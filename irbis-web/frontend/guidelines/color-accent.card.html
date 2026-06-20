@@ -1,0 +1,30 @@
+<!-- @dsCard group="Colors" name="Акцент — чернильно-синий" viewport="700x170" subtitle="Рабочая тема: действия, ссылки, выделение (AA на белом)" -->
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8" /><link rel="stylesheet" href="../styles.css" />
+<style>
+  body{margin:0;padding:18px;background:var(--bg-page);font-family:var(--font-ui);}
+  .row{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:10px;}
+  .sw{border-radius:var(--radius-md);border:1px solid var(--border-subtle);overflow:hidden;}
+  .chip{height:48px;}
+  .meta{padding:6px 8px;background:var(--surface-card);}
+  .nm{font-size:var(--text-2xs);font-weight:var(--weight-semibold);color:var(--text-strong);}
+  .hex{font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--text-subtle);}
+  .demo{display:flex;gap:10px;align-items:center;}
+  .btn{background:var(--accent);color:var(--accent-fg);padding:9px 16px;border-radius:var(--radius-md);font-weight:var(--weight-semibold);font-size:var(--text-sm);}
+  .lnk{color:var(--text-link);font-weight:var(--weight-medium);font-size:var(--text-sm);}
+  .tint{background:var(--accent-weak);border:1px solid var(--accent-weak-border);color:var(--accent-press);padding:8px 12px;border-radius:var(--radius-pill);font-size:var(--text-sm);font-weight:var(--weight-medium);}
+</style></head>
+<body>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--blue-700)"></div><div class="meta"><div class="nm">blue-700</div><div class="hex">#1B3A53</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--blue-600)"></div><div class="meta"><div class="nm">blue-600</div><div class="hex">#234866</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--blue-500)"></div><div class="meta"><div class="nm">blue-500 ·акцент</div><div class="hex">#2C5578</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--blue-100)"></div><div class="meta"><div class="nm">blue-100</div><div class="hex">#DCE7F0</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--blue-50)"></div><div class="meta"><div class="nm">blue-50</div><div class="hex">#EAF0F5</div></div></div>
+  </div>
+  <div class="demo">
+    <span class="btn">Найти</span>
+    <a class="lnk" href="#">Расширенный поиск</a>
+    <span class="tint">активный фильтр</span>
+  </div>
+</body></html>

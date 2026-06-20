@@ -1,0 +1,21 @@
+<!-- @dsCard group="Colors" name="Обратная связь" viewport="700x130" subtitle="info / success / warning / error" -->
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8" /><link rel="stylesheet" href="../styles.css" />
+<style>
+  body{margin:0;padding:18px;background:var(--bg-page);font-family:var(--font-ui);}
+  .row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  .al{border-radius:var(--radius-md);border:1px solid;padding:10px 12px;font-size:var(--text-sm);font-weight:var(--weight-medium);}
+  .info{background:var(--info-bg);border-color:var(--accent-weak-border);color:var(--accent-press);}
+  .ok{background:var(--success-bg);border-color:var(--status-available-border);color:var(--status-available-strong);}
+  .warn{background:var(--warning-bg);border-color:var(--status-issued-border);color:var(--status-issued-strong);}
+  .err{background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger-600);}
+  .nm{font-size:var(--text-2xs);font-family:var(--font-mono);opacity:.8;margin-top:4px;}
+</style></head>
+<body>
+  <div class="row">
+    <div class="al info">Информация<div class="nm">info</div></div>
+    <div class="al ok">Успех<div class="nm">success</div></div>
+    <div class="al warn">Внимание<div class="nm">warning</div></div>
+    <div class="al err">Ошибка<div class="nm">danger</div></div>
+  </div>
+</body></html>

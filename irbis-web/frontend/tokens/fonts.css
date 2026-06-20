@@ -1,0 +1,60 @@
+/* ============================================================
+   ИРБИС-Веб — Шрифты (локально, без внешних хостингов · разд. 11)
+   Объявления @font-face только через local() — используют шрифт,
+   УЖЕ установленный в ОС (PT-семейство присутствует в Astra Linux;
+   PT Astra Sans/Serif — как штатные альтернативы). Если шрифт не
+   установлен, правило игнорируется и срабатывает фолбэк из стека
+   (см. tokens/typography.css). URL не используется — данные за
+   периметр не уходят.
+
+   ▸ Чтобы поставить точные начертания: положите файлы шрифтов в каталог
+     /fonts и добавьте источник-файл [src: ссылка] ПЕРЕД local() в каждом правиле.
+   ============================================================ */
+
+/* ---- PT Sans ---- */
+@font-face {
+  font-family: "PT Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("PT Sans"), local("PTSans-Regular"), local("PT Astra Sans"), local("PTAstraSans-Regular");
+}
+@font-face {
+  font-family: "PT Sans";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: local("PT Sans Italic"), local("PTSans-Italic"), local("PT Astra Sans Italic");
+}
+@font-face {
+  font-family: "PT Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local("PT Sans Bold"), local("PTSans-Bold"), local("PT Astra Sans Bold"), local("PTAstraSans-Bold");
+}
+
+/* ---- PT Serif (заглавия карточек в театральном скине) ---- */
+@font-face {
+  font-family: "PT Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("PT Serif"), local("PTSerif-Regular"), local("PT Astra Serif"), local("PTAstraSerif-Regular");
+}
+@font-face {
+  font-family: "PT Serif";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local("PT Serif Bold"), local("PTSerif-Bold"), local("PT Astra Serif Bold"), local("PTAstraSerif-Bold");
+}
+
+/* ---- PT Mono (инвентарные номера, MFN, коды полей) ---- */
+@font-face {
+  font-family: "PT Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("PT Mono"), local("PTMono-Regular");
+}

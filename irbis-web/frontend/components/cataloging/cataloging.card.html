@@ -1,0 +1,76 @@
+<!-- @dsCard group="Components" name="Каталогизация · DynamicField" viewport="700x620" subtitle="Тип поля → контрол: меню, словарь, дерево, да-нет, авторитет, дата, повторяемые поля" -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; padding: 22px; background: var(--bg-page); }
+  .grid { display: grid; gap: 18px; }
+  .lbl { font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--text-subtle); font-weight: 700; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const NS = window.DesignSystem_d9a584;
+const { DynamicField } = NS;
+function Demo() {
+  const [v, setV] = React.useState({
+    title: "", docType: "Книга", author: ["Чехов А. П."], yn: "Да", grnti: "", subj: "", date: "1896",
+    authors: [{ a: "Чехов", b: "А. П." }],
+  });
+  const set = (k) => (val) => setV((s) => ({ ...s, [k]: val }));
+  return (
+    <div className="grid">
+      <div>
+        <div className="lbl">Свободный текст · MARC 200^a</div>
+        <DynamicField field={{ code:"200^a", label:"Заглавие", type:"text", required:true, placeholder:"Введите заглавие" }} value={v.title} onChange={set("title")} />
+      </div>
+      <div>
+        <div className="lbl">Меню (.mnu)</div>
+        <DynamicField field={{ code:"900", label:"Вид документа", type:"menu", options:["Книга","Сборник","Многотомник","Пьеса"] }} value={v.docType} onChange={set("docType")} />
+      </div>
+      <div>
+        <div className="lbl">Словарь с автодополнением (префикс)</div>
+        <DynamicField field={{ code:"700^a", label:"Автор", type:"dict", repeatable:true,
+          dictionary:[{term:"Чехов А. П.", count:318},{term:"Чайковский П. И.", count:156},{term:"Чацкий", count:11}] }} value={v.author} onChange={set("author")} />
+      </div>
+      <div>
+        <div className="lbl">Да / нет</div>
+        <DynamicField field={{ code:"905", label:"Электронная версия", type:"bool", options:["Да","Нет"] }} value={v.yn} onChange={set("yn")} />
+      </div>
+      <div>
+        <div className="lbl">Иерархический справочник (.tre) — ГРНТИ</div>
+        <DynamicField field={{ code:"606", label:"Рубрика ГРНТИ", type:"tree",
+          tree:[{code:"18", label:"Искусство. Искусствоведение", children:[
+            {code:"18.45", label:"Театр. Театроведение", children:[{code:"18.45.09", label:"Драматический театр"},{code:"18.45.21", label:"Опера. Балет"}]},
+            {code:"18.41", label:"Музыка"}]}]} } value={v.grnti} onChange={set("grnti")} />
+      </div>
+      <div>
+        <div className="lbl">Авторитетный файл</div>
+        <DynamicField field={{ code:"601", label:"Предметная рубрика", type:"authority",
+          authority:[{term:"Русская драматургия", code:"AU-1042"},{term:"Театр — История", code:"AU-2087"}] }} value={v.subj} onChange={set("subj")} />
+      </div>
+      <div>
+        <div className="lbl">Дата · ФЛК-ошибка</div>
+        <DynamicField field={{ code:"210^d", label:"Год издания", type:"date" }} value={v.date} onChange={set("date")} error={v.date && !/^\d{4}/.test(v.date) ? "Год должен начинаться с 4 цифр" : ""} />
+      </div>
+      <div>
+        <div className="lbl">Повторяемое поле с подполями</div>
+        <DynamicField field={{ code:"700", label:"Авторы", type:"text", repeatable:true,
+          subfields:[{code:"a", label:"Фамилия", type:"text"},{code:"b", label:"Инициалы", type:"text"},{code:"4", label:"Роль", type:"menu", options:["Автор","Редактор","Переводчик"]}] }}
+          value={v.authors} onChange={set("authors")} />
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script>
+</body>
+</html>

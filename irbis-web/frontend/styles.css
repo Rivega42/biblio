@@ -1,0 +1,12 @@
+/* ============================================================
+   ИРБИС-Веб — Дизайн-система
+   Корневая точка входа. Только @import. Потребители подключают
+   этот один файл. Темы переключаются через data-theme на <html>.
+   ============================================================ */
+
+@import "tokens/colors.css";
+@import "tokens/fonts.css";
+@import "tokens/typography.css";
+@import "tokens/spacing.css";
+@import "tokens/themes.css";
+@import "tokens/base.css";

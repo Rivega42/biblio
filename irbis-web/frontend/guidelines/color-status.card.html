@@ -1,0 +1,21 @@
+<!-- @dsCard group="Colors" name="Статусы экземпляров" viewport="700x150" subtitle="Единственное место яркого цвета · всегда цвет + иконка + текст" -->
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8" /><link rel="stylesheet" href="../styles.css" />
+<style>
+  body{margin:0;padding:18px;background:var(--bg-page);font-family:var(--font-ui);}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  .tile{border-radius:var(--radius-md);border:1px solid var(--border-subtle);background:var(--surface-card);padding:13px;}
+  .badge{display:inline-flex;align-items:center;gap:7px;border-radius:var(--radius-pill);padding:5px 11px;font-size:var(--text-sm);font-weight:var(--weight-semibold);border:1px solid;}
+  .av{background:var(--status-available-bg);color:var(--status-available-strong);border-color:var(--status-available-border);}
+  .is{background:var(--status-issued-bg);color:var(--status-issued-strong);border-color:var(--status-issued-border);}
+  .un{background:var(--status-unknown-bg);color:var(--status-unknown-strong);border-color:var(--status-unknown-border);}
+  .hex{font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--text-subtle);margin-top:10px;}
+  svg{width:15px;height:15px;}
+</style></head>
+<body>
+  <div class="row">
+    <div class="tile"><span class="badge av"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="8.5 12.5 11 15 15.5 9.5"/></svg>Доступен</span><div class="hex">available · #2E7D52</div></div>
+    <div class="tile"><span class="badge is"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>Выдан</span><div class="hex">issued · #9C6611</div></div>
+    <div class="tile"><span class="badge un"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/></svg>Нет данных</span><div class="hex">unknown · #6B675F</div></div>
+  </div>
+</body></html>

@@ -1,0 +1,55 @@
+/* ============================================================
+   ИРБИС-Веб — Типографика
+   Локальные/системно-безопасные стеки с полной кириллицей.
+   PT Sans / PT Serif / PT Mono присутствуют в Astra Linux;
+   корректный фолбэк на dev-машинах. Без внешних хостингов (разд. 11).
+   Если нужны точные шрифты — положите .ttf в /fonts и добавьте @font-face.
+   ============================================================ */
+
+:root {
+  /* ---- Семейства (базовые стеки) ---- */
+  --font-sans: 'PT Sans', 'PT Astra Sans', 'Segoe UI', system-ui, -apple-system,
+    'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-serif: 'PT Serif', 'PT Astra Serif', Georgia, 'Times New Roman', 'Noto Serif', serif;
+  --font-mono: 'PT Mono', 'JetBrains Mono', ui-monospace, 'SFMono-Regular',
+    Consolas, 'Liberation Mono', monospace;
+
+  /* ---- Семантические семейства (переопределяются скином) ---- */
+  --font-ui: var(--font-sans);          /* интерфейс, кнопки, поля */
+  --font-body: var(--font-sans);        /* основной текст */
+  --font-display: var(--font-sans);     /* крупные заголовки (рабочая тема — гротеск) */
+  --font-record-title: var(--font-sans);/* заглавие карточки записи */
+
+  /* ---- Базовый кегль (множитель для масштабирования темой) ---- */
+  --fs: 16px;
+
+  /* ---- Шкала кегля ---- */
+  --text-2xs: calc(var(--fs) * 0.75);    /* 12 — служебные метки */
+  --text-xs:  calc(var(--fs) * 0.8125);  /* 13 — мелкие подписи */
+  --text-sm:  calc(var(--fs) * 0.875);   /* 14 — плотные данные, чипы */
+  --text-base: var(--fs);                /* 16 — основной текст */
+  --text-md:  calc(var(--fs) * 1.125);   /* 18 — крупный текст */
+  --text-lg:  calc(var(--fs) * 1.25);    /* 20 — подзаголовки */
+  --text-xl:  calc(var(--fs) * 1.5);     /* 24 — H3 */
+  --text-2xl: calc(var(--fs) * 1.875);   /* 30 — H2 */
+  --text-3xl: calc(var(--fs) * 2.375);   /* 38 — H1 */
+  --text-4xl: calc(var(--fs) * 3);       /* 48 — дисплей */
+
+  /* ---- Насыщенность ---- */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---- Интерлиньяж ---- */
+  --leading-tight: 1.2;
+  --leading-snug: 1.32;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* ---- Трекинг ---- */
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+  --tracking-caps: 0.06em;   /* ВЕРХНИЙ РЕГИСТР, метки */
+}

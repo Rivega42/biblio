@@ -1,0 +1,143 @@
+/* ============================================================
+   ИРБИС-Веб — Цвет
+   Базовая палитра + семантические алиасы.
+   Тема по умолчанию — «рабочая»: тёплая бумажная основа,
+   графитовый текст, спокойный чернильно-синий акцент.
+   Скины (театральный, a11y) переопределяют семантику в themes.css.
+   ============================================================ */
+
+:root {
+  /* ---- Бумага / поверхности (тёплый нейтральный) ---- */
+  --paper-0: #FBFAF7;   /* фон страницы */
+  --paper-1: #FFFFFF;   /* поверхность карточки */
+  --paper-2: #F4F1EA;   /* панель / врезка */
+  --paper-3: #ECE7DD;   /* глубокая врезка / hover-фон */
+  --paper-4: #E2DBCD;   /* активный фон / нажатие */
+
+  /* ---- Чернила / текст (графит, тёплый) ---- */
+  --ink-0: #1C1B19;     /* заголовки, максимальный контраст */
+  --ink-1: #2E2C28;     /* основной текст */
+  --ink-2: #57534B;     /* вторичный текст, подписи */
+  --ink-3: #8A847A;     /* приглушённый, плейсхолдеры */
+  --ink-inverse: #FBFAF7; /* текст на тёмном/акценте */
+
+  /* ---- Линии / границы ---- */
+  --line-1: #E6E0D4;    /* тонкая разделительная */
+  --line-2: #D6CEBE;    /* выраженная граница поля */
+  --line-3: #C2B8A4;    /* акцентная граница / hover */
+
+  /* ---- Акцент: чернильно-синий (рабочая тема) ---- */
+  --blue-700: #1B3A53;
+  --blue-600: #234866;
+  --blue-500: #2C5578;  /* основной акцент, AA на белом (~6.4:1) */
+  --blue-100: #DCE7F0;
+  --blue-50:  #EAF0F5;
+
+  /* ---- Винный / гранатовый (театральный скин) ---- */
+  --wine-700: #561D28;
+  --wine-600: #682530;
+  --wine-500: #7A2E3A;
+  --wine-100: #EFD9DA;
+  --wine-50:  #F6EAE9;
+
+  /* ---- Сезонные акценты ---- */
+  /* Новый год: морозный-синий занавес + золото гирлянд */
+  --frost-700: #14294A;
+  --frost-600: #1C3D6E;  /* акцент, AAA на белом */
+  --frost-500: #244C84;
+  --frost-100: #DEE8F5;
+  --frost-50:  #EDF2F9;
+  --gold-500:  #C8A24A;  /* золото гирлянды/мишуры (только эффекты) */
+  --gold-300:  #E6CB86;
+  /* 8 марта: тёплая роза + мимоза */
+  --rose-700: #74203A;
+  --rose-600: #8E2942;
+  --rose-500: #A8324F;   /* акцент, AA на белом */
+  --rose-100: #FAD9E0;
+  --rose-50:  #FCEAEE;
+  --mimosa-500: #E3B100; /* мимоза (только эффекты) */
+
+  /* ---- Светлые темы под библиотеку (настраиваемая нейтральная тема, §9) ---- */
+  /* Лазурь: прохладный сине-стальной */
+  --azure-700: #14466B;
+  --azure-600: #1A567F;
+  --azure-500: #246B96;  /* акцент, AA на белом */
+  --azure-100: #D5E7F1;
+  --azure-50:  #E9F2F7;
+  /* Хвоя: глубокий приглушённый зелёный */
+  --pine-700: #16433A;
+  --pine-600: #1C5448;
+  --pine-500: #246356;   /* акцент, AA на белом */
+  --pine-100: #D6E8E1;
+  --pine-50:  #E9F3EF;
+
+
+  /* ---- Статусы экземпляров (общие для всех тем) ---- */
+  /* available — спокойный зелёный */
+  --status-available: #2E7D52;
+  --status-available-strong: #246343;
+  --status-available-bg: #E7F1EB;
+  --status-available-border: #BFDDCB;
+  /* issued — янтарный (затемнён до AA) */
+  --status-issued: #9C6611;
+  --status-issued-strong: #7E5210;
+  --status-issued-bg: #FAF0DA;
+  --status-issued-border: #E8D2A3;
+  /* unknown / нет данных — нейтральный серый */
+  --status-unknown: #6B675F;
+  --status-unknown-strong: #565249;
+  --status-unknown-bg: #EEEBE4;
+  --status-unknown-border: #D8D2C6;
+
+  /* ---- Семантика обратной связи ---- */
+  --danger-600: #97312F;
+  --danger-500: #B23B3B;
+  --danger-bg: #F8E8E6;
+  --danger-border: #E6C3C0;
+  --warning-500: var(--status-issued);
+  --warning-bg: var(--status-issued-bg);
+  --success-500: var(--status-available);
+  --success-bg: var(--status-available-bg);
+  --info-500: var(--blue-500);
+  --info-bg: var(--blue-50);
+
+  /* ============================================================
+     СЕМАНТИЧЕСКИЕ АЛИАСЫ — компоненты ссылаются на эти токены.
+     При смене темы переопределяются только они.
+     ============================================================ */
+
+  /* Фоны */
+  --bg-page: var(--paper-0);
+  --surface-card: var(--paper-1);
+  --surface-sunken: var(--paper-2);
+  --surface-hover: var(--paper-3);
+  --surface-active: var(--paper-4);
+
+  /* Текст */
+  --text-strong: var(--ink-0);
+  --text-body: var(--ink-1);
+  --text-muted: var(--ink-2);
+  --text-subtle: var(--ink-3);
+  --text-on-accent: var(--ink-inverse);
+  --text-link: var(--blue-600);
+
+  /* Границы */
+  --border-subtle: var(--line-1);
+  --border-default: var(--line-2);
+  --border-strong: var(--line-3);
+
+  /* Акцент (действия, ссылки, выделение) */
+  --accent: var(--blue-500);
+  --accent-hover: var(--blue-600);
+  --accent-press: var(--blue-700);
+  --accent-fg: #FFFFFF;
+  --accent-weak: var(--blue-50);
+  --accent-weak-hover: var(--blue-100);
+  --accent-weak-border: #C9DAE7;
+  --accent-ring: rgba(44, 85, 120, 0.34);
+
+  /* Фокус */
+  --focus-ring-color: var(--accent-ring);
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 1px;
+}

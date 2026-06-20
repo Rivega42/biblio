@@ -1,0 +1,102 @@
+<!-- @dsCard group="Components" name="Каталог" viewport="700x560" subtitle="Селектор базы, поиск, карточка результата, экземпляры, статусы, пагинация" -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; padding: 22px; background: var(--bg-page); }
+  .wrap { display: flex; flex-direction: column; gap: 18px; }
+  .lbl { font: var(--weight-semibold) var(--text-2xs)/1 var(--font-ui); text-transform: uppercase;
+    letter-spacing: var(--tracking-caps); color: var(--text-subtle); margin-bottom: 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .group + .group { border-top: 1px solid var(--border-subtle); padding-top: 16px; }
+  .panel { background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 16px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const NS = window.DesignSystem_d9a584;
+const { DatabaseSelector, SearchBar, ResultCard, StatusBadge, HoldingsTable, SubjectTag, Pagination, SearchModes, TreeNav } = NS;
+const DBS = [
+  { id:"EK", group:"ek", name:"Электронный каталог", short:"Книги", icon:"book", description:"Книги — эталонная база", count:214530 },
+  { id:"PERIO", group:"ek", name:"Периодические издания", icon:"newspaper", description:"Газеты и журналы", count:18740 },
+  { id:"SKETCH", name:"Эскизный фонд", icon:"images", description:"Изобразительные материалы", count:8412 },
+  { id:"GUAR", name:"Собрание архивных документов", icon:"archive", description:"Фонд / опись / даты", count:31980 },
+  { id:"PLAY", name:"Аннотированный указатель пьес", icon:"drama", description:"Пьесы, роли, жанры", count:9874 },
+  { id:"IMGOPERA", group:"libretto", name:"Либретто опер, оперетт", icon:"music", description:"Образы карточек", count:2140 },
+  { id:"IMGBALET", group:"libretto", name:"Либретто балетов", icon:"music", description:"Образы карточек", count:1560 },
+];
+const GROUPS = {
+  ek: { id:"ek", label:"Электронный каталог", icon:"book" },
+  libretto: { id:"libretto", label:"Базы Либретто", icon:"music" },
+};
+function Demo() {
+  const [db, setDb] = React.useState(["EK"]);
+  const [q, setQ] = React.useState("Чайка");
+  const [page, setPage] = React.useState(2);
+  const [mode, setMode] = React.useState("advanced");
+  const [nav, setNav] = React.useState(null);
+  const [marked, setMarked] = React.useState(false);
+  return (
+    <div className="wrap">
+      <div className="group" style={{display:"grid", gridTemplateColumns:"260px 1fr", gap:"14px", alignItems:"start"}}>
+        <DatabaseSelector databases={DBS} groups={GROUPS} value={db} onChange={setDb} />
+        <SearchBar value={q} onChange={setQ} suggestions={[{term:"Чайка", count:42},{term:"Чехов А. П.", count:318}]} onAdvanced={()=>{}} />
+      </div>
+      <div className="group" style={{display:"grid", gridTemplateColumns:"220px 1fr", gap:"18px", alignItems:"start"}}>
+        <SearchModes modes={["simple","advanced","complex"]} value={mode} onChange={setMode} />
+        <div>
+          <div className="lbl">Карточка результата · тег базы · статусы</div>
+          <div style={{display:"flex", flexDirection:"column", gap:"10px"}}>
+            <ResultCard dbTag="Книги" item={{title:"Чайка: комедия в четырёх действиях", author:"Чехов А. П.", year:"1896", docType:"Книга", availability:"available"}} checked={marked} onToggleCheck={()=>setMarked(m=>!m)} />
+            <ResultCard dbTag="Эскизы" showThumb typeIcon="image" item={{title:"Эскиз декорации к «Чайке»", author:"Симов В. А.", year:"1898", docType:"Эскиз", availability:"issued", fields:[{label:"Техника", value:"Акварель"}]}} />
+          </div>
+          <div className="row" style={{marginTop:"10px", gap:"16px"}}>
+            <StatusBadge status="available" />
+            <StatusBadge status="issued" />
+            <StatusBadge status="unknown" />
+            <StatusBadge status="available" dot />
+          </div>
+        </div>
+      </div>
+      <div className="group">
+        <div className="lbl">Навигатор-классификатор (ГРНТИ/УДК)</div>
+        <div style={{maxWidth:"320px"}}>
+          <TreeNav navigators={[
+            {id:"grnti", label:"ГРНТИ", tree:[{code:"18", label:"Искусство", count:412, children:[{code:"18.45", label:"Театр", count:230, children:[{code:"18.45.09", label:"Драматический театр", count:142}]},{code:"18.41", label:"Музыка", count:96}]}]},
+            {id:"udk", label:"УДК", tree:[{code:"792", label:"Театр", count:256, children:[{code:"792.2", label:"Драматический", count:130}]}]},
+          ]} value={nav} onPick={(n)=>setNav(n?n.code:null)} />
+        </div>
+      </div>
+      <div className="group">
+        <div className="lbl">Предметные рубрики</div>
+        <div className="row">
+          <SubjectTag>Русская драматургия</SubjectTag>
+          <SubjectTag>Пьесы</SubjectTag>
+          <SubjectTag>Чехов А. П.</SubjectTag>
+        </div>
+      </div>
+      <div className="group panel">
+        <div className="lbl">Экземпляры</div>
+        <HoldingsTable holdings={[
+          {location:"Основной фонд", inventory:"К-12345", status:"available"},
+          {location:"Филиал №2", inventory:"К-12346", status:"issued"},
+        ]} onOrder={()=>{}} />
+      </div>
+      <div className="group">
+        <Pagination page={page} pageCount={21} total={418} onPage={setPage} pageSize={20} onPageSize={()=>{}} />
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script>
+</body>
+</html>

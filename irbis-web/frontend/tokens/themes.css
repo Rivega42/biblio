@@ -1,0 +1,303 @@
+/* ============================================================
+   ИРБИС-Веб — Темы / скины
+   Переключение через data-theme на <html> или контейнере.
+     (по умолчанию)            — «рабочая»: спокойная, читаемая
+     [data-theme="theatrical"] — «архивно-театральный» скин для читателя
+     [data-theme="a11y"]       — высококонтрастный режим (ГОСТ Р 52872-2019)
+   Переопределяются ТОЛЬКО семантические алиасы — переключение мгновенное.
+   ============================================================ */
+
+/* ---- Театральный скин: пергамент + гранат + засечки в заголовках ---- */
+[data-theme="theatrical"] {
+  --bg-page: #F3ECDD;
+  --surface-card: #FBF6EC;
+  --surface-sunken: #ECE0CB;
+  --surface-hover: #E4D6BC;
+  --surface-active: #D9C8A9;
+
+  --text-strong: #241C16;
+  --text-body: #36291F;
+  --text-muted: #6A584A;
+  --text-subtle: #978472;
+  --text-link: var(--wine-600);
+
+  --border-subtle: #E0D2B8;
+  --border-default: #D2BF9E;
+  --border-strong: #BCA37C;
+
+  --accent: var(--wine-500);
+  --accent-hover: var(--wine-600);
+  --accent-press: var(--wine-700);
+  --accent-fg: #FBF6EC;
+  --accent-weak: var(--wine-50);
+  --accent-weak-hover: var(--wine-100);
+  --accent-weak-border: #E2C3C2;
+  --accent-ring: rgba(122, 46, 58, 0.34);
+
+  /* Засечки для крупных заголовков и заглавий записей */
+  --font-display: var(--font-serif);
+  --font-record-title: var(--font-serif);
+
+  /* Статусы на пергаменте — чуть теплее подложки */
+  --status-available-bg: #E4EEE3;
+  --status-issued-bg: #F4E8CC;
+  --status-unknown-bg: #EBE2D0;
+  --info-bg: #EFE7D6;
+}
+
+/* ---- Сезонный скин «Новый год»: морозная ночь театра + золото ---- */
+[data-theme="newyear"] {
+  --bg-page: #EAF1F8;
+  --surface-card: #FFFFFF;
+  --surface-sunken: #E0EAF5;
+  --surface-hover: #D5E2F1;
+  --surface-active: #C6D8EC;
+
+  --text-strong: #14233C;
+  --text-body: #1D3050;
+  --text-muted: #4A5C7A;
+  --text-subtle: #7C8AA3;
+
+  --border-subtle: #D7E2F0;
+  --border-default: #C3D2E5;
+  --border-strong: #A8BDD8;
+
+  --accent: var(--frost-600);
+  --accent-hover: var(--frost-700);
+  --accent-press: #0F2038;
+  --accent-fg: #FFFFFF;
+  --accent-weak: var(--frost-50);
+  --accent-weak-hover: var(--frost-100);
+  --accent-weak-border: #C2D3EA;
+  --accent-ring: rgba(28, 61, 110, 0.34);
+
+  /* Засечки для крупных заголовков — праздничная, нарядная подача */
+  --font-display: var(--font-serif);
+  --font-record-title: var(--font-serif);
+
+  --status-available-bg: #E2F0E8;
+  --status-issued-bg: #F4EAD3;
+  --status-unknown-bg: #E6ECF4;
+  --info-bg: var(--frost-50);
+}
+
+/* ---- Сезонный скин «8 марта»: тёплая роза + мимоза ---- */
+[data-theme="march8"] {
+  --bg-page: #FCF1F3;
+  --surface-card: #FFFFFF;
+  --surface-sunken: #F8E5EA;
+  --surface-hover: #F3D9E0;
+  --surface-active: #ECC9D3;
+
+  --text-strong: #3A1A23;
+  --text-body: #4A2630;
+  --text-muted: #7C5560;
+  --text-subtle: #A98692;
+
+  --border-subtle: #F1DBE1;
+  --border-default: #E6C6CF;
+  --border-strong: #D6A9B5;
+
+  --accent: var(--rose-500);
+  --accent-hover: var(--rose-600);
+  --accent-press: var(--rose-700);
+  --accent-fg: #FFFFFF;
+  --accent-weak: var(--rose-50);
+  --accent-weak-hover: var(--rose-100);
+  --accent-weak-border: #EEBECB;
+  --accent-ring: rgba(168, 50, 79, 0.32);
+  --text-link: var(--rose-600);
+
+  --font-display: var(--font-serif);
+  --font-record-title: var(--font-serif);
+
+  --status-available-bg: #E5F0E9;
+  --status-issued-bg: #F9EBCF;
+  --status-unknown-bg: #F0E6E9;
+  --info-bg: var(--rose-50);
+}
+
+/* ---- Светлая «Лазурь»: прохладный сине-стальной нейтрал ---- */
+[data-theme="azure"] {
+  --bg-page: #F2F6F9;
+  --surface-card: #FFFFFF;
+  --surface-sunken: #E8EFF4;
+  --surface-hover: #DFE9F0;
+  --surface-active: #CFDEEA;
+
+  --text-strong: #142433;
+  --text-body: #213444;
+  --text-muted: #4F6275;
+  --text-subtle: #7C8D9C;
+
+  --border-subtle: #DEE8EF;
+  --border-default: #CAD8E3;
+  --border-strong: #AEC1D1;
+
+  --accent: var(--azure-500);
+  --accent-hover: var(--azure-600);
+  --accent-press: var(--azure-700);
+  --accent-fg: #FFFFFF;
+  --accent-weak: var(--azure-50);
+  --accent-weak-hover: var(--azure-100);
+  --accent-weak-border: #C4DCEA;
+  --accent-ring: rgba(36, 107, 150, 0.32);
+  --text-link: var(--azure-600);
+
+  --status-available-bg: #E2F0E8;
+  --status-issued-bg: #F4EBD2;
+  --status-unknown-bg: #E8EEF3;
+  --info-bg: var(--azure-50);
+}
+
+/* ---- Светлая «Хвоя»: спокойный приглушённо-зелёный нейтрал ---- */
+[data-theme="pine"] {
+  --bg-page: #F2F6F3;
+  --surface-card: #FFFFFF;
+  --surface-sunken: #E7F0EB;
+  --surface-hover: #DEEAE3;
+  --surface-active: #CDDFD6;
+
+  --text-strong: #15271F;
+  --text-body: #21362C;
+  --text-muted: #4E6359;
+  --text-subtle: #7C8F86;
+
+  --border-subtle: #DDEAE2;
+  --border-default: #C9DBD1;
+  --border-strong: #ADC6B9;
+
+  --accent: var(--pine-500);
+  --accent-hover: var(--pine-600);
+  --accent-press: var(--pine-700);
+  --accent-fg: #FFFFFF;
+  --accent-weak: var(--pine-50);
+  --accent-weak-hover: var(--pine-100);
+  --accent-weak-border: #C2DDD2;
+  --accent-ring: rgba(36, 99, 86, 0.32);
+  --text-link: var(--pine-600);
+
+  --status-available-bg: #DEEFE4;
+  --status-issued-bg: #F4EBD2;
+  --status-unknown-bg: #E8EEEA;
+  --info-bg: var(--pine-50);
+}
+
+/* ---- Тёмная тема: графитовая ночь, спокойный сине-стальной акцент ---- */
+[data-theme="dark"] {
+  --bg-page: #14171C;
+  --surface-card: #1C2027;
+  --surface-sunken: #23282F;
+  --surface-hover: #2A3037;
+  --surface-active: #323942;
+
+  --text-strong: #F4F6F8;
+  --text-body: #DCE1E7;
+  --text-muted: #A3ADB8;
+  --text-subtle: #79838F;
+  --text-on-accent: #FFFFFF;
+  --text-link: #8FB6EF;
+
+  --border-subtle: #2A3037;
+  --border-default: #353C45;
+  --border-strong: #4A535E;
+
+  --accent: #6E9BE8;
+  --accent-hover: #84ACEE;
+  --accent-press: #9ABDF3;
+  --accent-fg: #0F1318;
+  --accent-weak: #1E2A3D;
+  --accent-weak-hover: #24344B;
+  --accent-weak-border: #314867;
+  --accent-ring: rgba(110, 155, 232, 0.40);
+
+  /* Статусы — приглушённые подложки на тёмном, текст светлый */
+  --status-available: #6FCB92;
+  --status-available-strong: #8FDCAC;
+  --status-available-bg: #16271E;
+  --status-issued: #E3B765;
+  --status-issued-strong: #F0CB85;
+  --status-issued-bg: #2A2417;
+  --status-unknown: #9AA3AE;
+  --status-unknown-bg: #23282F;
+
+  --info-bg: #1A2738;
+  --info-500: #6E9BE8;
+  --danger-500: #E8857F;
+  --success-500: #6FCB92;
+  --warning-500: #E3B765;
+
+  /* Тени почти не видны на тёмном — опора на границы */
+  --shadow-sm: 0 0 0 1px rgba(0,0,0,.4);
+  --shadow-md: 0 4px 14px rgba(0,0,0,.45);
+  --shadow-lg: 0 12px 34px rgba(0,0,0,.55);
+
+  color-scheme: dark;
+}
+
+/* ---- A11y: высокий контраст + крупнее кегль + толще фокус ---- */
+[data-theme="a11y"] {
+  --bg-page: #FFFFFF;
+  --surface-card: #FFFFFF;
+  --surface-sunken: #F2F2F2;
+  --surface-hover: #EAEAEA;
+  --surface-active: #DCDCDC;
+
+  --text-strong: #000000;
+  --text-body: #111111;
+  --text-muted: #2A2A2A;   /* остаётся AA на белом */
+  --text-subtle: #3D3D3D;
+  --text-on-accent: #FFFFFF;
+  --text-link: #0A3357;
+
+  --border-subtle: #6E6E6E;
+  --border-default: #4A4A4A;
+  --border-strong: #000000;
+
+  --accent: #0A3357;       /* затемнён до AAA на белом */
+  --accent-hover: #07263F;
+  --accent-press: #051A2C;
+  --accent-fg: #FFFFFF;
+  --accent-weak: #E6EDF3;
+  --accent-weak-hover: #D3E0EC;
+  --accent-weak-border: #0A3357;
+  --accent-ring: rgba(10, 51, 87, 0.55);
+
+  /* Статусы — затемнены до высокого контраста */
+  --status-available: #1B5E38;
+  --status-available-strong: #124327;
+  --status-issued: #7A4F0B;
+  --status-issued-strong: #5C3B08;
+  --status-unknown: #3D3A34;
+  --danger-500: #8E1F1F;
+
+  /* Крупнее текст и воздух */
+  --fs: 18px;
+  --leading-normal: 1.7;
+  --leading-snug: 1.45;
+  --leading-relaxed: 1.85;
+
+  /* Толще и заметнее фокус */
+  --focus-ring-width: 4px;
+  --focus-ring-offset: 2px;
+  --focus-ring-color: var(--accent);
+
+  /* Жёстче границы — опора не только на цвет */
+  --border-width: 1.5px;
+  --border-width-strong: 2px;
+}
+
+/* Театральный + a11y одновременно: контраст важнее скина */
+[data-theme="theatrical"][data-a11y="on"],
+[data-theme="a11y"] {
+  --shadow-sm: 0 0 0 1px var(--border-default);
+}
+
+/* Уважать системную настройку «меньше движения» */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms; /* @kind other */
+    --dur: 0ms; /* @kind other */
+    --dur-slow: 0ms; /* @kind other */
+  }
+}

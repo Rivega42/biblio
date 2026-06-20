@@ -1,0 +1,67 @@
+/* ============================================================
+   ИРБИС-Веб — Пространство, радиусы, тени, границы, движение
+   Сетка 4px. Тени сдержанные: контент важнее «хрома».
+   ============================================================ */
+
+:root {
+  /* ---- Отступы (4px-сетка) ---- */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ---- Радиусы ---- */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;    /* поля, кнопки */
+  --radius-lg: 12px;   /* карточки */
+  --radius-xl: 16px;   /* модалки, крупные блоки */
+  --radius-pill: 999px;
+  --radius-round: 50%;
+
+  /* ---- Тени (сдержанные, тёплый чёрный) ---- */
+  --shadow-xs: 0 1px 2px rgba(28, 27, 25, 0.06);
+  --shadow-sm: 0 1px 3px rgba(28, 27, 25, 0.09), 0 1px 2px rgba(28, 27, 25, 0.05);
+  --shadow-md: 0 4px 14px rgba(28, 27, 25, 0.10), 0 2px 4px rgba(28, 27, 25, 0.05);
+  --shadow-lg: 0 14px 40px rgba(28, 27, 25, 0.16), 0 4px 10px rgba(28, 27, 25, 0.06);
+  --shadow-inset: inset 0 1px 2px rgba(28, 27, 25, 0.06);
+
+  /* ---- Границы ---- */
+  --border-width: 1px;
+  --border-width-strong: 1.5px;
+
+  /* ---- Высота контролов (моторная доступность ≥ 40px) ---- */
+  --control-h-sm: 32px;
+  --control-h-md: 40px;
+  --control-h-lg: 48px;
+  --tap-min: 44px;   /* минимальная кликабельная цель */
+
+  /* ---- Контейнеры / сетка каталога ---- */
+  --container-max: 1240px;
+  --content-max: 760px;        /* читаемая ширина PFT-текста */
+  --rail-filters: 288px;       /* левая колонка фильтров/словаря */
+
+  /* ---- Z-индексы ---- */
+  --z-base: 0; /* @kind other */
+  --z-sticky: 100; /* @kind other */
+  --z-overlay: 200; /* @kind other */
+  --z-modal: 300; /* @kind other */
+  --z-toast: 400; /* @kind other */
+  --z-tooltip: 500; /* @kind other */
+
+  /* ---- Движение (сдержанное: фейды/мягкое смещение, без отскоков) ---- */
+  --dur-fast: 120ms; /* @kind other */
+  --dur: 180ms; /* @kind other */
+  --dur-slow: 280ms; /* @kind other */
+  --ease-standard: cubic-bezier(0.2, 0.6, 0.2, 1); /* @kind other */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* @kind other */
+}

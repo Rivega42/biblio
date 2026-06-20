@@ -1,0 +1,39 @@
+<!-- @dsCard group="Components" name="Иконки" viewport="700x300" subtitle="Локальный линейный набор · 24×24 · обводка 1.75" -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; padding: 22px; background: var(--bg-page); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 12px 6px;
+    border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-card); color: var(--text-body); }
+  .cell span { font: var(--text-2xs)/1.2 var(--font-mono); color: var(--text-subtle); text-align: center; word-break: break-all; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const { Icon, ICON_NAMES } = window.DesignSystem_d9a584;
+function Demo() {
+  return (
+    <div className="grid">
+      {ICON_NAMES.map((n) => (
+        <div className="cell" key={n} style={{color:"var(--accent)"}}>
+          <Icon name={n} size={24} />
+          <span>{n}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script>
+</body>
+</html>

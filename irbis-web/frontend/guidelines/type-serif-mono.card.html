@@ -1,0 +1,25 @@
+<!-- @dsCard group="Type" name="Засечки и моноширинный" viewport="700x180" subtitle="Засечки — архивный/театральный акцент · моно — инвентарные номера" -->
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8" /><link rel="stylesheet" href="../styles.css" />
+<style>
+  body{margin:0;padding:20px;background:var(--bg-page);color:var(--text-strong);}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .tile{border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-card);padding:14px;}
+  .serif{font-family:var(--font-serif);font-size:var(--text-xl);font-weight:700;}
+  .serif-b{font-family:var(--font-serif);font-size:var(--text-base);font-weight:400;color:var(--text-body);margin-top:6px;}
+  .mono{font-family:var(--font-mono);font-size:var(--text-md);color:var(--text-body);}
+  .tok{font-family:var(--font-mono);font-size:11px;color:var(--text-subtle);margin-top:10px;}
+</style></head>
+<body>
+  <div class="grid">
+    <div class="tile">
+      <div class="serif">Либретто оперы «Снегурочка»</div>
+      <div class="serif-b">Засечки — для заглавий карточек в театральном скине, поддержка архивного характера.</div>
+      <div class="tok">--font-serif</div>
+    </div>
+    <div class="tile">
+      <div class="mono">К-12345 · 910^B<br/>MFN 10567</div>
+      <div class="tok">--font-mono · инвентарь, MFN, коды полей</div>
+    </div>
+  </div>
+</body></html>

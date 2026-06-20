@@ -1,0 +1,84 @@
+<!-- @dsCard group="Components" name="Формы" viewport="700x430" subtitle="Кнопки, поля, селект, флажки, переключатели, чипы" -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; padding: 22px; background: var(--bg-page); }
+  .wrap { display: flex; flex-direction: column; gap: 20px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .lbl { font: var(--weight-semibold) var(--text-2xs)/1 var(--font-ui); text-transform: uppercase;
+    letter-spacing: var(--tracking-caps); color: var(--text-subtle); margin-bottom: 10px; }
+  .group + .group { border-top: 1px solid var(--border-subtle); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const { Button, IconButton, Input, Select, Checkbox, Radio, Switch, FilterChip } = window.DesignSystem_d9a584;
+function Demo() {
+  const [q, setQ] = React.useState("Чайка");
+  const [op, setOp] = React.useState("and");
+  const [trunc, setTrunc] = React.useState(true);
+  const [marked, setMarked] = React.useState(true);
+  return (
+    <div className="wrap">
+      <div className="group">
+        <div className="lbl">Кнопки</div>
+        <div className="row">
+          <Button>Найти</Button>
+          <Button variant="secondary" iconLeft="rotate-ccw">Сброс</Button>
+          <Button variant="ghost" iconLeft="bookmark" size="sm">Отметить</Button>
+          <Button variant="danger" size="sm">Отменить заказ</Button>
+          <Button loading>Заказываю…</Button>
+          <IconButton icon="sliders" label="Фильтры" variant="outline" />
+          <IconButton icon="x" label="Закрыть" />
+        </div>
+      </div>
+      <div className="group grid2">
+        <Input label="Заглавие" iconLeft="search" value={q} onChange={(e)=>setQ(e.target.value)} onClear={()=>setQ("")} />
+        <Select label="Сортировка" options={["По релевантности","По году ↓","По году ↑","По автору"]} />
+        <Input label="Читательский билет" required placeholder="00012345" />
+        <Input label="Год" error="Должен быть числом" defaultValue="abc" />
+      </div>
+      <div className="group row" style={{gap:"22px"}}>
+        <div>
+          <div className="lbl">Связка</div>
+          <div className="row" style={{gap:"14px"}}>
+            <Radio name="op" checked={op==="and"} onChange={()=>setOp("and")} label="И" />
+            <Radio name="op" checked={op==="or"} onChange={()=>setOp("or")} label="ИЛИ" />
+            <Radio name="op" checked={op==="not"} onChange={()=>setOp("not")} label="НЕ" />
+          </div>
+        </div>
+        <div>
+          <div className="lbl">Флажки / переключатель</div>
+          <div className="row" style={{gap:"14px"}}>
+            <Checkbox checked={marked} onChange={(e)=>setMarked(e.target.checked)} label="Отметить" />
+            <Checkbox indeterminate checked label="Все на странице" />
+            <Switch checked={trunc} onChange={(e)=>setTrunc(e.target.checked)} label="Усечение" />
+          </div>
+        </div>
+      </div>
+      <div className="group">
+        <div className="lbl">Чипы-фильтры</div>
+        <div className="row">
+          <FilterChip group="Язык" label="русский" onRemove={()=>{}} />
+          <FilterChip group="Тип" label="Книга" onRemove={()=>{}} />
+          <FilterChip label="Пьесы" count={128} pressed onToggle={()=>{}} />
+          <FilterChip label="Либретто" count={64} onToggle={()=>{}} />
+        </div>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script>
+</body>
+</html>
