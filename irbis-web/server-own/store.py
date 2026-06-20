@@ -129,3 +129,71 @@ class OwnStore:
     def cover(self, db, mfn):
         r = self._conn().execute("SELECT cover FROM rec WHERE db=? AND mfn=?", (db, mfn)).fetchone()
         return r['cover'] if r and r['cover'] else None
+
+    # ---- write (cataloging on OUR server) ----
+    def next_mfn(self, db):
+        r = self._conn().execute("SELECT max(mfn) m FROM rec WHERE db=?", (db,)).fetchone()
+        return (r['m'] or 0) + 1
+
+    def save(self, db, mfn, posted_fields):
+        fields = fields_from_posted(posted_fields)
+        item, keywords, brief = item_from_fields(fields)
+        if not mfn:
+            mfn = self.next_mfn(db)
+        self.upsert(db, mfn, item, brief, fields, None, keywords)
+        return mfn
+
+
+def _parse_subfields(value):
+    if '^' not in value:
+        return value, {}
+    parts = value.split('^')
+    subs = {}
+    for p in parts[1:]:
+        if p:
+            subs[p[0]] = p[1:]
+    return parts[0], subs
+
+
+def fields_from_posted(posted):
+    """[{tag, value}] (value carries ^subfields) -> [FieldVal]."""
+    out = []
+    for f in posted or []:
+        tag = str(f.get('tag', '')).strip()
+        val = (f.get('value') or '').strip()
+        if not tag or not val:
+            continue
+        head, subs = _parse_subfields(val)
+        out.append({'tag': tag, 'value': val, 'text': head, 'subfields': subs})
+    return out
+
+
+def item_from_fields(fields):
+    def F(tag):
+        return next((f for f in fields if f['tag'] == tag), None)
+
+    def Fall(tag):
+        return [f for f in fields if f['tag'] == tag]
+
+    def sf(f, c):
+        if not f:
+            return ''
+        d = f['subfields']
+        return d.get(c) or d.get(c.upper()) or d.get(c.lower()) or ''
+
+    title = sf(F('200'), 'A')
+    au = F('700')
+    author = (sf(au, 'A') + (', ' + sf(au, 'G') if sf(au, 'G') else '')).strip(', ') if au else ''
+    author = author or sf(F('200'), 'F')
+    year = sf(F('210'), 'D')
+    doctype = sf(F('900'), 'T') or sf(F('900'), 'B')
+    avail = 'unknown'
+    hold = Fall('910')
+    if hold:
+        st = sf(hold[0], 'A')
+        avail = 'available' if st in ('0', '') else 'issued'
+    keywords = ' '.join([title, author] + [sf(f, 'A') for f in Fall('606')])
+    item = {'title': title or 'без заглавия', 'author': author, 'year': year,
+            'docType': doctype, 'availability': avail}
+    brief = '%s%s%s' % (author + '. ' if author else '', title, '. ' + year if year else '')
+    return item, keywords, brief

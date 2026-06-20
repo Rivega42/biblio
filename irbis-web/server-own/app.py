@@ -7,6 +7,7 @@ the same built frontend. Proves the seam: the web client runs unchanged on our s
   py irbis-web/server-own/app.py                # http://127.0.0.1:8081
 """
 import os
+import sys
 import json
 import posixpath
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,15 @@ from urllib.parse import urlparse, parse_qs
 from store import OwnStore
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.normpath(os.path.join(HERE, '..', 'backend')))
+try:
+    from core import WORKLIST_IBIS          # reuse the cataloging worklist (DRY)
+except Exception:
+    WORKLIST_IBIS = []
+
+STAFF_GRANTS = [{'function': fn, 'db': '*', 'level': 'admin'} for fn in (
+    'search', 'record.read', 'record.write', 'record.delete', 'terms', 'file',
+    'order', 'cabinet', 'circ.issue', 'circ.return', 'admin.users', 'admin.db')]
 DIST = os.path.normpath(os.path.join(HERE, '..', 'frontend', 'dist'))
 STORE = OwnStore(os.environ.get('OWN_DB', os.path.join(HERE, 'own.db')))
 DEFAULT_DB = os.environ.get('OWN_DEFAULT_DB', 'IBIS')
@@ -58,12 +68,32 @@ class H(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self._send(204, b'', 'text/plain')
 
+    def _body(self):
+        n = int(self.headers.get('Content-Length', 0) or 0)
+        if not n:
+            return {}
+        try:
+            return json.loads(self.rfile.read(n).decode('utf-8'))
+        except Exception:
+            return {}
+
     def do_POST(self):
         u = urlparse(self.path)
         if u.path == '/api/auth/guest':
             return self._send(200, ok({'token': 'own-guest', 'kind': 'guest'}))
+        if u.path == '/api/auth/staff':
+            b = self._body()
+            return self._send(200, ok({'token': 'own-staff', 'kind': 'staff',
+                                       'login': b.get('login', 'staff'),
+                                       'name': 'Сотрудник (наш сервер)', 'grants': STAFF_GRANTS}))
         if u.path == '/api/order':
             return self._send(200, ok({'status': 'queued', 'note': 'own-server PoC'}))
+        parts = u.path.strip('/').split('/')
+        if len(parts) == 4 and parts[0] == 'api' and parts[1] == 'record':
+            b = self._body()
+            db, mfn = parts[2], int(parts[3])
+            new_mfn = STORE.save(db, mfn, b.get('fields') or [])
+            return self._send(200, ok({'db': db, 'mfn': new_mfn, 'created': mfn == 0, 'returnCode': 0}))
         return self._send(404, {'ok': False, 'error': {'code': 'not_found', 'message': '-'}})
 
     def do_GET(self):
@@ -104,6 +134,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, data, 'image/jpeg') if data else self._send(404, b'', 'text/plain')
             if p == '/api/me/cabinet':
                 return self._send(200, ok({'mfn': 0, 'name': 'Гость', 'loans': [], 'loanCount': 0}))
+            if len(parts) == 3 and parts[0] == 'api' and parts[1] == 'worklist':
+                return self._send(200, ok({'db': parts[2], 'fields': WORKLIST_IBIS}))
             return self._send(404, {'ok': False, 'error': {'code': 'not_found', 'message': '-'}})
         except Exception:
             return self._send(500, {'ok': False, 'error': {'code': 'internal', 'message': '-'}})
