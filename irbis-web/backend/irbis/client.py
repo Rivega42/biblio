@@ -128,6 +128,31 @@ class IrbisClient:
             raise IrbisError(r.return_code, 'format failed')
         return '\n'.join(x for x in r.data if x).strip()
 
+    # codes that still carry a valid term list (exact term may not exist)
+    _TERM_OK = (0, -202, -203, -204)
+
+    def read_terms(self, db, start, count=20):
+        """Dictionary terms from `start` (command 'H'). Returns [(posting_count, term), ...]."""
+        r = self._execute('H', [db, start, str(count)])
+        if r.return_code is not None and r.return_code not in self._TERM_OK:
+            raise IrbisError(r.return_code, 'read_terms failed')
+        terms = []
+        for line in r.data:
+            if '#' in line:
+                cnt, term = line.split('#', 1)
+                terms.append((int(cnt) if cnt.isdigit() else 0, term))
+        return terms
+
+    def read_file(self, spec):
+        """Read a text resource (command 'L'). spec = '<pathcode>.<db>.<file>'
+        (e.g. '2.IBIS.brief.pft', '3.IBIS.kv.mnu'). Returns decoded text (CP1251), '' if absent.
+        Server separates internal lines with \\x1F\\x1E; content follows the 10-line preamble."""
+        r = self._execute('L', [spec])
+        # round-trip via latin1 to recover exact bytes, then decode CP1251
+        segs = r.raw.decode('latin1').split('\r\n')
+        content = '\r\n'.join(segs[10:]).encode('latin1')
+        return content.decode('cp1251', 'replace').replace('\x1f\x1e', '\n').strip()
+
     # ---- write (guarded; use only with write grants) ----
     def update_record(self, db, record_lines, lock=0, actualize=1):
         """record_lines: list of 'tag#value' (mfn#status and 0#version prepended by caller)."""

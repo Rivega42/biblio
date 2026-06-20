@@ -55,6 +55,12 @@ class SessionManager:
     def format_record(self, db, mfn, pft='@brief'):
         return self._call(lambda c: c.format_record(db, mfn, pft))
 
+    def read_terms(self, db, start, count=20):
+        return self._call(lambda c: c.read_terms(db, start, count))
+
+    def read_file(self, spec):
+        return self._call(lambda c: c.read_file(spec))
+
     def close(self):
         with self._lock:
             try:
