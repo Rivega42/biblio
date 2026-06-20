@@ -60,3 +60,4 @@ venv/
 !docs/reference/*.txt
 
 tools/irbis-probe/*.txt
+irbis-web/backend/*_results.txt

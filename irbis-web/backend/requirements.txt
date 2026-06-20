@@ -1,0 +1,8 @@
+# P0 backend runs on the Python standard library — no install required.
+#   py irbis-web/backend/server.py
+#
+# Production port to aiohttp (per docs/build/P0_BUILDKIT_web-irbis.md) will add:
+# aiohttp>=3.9
+# aiohttp-cors>=0.7
+# python-dotenv>=1.0
+# asyncpg>=0.29          # PostgreSQL — staff accounts/grants/audit (access suite)
