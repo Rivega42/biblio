@@ -113,7 +113,7 @@ function IC_reg(aserver_host: Pchar; aserver_port: Pchar; arm: char;
 ### 3.7 Группа 9 — Пакетная `(txt:922-1000)`
 - `IC_print(Adbn,Atab,Ahead,Amod,Asexp; Amin,Amax; Aseq,Amfnlist; answer; abufsize)` — Atab=`@имя` табличной формы, Ahead ≤3 строк; out **RTF**; результат = пересечение трёх списков (прямой ∩ последовательный ∩ Amfnlist) `(txt:927-962)`.
 - `IC_stat(Adbn,Astat,Asexp; Amin,Amax; Aseq,Amfnlist...)` — Astat задания `FMT,N1,N2,N3` (FMT=`поле^подполе`, N1 длина, N2 макс. значений, N3 сортировка 0/1/2); out RTF `(txt:966-983)`.
-- `IC_gbl(Adbn,Aifupdate,Agbl,Asexp; Amin,Amax; Aseq,Amfnlist...)` — Agbl = `@имя` или строки задания; out протокол `(txt:987-1000)`. `TODO(Проход Б #07: грамматика задания Agbl.)`
+- `IC_gbl(Adbn,Aifupdate,Agbl,Asexp; Amin,Amax; Aseq,Amfnlist...)` — Agbl = `@имя` или строки задания; out протокол `(txt:987-1000)`. Грамматика задания Agbl — разобрана в [GLOBAL_CORRECTION.md](../format/GLOBAL_CORRECTION.md) (~~TODO #07 закрыт~~).
 **Amfnlist 3 формата** `(txt:936-952)`: диапазон `0/min/max`; список `N/mfn…`; отрицательный `-N/mfn…` (все КРОМЕ).
 
 ### 3.8 Группа 10 — Администратор (`IRBIS_ADMINISTRATOR`) `(txt:1003-1178)`
