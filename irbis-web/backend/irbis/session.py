@@ -61,6 +61,9 @@ class SessionManager:
     def read_file(self, spec):
         return self._call(lambda c: c.read_file(spec))
 
+    def update_record(self, db, record_lines, lock=0, actualize=1):
+        return self._call(lambda c: c.update_record(db, record_lines, lock, actualize))
+
     def close(self):
         with self._lock:
             try:

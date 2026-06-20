@@ -37,6 +37,13 @@ window.IrbisAPI = (function () {
       if (r.status === 200 && r.json && r.json.ok) token = r.json.data.token;
       return r;
     },
+    async loginStaff(login, password) {
+      const r = await jpost("/api/auth/staff", { login, password });
+      if (r.status === 200 && r.json && r.json.ok) token = r.json.data.token;
+      return r;
+    },
     order: (db, mfn) => jpost("/api/order", { db, mfn }),
+    worklist: (db) => jget("/api/worklist/" + db),
+    saveRecord: (db, mfn, fields) => jpost("/api/record/" + db + "/" + mfn, { fields }),
   };
 })();

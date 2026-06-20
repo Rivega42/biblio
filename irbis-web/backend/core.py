@@ -32,6 +32,37 @@ class Raw:
         self.data, self.content_type = data, content_type
 
 
+# Curated cataloging worklist for a book (IBIS/PAZK) — drives DynamicField on the
+# frontend. type -> control (text/menu/dict/tree/bool/authority/date); subfields nested.
+# In production this comes from the server worklist (.ws/.wss) per FIELD_CATALOG.
+WORKLIST_IBIS = [
+    {'code': '920', 'label': 'Тип записи', 'type': 'menu', 'required': True,
+     'options': ['PAZK', 'SPEC', 'NJ', 'NJP']},
+    {'code': '200', 'label': 'Заглавие', 'type': 'text', 'required': True, 'subfields': [
+        {'code': 'a', 'label': 'Основное заглавие', 'type': 'text'},
+        {'code': 'e', 'label': 'Сведения, относящиеся к заглавию', 'type': 'text'},
+        {'code': 'f', 'label': 'Первые сведения об ответственности', 'type': 'text'}]},
+    {'code': '700', 'label': 'Первый автор', 'type': 'text', 'subfields': [
+        {'code': 'a', 'label': 'Фамилия', 'type': 'text'},
+        {'code': 'g', 'label': 'Имя', 'type': 'text'}]},
+    {'code': '210', 'label': 'Выходные данные', 'type': 'text', 'subfields': [
+        {'code': 'a', 'label': 'Место издания', 'type': 'text'},
+        {'code': 'c', 'label': 'Издательство', 'type': 'text'},
+        {'code': 'd', 'label': 'Год издания', 'type': 'text'}]},
+    {'code': '215', 'label': 'Количественные характеристики', 'type': 'text', 'subfields': [
+        {'code': 'a', 'label': 'Объём (с.)', 'type': 'text'}]},
+    {'code': '10', 'label': 'ISBN', 'type': 'text', 'subfields': [
+        {'code': 'a', 'label': 'ISBN', 'type': 'text'}]},
+    {'code': '101', 'label': 'Язык основного текста', 'type': 'menu',
+     'options': ['rus', 'eng', 'fre', 'ger', 'ita', 'spa']},
+    {'code': '606', 'label': 'Предметная рубрика', 'type': 'text', 'repeatable': True, 'subfields': [
+        {'code': 'a', 'label': 'Рубрика', 'type': 'text'},
+        {'code': 'b', 'label': 'Подрубрика', 'type': 'text'}]},
+    {'code': '331', 'label': 'Аннотация', 'type': 'text', 'subfields': [
+        {'code': 'a', 'label': 'Текст аннотации', 'type': 'text'}]},
+]
+
+
 class Api:
     def __init__(self, cfg=None):
         self.cfg = cfg or Config()
@@ -179,6 +210,34 @@ class Api:
         text = self.irbis.read_file('3.%s.%s' % (db, spec_file))
         return 200, ok({'db': db, 'file': spec_file, 'text': text})
 
+    def worklist(self, session, db):
+        if not session:
+            raise Denied(401, 'unauthorized', 'no session')
+        return 200, ok({'db': db, 'fields': WORKLIST_IBIS})
+
+    def save_record(self, session, db, mfn, body):
+        """Create (mfn=0) or overwrite a record. Guarded by record.write + audited.
+        body: {fields:[{tag, value}]} where value already carries ^subfields."""
+        self._guard(session, 'record.write', db, 'write')
+        version = 0
+        if mfn > 0:
+            try:
+                version = int((self.irbis.read_record(db, mfn).get('version') or 0))
+            except (IrbisError, ValueError):
+                version = 0
+        lines = ['%d#0' % mfn, '0#%d' % version]
+        for f in (body.get('fields') or []):
+            tag = str(f.get('tag', '')).strip()
+            val = (f.get('value') or '').replace('\n', ' ').strip()
+            if tag and val:
+                lines.append('%s#%s' % (tag, val))
+        r = self.irbis.update_record(db, lines)
+        assigned = mfn
+        if r.data and '#' in r.data[0] and r.data[0].split('#')[0].isdigit():
+            assigned = int(r.data[0].split('#')[0])
+        self.access.audit(session['actor'], 'record.write', db, assigned, 'ok', {'created': mfn == 0})
+        return 200, ok({'db': db, 'mfn': assigned, 'created': mfn == 0, 'returnCode': r.return_code})
+
     def order(self, session, body):
         db = body.get('db', self.cfg.db_default)
         mfn = body.get('mfn')
@@ -237,6 +296,10 @@ class Api:
                 return self.order(session, body or {})
             if method == 'GET' and path == '/api/me/cabinet':
                 return self.cabinet(session)
+            if method == 'GET' and len(parts) == 3 and parts[0] == 'api' and parts[1] == 'worklist':
+                return self.worklist(session, parts[2])
+            if method == 'POST' and len(parts) == 4 and parts[0] == 'api' and parts[1] == 'record':
+                return self.save_record(session, parts[2], int(parts[3]), body or {})
             if len(parts) == 4 and parts[0] == 'api' and parts[1] in ('record', 'render', 'cover'):
                 db, mfn = parts[2], int(parts[3])
                 if parts[1] == 'record':
