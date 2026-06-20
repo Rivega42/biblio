@@ -210,6 +210,24 @@ class Api:
         text = self.irbis.read_file('3.%s.%s' % (db, spec_file))
         return 200, ok({'db': db, 'file': spec_file, 'text': text})
 
+    # service/authority DBs not meant for public reader search
+    _SERVICE_DBS = {'RDR', 'RQST', 'CMPL', 'PODB', 'POST', 'VISIT', 'LOG', 'COUNT'}
+
+    def databases(self, session):
+        if not session:
+            raise Denied(401, 'unauthorized', 'no session')
+        txt = self.irbis.read_file(self.cfg.db_menu)
+        lines = [x.strip() for x in txt.splitlines() if x.strip() and x.strip() != '*****']
+        items = []
+        for i in range(0, len(lines) - 1, 2):
+            code = lines[i]
+            name = lines[i + 1]
+            if not code:
+                continue
+            public = code not in self._SERVICE_DBS and not code.upper().startswith('ATHR')
+            items.append({'code': code, 'name': name, 'public': public})
+        return 200, ok({'items': items, 'default': self.cfg.db_default})
+
     def worklist(self, session, db):
         if not session:
             raise Denied(401, 'unauthorized', 'no session')
@@ -296,6 +314,8 @@ class Api:
                 return self.order(session, body or {})
             if method == 'GET' and path == '/api/me/cabinet':
                 return self.cabinet(session)
+            if method == 'GET' and path == '/api/databases':
+                return self.databases(session)
             if method == 'GET' and len(parts) == 3 and parts[0] == 'api' and parts[1] == 'worklist':
                 return self.worklist(session, parts[2])
             if method == 'POST' and len(parts) == 4 and parts[0] == 'api' and parts[1] == 'record':

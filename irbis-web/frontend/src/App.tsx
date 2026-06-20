@@ -1,6 +1,6 @@
 import React from "react";
 import { api, LANG } from "./api";
-import type { RecordData, ResultItem, FieldVal } from "./api";
+import type { RecordData, ResultItem, FieldVal, DbItem } from "./api";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
 import { SearchBar } from "../components/catalog/SearchBar.jsx";
@@ -50,6 +50,8 @@ export function App() {
   const [server, setServer] = React.useState<any>(null);
   const [theme, setTheme] = React.useState("theatrical");
   const [a11y, setA11y] = React.useState(false);
+  const [databases, setDatabases] = React.useState<DbItem[]>([]);
+  const [db, setDb] = React.useState("IBIS");
   const [prefix, setPrefix] = React.useState("K");
   const [q, setQ] = React.useState("Android");
   const [sug, setSug] = React.useState<any[]>([]);
@@ -66,12 +68,21 @@ export function App() {
   const tRef = React.useRef<any>(null);
   const toast = (t: Omit<Toast, "id">) => { const id = Math.random(); setToasts((x) => [...x, { ...t, id }]); setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 4000); };
 
-  React.useEffect(() => { (async () => { await api.initGuest(); const h = await api.health(); setServer(h.json?.data); setReady(true); runSearch("K", "Android", 1); })(); }, []);
+  React.useEffect(() => {
+    (async () => {
+      await api.initGuest();
+      const h = await api.health(); setServer(h.json?.data);
+      const startDb = h.json?.data?.db || "IBIS"; setDb(startDb);
+      const d = await api.databases(); if (d.json?.ok && d.json.data) setDatabases(d.json.data.items);
+      setReady(true);
+      runSearch(startDb, "K", "Android", 1);
+    })();
+  }, []);
 
-  async function runSearch(px: string, query: string, pg: number) {
+  async function runSearch(database: string, px: string, query: string, pg: number) {
     if (!query.trim()) return;
     setLoading(true); setRec(null); setSug([]); setPage(pg);
-    const r = await api.search(px, query, pg, pageSize);
+    const r = await api.search(database, px, query, pg, pageSize);
     if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); }
     else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
     setLoading(false);
@@ -84,9 +95,9 @@ export function App() {
       if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(prefix + "=") === 0).map((t) => ({ term: t.term.slice(prefix.length + 1), count: t.count })));
     }, 200);
   }
-  async function openRecord(mfn: number) { setLoading(true); const r = await api.record(server?.db || "IBIS", mfn); setLoading(false); if (r.json?.ok && r.json.data) { setRec(r.json.data); window.scrollTo(0, 0); } }
+  async function openRecord(mfn: number) { setLoading(true); const r = await api.record(db, mfn); setLoading(false); if (r.json?.ok && r.json.data) { setRec(r.json.data); window.scrollTo(0, 0); } }
   async function order(mfn: number) {
-    const r = await api.order(server?.db || "IBIS", mfn);
+    const r = await api.order(db, mfn);
     if (r.status === 200) toast({ variant: "success", title: "Заказ принят", message: "Экземпляр поставлен в очередь выдачи." });
     else if (r.status === 401 || r.status === 403) { toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." }); setLoginOpen(true); }
     else toast({ variant: "error", title: "Не удалось заказать", message: "Повторите попытку." });
@@ -99,7 +110,7 @@ export function App() {
 
   const rootTheme = a11y ? "a11y" : (theme === "working" ? undefined : theme);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const DB = server?.db || "IBIS";
+  const DB = db;
   const hbtn = (active: boolean): React.CSSProperties => ({ background: active ? "rgba(255,255,255,.25)" : "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" });
 
   if (!ready) return <div style={{ padding: 40, color: "var(--text-subtle)" }}>Загрузка каталога…</div>;
@@ -121,13 +132,19 @@ export function App() {
       <main style={{ flex: 1, maxWidth: 1100, width: "100%", margin: "0 auto", padding: 20, boxSizing: "border-box" }}>
         {!rec && (
           <>
-            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+              {databases.filter((d) => d.public).length > 1 && (
+                <select value={db} onChange={(e) => { setDb(e.target.value); runSearch(e.target.value, prefix, q, 1); }} title="База поиска"
+                  style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", maxWidth: 240 }}>
+                  {databases.filter((d) => d.public).map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
+                </select>
+              )}
               <select value={prefix} onChange={(e) => setPrefix(e.target.value)} style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)" }}>
                 {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
               </select>
-              <div style={{ flex: 1 }}>
-                <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(prefix, v, 1)} suggestions={sug}
-                  onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(prefix, term, 1); }}
+              <div style={{ flex: 1, minWidth: 240 }}>
+                <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(db, prefix, v, 1)} suggestions={sug}
+                  onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(db, prefix, term, 1); }}
                   placeholder="Поиск по каталогу" buttonLabel="Найти" />
               </div>
             </div>

@@ -12,6 +12,7 @@ export interface FieldVal { tag: string; value: string; text?: string; subfields
 export interface RecordData { db: string; mfn: number; version?: string; brief?: string; hasCover?: boolean; fields: FieldVal[]; }
 export interface Term { count: number; term: string; }
 export interface Grant { function: string; db: string; level: string; }
+export interface DbItem { code: string; name: string; public: boolean; }
 
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
@@ -40,8 +41,9 @@ export const api = {
     return j.data as { token: string; kind: string };
   },
   health: () => jget<Health>("/api/health"),
-  search: (prefix: string, q: string, page: number, pageSize: number) =>
-    jget<SearchResult>("/api/search?" + qs({ prefix, q, page, pageSize })),
+  databases: () => jget<{ items: DbItem[]; default: string }>("/api/databases"),
+  search: (db: string, prefix: string, q: string, page: number, pageSize: number) =>
+    jget<SearchResult>("/api/search?" + qs({ db, prefix, q, page, pageSize })),
   searchExpr: (expr: string, page: number, pageSize: number) =>
     jget<SearchResult>("/api/search?" + qs({ expr, page, pageSize })),
   terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
