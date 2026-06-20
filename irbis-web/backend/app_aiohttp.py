@@ -27,7 +27,12 @@ def _query(request):
 
 async def handle(request):
     if request.method == 'GET' and (request.path.rstrip('/') or '/') == '/':
+        if static_files.has_dist():
+            return web.Response(body=static_files.dist_index(), content_type='text/html', charset='utf-8', headers=CORS)
         return web.Response(text=READER_HTML, content_type='text/html', headers=CORS)
+    if request.method == 'GET' and request.path.startswith('/assets/'):
+        st, data, ct = static_files.serve_dist(request.path)
+        return web.Response(status=st, body=data, content_type=ct.split(';')[0], headers=CORS)
     if request.method == 'GET' and request.path.rstrip('/') == '/app':
         return web.Response(status=302, headers={'Location': '/ui/app/'})
     if request.method == 'GET' and request.path.startswith('/ui/'):
