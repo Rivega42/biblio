@@ -44,8 +44,8 @@ export const api = {
   databases: () => jget<{ items: DbItem[]; default: string }>("/api/databases"),
   search: (db: string, prefix: string, q: string, page: number, pageSize: number) =>
     jget<SearchResult>("/api/search?" + qs({ db, prefix, q, page, pageSize })),
-  searchExpr: (expr: string, page: number, pageSize: number) =>
-    jget<SearchResult>("/api/search?" + qs({ expr, page, pageSize })),
+  searchExpr: (db: string, expr: string, page: number, pageSize: number) =>
+    jget<SearchResult>("/api/search?" + qs({ db, expr, page, pageSize })),
   terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),

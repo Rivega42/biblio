@@ -56,6 +56,9 @@ export function App() {
   const [db, setDb] = React.useState("IBIS");
   const [prefix, setPrefix] = React.useState("K");
   const [q, setQ] = React.useState("Android");
+  const [mode, setMode] = React.useState<"simple" | "advanced">("simple");
+  const [advRows, setAdvRows] = React.useState([{ field: "A", value: "" }, { field: "T", value: "" }]);
+  const [advCombine, setAdvCombine] = React.useState<"and" | "or">("and");
   const [sug, setSug] = React.useState<any[]>([]);
   const [items, setItems] = React.useState<ResultItem[]>([]);
   const [total, setTotal] = React.useState(0);
@@ -101,6 +104,30 @@ export function App() {
       if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(prefix + "=") === 0).map((t) => ({ term: t.term.slice(prefix.length + 1), count: t.count })));
     }, 200);
   }
+  async function runExpr(database: string, expr: string, pg: number) {
+    setLoading(true); setRec(null); setPage(pg);
+    const r = await api.searchExpr(database, expr, pg, pageSize);
+    if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); }
+    else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
+    setLoading(false);
+  }
+  function buildAdvExpr() {
+    const parts = advRows.map((r) => {
+      let v = r.value.trim().replace(/"/g, "");
+      if (!v) return "";
+      if ((r.field === "A" || r.field === "T") && !v.endsWith("$")) v += "$";
+      return `"${r.field}=${v}"`;
+    }).filter(Boolean);
+    if (!parts.length) return null;
+    if (parts.length === 1) return parts[0];
+    return "(" + parts.join(advCombine === "or" ? " + " : " * ") + ")";
+  }
+  function runAdvanced() {
+    const expr = buildAdvExpr();
+    if (!expr) { toast({ variant: "warning", title: "Заполните условия", message: "Введите хотя бы одно значение." }); return; }
+    runExpr(db, expr, 1);
+  }
+
   async function openRecord(mfn: number) { setLoading(true); const r = await api.record(db, mfn); setLoading(false); if (r.json?.ok && r.json.data) { setRec(r.json.data); window.scrollTo(0, 0); } }
   async function order(mfn: number) {
     const r = await api.order(db, mfn);
@@ -127,6 +154,9 @@ export function App() {
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const DB = db;
   const hbtn = (active: boolean): React.CSSProperties => ({ background: active ? "rgba(255,255,255,.25)" : "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" });
+  const selStyle: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", maxWidth: 240 };
+  const modeBtn = (active: boolean): React.CSSProperties => ({ background: active ? "var(--accent)" : "transparent", color: active ? "#fff" : "var(--text-body)", border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: "var(--text-sm)" });
+  const iconBtn: React.CSSProperties = { padding: "7px 11px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", cursor: "pointer" };
 
   if (!ready) return <div style={{ padding: 40, color: "var(--text-subtle)" }}>Загрузка каталога…</div>;
 
@@ -156,22 +186,52 @@ export function App() {
         <>
         {!rec && (
           <>
-            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
               {databases.filter((d) => d.public).length > 1 && (
-                <select value={db} onChange={(e) => { setDb(e.target.value); runSearch(e.target.value, prefix, q, 1); }} title="База поиска"
-                  style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", maxWidth: 240 }}>
+                <select value={db} onChange={(e) => { setDb(e.target.value); if (mode === "simple") runSearch(e.target.value, prefix, q, 1); }} title="База поиска" style={selStyle}>
                   {databases.filter((d) => d.public).map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
                 </select>
               )}
-              <select value={prefix} onChange={(e) => setPrefix(e.target.value)} style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)" }}>
-                {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
-              </select>
-              <div style={{ flex: 1, minWidth: 240 }}>
-                <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(db, prefix, v, 1)} suggestions={sug}
-                  onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(db, prefix, term, 1); }}
-                  placeholder="Поиск по каталогу" buttonLabel="Найти" />
+              <div style={{ display: "flex", gap: 4, padding: 2, background: "var(--surface-sunken,#eee)", borderRadius: 10 }}>
+                <button onClick={() => setMode("simple")} style={modeBtn(mode === "simple")}>Простой</button>
+                <button onClick={() => setMode("advanced")} style={modeBtn(mode === "advanced")}>Расширенный</button>
               </div>
             </div>
+            {mode === "simple" ? (
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <select value={prefix} onChange={(e) => setPrefix(e.target.value)} style={selStyle}>
+                  {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
+                </select>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(db, prefix, v, 1)} suggestions={sug}
+                    onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(db, prefix, term, 1); }}
+                    placeholder="Поиск по каталогу" buttonLabel="Найти" />
+                </div>
+              </div>
+            ) : (
+              <div style={{ marginBottom: 14, background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 12, padding: 14 }}>
+                {advRows.map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                    {i > 0
+                      ? <select value={advCombine} onChange={(e) => setAdvCombine(e.target.value as any)} style={{ ...selStyle, width: 86 }}><option value="and">И</option><option value="or">ИЛИ</option></select>
+                      : <span style={{ width: 86, fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>где</span>}
+                    <select value={r.field} onChange={(e) => setAdvRows((rows) => rows.map((x, j) => j === i ? { ...x, field: e.target.value } : x))} style={selStyle}>
+                      {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
+                    </select>
+                    <input value={r.value} onChange={(e) => setAdvRows((rows) => rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                      onKeyDown={(e) => { if (e.key === "Enter") runAdvanced(); }} placeholder="значение" style={{ flex: 1, minWidth: 160, padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)" }} />
+                    {advRows.length > 1 && <button onClick={() => setAdvRows((rows) => rows.filter((_, j) => j !== i))} style={iconBtn} title="Убрать условие">×</button>}
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
+                  <button onClick={() => setAdvRows((rows) => [...rows, { field: "K", value: "" }])} style={iconBtn}>+ условие</button>
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                    <Button variant="ghost" onClick={() => setAdvRows([{ field: "A", value: "" }, { field: "T", value: "" }])}>Сброс</Button>
+                    <Button iconLeft="search" onClick={runAdvanced}>Найти</Button>
+                  </div>
+                </div>
+              </div>
+            )}
             {loading ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
               total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Измените запрос или область поиска." /> :
                 <>
@@ -179,7 +239,7 @@ export function App() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {items.map((it) => <ResultCard key={it.mfn} item={it} dbTag="Книги" typeIcon="book" showCheck={false} onOpen={() => openRecord(it.mfn)} />)}
                   </div>
-                  <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={(p: number) => runSearch(prefix, q, p)} /></div>
+                  <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={(p: number) => { const ex = mode === "advanced" ? buildAdvExpr() : null; ex ? runExpr(db, ex, p) : runSearch(db, prefix, q, p); }} /></div>
                 </>}
           </>
         )}
@@ -200,7 +260,7 @@ export function App() {
                     </dl>
                   )}
                   {v.subjects.length > 0 && <><div style={lbl}>Темы и рубрики</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {v.subjects.map((s, i) => <span key={i} onClick={() => { setPrefix("K"); setQ(s.split(" — ")[0]); runSearch("K", s.split(" — ")[0], 1); }} style={{ cursor: "pointer", background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", padding: "3px 11px", borderRadius: 999, fontSize: "var(--text-xs)" }}>{s}</span>)}
+                    {v.subjects.map((s, i) => <span key={i} onClick={() => { setMode("simple"); setPrefix("K"); setQ(s.split(" — ")[0]); runSearch(db, "K", s.split(" — ")[0], 1); }} style={{ cursor: "pointer", background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", padding: "3px 11px", borderRadius: 999, fontSize: "var(--text-xs)" }}>{s}</span>)}
                   </div></>}
                   {v.files.length > 0 && <><div style={lbl}>Электронная версия</div>{v.files.map((f, i) => <div key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "var(--text-sm)", color: "var(--text-subtle)" }}><Icon name="file-text" size={15} />{f}<span style={{ fontSize: "var(--text-xs)" }}>· документ pdf-формата</span></div>)}</>}
                   <div style={lbl}>Экземпляры</div>
