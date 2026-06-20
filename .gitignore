@@ -58,3 +58,5 @@ venv/
 
 # ── Allowed: derived doc text under docs/reference/ (protocol/manual)
 !docs/reference/*.txt
+
+tools/irbis-probe/*.txt
