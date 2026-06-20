@@ -1,6 +1,10 @@
 # ── Working area (temp conversions, archive extractions) ─────────────
 _work/
 
+# ── Probe run output (raw capture; contains ANSI/CP1251 artifacts) ────
+tools/irbis-probe/probe_results*.txt
+tools/irbis-probe/*.bin
+
 # ── Secrets — only schema in .env.example, never real values ─────────
 .env
 .env.*
