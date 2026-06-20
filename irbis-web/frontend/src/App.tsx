@@ -1,6 +1,6 @@
 import React from "react";
 import { api, LANG } from "./api";
-import type { RecordData, ResultItem, FieldVal, DbItem } from "./api";
+import type { RecordData, ResultItem, FieldVal, DbItem, CabinetData } from "./api";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
 import { SearchBar } from "../components/catalog/SearchBar.jsx";
@@ -69,6 +69,8 @@ export function App() {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
   const [account, setAccount] = React.useState<{ loggedIn: boolean; ticket?: string }>({ loggedIn: false });
   const [loginOpen, setLoginOpen] = React.useState(false);
+  const [view, setView] = React.useState<"search" | "cabinet">("search");
+  const [cab, setCab] = React.useState<CabinetData | null>(null);
   const [context, setContext] = React.useState<"reader" | "staff">("reader");
   const [staff, setStaff] = React.useState<StaffSession | null>(null);
   const [staffRoute, setStaffRoute] = React.useState<any>("desktop");
@@ -135,10 +137,15 @@ export function App() {
     else if (r.status === 401 || r.status === 403) { toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." }); setLoginOpen(true); }
     else toast({ variant: "error", title: "Не удалось заказать", message: "Повторите попытку." });
   }
+  async function loadCabinet() {
+    const r = await api.cabinet();
+    if (r.json?.ok && r.json.data) { setCab(r.json.data); setView("cabinet"); setRec(null); }
+    else toast({ variant: "info", title: "Кабинет недоступен", message: "Войдите по читательскому билету." });
+  }
   async function doLogin(ticket: string) {
     const r = await api.loginReader(ticket);
-    if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); }
-    else toast({ variant: "warning", title: "Билет не найден", message: "Проверьте номер билета." });
+    if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); loadCabinet(); }
+    else toast({ variant: "warning", title: "Билет не найден", message: "Проверьте номер читательского билета." });
   }
   function switchContext(c: "reader" | "staff") { if (c === "staff" && !staff) { setStaffLoginOpen(true); return; } setContext(c); setRec(null); }
   async function doStaffLogin(login: string, password: string) {
@@ -174,7 +181,8 @@ export function App() {
           <button onClick={() => { setA11y(false); setTheme("working"); }} style={hbtn(theme === "working" && !a11y)}>Рабочая</button>
           <button onClick={() => { setA11y(false); setTheme("theatrical"); }} style={hbtn(theme === "theatrical" && !a11y)}>Театр</button>
           <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
-          {context === "reader" && <button onClick={() => account.loggedIn ? setAccount({ loggedIn: false }) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
+          {context === "reader" && account.loggedIn && <button onClick={loadCabinet} style={hbtn(view === "cabinet")}>Кабинет</button>}
+          {context === "reader" && <button onClick={() => account.loggedIn ? (setAccount({ loggedIn: false }), setView("search"), setCab(null)) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
           {context === "staff" && staff && <button onClick={() => { setStaff(null); setContext("reader"); }} style={hbtn(false)}>Выйти ({staff.login})</button>}
         </div>
       </header>
@@ -182,6 +190,8 @@ export function App() {
       <main style={{ flex: 1, maxWidth: 1100, width: "100%", margin: "0 auto", padding: 20, boxSizing: "border-box" }}>
         {context === "staff" ? (
           <StaffArea staff={staff!} route={staffRoute} setRoute={setStaffRoute} toast={toast} />
+        ) : view === "cabinet" ? (
+          <CabinetScreen cab={cab} ticket={account.ticket} onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
         ) : (
         <>
         {!rec && (
@@ -291,6 +301,29 @@ export function App() {
       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
+    </div>
+  );
+}
+
+function CabinetScreen({ cab, ticket, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; onBack: () => void; onLogout: () => void }) {
+  const loanLine = (l: any) => Object.values(l.subfields).filter(Boolean).join(" · ") || l.value;
+  return (
+    <div>
+      <Button iconLeft="arrow-left" onClick={onBack}>К поиску</Button>
+      <h2 style={{ fontSize: "var(--text-2xl,1.5rem)", margin: "8px 0 2px" }}>Личный кабинет</h2>
+      <p style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", marginTop: 0 }}>{cab?.name || "Читатель"}{ticket ? " · билет № " + ticket : ""}</p>
+      <div style={{ fontWeight: 600, margin: "16px 0 8px" }}>Формуляр · книги на руках: {cab?.loanCount ?? 0}</div>
+      {cab && cab.loans.length ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {cab.loans.map((l, i) => (
+            <div key={i} style={{ background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: "10px 14px", fontSize: "var(--text-sm)", display: "flex", gap: 10, alignItems: "center" }}>
+              <Icon name="book" size={15} style={{ color: "var(--text-subtle)", flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>{loanLine(l)}</span>
+            </div>
+          ))}
+        </div>
+      ) : <EmptyState icon="check-circle" title="На руках книг нет" description="Все издания возвращены, либо формуляр пуст." />}
+      <div style={{ marginTop: 20 }}><Button variant="ghost" onClick={onLogout}>Выйти из кабинета</Button></div>
     </div>
   );
 }

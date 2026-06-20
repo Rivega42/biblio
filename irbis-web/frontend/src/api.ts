@@ -13,6 +13,8 @@ export interface RecordData { db: string; mfn: number; version?: string; brief?:
 export interface Term { count: number; term: string; }
 export interface Grant { function: string; db: string; level: string; }
 export interface DbItem { code: string; name: string; public: boolean; }
+export interface Loan { value: string; subfields: Record<string, string>; }
+export interface CabinetData { mfn: number; name: string; loans: Loan[]; loanCount: number; }
 
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
@@ -50,6 +52,7 @@ export const api = {
   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),
   order: (db: string, mfn: number) => jpost("/api/order", { db, mfn }),
+  cabinet: () => jget<CabinetData>("/api/me/cabinet"),
   async loginReader(ticket: string) {
     const r = await jpost<{ token: string; name?: string }>("/api/auth/reader", { ticket });
     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
