@@ -13,6 +13,7 @@
     { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
   ];
   const esc = (s) => (s || "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m]));
+  const LANG = { rus: "русский", eng: "английский", fre: "французский", ger: "немецкий", ita: "итальянский", spa: "испанский", lat: "латинский", chi: "китайский", jpn: "японский", ukr: "украинский" };
 
   function App() {
     const [ready, setReady] = React.useState(false);
@@ -30,6 +31,7 @@
     const [toasts, setToasts] = React.useState([]);
     const [account, setAccount] = React.useState({ loggedIn: false });
     const [loginOpen, setLoginOpen] = React.useState(false);
+    const [showRaw, setShowRaw] = React.useState(false);
     const pageSize = 10;
     const tRef = React.useRef(null);
 
@@ -94,17 +96,42 @@
     }
 
     function recView(d) {
-      const holds = d.fields.filter((x) => x.tag === "910").map((h) => ({
-        loc: h.subfields.D || h.subfields.d || "Фонд",
-        inv: h.subfields.B || h.subfields.b || "",
-        st: h.subfields.A || h.subfields.a || "",
-      }));
-      const subj = d.fields.filter((x) => x.tag === "606").map((x) => x.subfields.A || x.subfields.a || "").filter(Boolean);
-      const rows = d.fields.slice(0, 40).map((x) =>
-        `<tr><td style="color:var(--text-subtle);font-family:var(--font-mono);padding-right:12px;vertical-align:top">${x.tag}</td><td>${esc(x.value)}</td></tr>`).join("");
-      const html = `<p style="font-size:var(--text-lg)"><b>${esc(d.brief || "")}</b></p>` +
-        `<table style="border-collapse:collapse;font-size:var(--text-sm);width:100%">${rows}</table>`;
-      return { html, holds, subj };
+      const sub = (f, c) => (f.subfields[c] || f.subfields[c.toLowerCase()] || f.subfields[c.toUpperCase()] || "");
+      const F = (tag) => d.fields.filter((x) => x.tag === tag);
+      const F1 = (tag) => F(tag)[0];
+
+      // авторы 700/701/702 -> "Фамилия, Имя"
+      const authors = ["700", "701", "702"].flatMap(F).map((f) => {
+        const s = sub(f, "A"), g = sub(f, "G") || sub(f, "B");
+        return (s + (g ? ", " + g : "")).trim();
+      }).filter(Boolean);
+      // организации-авторы 710/711
+      const orgs = ["710", "711"].flatMap(F).map((f) => sub(f, "A")).filter(Boolean);
+
+      const imprint = (() => { const f = F1("210"); if (!f) return ""; const a = sub(f, "A"), c = sub(f, "C"), y = sub(f, "D"); return [a, c].filter(Boolean).join(" : ") + (y ? (a || c ? ", " : "") + y : ""); })();
+      const volume = (() => { const f = F1("215"); if (!f) return ""; return [sub(f, "A"), sub(f, "C"), sub(f, "E")].filter(Boolean).join(" ; "); })();
+      const isbn = (() => { const f = F1("10"); return f ? sub(f, "A") : ""; })();
+      const langCode = (() => { const f = F1("101"); return f ? (sub(f, "A") || f.value) : ""; })();
+      const lang = LANG[langCode] || langCode;
+      const udk = (F1("675") && sub(F1("675"), "A")) || (F1("675") || {}).value || "";
+      const note = (F1("331") && sub(F1("331"), "A")) || (F1("330") && sub(F1("330"), "A")) || (F1("300") || {}).value || "";
+
+      const meta = [
+        { label: "Авторы", value: authors.concat(orgs).join("; ") },
+        { label: "Выходные данные", value: imprint },
+        { label: "Объём", value: volume },
+        { label: "ISBN", value: isbn },
+        { label: "Язык", value: lang },
+        { label: "УДК", value: udk },
+        { label: "Примечание", value: note },
+      ].filter((r) => r.value);
+
+      const subjects = F("606").map((f) => [sub(f, "A"), sub(f, "B"), sub(f, "C"), sub(f, "D")].filter(Boolean).join(" — ")).filter(Boolean);
+      const holds = F("910").map((h) => ({ loc: sub(h, "D") || "Фонд", inv: sub(h, "B"), st: sub(h, "A") }));
+      const files = ["951", "955"].flatMap(F).map((f) => sub(f, "A") || sub(f, "T")).filter(Boolean);
+      const rawRows = d.fields.map((x) =>
+        `<tr><td style="color:var(--text-subtle);font-family:var(--font-mono);padding-right:12px;vertical-align:top">${x.tag}</td><td style="font-family:var(--font-mono);font-size:12px">${esc(x.value)}</td></tr>`).join("");
+      return { brief: d.brief || "", meta, subjects, holds, files, rawRows };
     }
 
     const rootTheme = a11y ? "a11y" : (theme === "working" ? undefined : theme);
@@ -153,25 +180,55 @@
 
           {rec && (() => {
             const v = recView(rec);
+            const lbl = { fontWeight: 600, fontSize: "var(--text-sm)", margin: "18px 0 8px" };
             return (
               <div>
-                <Button iconLeft="arrow-left" onClick={() => setRec(null)}>К результатам</Button>
-                <div style={{ display: "flex", gap: 20, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  {rec.hasCover && <img alt="обложка" src={API.coverUrl(DB, rec.mfn)} onError={(e) => { e.target.style.display = "none"; }} style={{ width: 160, borderRadius: 8, border: "1px solid var(--border-subtle)" }} />}
-                  <div style={{ flex: 1, minWidth: 260 }}>
-                    <PftBlock html={v.html} sanitize={(s) => s} />
-                    {v.subj.length > 0 && <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {v.subj.map((s, i) => <span key={i} onClick={() => { setPrefix("K"); setQ(s); runSearch("K", s, 1); }} style={{ cursor: "pointer", background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", padding: "2px 10px", borderRadius: 999, fontSize: "var(--text-xs)" }}>{s}</span>)}
-                    </div>}
-                    <div style={{ marginTop: 16 }}>
-                      <div style={{ fontWeight: 600, marginBottom: 6 }}>Экземпляры</div>
-                      {v.holds.length ?
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}><tbody>
-                          {v.holds.map((h, i) => <tr key={i}><td style={{ padding: "4px 0" }}>{h.loc}</td><td style={{ fontFamily: "var(--font-mono)" }}>{h.inv}</td><td><StatusBadge status={h.st === "0" || h.st === "" ? "available" : "issued"} dot /></td></tr>)}
-                        </tbody></table> :
-                        <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>}
+                <Button iconLeft="arrow-left" onClick={() => { setRec(null); setShowRaw(false); }}>К результатам</Button>
+                <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                  {rec.hasCover && <img alt="обложка" src={API.coverUrl(DB, rec.mfn)} onError={(e) => { e.target.style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
+                  <div style={{ flex: 1, minWidth: 300 }}>
+                    {/* заголовок — серверное БО (PFT) */}
+                    <h2 style={{ fontFamily: "var(--font-serif, inherit)", fontSize: "var(--text-2xl, 1.5rem)", lineHeight: 1.3, margin: "2px 0 4px" }}>{v.brief}</h2>
+
+                    {/* поля с подписями (не сырой MARC) */}
+                    {v.meta.length > 0 && (
+                      <dl style={{ display: "grid", gridTemplateColumns: "minmax(120px,160px) 1fr", gap: "6px 14px", margin: "14px 0 0", fontSize: "var(--text-sm)" }}>
+                        {v.meta.map((m, i) => (
+                          <React.Fragment key={i}>
+                            <dt style={{ color: "var(--text-subtle)" }}>{m.label}</dt>
+                            <dd style={{ margin: 0 }}>{m.value}</dd>
+                          </React.Fragment>
+                        ))}
+                      </dl>
+                    )}
+
+                    {v.subjects.length > 0 && <>
+                      <div style={lbl}>Темы и рубрики</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {v.subjects.map((s, i) => <span key={i} title="Искать по рубрике" onClick={() => { setPrefix("K"); setQ(s.split(" — ")[0]); runSearch("K", s.split(" — ")[0], 1); }} style={{ cursor: "pointer", background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", padding: "3px 11px", borderRadius: 999, fontSize: "var(--text-xs)" }}>{s}</span>)}
+                      </div>
+                    </>}
+
+                    {v.files.length > 0 && <>
+                      <div style={lbl}>Электронная версия</div>
+                      {v.files.map((f, i) => <div key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "var(--text-sm)", color: "var(--text-subtle)" }}><Icon name="file-text" size={15} />{f}<span style={{ fontSize: "var(--text-xs)" }}>· документ pdf-формата</span></div>)}
+                    </>}
+
+                    <div style={lbl}>Экземпляры</div>
+                    {v.holds.length ?
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}><tbody>
+                        {v.holds.map((h, i) => <tr key={i}><td style={{ padding: "4px 0" }}>{h.loc}</td><td style={{ fontFamily: "var(--font-mono)" }}>{h.inv}</td><td style={{ textAlign: "right" }}><StatusBadge status={h.st === "0" || h.st === "" ? "available" : "issued"} dot /></td></tr>)}
+                      </tbody></table> :
+                      <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>}
+
+                    <div style={{ marginTop: 20, display: "flex", gap: 10, alignItems: "center" }}>
+                      <Button iconLeft="bookmark" onClick={() => order(rec.mfn)}>Заказать</Button>
+                      <button onClick={() => setShowRaw((x) => !x)} style={{ background: "none", border: "none", color: "var(--text-subtle)", cursor: "pointer", fontSize: "var(--text-xs)" }}>
+                        {showRaw ? "Скрыть" : "Показать"} все поля (MARC)
+                      </button>
                     </div>
-                    <div style={{ marginTop: 16 }}><Button iconLeft="bookmark" onClick={() => order(rec.mfn)}>Заказать</Button></div>
+
+                    {showRaw && <div style={{ marginTop: 12, borderTop: "1px solid var(--border-subtle)", paddingTop: 8 }} dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />}
                   </div>
                 </div>
               </div>
