@@ -107,17 +107,34 @@ class Api:
         token, _ = self._new_session('reader', 'RI=%s' % ticket, READER_GRANTS, rdr_mfn=mfns[0])
         return 200, ok({'token': token, 'kind': 'reader', 'name': name, 'mfn': mfns[0]})
 
+    def _brief_item(self, db, mfn):
+        """Structured result item (title/author/year/docType/availability) for cards."""
+        try:
+            rec = self.irbis.read_record(db, mfn)
+        except IrbisError:
+            return {'mfn': mfn, 'title': 'MFN %d' % mfn, 'availability': 'unknown'}
+        title = sf(field(rec, '200'), 'A') or sf(field(rec, '200'), 'a')
+        au = field(rec, '700')
+        author = ''
+        if au:
+            author = (sf(au, 'A') + (', ' + sf(au, 'G') if sf(au, 'G') else '')).strip(', ')
+        author = author or sf(field(rec, '200'), 'F')
+        year = sf(field(rec, '210'), 'D') or sf(field(rec, '210'), 'd')
+        doctype = sf(field(rec, '900'), 'T') or sf(field(rec, '900'), 'B')
+        avail = 'unknown'
+        hold = fields(rec, '910')
+        if hold:
+            st = sf(hold[0], 'A')
+            avail = 'available' if st in ('0', '') else 'issued'
+        return {'mfn': mfn, 'title': title or ('MFN %d' % mfn), 'author': author,
+                'year': year, 'docType': doctype, 'availability': avail,
+                'hasCover': any(f['tag'] == '953' for f in rec['fields'])}
+
     def search(self, session, db, expr, page, page_size):
         self._guard(session, 'search', db, 'read')
         count, mfns = self.irbis.search(db, expr)
         start = (page - 1) * page_size
-        items = []
-        for mfn in mfns[start:start + page_size]:
-            try:
-                brief = self.irbis.format_record(db, mfn, '@brief')
-            except IrbisError:
-                brief = ''
-            items.append({'mfn': mfn, 'brief': brief})
+        items = [self._brief_item(db, mfn) for mfn in mfns[start:start + page_size]]
         return 200, ok({'db': db, 'expr': expr, 'total': count,
                         'page': page, 'pageSize': page_size, 'items': items})
 
@@ -190,7 +207,9 @@ class Api:
         path = path.rstrip('/') or '/'
         if method == 'OPTIONS':
             return 204, None
-        session = self._session(self._bearer(headers))
+        # bearer header for API calls; <img>/<a> can't set headers, so also accept ?t=token
+        token = self._bearer(headers) or (query.get('t', [None])[0] if query else None)
+        session = self._session(token)
         try:
             if method == 'POST' and path == '/api/auth/guest':
                 return self.auth_guest()
@@ -245,6 +264,14 @@ class Denied(Exception):
     def __init__(self, status, code, message):
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
+
+
+def sf(f, code):
+    """Case-insensitive subfield lookup; '' if absent."""
+    if not f:
+        return ''
+    d = f['subfields']
+    return d.get(code) or d.get(code.lower()) or d.get(code.upper()) or ''
 
 
 def build_expr(query):

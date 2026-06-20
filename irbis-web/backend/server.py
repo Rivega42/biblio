@@ -8,6 +8,7 @@ from urllib.parse import urlparse, parse_qs
 
 from core import Api, Raw
 from reader_page import READER_HTML
+import static_files
 
 API = Api()
 
@@ -52,6 +53,14 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if method == 'GET' and (u.path.rstrip('/') or '/') == '/':
             return self._emit(200, Raw(READER_HTML.encode('utf-8'), 'text/html; charset=utf-8'))
+        if method == 'GET' and u.path.rstrip('/') == '/app':
+            self.send_response(302)
+            self.send_header('Location', '/ui/app/')
+            self.end_headers()
+            return
+        if method == 'GET' and u.path.startswith('/ui/'):
+            st, data, ct = static_files.serve(u.path)
+            return self._emit(st, Raw(data, ct))
         body = self._body() if method == 'POST' else None
         status, payload = API.route(method, u.path, parse_qs(u.query), body, self._headers())
         self._emit(status, payload)

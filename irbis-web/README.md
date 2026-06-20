@@ -19,6 +19,9 @@ py  irbis-web/backend/server.py                       # http://127.0.0.1:8080
 py -3.12 -m pip install aiohttp asyncpg
 py -3.12 irbis-web/backend/app_aiohttp.py
 
+# живой каталог (дизайн-система на реальных данных IBIS):
+#   http://127.0.0.1:8080/app    (или /ui/app/)
+
 # тесты
 py irbis-web/backend/tests/test_access.py             # authz/audit (unit)
 py irbis-web/backend/smoke.py                          # слой IRBIS на живом сервере
@@ -42,19 +45,39 @@ py irbis-web/backend/tests/e2e.py                      # HTTP e2e (сервер 
 | `POST /api/order` | заказ (guard+audit; RQST — TODO) | `order` |
 | `GET /api/me/cabinet` | формуляр читателя (RDR, поле 40) | `cabinet` |
 
+## Фронтенд (дизайн-система + живой каталог)
+`frontend/` — дизайн-система **ИРБИС-Веб** (Claude Design): токены, темы (Рабочая/Театр/a11y),
+React-компоненты (`SearchBar`, `ResultCard`, `StatusBadge`, `PftBlock`, `Pagination`, `DynamicField`…),
+кликабельный прототип на моках (`ui_kits/`). Подробности — `frontend/readme.md`.
+
+`frontend/app/` — **живой каталог**: те же дизайн-компоненты, но на **реальных данных IBIS** через наш API.
+Поток: гостевой вход → поиск (автодополнение из словаря) → результаты (карточки + статусы) → карточка
+записи (обложка из поля 953, серверный PFT, экземпляры) → вход читателя → заказ. Точки подключения
+бэкенда из прототипа (`runQuery/recordFor/login/confirmOrder`) реализованы в `app/api.js`.
+Открыть: `http://127.0.0.1:8080/app`. Проверено headless-браузером (поиск/карточка/обложка рендерятся).
+
+> Нюанс: `<img>` не шлёт заголовок `Authorization`, поэтому обложка берётся как `/api/cover/...?t=<token>`.
+> В dev React/Babel грузятся с CDN — в боевом контуре заменяются на self-hosted (разд. 11 ТЗ).
+
 ## Структура
 ```
 irbis-web/
 ├─ .env.example
-└─ backend/
-   ├─ core.py            # ⭐ framework-agnostic API: authn→authz→IRBIS→audit
-   ├─ server.py          # транспорт stdlib + демо-страница (/)
-   ├─ app_aiohttp.py     # транспорт aiohttp (то же ядро, через executor)
-   ├─ reader_page.py     # демо-страница читателя
-   ├─ config.py          # .env (секреты не в коде)
-   ├─ irbis/             # слой протокола (Проход Б): client/parser/session
-   ├─ access/            # гранты/роли/аудит: store(sqlite)+schema_postgres+authz+seed
-   └─ tests/             # test_access (unit), e2e (HTTP)
+├─ backend/
+│  ├─ core.py            # ⭐ framework-agnostic API: authn→authz→IRBIS→audit
+│  ├─ server.py          # транспорт stdlib + демо-страница (/) + статика /ui/
+│  ├─ app_aiohttp.py     # транспорт aiohttp (то же ядро, через executor)
+│  ├─ static_files.py    # отдача frontend/ под /ui/
+│  ├─ reader_page.py     # простая демо-страница читателя
+│  ├─ config.py          # .env (секреты не в коде)
+│  ├─ irbis/             # слой протокола (Проход Б): client/parser/session
+│  ├─ access/            # гранты/роли/аудит: store(sqlite)+schema_postgres+authz+seed
+│  └─ tests/             # test_access (unit), e2e (HTTP)
+└─ frontend/             # дизайн-система ИРБИС-Веб (Claude Design) + живой каталог
+   ├─ tokens/ components/ ui_kits/ guidelines/   # токены, React-компоненты, прототип
+   ├─ _ds_bundle.js styles.css                   # сборка компонентов + корневой CSS
+   └─ app/               # ⭐ ЖИВОЙ каталог: index.html + api.js + live.jsx
+                         #    дизайн-компоненты на реальных данных IBIS (через /api)
 ```
 
 ## Безопасность

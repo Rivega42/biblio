@@ -10,6 +10,7 @@ from aiohttp import web
 
 from core import Api, Raw
 from reader_page import READER_HTML
+import static_files
 
 API = Api()
 CORS = {
@@ -27,6 +28,12 @@ def _query(request):
 async def handle(request):
     if request.method == 'GET' and (request.path.rstrip('/') or '/') == '/':
         return web.Response(text=READER_HTML, content_type='text/html', headers=CORS)
+    if request.method == 'GET' and request.path.rstrip('/') == '/app':
+        return web.Response(status=302, headers={'Location': '/ui/app/'})
+    if request.method == 'GET' and request.path.startswith('/ui/'):
+        st, data, ct = static_files.serve(request.path)
+        ctype = ct.split(';')[0]
+        return web.Response(status=st, body=data, content_type=ctype, headers=CORS)
     if request.method == 'OPTIONS':
         return web.Response(status=204, headers=CORS)
     body = None
