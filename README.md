@@ -1,45 +1,28 @@
-# Картография продукта САБ ИРБИС64(+)
+# irbis-web — веб-версия САБ ИРБИС64+ (проект и доказательная база)
 
-Независимая реконструкция продукта **САБ ИРБИС64+** (система автоматизации библиотек: сервер + 6 настольных АРМов + Web-ИРБИС + 49 БД) из его поставки и документации. Цель — точно и полно описать, **что продукт умеет и как устроен** (данные, протокол, АРМы, форматы, поиск, права, файлы), как основу для будущих веб-версий АРМов и сервера.
-
-Картография выведена **только из самих файлов** (без внешних источников), каждый нетривиальный факт — со ссылкой на исходный файл/строку.
+Репозиторий проекта **веб-замены ИРБИС64+** (пилот — каталог СПб театральной библиотеки) и **полной картографии** продукта, на которую он опирается. Разработчика/исходников сервера нет → демо-поставка ИРБИС64+ = действующая спецификация, восстановленная из файлов.
 
 ## С чего начать
-1. [`CAPABILITY_MAP.md`](CAPABILITY_MAP.md) — **сводная мастер-карта** возможностей (читать первой).
-2. [`DOCUMENT_REGISTER.md`](DOCUMENT_REGISTER.md) — реестр всех 14 270 файлов со статусами (`todo=0`).
-3. [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) — незакрытое (`TODO(recon #N)`) и требующее живого сервера.
-4. `FINDINGS_NN_*.md` — детальные находки по областям.
+1. [docs/CLAUDECODE_PROJECT_BRIEF.md](docs/CLAUDECODE_PROJECT_BRIEF.md) — главный бриф (зачем/что/как). **Читать первым.**
+2. [docs/PROJECT_INDEX.md](docs/PROJECT_INDEX.md) — порядок чтения комплекта.
+3. [docs/FILES_MANIFEST.md](docs/FILES_MANIFEST.md) — раскладка и статусы файлов.
 
-## Находки по областям
-| Файл | Область |
-|---|---|
-| [FINDINGS_02](FINDINGS_02_config_and_db_profiles.md) | Статические конфиги (PAR/FST/INI/PFT/WSS/OPT) + профили 49 БД |
-| [FINDINGS_03](FINDINGS_03_protocol.md) | Протокол / клиентская DLL (80 функций, коды АРМов/ошибок) |
-| [FINDINGS_04](FINDINGS_04_server_admin.md) | Сервер и администрирование |
-| [FINDINGS_05](FINDINGS_05_arm_cataloger.md) | АРМ Каталогизатор |
-| [FINDINGS_06](FINDINGS_06_arm_acquisition.md) | АРМ Комплектатор |
-| [FINDINGS_07](FINDINGS_07_arm_bookprovision.md) | АРМ Книгообеспеченность |
-| [FINDINGS_08](FINDINGS_08_arm_lending_mba.md) | АРМ Книговыдача / МБА |
-| [FINDINGS_09](FINDINGS_09_web_reader.md) | Web-ИРБИС / Читатель |
-| [FINDINGS_10](FINDINGS_10_overview_system.md) | Общее описание системы |
-| [FINDINGS_11](FINDINGS_11_release_capabilities.md) | Каталог возможностей по выпускам |
-| [FINDINGS_12](FINDINGS_12_record_structure.md) | Структура записи и файлов БД |
-| [FINDINGS_13](FINDINGS_13_irbisprl.md) | IRBISPRL — перечень элементов данных |
-| [FINDINGS_14](FINDINGS_14_db_descriptions_misc.md) | Спец-БД (GUAR/EVENT), фасеты, стат.формы |
+## Структура `docs/`
+| Папка | Что | Статус |
+|---|---|---|
+| [`docs/design/`](docs/design/) | **Что строим**: [мастер-карта возможностей](docs/design/IRBIS_CAPABILITY_MAP_v2.md), [модель доступа](docs/design/ACCESS_MODEL_web-irbis.md) (функция×база×уровень), [функция→протокол](docs/design/FUNCTION_PROTOCOL_MAP.md), экраны [читателя](docs/design/SCREENMAP_web-reader.md)/[сотрудника](docs/design/SCREENMAP_web-staff.md) | И/П |
+| [`docs/build/`](docs/build/) | **Как строим**: [инженерное ТЗ](docs/build/TZ_CLAUDE_CODE_irbis-web.md) + [аддендум доступа](docs/build/TZ_CLAUDE_CODE_ADDENDUM_access-suite.md) + [контракты P0](docs/build/P0_BUILDKIT_web-irbis.md) | И |
+| [`docs/recon/`](docs/recon/) | **Откуда выводы**: находки [01](docs/recon/RECON_FINDINGS_01.md)–[07](docs/recon/RECON_FINDINGS_07.md), [методика](docs/recon/TZ_IRBIS_RECON.md), [промт-перепроверка](docs/recon/PROMPT_CLAUDECODE_RECON.md) | Д/М |
+| [`docs/recon/deep/`](docs/recon/deep/) | **Глубокая картография** (этот ресерч): [CAPABILITY_MAP](docs/recon/deep/CAPABILITY_MAP.md), 14 FINDINGS, [reference/](docs/recon/deep/reference/) (per-DB FST/поля/PFT, INI всех АРМов), [реестр файлов](docs/recon/deep/DOCUMENT_REGISTER.md), [открытые вопросы](docs/recon/deep/OPEN_QUESTIONS.md) | Д |
+| [`docs/reference/`](docs/reference/) | **Первоисточники** (только чтение): [API протокола](docs/reference/irbis64_client_dll_TEXT.txt), [мануал J-ИРБИС](docs/reference/ReadMe_jirbis2_text.txt) | С |
 
-## Фаза 2 — reconstruction-grade reference (в работе)
-Углублённая проработка до уровня, по которому приложения можно пересобрать. Журнал — [CHANGELOG.md](CHANGELOG.md). Структура:
-- `reference/databases/DB_*.md` — полный справочник каждой БД (каждая строка FST, все рабочие листы `.ws/.wss`, словарь полей/подполей, каталог PFT и ветвление по 920, справочники, связи).
-- `reference/arms/ARM_*.md` — посекционный разбор INI каждого АРМа + экраны/режимы/потоки.
-- `reference/format/PFT_LANGUAGE.md`, `FIELD_DICTIONARY.md` — язык форматирования и сводный словарь полей.
+Интеграция двух исследований (комплект ↔ глубокий ресерч): [docs/recon/INTEGRATION_deep-recon.md](docs/recon/INTEGRATION_deep-recon.md).
+Журнал: [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
-Документация — живая: обновляется и пушится в `main` инкрементально по мере разбора.
+## Принципы
+- **Организация по учёткам/грантам**, не по «АРМам» (АРМ — только контекст протокола; гейт `-3338`).
+- **Отображение — серверным PFT** (не переписываем язык форматирования в коде).
+- **Безопасность некомпромиссна**: секреты только в env ([`.env.example`](.env.example)), бинарь/данные/`*.ini` с кредами — не в репозиторий, секрет-сканер в CI. Незакрытое — `TODO(...)`, факты — с источником.
 
-## Методика
-- **Источники**: `C:\IRBIS64\` (инсталляция) + `C:\IRBIS64_COPY 17-09-2025\` (документация). В репозиторий идут только **производные карты**, не исходные файлы продукта (см. `.gitignore`).
-- **Конвертация**: `.doc/.docx/.rtf/.ppt` → текст через Word/PowerPoint COM (CP1251→UTF-8); конфиги читаются через .NET CP1251. CHM/HLP — извлечение в среде недоступно (см. OPEN_QUESTIONS #R01), покрыты эквивалентными `.doc`.
-- **Полнота**: машинный реестр [`inventory.csv`](inventory.csv) классифицирует каждый файл; статус `done`/`skipped(+причина)`; `todo=0`.
-- **Безопасность (§6)**: значения логинов/паролей/ПДн/IP в карты не переносились — только структура и имена ключей. Бинарь не декомпилировался. Данные/изображения/архивы помечены `skipped`.
-
-## Прослеживаемость
-Ссылки на источники: для документов — `<ОригДок> (txt:строка)` (строка в конвертированном тексте оригинала); для конфигов — путь к файлу. Незакрытое помечено `TODO(recon #NNNN)` и собрано в OPEN_QUESTIONS.md.
+## Код (предстоит, фаза P0)
+`backend/` (Python/aiohttp: irbis/access/api) · `frontend/` (React-TS) · `infra/` — по [P0_BUILDKIT](docs/build/P0_BUILDKIT_web-irbis.md). Сейчас репозиторий — документация и доказательная база; сборка каркаса P0 — следующий этап.

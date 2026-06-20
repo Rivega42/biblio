@@ -1,9 +1,18 @@
-# Working area: converted text dumps, temp extractions — never committed
+# ── Working area (temp conversions, archive extractions) ─────────────
 _work/
 
-# Safety net: never commit product source, binaries, data, or images
-# (product files live in the parent folder C:\IRBIS64, outside this repo,
-#  but these patterns guard against accidental copies inside the repo)
+# ── Secrets — only schema in .env.example, never real values ─────────
+.env
+.env.*
+!.env.example
+*.secret
+*.key
+*.pem
+secrets.*
+# product INI files often carry creds (mail/LIBNET/IP) — never commit
+*.ini
+
+# ── Product source: binaries, DB data, images — not in repo ──────────
 *.exe
 *.dll
 *.mst
@@ -34,7 +43,14 @@ _work/
 *.rar
 *.zip
 
-# Secrets
-*.key
-*.pem
-secrets.*
+# ── Code deps / build (future P0) ────────────────────────────────────
+node_modules/
+__pycache__/
+*.pyc
+dist/
+build/
+.venv/
+venv/
+
+# ── Allowed: derived doc text under docs/reference/ (protocol/manual)
+!docs/reference/*.txt
