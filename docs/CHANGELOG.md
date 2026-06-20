@@ -54,3 +54,13 @@
 - [`reference/format/GLOBAL_CORRECTION.md`](recon/deep/reference/format/GLOBAL_CORRECTION.md) — язык глобальной корректировки (`IC_gbl`): 22 оператора (ADD/REP/CHA/DEL/DELR/UNDOR/NEWMFN/CORREC/IF/REPEAT/PUTLOG…), формат `.gbl`, **каталог 124 заданий** по БД (автоввод/КСУ/КО/книговыдача/очистка). Закрыл `TODO(Проход Б #07)` протокол-референса.
 - [`reference/format/PFT_MODULES.md`](recon/deep/reference/format/PFT_MODULES.md) — каталог **68 PFT-модулей** (`Pft.tre`), цепочки главных форматов (KN/MN/ASP/BRIEF, диспетчер по 920), **табличные формы для `IC_print`** (`.tab`/`.tbg` декларативные колонки) и статформы (`.stf`/`IC_stat`). Ключ: тела модулей — в `Datai\Deposit\`.
 - **Итог reference/format/:** язык PFT, словарь полей, полный каталог полей/подполей, ФЛК, словари, глоб.корректировка, PFT-модули, протокол — полный набор для пересборки слоёв данных/поиска/вывода.
+
+## Проход Б — проводной протокол снят с живого сервера
+- [`reference/protocol/WIRE_PROTOCOL.md`](recon/deep/reference/protocol/WIRE_PROTOCOL.md) + зонд `tools/irbis-probe/`: модель **одно TCP на запрос**, сессия по `client_id`; кадры запрос(`\n`)/ответ(`\r\n`); команды `A/B/N/O/K/C/G/D/H/L`; **полный CRUD** (поиск/чтение полей+подполей `^`/рендер серверным PFT/запись/удаление); словарь `H` (автодополнение `count#term`), ресурсы `L` (CP1251, `\x1F\x1E`); числовые коды `0/-140/-202/-603/-3337/-3338`. Закрыт gap §7 PROTOCOL_REFERENCE. IBIS: maxmfn 394.
+
+## Фаза 6 — боевой каркас P0 (`irbis-web/`)
+- **Слой протокола** `backend/irbis/`: `IrbisClient` (sync, connection-per-request), `parser` (запись→поля/подполя), `SessionManager` (потокобезопасно: 1 `client_id`, lock, reconnect). Запись через `update_record`.
+- **Access-набор** `backend/access/`: гранты функция×база×уровень + роли + аудит; `authz` (точная база > `*`, ранги read/write/admin); хранилище sqlite (dev) / PostgreSQL DDL (prod) — [`ADR-004`](build/ADR-004_access-store-sqlite-postgres.md); 17 unit-тестов зелёные.
+- **API-ядро** `backend/core.py` (framework-agnostic) + два транспорта: `server.py` (stdlib, любой Python) и `app_aiohttp.py` (aiohttp, Py3.12) — общая логика. Эндпоинты: `health`, `auth/{guest,staff,reader}`, `search`, `terms` (автодополнение), `record`, `render`, `cover` (встроенная картинка 953^B), `order` (guard+audit, RQST — TODO), `me/cabinet` (формуляр RDR), `resource`.
+- **Проверено на живом IBIS** (e2e, оба транспорта): auth guest/staff, authz `401/403`, поиск (K=Android→7), автодополнение, чтение 59 полей, обложка JPEG (3980 б), заказ под грантом. Демо-страница читателя на `/` (поиск+автодополнение+карточка+обложка).
+- **Дальше:** asyncpg-реализация Access (prod Postgres); боевой `order`→RQST; файлы/полный текст PDF; фронт React/TS по `TZ_ClaudeDesign_UI`.

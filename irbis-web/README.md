@@ -1,53 +1,68 @@
-# irbis-web — P0 (ядро + читательский поиск)
+# irbis-web — P0 (ядро + доступ + читательский поиск)
 
-Минимальный боевой каркас веб-замены ИРБИС. **Backend читает реальные данные с живого сервера ИРБИС64** через адаптер, снятый в Проходе Б (см. [`../docs/recon/deep/reference/protocol/WIRE_PROTOCOL.md`](../docs/recon/deep/reference/protocol/WIRE_PROTOCOL.md)). Проектные контракты — [`../docs/build/P0_BUILDKIT_web-irbis.md`](../docs/build/P0_BUILDKIT_web-irbis.md).
+Боевой каркас веб-замены ИРБИС. **Backend читает/пишет реальные данные живого сервера ИРБИС64** через адаптер, снятый в Проходе Б ([`WIRE_PROTOCOL.md`](../docs/recon/deep/reference/protocol/WIRE_PROTOCOL.md)). Контракты — [`P0_BUILDKIT`](../docs/build/P0_BUILDKIT_web-irbis.md); хранилище доступа — [`ADR-004`](../docs/build/ADR-004_access-store-sqlite-postgres.md).
 
-## Статус P0 (проверено на живом `:6666`, БД IBIS)
-- ✅ Соединение/сессия, `health` (версия сервера `2022+`, maxmfn 394).
-- ✅ Поиск: `K=` (ключевые), `A=`/`T=` (автор/заглавие, авто-усечение `$`), `V=` и любой `expr`.
-- ✅ Запись: структурированное чтение полей/подполей (разделитель `^`) → JSON.
-- ✅ Рендер: серверный PFT (`@brief`) → готовое БО.
-- ✅ Демо-страница читателя (`/`): поиск → список → карточка записи.
+## Статус (проверено на живом `:6666`, БД IBIS)
+- ✅ Протокол: соединение/сессия, поиск, чтение полей+подполей (`^`), рендер серверным PFT, словарь (автодополнение), ресурсы, встроенные обложки.
+- ✅ **Access-набор:** гранты `функция×база×уровень` + роли + аудит; `authz` (точная база > `*`); вход guest/staff/reader; `-3338`/денай → `403`.
+- ✅ Два транспорта на **общем ядре** `core.py`: stdlib (`server.py`) и **aiohttp** (`app_aiohttp.py`) — одинаковый e2e.
+- ✅ Демо-страница читателя (`/`): поиск → автодополнение → карточка → обложка.
 
-## Запуск (без установки зависимостей — stdlib Python 3)
+## Запуск
 ```
-cp irbis-web/.env.example irbis-web/backend/.env   # вписать IRBIS_USER/PASS
-py irbis-web/backend/server.py                     # http://127.0.0.1:8080
-py irbis-web/backend/smoke.py                       # самопроверка слоя IRBIS (без HTTP)
-```
+cp irbis-web/.env.example irbis-web/backend/.env     # вписать IRBIS_USER/PASS
 
-## API (конверт `{ok, data}` | `{ok:false, error:{code,message}}`)
-| Метод | Назначение |
-|---|---|
-| `GET /api/health` | сервер, версия, maxmfn |
-| `GET /api/search?db&prefix&q&page&pageSize` (или `&expr=`) | поиск: total + краткие БО (серверный PFT) |
-| `GET /api/record/{db}/{mfn}` | запись: поля/подполя (структура) + `brief` |
-| `GET /api/render/{db}/{mfn}?fmt=@brief` | серверный рендер PFT |
-| `GET /` | демо-страница читателя |
+# вариант A — stdlib, без установки (любой Python 3)
+py  irbis-web/backend/server.py                       # http://127.0.0.1:8080
+
+# вариант B — aiohttp (Python 3.12)
+py -3.12 -m pip install aiohttp asyncpg
+py -3.12 irbis-web/backend/app_aiohttp.py
+
+# тесты
+py irbis-web/backend/tests/test_access.py             # authz/audit (unit)
+py irbis-web/backend/smoke.py                          # слой IRBIS на живом сервере
+py irbis-web/backend/tests/e2e.py                      # HTTP e2e (сервер должен быть запущен)
+```
+Демо-аккаунты (dev-сид): `admin/admin` (все права), `librarian/librarian` (читательские + каталогизация).
+
+## API (конверт `{ok, data}` | `{ok:false, error:{code,message}}`; токен — `Authorization: Bearer`)
+| Метод/путь | Назначение | Грант |
+|---|---|---|
+| `GET /api/health` | сервер/версия/maxmfn | — |
+| `POST /api/auth/guest` | гостевая сессия | публично |
+| `POST /api/auth/staff` | вход сотрудника (login+pass) | публично |
+| `POST /api/auth/reader` | вход читателя (билет, через RDR) | публично |
+| `GET /api/search?db&prefix&q&page` (или `&expr=`) | поиск: total + краткие БО | `search` |
+| `GET /api/terms?db&start&count` | словарь/автодополнение (`count#term`) | `terms` |
+| `GET /api/record/{db}/{mfn}` | запись: поля/подполя + `brief` | `record.read` |
+| `GET /api/render/{db}/{mfn}?fmt` | серверный рендер PFT | `record.read` |
+| `GET /api/cover/{db}/{mfn}` | встроенная обложка (поле 953^B) | `record.read` |
+| `GET /api/resource/{db}/{file}` | меню/словарь БД (FILE `L`) | `file` |
+| `POST /api/order` | заказ (guard+audit; RQST — TODO) | `order` |
+| `GET /api/me/cabinet` | формуляр читателя (RDR, поле 40) | `cabinet` |
 
 ## Структура
 ```
 irbis-web/
 ├─ .env.example
-├─ backend/
-│  ├─ server.py            # HTTP API (stdlib) + демо-страница
-│  ├─ smoke.py             # самопроверка слоя IRBIS на живом сервере
-│  ├─ config.py            # конфиг из .env (секреты не в коде)
-│  ├─ requirements.txt     # stdlib; prod-порт на aiohttp — опц.
-│  └─ irbis/               # ⭐ переиспользуемый слой протокола (Проход Б)
-│     ├─ client.py         #   синхронный IrbisClient (connection-per-request)
-│     ├─ parser.py         #   запись -> поля/подполя
-│     └─ session.py        #   потокобезопасная сессия (1 client_id, lock, reconnect)
-└─ (frontend/ React+TS — следующий шаг, по TZ_ClaudeDesign_UI)
+└─ backend/
+   ├─ core.py            # ⭐ framework-agnostic API: authn→authz→IRBIS→audit
+   ├─ server.py          # транспорт stdlib + демо-страница (/)
+   ├─ app_aiohttp.py     # транспорт aiohttp (то же ядро, через executor)
+   ├─ reader_page.py     # демо-страница читателя
+   ├─ config.py          # .env (секреты не в коде)
+   ├─ irbis/             # слой протокола (Проход Б): client/parser/session
+   ├─ access/            # гранты/роли/аудит: store(sqlite)+schema_postgres+authz+seed
+   └─ tests/             # test_access (unit), e2e (HTTP)
 ```
 
 ## Безопасность
-- Креды только в `irbis-web/backend/.env` (**gitignored**), не в коде/репозитории.
-- Ответы об ошибках без внутренних деталей; `-3338`(нет доступа) → HTTP 403.
-- Слой read-only по умолчанию; запись (`update_record`) — отдельный метод под гранты записи.
+- Секреты только в `backend/.env` (**gitignored**); dev-БД доступа `access.db` — **gitignored**.
+- Ошибки без внутренних деталей; денай прав и `-3338` → `403`; аудит write/admin.
+- Запись (`record.write`/`order`) — только под соответствующим грантом.
 
-## Дальше (по P0_BUILDKIT / issues)
-- Порт HTTP-слоя на **aiohttp**; PostgreSQL для сотрудников/грантов/аудита (Access-набор, #34).
-- **Frontend** React+TS+Tailwind по [`../docs/design/TZ_ClaudeDesign_UI.md`](../docs/design/TZ_ClaudeDesign_UI.md) (#33).
-- Эндпоинты `terms` (автодополнение по словарю), `order`/ЛК, файлы/полный текст через прокси.
-- Боевые базы пилота (СПб ГТБ): префиксы `[SEARCH]`, PFT, рабочие листы.
+## Дальше (issues #33/#34)
+- asyncpg-реализация `AccessStore` + Postgres (prod), миграции.
+- Боевой `order` → запись RQST + резерв экземпляра/ячейки; файлы/полный текст PDF через прокси.
+- Frontend React+TS+Tailwind по [`TZ_ClaudeDesign_UI.md`](../docs/design/TZ_ClaudeDesign_UI.md) поверх этого API.

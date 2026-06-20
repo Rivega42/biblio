@@ -61,3 +61,8 @@ venv/
 
 tools/irbis-probe/*.txt
 irbis-web/backend/*_results.txt
+irbis-web/backend/tests/*_results.txt
+# dev access store (accounts/grants/audit) — never commit
+*.db
+*.sqlite
+*.sqlite3

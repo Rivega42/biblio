@@ -30,6 +30,10 @@ class Config:
         self.workstation = os.environ.get('IRBIS_WORKSTATION', 'A')
         self.db_default = os.environ.get('IRBIS_DB_DEFAULT', 'IBIS')
         self.timeout = float(os.environ.get('IRBIS_TIMEOUT', '8'))
+        # Access store: sqlite path (dev) or Postgres DSN (prod) — ADR-004
+        self.access_db = os.environ.get('ACCESS_DB', os.path.join(here, 'access.db'))
+        self.pg_dsn = os.environ.get('PG_DSN', '')      # prod: postgresql://...
+        self.app_secret = os.environ.get('APP_SECRET', 'dev-insecure-secret')
         # App
         self.app_host = os.environ.get('APP_HOST', '127.0.0.1')
         self.app_port = int(os.environ.get('APP_PORT', '8080'))
