@@ -10,6 +10,8 @@ import { PftBlock } from "../components/catalog/PftBlock.jsx";
 import { Pagination } from "../components/catalog/Pagination.jsx";
 import { EmptyState } from "../components/feedback/EmptyState.jsx";
 import { ToastViewport } from "../components/feedback/Toast.jsx";
+import { StaffArea, StaffLoginOverlay } from "./Staff";
+import type { StaffSession } from "./Staff";
 
 const PREFIXES = [
   { code: "K", label: "Ключевые слова" }, { code: "A", label: "Автор" },
@@ -64,6 +66,10 @@ export function App() {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
   const [account, setAccount] = React.useState<{ loggedIn: boolean; ticket?: string }>({ loggedIn: false });
   const [loginOpen, setLoginOpen] = React.useState(false);
+  const [context, setContext] = React.useState<"reader" | "staff">("reader");
+  const [staff, setStaff] = React.useState<StaffSession | null>(null);
+  const [staffRoute, setStaffRoute] = React.useState<any>("desktop");
+  const [staffLoginOpen, setStaffLoginOpen] = React.useState(false);
   const pageSize = 10;
   const tRef = React.useRef<any>(null);
   const toast = (t: Omit<Toast, "id">) => { const id = Math.random(); setToasts((x) => [...x, { ...t, id }]); setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 4000); };
@@ -107,6 +113,15 @@ export function App() {
     if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); }
     else toast({ variant: "warning", title: "Билет не найден", message: "Проверьте номер билета." });
   }
+  function switchContext(c: "reader" | "staff") { if (c === "staff" && !staff) { setStaffLoginOpen(true); return; } setContext(c); setRec(null); }
+  async function doStaffLogin(login: string, password: string) {
+    const r = await api.loginStaff(login, password);
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      setStaff({ name: r.json.data.name, login: r.json.data.login, grants: r.json.data.grants || [] });
+      setContext("staff"); setStaffRoute("desktop"); setStaffLoginOpen(false);
+      toast({ variant: "success", title: "Вход выполнен", message: r.json.data.name || login });
+    } else toast({ variant: "warning", title: "Неверный логин или пароль", message: "Проверьте учётные данные." });
+  }
 
   const rootTheme = a11y ? "a11y" : (theme === "working" ? undefined : theme);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -121,15 +136,24 @@ export function App() {
         <Icon name="book" size={22} />
         <b>ИРБИС-Веб · электронный каталог</b>
         <span style={{ opacity: .85, fontSize: "var(--text-xs)" }}>ИРБИС {server?.version} · база {DB}</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 4, marginRight: 6, padding: 2, background: "rgba(255,255,255,.12)", borderRadius: 10 }}>
+            <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>Читатель</button>
+            <button onClick={() => switchContext("staff")} style={hbtn(context === "staff")}>Сотрудник</button>
+          </div>
           <button onClick={() => { setA11y(false); setTheme("working"); }} style={hbtn(theme === "working" && !a11y)}>Рабочая</button>
           <button onClick={() => { setA11y(false); setTheme("theatrical"); }} style={hbtn(theme === "theatrical" && !a11y)}>Театр</button>
           <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
-          <button onClick={() => account.loggedIn ? setAccount({ loggedIn: false }) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>
+          {context === "reader" && <button onClick={() => account.loggedIn ? setAccount({ loggedIn: false }) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
+          {context === "staff" && staff && <button onClick={() => { setStaff(null); setContext("reader"); }} style={hbtn(false)}>Выйти ({staff.login})</button>}
         </div>
       </header>
 
       <main style={{ flex: 1, maxWidth: 1100, width: "100%", margin: "0 auto", padding: 20, boxSizing: "border-box" }}>
+        {context === "staff" ? (
+          <StaffArea staff={staff!} route={staffRoute} setRoute={setStaffRoute} toast={toast} />
+        ) : (
+        <>
         {!rec && (
           <>
             <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
@@ -195,6 +219,8 @@ export function App() {
             </div>
           );
         })()}
+        </>
+        )}
       </main>
 
       <footer style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 20px", fontSize: "var(--text-xs)", color: "var(--text-subtle)", display: "flex", gap: 10, alignItems: "center" }}>
@@ -203,6 +229,7 @@ export function App() {
       </footer>
 
       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
+      {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
     </div>
   );
