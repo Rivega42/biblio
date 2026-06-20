@@ -1,0 +1,40 @@
+# Working area: converted text dumps, temp extractions — never committed
+_work/
+
+# Safety net: never commit product source, binaries, data, or images
+# (product files live in the parent folder C:\IRBIS64, outside this repo,
+#  but these patterns guard against accidental copies inside the repo)
+*.exe
+*.dll
+*.mst
+*.xrf
+*.ifp
+*.l01
+*.l02
+*.n01
+*.n02
+*.cnt
+*.ifs
+*.fdt
+*.ibf
+*.bin
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.ico
+*.wav
+*.chm
+*.hlp
+*.doc
+*.docx
+*.rtf
+*.ppt
+*.rar
+*.zip
+
+# Secrets
+*.key
+*.pem
+secrets.*
