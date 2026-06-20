@@ -11,6 +11,7 @@ type ToastFn = (t: { variant: string; title: string; message?: string }) => void
 
 const DOMAINS = [
   { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей", route: "cataloging" as const },
+  { id: "cells", label: "Ячеистое хранение", icon: "archive", grant: "record.read", desc: "Карта ячеек: занятость, адрес, RFID (наша фишка)", route: "cells" as const },
   { id: "circ", label: "Книговыдача", icon: "package", grant: "circ.issue", desc: "Выдача, возврат, очередь, бронеполка, ячейки", route: "stub" as const },
   { id: "acq", label: "Комплектование", icon: "archive", grant: "acq.receipt", desc: "Заказ, поступление, КСУ, списание", route: "stub" as const },
   { id: "inv", label: "Инвентаризация", icon: "scan-line", grant: "record.read", desc: "Сверка фонда с ТСД", route: "stub" as const },
@@ -55,8 +56,9 @@ function recordToValues(fields: any[], wl: WLField[]) {
 
 export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSession; route: any; setRoute: (r: any) => void; toast: ToastFn }) {
   if (route === "cataloging") return <CatalogingWorksheet staff={staff} onBack={() => setRoute("desktop")} toast={toast} />;
+  if (route === "cells") return <CellMap onBack={() => setRoute("desktop")} />;
   if (route && route.name === "stub") return <StaffStub title={route.title} onBack={() => setRoute("desktop")} />;
-  return <StaffDesktop staff={staff} onOpen={(d) => setRoute(d.route === "cataloging" ? "cataloging" : { name: "stub", title: d.label })} />;
+  return <StaffDesktop staff={staff} onOpen={(d) => setRoute(d.route === "stub" ? { name: "stub", title: d.label } : d.route)} />;
 }
 
 function StaffDesktop({ staff, onOpen }: { staff: StaffSession; onOpen: (d: typeof DOMAINS[number]) => void }) {
@@ -83,6 +85,44 @@ function StaffStub({ title, onBack }: { title: string; onBack: () => void }) {
     <div>
       <Button iconLeft="arrow-left" onClick={onBack}>К рабочему столу</Button>
       <EmptyState icon="clock" title={title} description="Экран спроектирован в дизайн-системе. На живые данные подключается следующим шагом — сейчас доступна каталогизация." />
+    </div>
+  );
+}
+
+function CellMap({ onBack }: { onBack: () => void }) {
+  const [data, setData] = React.useState<any>(null);
+  const [err, setErr] = React.useState(false);
+  React.useEffect(() => { (async () => { const r = await api.cells("IBIS"); if (r.json && r.json.ok && r.json.data) setData(r.json.data); else setErr(true); })(); }, []);
+  const color = (s: string) => s === "available" ? "var(--status-available-strong,#2f855a)" : s === "issued" ? "var(--status-issued-strong,#b7791f)" : "#888";
+  if (err) return (
+    <div>
+      <Button iconLeft="arrow-left" onClick={onBack}>К рабочему столу</Button>
+      <EmptyState icon="archive" title="Ячеистое хранение" description="Доступно на нашем сервере (server-own). На адаптере к ИРБИС ячеек нет — это наша модель хранения." />
+    </div>
+  );
+  if (!data) return <div style={{ color: "var(--text-subtle)" }}>Загрузка карты ячеек…</div>;
+  const cells: any[] = data.cells || [];
+  const racks: Record<string, any[]> = {};
+  cells.forEach((c) => { const rack = String(c.cell).split("-").slice(0, 2).join("-"); (racks[rack] = racks[rack] || []).push(c); });
+  return (
+    <div>
+      <Button iconLeft="arrow-left" onClick={onBack}>К рабочему столу</Button>
+      <h2 style={{ fontSize: "var(--text-2xl,1.5rem)", margin: "8px 0 2px" }}>Ячеистое хранение</h2>
+      <p style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", marginTop: 0 }}>Занято ячеек: {cells.length} · адрес «Зона-Стеллаж-Ячейка» · цвет = статус экземпляра · наведи — издание. В ИРБИС такого нет.</p>
+      <div style={{ display: "flex", gap: 14, margin: "8px 0 14px", fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: color("available"), marginRight: 5 }} />доступен</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: color("issued"), marginRight: 5 }} />выдан</span>
+      </div>
+      {Object.keys(racks).sort().slice(0, 30).map((rack) => (
+        <div key={rack} style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, fontSize: "var(--text-sm)", margin: "6px 0 4px" }}>Стеллаж {rack}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {racks[rack].map((c, i) => (
+              <span key={i} title={(c.title || "") + " · " + c.inv_no} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", padding: "4px 7px", borderRadius: 6, color: "#fff", background: color(c.status), cursor: "default" }}>{String(c.cell).split("-")[2]}</span>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

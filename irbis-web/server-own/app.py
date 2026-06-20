@@ -111,6 +111,11 @@ class H(BaseHTTPRequestHandler):
             if p == '/api/databases':
                 items = [{'code': d['code'], 'name': d['name'], 'public': bool(d['public'])} for d in STORE.databases()]
                 return self._send(200, ok({'items': items, 'default': DEFAULT_DB}))
+            if p == '/api/cells':
+                db = q.get('db', [DEFAULT_DB])[0]
+                zone = q.get('zone', [None])[0]
+                return self._send(200, ok({'db': db, 'zones': ['А', 'Б', 'В', 'Г', 'Д'],
+                                           'cells': STORE.cell_map(db, zone)}))
             if p == '/api/search':
                 db = q.get('db', [DEFAULT_DB])[0]
                 prefix, term, expr = build_expr(q)

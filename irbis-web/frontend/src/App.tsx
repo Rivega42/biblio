@@ -41,7 +41,10 @@ function recView(d: RecordData) {
     { label: "Примечание", value: (F1("331") && sf(F1("331"), "A")) || (F1("330") && sf(F1("330"), "A")) || (F1("300")?.value ?? "") },
   ].filter((r) => r.value);
   const subjects = F("606").map((f) => [sf(f, "A"), sf(f, "B"), sf(f, "C"), sf(f, "D")].filter(Boolean).join(" — ")).filter(Boolean);
-  const holds = F("910").map((h) => ({ loc: sf(h, "D") || "Фонд", inv: sf(h, "B"), st: sf(h, "A") }));
+  const holds = (d.holdings && d.holdings.length)
+    ? d.holdings.map((h) => ({ loc: "Основной фонд", inv: h.inv_no, st: h.status, cell: h.cell, rfid: h.rfid }))
+    : F("910").map((h) => ({ loc: sf(h, "D") || "Фонд", inv: sf(h, "B"),
+        st: (sf(h, "A") === "0" || sf(h, "A") === "") ? "available" : "issued", cell: "", rfid: "" }));
   const files = ["951", "955"].flatMap(F).map((f) => sf(f, "A") || sf(f, "T")).filter(Boolean);
   const rawRows = d.fields.map((x) => `<tr><td style="color:var(--text-subtle);font-family:var(--font-mono);padding-right:12px;vertical-align:top">${x.tag}</td><td style="font-family:var(--font-mono);font-size:12px">${esc(x.value)}</td></tr>`).join("");
   return { brief: d.brief || "", meta, subjects, holds, files, rawRows };
@@ -276,7 +279,12 @@ export function App() {
                   <div style={lbl}>Экземпляры</div>
                   {v.holds.length ?
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}><tbody>
-                      {v.holds.map((h, i) => <tr key={i}><td style={{ padding: "4px 0" }}>{h.loc}</td><td style={{ fontFamily: "var(--font-mono)" }}>{h.inv}</td><td style={{ textAlign: "right" }}><StatusBadge status={h.st === "0" || h.st === "" ? "available" : "issued"} dot /></td></tr>)}
+                      {v.holds.map((h, i) => <tr key={i}>
+                        <td style={{ padding: "4px 0" }}>{h.loc}</td>
+                        <td style={{ fontFamily: "var(--font-mono)", color: "var(--text-subtle)" }}>{h.inv}</td>
+                        <td>{(h as any).cell ? <span title={"RFID " + (h as any).rfid} style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--accent)", background: "var(--accent-weak,#eef2f7)", borderRadius: 6, padding: "1px 8px" }}>⬚ {(h as any).cell}</span> : null}</td>
+                        <td style={{ textAlign: "right" }}><StatusBadge status={(h.st === "available" || h.st === "issued" || h.st === "unknown") ? h.st as any : (h.st === "0" || h.st === "" ? "available" : "issued")} dot /></td>
+                      </tr>)}
                     </tbody></table> :
                     <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>}
                   <div style={{ marginTop: 20, display: "flex", gap: 10, alignItems: "center" }}>

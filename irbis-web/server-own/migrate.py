@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.normpath(os.path.join(HERE, '..', 'backend')))
 sys.path.insert(0, HERE)
 from irbis.client import IrbisClient            # noqa: E402
 from irbis.parser import field, fields as fields_of  # noqa: E402
-from store import OwnStore                       # noqa: E402
+from store import OwnStore, cell_address          # noqa: E402
 
 
 def sf(f, c):
@@ -75,7 +75,7 @@ def main():
         mfns = mfns[:a.limit]
     print('migrating %d records from %s ...' % (len(mfns), a.db))
     done = 0
-    for mfn in mfns:
+    for i, mfn in enumerate(mfns):
         try:
             rec = c.read_record(a.db, mfn)
             try:
@@ -87,6 +87,9 @@ def main():
                 brief = '%s%s%s' % (item['author'] + '. ' if item['author'] else '', item['title'],
                                     '. ' + item['year'] if item['year'] else '')
             st.upsert(a.db, mfn, item, brief, rec['fields'], cover, kw)
+            # ячеистое хранение (наша модель): один адресуемый экземпляр на запись
+            st.add_holding(a.db, mfn, '%s-%06d' % (a.db, mfn), item['availability'],
+                           cell_address(i), 'RFID%08X' % (mfn * 2654435761 & 0xFFFFFFFF))
             done += 1
             if done % 50 == 0:
                 print('  %d/%d' % (done, len(mfns)))

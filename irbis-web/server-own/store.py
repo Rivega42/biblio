@@ -19,7 +19,29 @@ CREATE TABLE IF NOT EXISTS dbs(code TEXT PRIMARY KEY, name TEXT, public INTEGER 
 CREATE VIRTUAL TABLE IF NOT EXISTS rec_fts USING fts5(
   db UNINDEXED, mfn UNINDEXED, title, author, keywords, doctype, tokenize='unicode61'
 );
+-- Ячеистое хранение (наша фишка — в ИРБИС нет): экземпляр живёт в адресуемой ячейке.
+CREATE TABLE IF NOT EXISTS holding(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  db TEXT NOT NULL, mfn INTEGER NOT NULL,
+  inv_no TEXT, status TEXT, cell TEXT, rfid TEXT,
+  UNIQUE(db, inv_no)
+);
+CREATE INDEX IF NOT EXISTS holding_rec ON holding(db, mfn);
+CREATE INDEX IF NOT EXISTS holding_cell ON holding(cell);
 """
+
+ZONES = ['А', 'Б', 'В', 'Г', 'Д']
+RACKS = 20
+CELLS = 30
+
+
+def cell_address(idx):
+    """Линейный индекс -> адрес ячейки Зона-Стеллаж-Ячейка (напр. 'А-03-12')."""
+    per_zone = RACKS * CELLS
+    z = ZONES[(idx // per_zone) % len(ZONES)]
+    rack = (idx // CELLS) % RACKS + 1
+    cell = idx % CELLS + 1
+    return '%s-%02d-%02d' % (z, rack, cell)
 
 
 class OwnStore:
@@ -124,11 +146,37 @@ class OwnStore:
         if not r:
             return None
         return {'db': db, 'mfn': mfn, 'brief': r['brief'], 'hasCover': bool(r['has_cover']),
-                'fields': json.loads(r['fields'] or '[]')}
+                'fields': json.loads(r['fields'] or '[]'), 'holdings': self.holdings(db, mfn)}
 
     def cover(self, db, mfn):
         r = self._conn().execute("SELECT cover FROM rec WHERE db=? AND mfn=?", (db, mfn)).fetchone()
         return r['cover'] if r and r['cover'] else None
+
+    # ---- holdings / cells (ячеистое хранение) ----
+    def add_holding(self, db, mfn, inv_no, status, cell, rfid):
+        c = self._conn()
+        c.execute("INSERT OR REPLACE INTO holding(db,mfn,inv_no,status,cell,rfid) VALUES(?,?,?,?,?,?)",
+                  (db, mfn, inv_no, status, cell, rfid))
+        c.commit()
+
+    def holdings(self, db, mfn):
+        return [dict(r) for r in self._conn().execute(
+            "SELECT inv_no,status,cell,rfid FROM holding WHERE db=? AND mfn=? ORDER BY cell", (db, mfn))]
+
+    def count_holdings(self, db):
+        r = self._conn().execute("SELECT count(*) n FROM holding WHERE db=?", (db,)).fetchone()
+        return r['n'] if r else 0
+
+    def cell_map(self, db, zone=None, limit=400):
+        q = ("SELECT h.cell, h.inv_no, h.status, h.mfn, r.title "
+             "FROM holding h LEFT JOIN rec r ON r.db=h.db AND r.mfn=h.mfn WHERE h.db=?")
+        args = [db]
+        if zone:
+            q += " AND h.cell LIKE ?"
+            args.append(zone + '-%')
+        q += " ORDER BY h.cell LIMIT ?"
+        args.append(limit)
+        return [dict(r) for r in self._conn().execute(q, args)]
 
     # ---- write (cataloging on OUR server) ----
     def next_mfn(self, db):
