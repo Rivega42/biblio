@@ -32,5 +32,5 @@
   - `databases/DB_CATALOG_VARIANTS.md` — IMAGE (образы 951/953/952/955), SK (сводный, сигла 902, импорт `impsvk*`), Sk_ekz/new/user (БД-спутники), VKR (научрук 702, антиплагиат 215^W, доступ RIGHT).
   - `databases/DB_SERVICE.md` — RIGHT (шаблоны прав, `right_ft.pft`), LICH (20 префиксов), ZAPR (ИРИ), COUNT/MORPH/WORK/Deposit, LOG* (протоколы).
   - `arms/ARM_*.md` (6 шт.) — посекционный разбор INI всех АРМов (48 секций, ~7046 параметров; креды/IP не переносились).
-  - _(осталось в волне 2:)_ `databases/DB_SPECIAL.md` (GUAR/EVENT/KZD/PAY/IRI/ARCH).
-- **Итог reference/:** 17 документов (9 БД + 6 АРМ + 2 формат), ~5200 строк.
+  - `databases/DB_SPECIAL.md` — GUAR (5-уровневая иерархия FOND/OPIS/DELO/GUAR/LIST, связь полем 488^T), GURF/GuSk (рубрикаторы фондов), Event (План↔Мероприятие, 488), KZD (календарь, поле 309), PAY (оплаты, ключ читатель RI=), IRI (профили), ARCH (тех. архив).
+- **Итог reference/ (Фаза 2 завершена):** 18 документов (10 БД + 6 АРМ + 2 формат), ~5800 строк. `CAPABILITY_MAP.md §13a` ссылается на весь корпус; `OPEN_QUESTIONS.md §A0` фиксирует закрытые Фазой 2 вопросы.

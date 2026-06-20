@@ -97,5 +97,13 @@
 - **Показ/ввод**: интерпретатор PFT (показ) и движок рабочих листов `.WS/.WSS` (ввод) с ФЛК; меню/справочники `.MNU/.TRE`.
 - **Права/АРМы**: модель `CLIENT_M.MNU` + коды АРМов + per-DB видимость (`DBNAM*.MNU`).
 
+## 13a. Reconstruction-grade reference (Фаза 2) — для пересборки
+Углублённые справочники, выведенные из реальных конфигов (каждая строка FST, все рабочие листы, словари полей/подполей, каталоги форматов, посекционный INI):
+- **Язык/данные:** [PFT_LANGUAGE](reference/format/PFT_LANGUAGE.md) (44 конструкции + 41 UNIFOR-код), [FIELD_DICTIONARY](reference/format/FIELD_DICTIONARY.md) (115 полей формата).
+- **Базы данных:** [DB_IBIS](reference/databases/DB_IBIS.md), [DB_CIRCULATION](reference/databases/DB_CIRCULATION.md) (RDR/RQST/RDR_ARH/RDRV), [DB_ACQUISITION](reference/databases/DB_ACQUISITION.md) (CMPL/PODB/POST), [DB_VUZ](reference/databases/DB_VUZ.md), [DB_AUTHORITY](reference/databases/DB_AUTHORITY.md) (ATHR*), [DB_MBA](reference/databases/DB_MBA.md), [DB_CLASSIFICATION](reference/databases/DB_CLASSIFICATION.md) (УДК/ББК/ГРНТИ/MeSH/тезаурус/навигатор), [DB_CATALOG_VARIANTS](reference/databases/DB_CATALOG_VARIANTS.md) (IMAGE/SK/VKR), [DB_SERVICE](reference/databases/DB_SERVICE.md) (RIGHT/LICH/ZAPR/LOG*), [DB_SPECIAL](reference/databases/DB_SPECIAL.md) (GUAR/EVENT/KZD/PAY/IRI/ARCH).
+- **АРМы (посекционный INI):** [Каталогизатор](reference/arms/ARM_CATALOGER.md) · [Читатель](reference/arms/ARM_READER.md) · [Книговыдача](reference/arms/ARM_LENDING.md) · [Комплектатор](reference/arms/ARM_ACQUISITION.md) · [Книгообеспеченность](reference/arms/ARM_BOOKPROVISION.md) · [Администратор](reference/arms/ARM_ADMIN.md).
+
+Ключевой результат Фазы 2: **модель книговыдачи (заказ→выдача→возврат), отсутствовавшая в документации, восстановлена из конфигов** (`RQSTRDR.PFT` материализует выдачу в поле RDR.40, маркер долга `^F=******`).
+
 ## 13. Перечень FINDINGS
 [02 конфиги+БД](FINDINGS_02_config_and_db_profiles.md) · [03 протокол](FINDINGS_03_protocol.md) · [04 сервер/админ](FINDINGS_04_server_admin.md) · [05 Каталогизатор](FINDINGS_05_arm_cataloger.md) · [06 Комплектатор](FINDINGS_06_arm_acquisition.md) · [07 Книгообеспеченность](FINDINGS_07_arm_bookprovision.md) · [08 Книговыдача/МБА](FINDINGS_08_arm_lending_mba.md) · [09 Web/Читатель](FINDINGS_09_web_reader.md) · [10 Обзор системы](FINDINGS_10_overview_system.md) · [11 Возможности по выпускам](FINDINGS_11_release_capabilities.md) · [12 Структура записи](FINDINGS_12_record_structure.md) · [13 IRBISPRL/ЭД](FINDINGS_13_irbisprl.md) · [14 Спец-БД](FINDINGS_14_db_descriptions_misc.md)
