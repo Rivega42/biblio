@@ -26,4 +26,11 @@
   - `databases/DB_ACQUISITION.md` — CMPL/PODB/POST: модель заявка→заказ→SZ→поступление→КСУ→списание→перенос в ЭК (~114 префиксов, RTF-бланки КСУ).
   - `databases/DB_VUZ.md` — книгообеспеченность (10 типов записи, «связка», расчёт ККО, поле 693).
   - `databases/DB_AUTHORITY.md` — ATHRA/C/S/G/U/B: 4-блочная модель авторитетного контроля, подполе `^3`, autoin-генерация связанных записей.
-- **Волна 2 (предстоит):** МБА (MBA/MBA_ARH), классификация/тезаурусы (RSUDC/RSBBK/HELP/MESH/TEZ/URUB), SK/IMAGE, VKR/GUAR/EVENT, служебные БД, посекционный разбор INI всех АРМов (`reference/arms/`).
+- **Волна 2 (в основном готово):**
+  - `databases/DB_MBA.md` — МБА: дискриминатор 920 (AB/ODER/CENA/ARHIV), цикл оформление→выдача(O1)→продление(O2)→возврат(S1/S2)→списание(H1)→архив, перенаправление M4 (sigl.mnu), статусы из `irbism.ini`.
+  - `databases/DB_CLASSIFICATION.md` — RSUDC/RSBBK/HELP/MESH/TEZ/URUB: три модели иерархии (вышестоящий индекс / усечение кода / термин-`U=`+автоввод), навигаторы.
+  - `databases/DB_CATALOG_VARIANTS.md` — IMAGE (образы 951/953/952/955), SK (сводный, сигла 902, импорт `impsvk*`), Sk_ekz/new/user (БД-спутники), VKR (научрук 702, антиплагиат 215^W, доступ RIGHT).
+  - `databases/DB_SERVICE.md` — RIGHT (шаблоны прав, `right_ft.pft`), LICH (20 префиксов), ZAPR (ИРИ), COUNT/MORPH/WORK/Deposit, LOG* (протоколы).
+  - `arms/ARM_*.md` (6 шт.) — посекционный разбор INI всех АРМов (48 секций, ~7046 параметров; креды/IP не переносились).
+  - _(осталось в волне 2:)_ `databases/DB_SPECIAL.md` (GUAR/EVENT/KZD/PAY/IRI/ARCH).
+- **Итог reference/:** 17 документов (9 БД + 6 АРМ + 2 формат), ~5200 строк.
