@@ -1,0 +1,30 @@
+# Производственный запуск веб-клиента поверх существующего ИРБИС64.
+# Значения берутся из irbis-web/.env (скопировать из .env.example, не коммитить).
+services:
+  irbis-web:
+    build: .
+    image: irbis-web:latest
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      # адрес боевого ИРБИС-сервера (host.docker.internal — если ИРБИС на том же хосте)
+      IRBIS_HOST: "${IRBIS_HOST:-host.docker.internal}"
+      IRBIS_PORT: "${IRBIS_PORT:-6666}"
+      IRBIS_USER: "${IRBIS_USER:?задайте служебный логин ИРБИС}"
+      IRBIS_PASS: "${IRBIS_PASS:?задайте служебный пароль ИРБИС}"
+      IRBIS_WORKSTATION: "${IRBIS_WORKSTATION:-A}"
+      IRBIS_DB_DEFAULT: "${IRBIS_DB_DEFAULT:-IBIS}"
+      IRBIS_DB_MENU: "${IRBIS_DB_MENU:-1.&.dbnam1.mnu}"
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8080"
+      ACCESS_DB: "/app/data/access.db"
+      APP_SECRET: "${APP_SECRET:?задайте ключ подписи сессий}"
+      # PG_DSN: "${PG_DSN:-}"   # включить, когда Access-набор переедет на Postgres
+    volumes:
+      - irbis-web-data:/app/data        # учётки/гранты/аудит (sqlite) — сохраняются между перезапусками
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  irbis-web-data:

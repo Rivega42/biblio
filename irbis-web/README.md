@@ -88,6 +88,20 @@ irbis-web/
                          #    дизайн-компоненты на реальных данных IBIS (через /api)
 ```
 
+## Развёртывание (Docker)
+Производственный запуск поверх существующего ИРБИС64 — одним образом (сборка фронта + рантайм бэкенда):
+```
+cp irbis-web/.env.example irbis-web/.env      # вписать IRBIS_HOST/USER/PASS, APP_SECRET
+cd irbis-web
+docker compose up -d --build                  # → http://<host>:8080
+```
+- Фронт собирается внутри образа (Vite, self-hosted — без CDN), бэкенд (aiohttp) отдаёт его и проксирует к ИРБИС.
+- `IRBIS_HOST` — адрес боевого сервера (`host.docker.internal` если на том же хосте; иначе IP/DNS сервера ИРБИС).
+- Учётки/гранты/аудит (sqlite) — в томе `irbis-web-data` (переживают перезапуск). Postgres — когда переедет Access.
+- Конфиг полностью из env; список баз тянется с сервера (`IRBIS_DB_MENU`). Секретов в образе нет.
+
+Без Docker (dev): `py irbis-web/backend/app_aiohttp.py` (или `server.py`) + отдельно `npm --prefix irbis-web/frontend run dev` (Vite-прокси на :8080), либо `npm run build` и бэкенд отдаёт `dist`.
+
 ## Безопасность
 - Секреты только в `backend/.env` (**gitignored**); dev-БД доступа `access.db` — **gitignored**.
 - Ошибки без внутренних деталей; денай прав и `-3338` → `403`; аудит write/admin.
