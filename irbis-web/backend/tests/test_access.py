@@ -201,6 +201,21 @@ def flk_checks():
     FAIL[0] += test_flk.FAIL[0]
 
 
+def module_checks(modname):
+    """Run a self-contained engine test module (issue #188 A1/A3/A4/A6): import it,
+    run every *_checks() it defines, fold its PASS/FAIL tally in. Each lives in its
+    own module but is invoked here so the CI test_access.py step also exercises it."""
+    try:
+        mod = __import__(modname)
+    except Exception as e:
+        print('-- %s NOT RUN (import failed: %s)' % (modname, e)); FAIL[0] += 1; return
+    for fn in sorted(dir(mod)):
+        if fn.endswith('_checks') and callable(getattr(mod, fn)):
+            getattr(mod, fn)()
+    PASS[0] += mod.PASS[0]
+    FAIL[0] += mod.FAIL[0]
+
+
 def main():
     pure_checks()
     store_checks('sqlite', sqlite_store())
@@ -211,6 +226,8 @@ def main():
     identity_checks()
     seeding_checks()
     flk_checks()
+    for _m in ('test_pft', 'test_authority', 'test_notifications', 'test_gbl'):
+        module_checks(_m)
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
