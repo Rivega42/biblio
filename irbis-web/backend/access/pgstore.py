@@ -19,6 +19,7 @@ import re
 import threading
 
 from .store import AccessStore   # reuse pbkdf2 hash/verify (interchangeable hashes)
+from . import crypto             # ПДн field encryption (V1): pgcrypto key + token fallback
 
 # DDL lives next to this module as the shared production schema.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -97,6 +98,11 @@ class PgAccessStore:
         """Create the Access tables. For a tenant store, create the schema first
         and apply the (unqualified) Access DDL *into* it via ``search_path``."""
         conn = self._conn()   # also applies search_path = t_<slug>, public
+        # pgcrypto: enable best-effort BEFORE the DDL (V1 ПДн encryption). It lives
+        # in the public/extension schema, so it is shared across tenant schemas. A
+        # role without CREATE EXTENSION privilege must not abort schema creation —
+        # we record availability and degrade to the Python-side cipher token.
+        self._pgcrypto = self._ensure_pgcrypto(conn)
         if self.tenant_schema:
             from psycopg import sql
             conn.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(
@@ -106,6 +112,23 @@ class PgAccessStore:
         with open(_SCHEMA_SQL_PATH, encoding='utf-8') as f:
             ddl = f.read()
         conn.execute(ddl)
+
+    @staticmethod
+    def _ensure_pgcrypto(conn):
+        """Best-effort ``CREATE EXTENSION pgcrypto`` + verify pgp_sym_* are callable.
+
+        Returns True iff in-database encryption is available. On a role without the
+        privilege (or pgcrypto absent) returns False so review writes fall back to
+        the Python-side cipher token — still ciphertext at rest, just not pgcrypto."""
+        try:
+            conn.execute('CREATE EXTENSION IF NOT EXISTS pgcrypto')
+        except Exception:
+            pass
+        try:
+            conn.execute("SELECT pgp_sym_decrypt(pgp_sym_encrypt('x', 'k'), 'k')").fetchone()
+            return True
+        except Exception:
+            return False
 
     # ---- password hashing — reuse the sqlite store's pbkdf2 (hashes interchangeable) ----
     @staticmethod
@@ -356,26 +379,80 @@ class PgAccessStore:
             'AND db=%s AND mfn=%s', (ticket, list_id, db, mfn))
 
     # ---- reader-portal v2 social (#134/#133) — reviews / history / saved searches ----
+    # reader_name is ПДн: stored ENCRYPTED at rest (V1) in the BYTEA column. The
+    # real prod path is pgcrypto pgp_sym_encrypt(name, PDN_KEY) IN-DATABASE,
+    # decrypted on read with pgp_sym_decrypt (key bound as a parameter, never
+    # interpolated). When pgcrypto is unavailable (role lacks the extension) the
+    # store falls back to the Python-side cipher TOKEN stored as the column's bytes
+    # — still ciphertext at rest, decrypted with crypto.decrypt. Either way the
+    # caller sees plaintext transparently.
+    def _review_select_cols(self):
+        """SELECT column list that yields a decrypted ``reader_name`` for the
+        active backend. pgcrypto decrypts in-DB; the fallback returns raw bytes
+        which _row_decrypt() turns back into the plaintext via the token cipher."""
+        if getattr(self, '_pgcrypto', False):
+            return ('id, ticket, db, mfn, rating, text, ts, '
+                    'pgp_sym_decrypt(reader_name, %s) AS reader_name'), (crypto.pg_key(),)
+        return 'id, ticket, db, mfn, rating, text, ts, reader_name', ()
+
+    @staticmethod
+    def _row_decrypt(row):
+        """Normalize a review row: decode a token-fallback bytea reader_name back to
+        plaintext. pgcrypto rows already carry plaintext text; pass them through."""
+        if row is None:
+            return None
+        d = dict(row)
+        v = d.get('reader_name')
+        if isinstance(v, (bytes, bytearray, memoryview)):
+            d['reader_name'] = crypto.decrypt(bytes(v).decode('utf-8', 'replace'))
+        return d
+
     def review_upsert(self, ticket, db, mfn, rating, text, reader_name, ts):
+        if getattr(self, '_pgcrypto', False) and reader_name:
+            name_sql, name_args = 'pgp_sym_encrypt(%s, %s)', (reader_name, crypto.pg_key())
+        elif reader_name:
+            # Fallback: store the Python-cipher token's UTF-8 bytes in the bytea col.
+            name_sql, name_args = '%s', (crypto.encrypt(reader_name).encode('utf-8'),)
+        else:
+            name_sql, name_args = '%s', (None,)
         r = self._conn().execute(
             'INSERT INTO reader_review(ticket,db,mfn,rating,text,reader_name,ts) '
-            'VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(ticket,db,mfn) DO UPDATE SET '
+            'VALUES(%s,%s,%s,%s,%s,' + name_sql + ',%s) '
+            'ON CONFLICT(ticket,db,mfn) DO UPDATE SET '
             'rating=EXCLUDED.rating, text=EXCLUDED.text, '
             'reader_name=EXCLUDED.reader_name, ts=EXCLUDED.ts RETURNING id',
-            (ticket, db, mfn, rating, text, reader_name, ts)).fetchone()
-        return self._conn().execute(
-            'SELECT * FROM reader_review WHERE id=%s', (r['id'],)).fetchone()
+            (ticket, db, mfn, rating, text) + name_args + (ts,)).fetchone()
+        cols, kargs = self._review_select_cols()
+        row = self._conn().execute(
+            'SELECT ' + cols + ' FROM reader_review WHERE id=%s',
+            kargs + (r['id'],)).fetchone()
+        return self._row_decrypt(row)
 
     def reviews_for(self, db, mfn):
-        return [dict(r) for r in self._conn().execute(
-            'SELECT * FROM reader_review WHERE db=%s AND mfn=%s '
-            'ORDER BY ts DESC, id DESC', (db, mfn)).fetchall()]
+        cols, kargs = self._review_select_cols()
+        return [self._row_decrypt(r) for r in self._conn().execute(
+            'SELECT ' + cols + ' FROM reader_review WHERE db=%s AND mfn=%s '
+            'ORDER BY ts DESC, id DESC', kargs + (db, mfn)).fetchall()]
 
     def review_mine(self, ticket, db, mfn):
+        cols, kargs = self._review_select_cols()
         r = self._conn().execute(
-            'SELECT * FROM reader_review WHERE ticket=%s AND db=%s AND mfn=%s',
+            'SELECT ' + cols + ' FROM reader_review '
+            'WHERE ticket=%s AND db=%s AND mfn=%s',
+            kargs + (ticket, db, mfn)).fetchone()
+        return self._row_decrypt(r) if r else None
+
+    def review_name_ciphertext(self, ticket, db, mfn):
+        """The RAW (encrypted BYTEA) reader_name — for tests/forensics asserting the
+        at-rest value is ciphertext, not plaintext."""
+        r = self._conn().execute(
+            'SELECT reader_name FROM reader_review WHERE ticket=%s AND db=%s AND mfn=%s',
             (ticket, db, mfn)).fetchone()
-        return dict(r) if r else None
+        if not r:
+            return None
+        v = r['reader_name']
+        # psycopg returns BYTEA as memoryview/bytes; normalize to bytes for tests.
+        return bytes(v) if v is not None else None
 
     def review_delete(self, ticket, review_id):
         row = self._conn().execute(
@@ -420,6 +497,43 @@ class PgAccessStore:
             return None
         self._conn().execute('DELETE FROM saved_search WHERE id=%s', (search_id,))
         return dict(row)
+
+    # ---- consent (V9) — append-only; latest row by ts is effective ----
+    def consent_record(self, ticket, given, version, ts):
+        self._conn().execute(
+            'INSERT INTO reader_consent(ticket,given,version,ts) VALUES(%s,%s,%s,%s)',
+            (ticket, bool(given), int(version), ts))
+        return self.consent_current(ticket)
+
+    def consent_current(self, ticket):
+        r = self._conn().execute(
+            'SELECT given,version,ts FROM reader_consent WHERE ticket=%s '
+            'ORDER BY ts DESC, id DESC LIMIT 1', (ticket,)).fetchone()
+        if not r:
+            return None
+        return {'given': bool(r['given']), 'ts': r['ts'], 'version': r['version']}
+
+    # ---- right to erasure (V9) — delete OUR stored reader data only ----
+    def erase_reader(self, ticket):
+        c = self._conn()
+        counts = {}
+        for key, sql in (
+                ('reviews', 'DELETE FROM reader_review WHERE ticket=%s'),
+                ('holds', 'DELETE FROM reader_hold WHERE ticket=%s'),
+                ('shelves', 'DELETE FROM reader_shelf WHERE ticket=%s'),
+                ('shelfItems', 'DELETE FROM reader_shelf_item WHERE ticket=%s'),
+                ('history', 'DELETE FROM reader_history WHERE ticket=%s'),
+                ('savedSearches', 'DELETE FROM saved_search WHERE ticket=%s'),
+                ('consent', 'DELETE FROM reader_consent WHERE ticket=%s')):
+            cur = c.execute(sql, (ticket,))
+            counts[key] = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+        return counts
+
+    # ---- PDn-access journal read (V5) — entries written via audit() ----
+    def pdn_access_log(self, limit=50):
+        return [dict(r) for r in self._conn().execute(
+            "SELECT * FROM audit_log WHERE function='pdn.read' "
+            'ORDER BY id DESC LIMIT %s', (limit,)).fetchall()]
 
 
 def make_store(cfg=None):
