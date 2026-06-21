@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biblio — библиотечная платформа нового поколения</title>
+<!--
+  Стиль B (Apple Glassmorphism) — self-contained marketing landing.
+  Own Style-B palette (NOT the Style-A token layer). No external CDN / Google Fonts.
+  Fonts are self-host-ready stacks; drop @font-face files in to upgrade.
+  Includes prefers-reduced-transparency + prefers-reduced-motion fallbacks.
+-->
+<style>
+  :root{
+    /* ---- Style B palette (self-contained) ---- */
+    --b-ink:        #0E0D14;     /* page canvas */
+    --b-text:       #F4F1EC;
+    --b-text-72:    rgba(244,241,236,.72);
+    --b-text-66:    rgba(244,241,236,.66);
+    --b-text-62:    rgba(244,241,236,.62);
+    --b-text-55:    rgba(244,241,236,.55);
+    --b-text-45:    rgba(244,241,236,.45);
+    --b-clay:       #E08A5C;
+    --b-clay-deep:  #C96442;
+    --b-grad:       linear-gradient(150deg, #E08A5C, #C96442);
+
+    /* glass primitives — overridden under reduced-transparency */
+    --glass-bg:     rgba(255,255,255,.06);
+    --glass-border: rgba(255,255,255,.12);
+    --glass-blur:   blur(20px) saturate(150%);
+    --glass-shadow: 0 16px 50px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.14);
+
+    --font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    --font-sans:  'Onest', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--b-ink); }
+  body{ font-family:var(--font-sans); color:var(--b-text); overflow-x:hidden; -webkit-font-smoothing:antialiased; }
+  ::selection{ background:rgba(224,138,92,.35); }
+  a{ color:inherit; }
+  a:focus-visible, button:focus-visible{ outline:2px solid var(--b-clay); outline-offset:3px; border-radius:6px; }
+
+  @keyframes floaty  { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-14px); } }
+  @keyframes floaty2 { 0%,100% { transform:translateY(0); } 50% { transform:translateY(10px); } }
+
+  /* ---- decorative background ---- */
+  .mesh, .vignette{ position:fixed; inset:0; z-index:0; }
+  .mesh{
+    background:
+      radial-gradient(at 16% 10%, rgba(224,138,92,.50), transparent 42%),
+      radial-gradient(at 84% 6%,  rgba(138,79,158,.45), transparent 40%),
+      radial-gradient(at 74% 72%, rgba(79,91,213,.42),  transparent 46%),
+      radial-gradient(at 10% 82%, rgba(31,138,91,.30),  transparent 46%),
+      var(--b-ink);
+  }
+  .vignette{ background:radial-gradient(at 50% 50%, transparent 60%, rgba(14,13,20,.55)); pointer-events:none; }
+
+  .page{ position:relative; z-index:1; }
+  .container{ max-width:1180px; margin:0 auto; }
+
+  /* ---- glass utility ---- */
+  .glass{
+    background:var(--glass-bg);
+    -webkit-backdrop-filter:var(--glass-blur); backdrop-filter:var(--glass-blur);
+    border:1px solid var(--glass-border);
+    box-shadow:var(--glass-shadow);
+  }
+
+  /* ---- nav ---- */
+  .nav-wrap{ padding:22px 24px 0; }
+  nav.bar{ display:flex; align-items:center; gap:18px; padding:11px 12px 11px 20px; border-radius:9999px; box-shadow:0 12px 40px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.16); }
+  .brand{ display:flex; align-items:center; gap:11px; }
+  .brand-logo{ width:30px; height:30px; border-radius:9px; background:var(--b-grad); display:flex; align-items:center; justify-content:center; box-shadow:0 4px 14px rgba(201,100,66,.5); }
+  .brand-name{ font-family:var(--font-serif); font-weight:600; font-size:19px; letter-spacing:-.01em; }
+  .nav-links{ display:flex; gap:6px; margin-left:14px; }
+  .nav-links a{ padding:7px 14px; border-radius:9999px; font-size:13.5px; font-weight:500; color:var(--b-text-72); text-decoration:none; }
+  .nav-links a:hover{ color:var(--b-text); background:rgba(255,255,255,.07); }
+  .nav-cta{ margin-left:auto; display:flex; align-items:center; gap:8px; }
+  .nav-cta a.login{ padding:9px 16px; border-radius:9999px; font-size:13.5px; font-weight:500; color:var(--b-text); text-decoration:none; }
+  .nav-cta a.login:hover{ background:rgba(255,255,255,.08); }
+  .btn-primary{ display:inline-flex; align-items:center; gap:9px; border-radius:9999px; font-weight:600; color:#fff; text-decoration:none; background:var(--b-grad); box-shadow:0 6px 20px rgba(201,100,66,.45); }
+  .nav-cta .btn-primary{ padding:9px 18px; font-size:13.5px; }
+
+  /* ---- hero ---- */
+  .hero{ padding:80px 24px 60px; display:grid; grid-template-columns:1.05fr .95fr; gap:50px; align-items:center; }
+  @media (max-width:880px){ .hero{ grid-template-columns:1fr; gap:36px; } }
+  .pill{ display:inline-flex; align-items:center; gap:9px; padding:7px 14px; border-radius:9999px; font-size:12.5px; font-weight:500; color:rgba(244,241,236,.9); }
+  .pill .ping{ width:7px; height:7px; border-radius:9999px; background:var(--b-clay); box-shadow:0 0 10px var(--b-clay); }
+  .hero h1{ font-weight:800; font-size:clamp(44px,5.6vw,74px); line-height:1.02; letter-spacing:-.035em; margin:24px 0 0; }
+  .hero p.lede{ font-size:19px; line-height:1.6; color:var(--b-text-72); margin:22px 0 0; max-width:48ch; }
+  .hero-actions{ display:flex; gap:12px; margin-top:34px; flex-wrap:wrap; }
+  .btn-lg-primary{ display:inline-flex; align-items:center; gap:9px; padding:14px 26px; border-radius:13px; font-size:15px; font-weight:600; color:#fff; text-decoration:none; background:var(--b-grad); box-shadow:0 12px 32px rgba(201,100,66,.45); }
+  .btn-lg-glass{ display:inline-flex; align-items:center; gap:9px; padding:14px 24px; border-radius:13px; font-size:15px; font-weight:600; color:var(--b-text); text-decoration:none; }
+  .avatars-row{ display:flex; align-items:center; gap:12px; margin-top:34px; }
+  .avatars{ display:flex; }
+  .avatars span{ width:32px; height:32px; border-radius:9999px; border:2px solid var(--b-ink); }
+  .avatars span+span{ margin-left:-9px; }
+  .avatars-note{ font-size:13px; color:var(--b-text-62); }
+
+  /* hero product mockup */
+  .mock{ border-radius:22px; padding:14px; box-shadow:0 30px 80px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.22); }
+  .mock-screen{ border-radius:14px; background:#FBFAF7; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+  .mock-bar{ display:flex; align-items:center; gap:8px; padding:11px 14px; background:#F0EEE6; border-bottom:1px solid #E4E0D6; }
+  .mock-bar .dot{ width:9px; height:9px; border-radius:9999px; }
+  .mock-bar .label{ margin-left:10px; font-size:11.5px; color:#8A857A; }
+  .mock-body{ padding:16px; }
+  .mock-search{ display:flex; align-items:center; gap:8px; background:#F0EEE6; border:1px solid #E4E0D6; border-radius:9px; padding:8px 11px; color:#8A857A; font-size:12.5px; }
+  .mock-list{ display:flex; flex-direction:column; gap:9px; margin-top:13px; }
+  .mock-item{ display:flex; gap:12px; padding:11px; border:1px solid #E4E0D6; border-radius:11px; background:#FBFAF7; }
+  .mock-cover{ width:42px; height:58px; border-radius:6px; flex:none; }
+  .mock-title{ font-family:var(--font-serif); font-weight:600; font-size:14px; color:#26241F; }
+  .mock-author{ font-size:11.5px; color:#5C5850; margin-top:2px; }
+  .mock-badge{ display:inline-flex; align-items:center; gap:4px; margin-top:7px; padding:2px 7px; border-radius:5px; font-size:10.5px; font-weight:600; }
+  .mock-badge .dot{ width:5px; height:5px; border-radius:9999px; }
+
+  /* ---- stats ---- */
+  .stats-wrap{ padding:14px 24px 40px; }
+  .stats{ display:grid; grid-template-columns:repeat(4,1fr); border-radius:18px; overflow:hidden; }
+  @media (max-width:680px){ .stats{ grid-template-columns:1fr 1fr; } }
+  .stat{ padding:26px 28px; border-right:1px solid rgba(255,255,255,.1); }
+  .stat:last-child{ border-right:none; }
+  .stat .num{ font-weight:800; font-size:34px; letter-spacing:-.03em; }
+  .stat .num .accent{ color:var(--b-clay); }
+  .stat .cap{ font-size:13px; color:var(--b-text-62); margin-top:4px; }
+
+  /* ---- section heads ---- */
+  .sec{ padding:50px 24px; }
+  .sec-head{ text-align:center; margin-bottom:42px; }
+  .eyebrow{ font-size:13px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--b-clay); }
+  .sec-head h2{ font-weight:800; font-size:clamp(30px,3.6vw,44px); letter-spacing:-.03em; margin:14px 0 0; }
+
+  /* ---- features ---- */
+  .feature-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:20px; }
+  @media (max-width:880px){ .feature-grid{ grid-template-columns:1fr; } }
+  .feature{ padding:28px; border-radius:18px; }
+  .feature .ic{ width:50px; height:50px; border-radius:13px; border:1px solid rgba(255,255,255,.16); display:flex; align-items:center; justify-content:center; }
+  .feature h3{ font-weight:700; font-size:20px; letter-spacing:-.02em; margin:18px 0 0; }
+  .feature p{ font-size:14.5px; line-height:1.6; color:var(--b-text-66); margin:10px 0 0; }
+
+  /* ---- pricing ---- */
+  .price-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:20px; align-items:stretch; }
+  @media (max-width:880px){ .price-grid{ grid-template-columns:1fr; } }
+  .tier{ display:flex; flex-direction:column; padding:30px; border-radius:20px; }
+  .tier .name{ font-size:14px; font-weight:600; color:var(--b-text-72); }
+  .tier .price{ margin:16px 0 4px; display:flex; align-items:baseline; gap:6px; }
+  .tier .price .amt{ font-weight:800; font-size:40px; letter-spacing:-.03em; }
+  .tier .price .per{ font-size:15px; color:var(--b-text-55); }
+  .tier .who{ font-size:13px; color:var(--b-text-55); }
+  .tier .rule{ height:1px; background:rgba(255,255,255,.1); margin:22px 0; }
+  .tier ul{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:11px; flex:1; }
+  .tier li{ display:flex; gap:9px; font-size:14px; color:rgba(244,241,236,.82); }
+  .tier li svg{ flex:none; margin-top:1px; }
+  .tier-cta{ margin-top:24px; text-align:center; padding:12px; border-radius:11px; font-size:14px; font-weight:600; color:var(--b-text); text-decoration:none; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); }
+  .tier-cta.solid{ padding:13px; color:#fff; background:var(--b-grad); border:none; box-shadow:0 12px 30px rgba(201,100,66,.45); }
+  .tier.featured{ background:linear-gradient(160deg,rgba(224,138,92,.22),rgba(255,255,255,.05)); border:1px solid rgba(224,138,92,.45); box-shadow:0 26px 70px rgba(201,100,66,.32), inset 0 1px 0 rgba(255,255,255,.25); position:relative; }
+  .tier.featured .name{ color:#F4D2C0; }
+  .tier.featured .per{ color:var(--b-text-62); }
+  .tier.featured .who{ color:var(--b-text-62); }
+  .tier.featured .rule{ background:rgba(255,255,255,.14); }
+  .tier.featured li{ color:var(--b-text); }
+  .tier-flag{ position:absolute; top:-12px; left:30px; padding:5px 13px; border-radius:9999px; background:var(--b-grad); font-size:11.5px; font-weight:700; color:#fff; box-shadow:0 6px 18px rgba(201,100,66,.5); }
+
+  /* ---- testimonial ---- */
+  .quote-wrap{ max-width:900px; margin:0 auto; padding:40px 24px 50px; }
+  .quote{ padding:42px; border-radius:22px; text-align:center; }
+  .quote blockquote{ font-family:var(--font-serif); font-size:clamp(22px,2.6vw,30px); line-height:1.4; letter-spacing:-.01em; margin:22px 0 0; color:var(--b-text); }
+  .quote .who{ display:flex; align-items:center; justify-content:center; gap:12px; margin-top:28px; }
+  .quote .ava{ width:46px; height:46px; border-radius:9999px; background:linear-gradient(150deg,#4F5BD5,#3F4ABF); display:flex; align-items:center; justify-content:center; font-weight:600; font-size:15px; color:#fff; }
+  .quote .who-name{ font-weight:600; font-size:15px; text-align:left; }
+  .quote .who-role{ font-size:13px; color:var(--b-text-62); text-align:left; }
+
+  /* ---- CTA ---- */
+  .cta-wrap{ max-width:1180px; margin:0 auto; padding:30px 24px 70px; }
+  .cta{ position:relative; overflow:hidden; padding:56px; border-radius:26px; text-align:center; background:linear-gradient(150deg,rgba(224,138,92,.2),rgba(138,79,158,.16)); box-shadow:0 30px 80px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.22); }
+  .cta .blob{ position:absolute; top:-40px; right:-30px; width:180px; height:180px; border-radius:9999px; background:radial-gradient(circle, rgba(224,138,92,.5), transparent 70%); }
+  .cta h2{ font-weight:800; font-size:clamp(30px,4vw,48px); letter-spacing:-.03em; margin:0; position:relative; }
+  .cta p{ font-size:17px; line-height:1.6; color:var(--b-text-72); margin:16px auto 0; max-width:52ch; position:relative; }
+  .cta-actions{ display:flex; gap:12px; justify-content:center; margin-top:30px; flex-wrap:wrap; position:relative; }
+  .cta-actions a.solid{ padding:14px 28px; border-radius:13px; font-size:15px; font-weight:600; color:#fff; text-decoration:none; background:var(--b-grad); box-shadow:0 12px 32px rgba(201,100,66,.45); }
+  .cta-actions a.ghost{ padding:14px 26px; border-radius:13px; font-size:15px; font-weight:600; color:var(--b-text); text-decoration:none; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); }
+
+  /* ---- footer ---- */
+  footer{ border-top:1px solid rgba(255,255,255,.08); }
+  .foot-top{ max-width:1180px; margin:0 auto; padding:40px 24px; display:flex; justify-content:space-between; align-items:flex-start; gap:30px; flex-wrap:wrap; }
+  .foot-about{ max-width:280px; }
+  .foot-brand{ display:flex; align-items:center; gap:10px; }
+  .foot-brand .lg{ width:28px; height:28px; border-radius:8px; background:var(--b-grad); display:flex; align-items:center; justify-content:center; }
+  .foot-brand .nm{ font-family:var(--font-serif); font-weight:600; font-size:17px; }
+  .foot-about p{ font-size:13px; line-height:1.6; color:var(--b-text-45); margin:14px 0 0; }
+  .foot-cols{ display:flex; gap:56px; flex-wrap:wrap; }
+  .foot-col{ display:flex; flex-direction:column; gap:10px; }
+  .foot-col .ttl{ font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--b-text-45); }
+  .foot-col a{ font-size:13.5px; color:var(--b-text-72); text-decoration:none; }
+  .foot-col a:hover{ color:var(--b-text); }
+  .foot-bottom{ border-top:1px solid rgba(255,255,255,.06); padding:18px 24px; text-align:center; }
+  .foot-bottom span{ font-size:12px; color:var(--b-text-45); }
+
+  /* ============================================================
+     ACCESSIBILITY FALLBACKS
+     ============================================================ */
+  /* Reduced transparency → opaque frosted surfaces, no blur. */
+  @media (prefers-reduced-transparency: reduce){
+    :root{
+      --glass-bg:     rgba(24,21,30,.97);
+      --glass-border: rgba(255,255,255,.16);
+      --glass-blur:   none;
+      --glass-shadow: 0 16px 50px rgba(0,0,0,.40);
+    }
+    .glass{ -webkit-backdrop-filter:none !important; backdrop-filter:none !important; background:rgba(24,21,30,.97) !important; }
+    .mesh{ background:#16131C !important; }
+    .vignette{ display:none; }
+    .tier.featured{ background:rgba(46,33,28,.97) !important; }
+    .cta{ background:rgba(40,28,38,.97) !important; }
+    .quote blockquote{ color:var(--b-text); }
+  }
+  /* Reduced motion → freeze floats. (token-layer reset is per-page here.) */
+  @media (prefers-reduced-motion: reduce){
+    [data-float]{ animation:none !important; }
+    *, *::before, *::after{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; scroll-behavior:auto !important; }
+  }
+</style>
+</head>
+<body>
+  <!-- decorative background (hidden from AT) -->
+  <div class="mesh" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <div class="page">
+
+    <!-- ===== NAV ===== -->
+    <div class="nav-wrap container">
+      <nav class="bar glass" aria-label="Главная навигация">
+        <a href="#hero" class="brand" aria-label="Biblio — на главную">
+          <span class="brand-logo" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+          <span class="brand-name">Biblio</span>
+        </a>
+        <div class="nav-links">
+          <a href="#features">Возможности</a>
+          <a href="#pricing">Тарифы</a>
+          <a href="#cases">Кейсы</a>
+          <a href="#docs">Документация</a>
+        </div>
+        <div class="nav-cta">
+          <a href="#login" class="login">Войти</a>
+          <a href="#demo" class="btn-primary">Запросить демо</a>
+        </div>
+      </nav>
+    </div>
+
+    <main>
+    <!-- ===== HERO ===== -->
+    <section class="hero container" id="hero" aria-labelledby="hero-h">
+      <div>
+        <span class="pill glass"><span class="ping" aria-hidden="true"></span>Библиотечная платформа нового поколения</span>
+        <h1 id="hero-h">Библиотека<br>без хаоса</h1>
+        <p class="lede">Каталогизация, выдача, постаматы и читательский кабинет — в одной системе. Современная замена САБ ИРБИС64+ с мультиарендностью и доступностью из коробки.</p>
+        <div class="hero-actions">
+          <a href="#demo" class="btn-lg-primary">Запросить демо<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></a>
+          <a href="#features" class="btn-lg-glass glass"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>Смотреть возможности</a>
+        </div>
+        <div class="avatars-row">
+          <div class="avatars" aria-hidden="true">
+            <span style="background:#C96442;"></span>
+            <span style="background:#4F5BD5;"></span>
+            <span style="background:#1F8A5B;"></span>
+            <span style="background:#8A4F9E;"></span>
+          </div>
+          <span class="avatars-note">Внедрено в библиотеках — от школьных до вузовских</span>
+        </div>
+      </div>
+
+      <!-- glass product mockup -->
+      <div data-float style="animation:floaty 7s ease-in-out infinite;">
+        <div class="mock glass" role="img" aria-label="Снимок каталога Biblio: поиск и карточки книг со статусами наличия">
+          <div class="mock-screen">
+            <div class="mock-bar">
+              <span class="dot" style="background:#E08A5C;"></span><span class="dot" style="background:#E4C04A;"></span><span class="dot" style="background:#6FBF73;"></span>
+              <span class="label">Каталог · Biblio</span>
+            </div>
+            <div class="mock-body">
+              <div class="mock-search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>программирование</div>
+              <div class="mock-list">
+                <div class="mock-item">
+                  <div class="mock-cover" style="background:linear-gradient(150deg,#2F5D62,#22454a);"></div>
+                  <div style="flex:1; min-width:0;"><div class="mock-title">Чистый код</div><div class="mock-author">Роберт Мартин · 2019</div><span class="mock-badge" style="background:#E4F0E8; color:#2E7D52;"><span class="dot" style="background:#2E7D52;"></span>В наличии · 3 экз.</span></div>
+                </div>
+                <div class="mock-item">
+                  <div class="mock-cover" style="background:linear-gradient(150deg,#C96442,#9a4f35);"></div>
+                  <div style="flex:1; min-width:0;"><div class="mock-title">Рефакторинг</div><div class="mock-author">Мартин Фаулер · 2019</div><span class="mock-badge" style="background:#E3ECF8; color:#2F6DB5;"><span class="dot" style="background:#2F6DB5;"></span>В постамате №9</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== STATS ===== -->
+    <section class="stats-wrap container" aria-label="Ключевые показатели">
+      <div class="stats glass">
+        <div class="stat"><div class="num">84&thinsp;000<span class="accent">+</span></div><div class="cap">записей в каталоге</div></div>
+        <div class="stat"><div class="num">3</div><div class="cap">оси тем · мультиаренда</div></div>
+        <div class="stat"><div class="num">99.9<span class="accent">%</span></div><div class="cap">аптайм платформы</div></div>
+        <div class="stat"><div class="num">AA</div><div class="cap">WCAG 2.2 · ГОСТ</div></div>
+      </div>
+    </section>
+
+    <!-- ===== FEATURES ===== -->
+    <section class="sec container" id="features" aria-labelledby="features-h">
+      <div class="sec-head">
+        <span class="eyebrow">Возможности</span>
+        <h2 id="features-h">Вся работа библиотеки — в одной системе</h2>
+      </div>
+      <div class="feature-grid">
+        <article class="feature glass">
+          <div class="ic" style="background:linear-gradient(150deg,rgba(224,138,92,.35),rgba(201,100,66,.2));" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F4D2C0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
+          <h3>Каталогизация RUSMARC</h3>
+          <p>DynamicField с ФЛК-валидацией, авторитетные файлы, дерево УДК/ББК и серверные форматы вывода.</p>
+        </article>
+        <article class="feature glass">
+          <div class="ic" style="background:linear-gradient(150deg,rgba(79,91,213,.35),rgba(79,91,213,.18));" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C9CEF6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></div>
+          <h3>Постаматы и выдача</h3>
+          <p>Ячеистое хранение с планом помещения, самообслуживание, книгоприём и инвентаризация по RFID.</p>
+        </article>
+        <article class="feature glass">
+          <div class="ic" style="background:linear-gradient(150deg,rgba(31,138,91,.35),rgba(31,138,91,.18));" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#BDE3CE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
+          <h3>Мультиарендность</h3>
+          <p>White-label под каждую библиотеку: редактор тем, бренд-цвет из seed и контраст-гард, не ломающий доступность.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ===== PRICING ===== -->
+    <section class="sec container" id="pricing" aria-labelledby="pricing-h">
+      <div class="sec-head">
+        <span class="eyebrow">Тарифы</span>
+        <h2 id="pricing-h">Под размер вашего фонда</h2>
+      </div>
+      <div class="price-grid">
+        <!-- tier 1 -->
+        <article class="tier glass">
+          <span class="name">Базовая</span>
+          <div class="price"><span class="amt">29&thinsp;000</span><span class="per">₽ / мес</span></div>
+          <span class="who">для школьных и сельских библиотек</span>
+          <div class="rule"></div>
+          <ul>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6FBF73" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Каталог и читательский кабинет</li>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6FBF73" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>До 30 000 записей</li>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6FBF73" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>PWA и офлайн-доступ</li>
+          </ul>
+          <a href="#demo" class="tier-cta">Выбрать</a>
+        </article>
+        <!-- tier 2 highlighted -->
+        <article class="tier featured glass">
+          <span class="tier-flag">Популярный</span>
+          <span class="name">Профессиональная</span>
+          <div class="price"><span class="amt">79&thinsp;000</span><span class="per">₽ / мес</span></div>
+          <span class="who">для городских и вузовских библиотек</span>
+          <div class="rule"></div>
+          <ul>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#E08A5C" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Всё из «Базовой» без лимитов</li>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#E08A5C" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Постаматы и рабочее место сотрудника</li>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#E08A5C" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Редактор тем · white-label</li>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#E08A5C" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Аналитика и BI-дашборды</li>
+          </ul>
+          <a href="#demo" class="tier-cta solid">Запросить демо</a>
+        </article>
+        <!-- tier 3 -->
+        <article class="tier glass">
+          <span class="name">Ведомственная</span>
+          <div class="price"><span class="amt">По запросу</span></div>
+          <span class="who">сети, кастом-домен, managed white-label</span>
+          <div class="rule"></div>
+          <ul>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6FBF73" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Защищённый контур · self-host</li>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6FBF73" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>ЕСИА и интеграции</li>
+            <li><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6FBF73" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>SLA и выделенная поддержка</li>
+          </ul>
+          <a href="#demo" class="tier-cta">Связаться</a>
+        </article>
+      </div>
+    </section>
+
+    <!-- ===== TESTIMONIAL ===== -->
+    <section class="quote-wrap" id="cases" aria-label="Отзыв клиента">
+      <figure class="quote glass" style="margin:0;">
+        <svg width="34" height="34" style="opacity:.5; margin:0 auto; display:block;" viewBox="0 0 24 24" fill="#E08A5C" aria-hidden="true"><path d="M9.5 7C6.5 7 5 9.5 5 12v5h5v-5H7.5c0-1.5.5-3 2-3V7zm9 0c-3 0-4.5 2.5-4.5 5v5h5v-5H16c0-1.5.5-3 2-3V7z"/></svg>
+        <blockquote style="margin:22px 0 0;">«Перешли с ИРБИС за месяц. Сотрудники освоили каталогизацию без обучения, а читатели наконец-то находят книги сами».</blockquote>
+        <figcaption class="who">
+          <span class="ava" aria-hidden="true">ОЛ</span>
+          <div><div class="who-name">Ольга Лебедева</div><div class="who-role">директор, Городская библиотека №3</div></div>
+        </figcaption>
+      </figure>
+    </section>
+
+    <!-- ===== CTA ===== -->
+    <section class="cta-wrap" id="demo" aria-labelledby="cta-h">
+      <div class="cta glass">
+        <div class="blob" data-float style="animation:floaty2 9s ease-in-out infinite;" aria-hidden="true"></div>
+        <h2 id="cta-h">Покажем Biblio на вашем фонде</h2>
+        <p>Демо за 30 минут: перенесём образец каталога, настроим тему вашей библиотеки и пройдём ключевые сценарии.</p>
+        <div class="cta-actions">
+          <a href="#demo" class="solid">Запросить демо</a>
+          <a href="#docs" class="ghost">Документация</a>
+        </div>
+      </div>
+    </section>
+    </main>
+
+    <!-- ===== FOOTER ===== -->
+    <footer id="docs">
+      <div class="foot-top">
+        <div class="foot-about">
+          <div class="foot-brand">
+            <span class="lg" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+            <span class="nm">Biblio</span>
+          </div>
+          <p>Мультиарендная библиотечная платформа. Защищённый контур, доступность из коробки.</p>
+        </div>
+        <nav class="foot-cols" aria-label="Подвал сайта">
+          <div class="foot-col"><span class="ttl">Продукт</span><a href="#features">Возможности</a><a href="#pricing">Тарифы</a><a href="#cases">Кейсы</a></div>
+          <div class="foot-col"><span class="ttl">Ресурсы</span><a href="#docs">Документация</a><a href="#docs">API</a><a href="#docs">Поддержка</a></div>
+          <div class="foot-col"><span class="ttl">Компания</span><a href="#docs">О нас</a><a href="#docs">Контакты</a><a href="#docs">Оферта</a></div>
+        </nav>
+      </div>
+      <div class="foot-bottom"><span>© 2026 Biblio · Стиль B (Apple Glass) · prefers-reduced-transparency → непрозрачные поверхности</span></div>
+    </footer>
+
+  </div>
+</body>
+</html>
