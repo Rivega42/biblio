@@ -13,6 +13,8 @@ import json
 import threading
 import time
 
+from . import crypto
+
 SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS staff_account (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,6 +163,18 @@ CREATE TABLE IF NOT EXISTS saved_search (
   created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS saved_search_ticket_idx ON saved_search(ticket, id);
+-- Consent (152-ФЗ ст.6/9, audit finding V9 / R9) — append-only: a new state is a
+-- NEW row, never an UPDATE, so withdraw + re-consent is HISTORY not overwrite
+-- (SPEC_compliance_152fz §2.5). The effective consent for a reader is the latest
+-- row by ts. Reader-scoped by RDR ticket (readers are not in staff_account).
+CREATE TABLE IF NOT EXISTS reader_consent (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket TEXT NOT NULL,
+  given INTEGER NOT NULL,            -- 1 granted | 0 withdrawn
+  version INTEGER NOT NULL DEFAULT 1, -- privacy-policy version the consent is for
+  ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reader_consent_ticket_idx ON reader_consent(ticket, ts DESC);
 """
 
 
@@ -471,32 +485,60 @@ class AccessStore:
         c.commit()
 
     # ---- reader-portal v2 social (#134/#133) — reviews / history / saved searches ----
+    @staticmethod
+    def _decrypt_review(row):
+        """Return the review dict with ``reader_name`` decrypted (V1).
+
+        The column is stored as ciphertext at rest (crypto.encrypt); decryption is
+        transparent — a legacy plaintext row passes through unchanged."""
+        if row is None:
+            return None
+        d = dict(row)
+        if 'reader_name' in d:
+            d['reader_name'] = crypto.decrypt(d['reader_name'])
+        return d
+
     def review_upsert(self, ticket, db, mfn, rating, text, reader_name, ts):
-        """Insert/replace the reader's review of (db,mfn) (one per reader+item)."""
+        """Insert/replace the reader's review of (db,mfn) (one per reader+item).
+
+        ``reader_name`` is the reader's resolved display name (ПДн); it is
+        ENCRYPTED at rest (V1) so a raw DB dump never reveals it. The returned row
+        is decrypted for the caller (transparent)."""
         c = self._conn()
+        enc_name = crypto.encrypt(reader_name)
         c.execute(
             'INSERT INTO reader_review(ticket,db,mfn,rating,text,reader_name,ts) '
             'VALUES(?,?,?,?,?,?,?) ON CONFLICT(ticket,db,mfn) DO UPDATE SET '
             'rating=excluded.rating, text=excluded.text, '
             'reader_name=excluded.reader_name, ts=excluded.ts',
-            (ticket, db, mfn, rating, text, reader_name, ts))
+            (ticket, db, mfn, rating, text, enc_name, ts))
         c.commit()
         r = c.execute('SELECT * FROM reader_review WHERE ticket=? AND db=? AND mfn=?',
                       (ticket, db, mfn)).fetchone()
-        return dict(r)
+        return self._decrypt_review(r)
 
     def reviews_for(self, db, mfn):
-        """All reviews of (db,mfn), newest first — feeds avg/count + cards."""
-        return [dict(r) for r in self._conn().execute(
+        """All reviews of (db,mfn), newest first — feeds avg/count + cards.
+
+        ``reader_name`` is decrypted in the handler (stored ciphertext, V1)."""
+        return [self._decrypt_review(r) for r in self._conn().execute(
             'SELECT * FROM reader_review WHERE db=? AND mfn=? ORDER BY ts DESC, id DESC',
             (db, mfn)).fetchall()]
 
     def review_mine(self, ticket, db, mfn):
-        """The reader's own review of (db,mfn), or None."""
+        """The reader's own review of (db,mfn), or None (reader_name decrypted)."""
         r = self._conn().execute(
             'SELECT * FROM reader_review WHERE ticket=? AND db=? AND mfn=?',
             (ticket, db, mfn)).fetchone()
-        return dict(r) if r else None
+        return self._decrypt_review(r) if r else None
+
+    def review_name_ciphertext(self, ticket, db, mfn):
+        """The RAW stored ``reader_name`` value (no decrypt) — for tests/forensics
+        that need to assert the at-rest value is ciphertext, not plaintext."""
+        r = self._conn().execute(
+            'SELECT reader_name FROM reader_review WHERE ticket=? AND db=? AND mfn=?',
+            (ticket, db, mfn)).fetchone()
+        return r['reader_name'] if r else None
 
     def review_delete(self, ticket, review_id):
         """Delete the reader's OWN review by id; returns the row, or None when the
@@ -552,3 +594,59 @@ class AccessStore:
         c.execute('DELETE FROM saved_search WHERE id=?', (search_id,))
         c.commit()
         return dict(row)
+
+    # ---- consent (V9 / R9) — append-only; latest row by ts is effective ----
+    def consent_record(self, ticket, given, version, ts):
+        """Append a consent state (granted/withdrawn) for the reader. Never an
+        UPDATE — the prior state is kept as history (SPEC_compliance_152fz §2.5).
+        Returns the effective consent after the write."""
+        c = self._conn()
+        c.execute('INSERT INTO reader_consent(ticket,given,version,ts) VALUES(?,?,?,?)',
+                  (ticket, 1 if given else 0, int(version), ts))
+        c.commit()
+        return self.consent_current(ticket)
+
+    def consent_current(self, ticket):
+        """The reader's effective consent (latest row by ts), or None if never set.
+
+        Returns ``{'given': bool, 'ts': float, 'version': int}``."""
+        r = self._conn().execute(
+            'SELECT given,version,ts FROM reader_consent WHERE ticket=? '
+            'ORDER BY ts DESC, id DESC LIMIT 1', (ticket,)).fetchone()
+        if not r:
+            return None
+        return {'given': bool(r['given']), 'ts': r['ts'], 'version': r['version']}
+
+    # ---- right to erasure (V9 / R9) — delete OUR stored reader data only ----
+    # Deletes the reader's own rows across every table OUR store holds for a
+    # ticket. Does NOT touch the live ИРБИС RDR (that is the system of record);
+    # only the portal-side state we persisted. Reader-scoped: a ticket can only
+    # erase its own rows (the route guards the ticket == session).
+    def erase_reader(self, ticket):
+        """Delete all of ``ticket``'s portal data; return a per-table count dict."""
+        c = self._conn()
+        counts = {}
+        for key, sql in (
+                ('reviews', 'DELETE FROM reader_review WHERE ticket=?'),
+                ('holds', 'DELETE FROM reader_hold WHERE ticket=?'),
+                ('shelves', 'DELETE FROM reader_shelf WHERE ticket=?'),
+                ('shelfItems', 'DELETE FROM reader_shelf_item WHERE ticket=?'),
+                ('history', 'DELETE FROM reader_history WHERE ticket=?'),
+                ('savedSearches', 'DELETE FROM saved_search WHERE ticket=?'),
+                ('consent', 'DELETE FROM reader_consent WHERE ticket=?')):
+            cur = c.execute(sql, (ticket,))
+            counts[key] = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+        c.commit()
+        return counts
+
+    # ---- PDn-access journal read (V5 / R5) — entries are written via audit() ----
+    def pdn_access_log(self, limit=50):
+        """The most-recent ``pdn.read`` audit entries, newest first, capped.
+
+        The journal reuses the append-only ``audit_log`` with function='pdn.read'
+        (MVP: a dedicated pdn_access_log table is specified for a later slice,
+        SPEC_compliance_152fz §3.5). Each entry carries actor, subject ticket (in
+        detail), ts, action."""
+        return [dict(r) for r in self._conn().execute(
+            "SELECT * FROM audit_log WHERE function='pdn.read' "
+            'ORDER BY id DESC LIMIT ?', (limit,)).fetchall()]

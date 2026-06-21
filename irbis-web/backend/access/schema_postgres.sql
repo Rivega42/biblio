@@ -1,6 +1,13 @@
 -- Production schema (PostgreSQL) for the access suite. Dev uses the sqlite mirror
 -- in store.py (ADR-004). Readers live in RDR (not here); only staff + grants + audit.
 
+-- pgcrypto (field-level ПДн encryption at rest, audit finding V1) is enabled
+-- best-effort by PgAccessStore.ensure_schema() BEFORE this DDL runs, so a role
+-- without CREATE EXTENSION privilege does not abort schema creation — the store
+-- then degrades to the Python-side cipher token (still ciphertext at rest). The
+-- reader_review.reader_name column is BYTEA either way (pgcrypto bytea, or the
+-- token's UTF-8 bytes).
+
 CREATE TABLE IF NOT EXISTS staff_account (
   id          BIGSERIAL PRIMARY KEY,
   login       TEXT UNIQUE NOT NULL,
@@ -155,6 +162,9 @@ CREATE INDEX IF NOT EXISTS reader_shelf_item_list_idx ON reader_shelf_item(ticke
 -- ---------------------------------------------------------------------------
 
 -- One editable review per (ticket, db, mfn) — a re-post upserts on that key.
+-- reader_name is the reader's resolved display name (ПДн) — stored ENCRYPTED at
+-- rest (V1): a BYTEA column written with pgcrypto pgp_sym_encrypt(name, PDN_KEY)
+-- and read back with pgp_sym_decrypt, so a raw dump never reveals it.
 CREATE TABLE IF NOT EXISTS reader_review (
   id          BIGSERIAL PRIMARY KEY,
   ticket      TEXT NOT NULL,
@@ -162,7 +172,7 @@ CREATE TABLE IF NOT EXISTS reader_review (
   mfn         INTEGER NOT NULL,
   rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
   text        TEXT,
-  reader_name TEXT,
+  reader_name BYTEA,                  -- pgcrypto-encrypted display name (V1)
   ts          DOUBLE PRECISION NOT NULL,
   UNIQUE(ticket, db, mfn)
 );
@@ -190,3 +200,16 @@ CREATE TABLE IF NOT EXISTS saved_search (
   created_at DOUBLE PRECISION NOT NULL
 );
 CREATE INDEX IF NOT EXISTS saved_search_ticket_idx ON saved_search(ticket, id);
+
+-- Consent (152-ФЗ ст.6/9, audit finding V9). Append-only: a new state is a NEW
+-- row, never an UPDATE, so withdraw + re-consent is history not overwrite
+-- (SPEC_compliance_152fz §2.5). Effective consent = latest row by ts. Reader-
+-- scoped by RDR ticket. Mirrors the sqlite DDL in store.py.
+CREATE TABLE IF NOT EXISTS reader_consent (
+  id      BIGSERIAL PRIMARY KEY,
+  ticket  TEXT NOT NULL,
+  given   BOOLEAN NOT NULL,            -- true granted | false withdrawn
+  version INTEGER NOT NULL DEFAULT 1,  -- privacy-policy version
+  ts      DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reader_consent_ticket_idx ON reader_consent(ticket, ts DESC);

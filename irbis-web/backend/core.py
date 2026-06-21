@@ -422,6 +422,30 @@ class Api:
         except Exception:
             return self.access
 
+    def _audit_pdn_read(self, session, subject_ticket, fields_accessed, resource):
+        """Journal a READ of reader ПДн on behalf of staff — audit finding V5 / R5
+        (152-ФЗ ст.19 ч.2 п.5; ФСТЭК-21 РСБ). Writes a ``pdn.read`` entry to the
+        append-only audit log: {ts (audit adds it), actor, subject=ticket, action,
+        fields, resource}.
+
+        Only third-party access is journaled: a reader reading THEIR OWN data is
+        not a ПДн-access event (the actor IS the subject), so it is skipped. Never
+        raises — a journaling hiccup must not break the staff read."""
+        try:
+            if not session:
+                return
+            actor = session.get('actor') or ''
+            # A reader reading own data: actor 'RI=<ticket>' == the subject ticket.
+            if session.get('kind') == 'reader' and actor[3:] == subject_ticket:
+                return
+            tenant = session.get('tenant', DEFAULT_TENANT)
+            self._store_for(tenant).audit(
+                actor, 'pdn.read', None, None, 'ok',
+                {'subject': subject_ticket, 'action': 'read',
+                 'fields': fields_accessed, 'resource': resource})
+        except Exception:
+            pass
+
     def _guard(self, session, function, db, level):
         """Authorize or raise Denied. Audits denials for write/admin.
 
@@ -1204,6 +1228,66 @@ class Api:
             return 404, err('not_found', 'saved search not found')
         return 200, ok(res)
 
+    # ---- privacy: consent + right-to-erasure (V9 / R9, 152-ФЗ ст.6/9/14/21) ---- #
+    # Reader-session surfaces over OUR store. Consent is append-only history;
+    # erasure deletes ONLY our portal-side data for the authed reader's own ticket
+    # (never the live ИРБИС RDR — that is the system of record). A reader can only
+    # act on THEIR OWN ticket (the session's RI= ticket), enforced by deriving the
+    # ticket from the session, not from the request body.
+    # Current privacy-policy version a consent is recorded against (env-overridable).
+    _CONSENT_VERSION = int(os.environ.get('PDN_POLICY_VERSION', '1'))
+
+    def get_consent(self, session):
+        """GET /api/reader/consent → {given, ts, version} (false/none when unset)."""
+        ticket = self._reader_ticket(session)
+        cur = self._store_for(session.get('tenant', DEFAULT_TENANT)).consent_current(ticket)
+        if cur is None:
+            return 200, ok({'given': False, 'ts': None, 'version': self._CONSENT_VERSION})
+        return 200, ok(cur)
+
+    def set_consent(self, session, body):
+        """POST /api/reader/consent {given} → record the reader's consent state.
+
+        Append-only: each call is a NEW row (granted/withdrawn history), so a
+        withdraw + re-consent is preserved. Audited."""
+        ticket = self._reader_ticket(session)
+        if 'given' not in (body or {}):
+            return 400, err('bad_request', 'given required')
+        given = bool(body.get('given'))
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        cur = store.consent_record(ticket, given, self._CONSENT_VERSION, time.time())
+        store.audit(session['actor'], 'consent', None, None, 'ok',
+                    {'subject': ticket, 'given': given, 'version': self._CONSENT_VERSION})
+        return 200, ok(cur)
+
+    def erase_me(self, session, body):
+        """POST /api/reader/erase {confirm:true} → delete the reader's OWN stored
+        data (reviews/holds/shelves/history/saved-searches/consent) from OUR store.
+
+        Right to erasure (152-ФЗ ст.14/21). Scope: only OUR portal-side data for
+        the authed reader's own ticket — the live ИРБИС RDR record is NOT touched.
+        Guarded: the ticket comes from the session, so a reader can only erase their
+        own data (no cross-ticket erase). Audited with the per-table counts."""
+        ticket = self._reader_ticket(session)
+        if not (body or {}).get('confirm'):
+            return 400, err('bad_request', 'confirm:true required')
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        erased = store.erase_reader(ticket)
+        store.audit(session['actor'], 'erasure', None, None, 'ok',
+                    {'subject': ticket, 'erased': erased})
+        return 200, ok({'erased': erased})
+
+    def admin_pdn_access(self, session, limit):
+        """GET /api/admin/pdn-access?limit= → the ПДн-access journal, newest first.
+
+        The V5 journal of ``pdn.read`` events (who read whose reader ПДн). Super-
+        admin only (``admin.db`` at admin) — the journal is itself ПДн-by-reference
+        and must not be broadly readable (SPEC_compliance_152fz §3.3)."""
+        self._require_super_admin(session)
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        items = [self._audit_view(r) for r in store.pdn_access_log(limit)]
+        return 200, ok({'items': items})
+
     def _log_history(self, session, db, mfn):
         """Best-effort reading-history hook for the record-open path. Logs only for
         a reader session and never raises — a logging hiccup must not break the read."""
@@ -1476,6 +1560,9 @@ class Api:
         self._guard(session, 'circ.issue', self.cfg.db_default, 'read')
         if not ticket:
             return 400, err('bad_request', 'ticket required')
+        # V5: a staff member is about to READ this reader's ПДн (formulary = name +
+        # loans + debt). Journal the third-party access to ПДн before resolving it.
+        self._audit_pdn_read(session, ticket, ['name', 'history'], 'circ.reader')
         reader_id = self._circ_reader(ticket)
         today = self._circ_today()
         loans = [self._loan_card(ln, today=today)
@@ -2036,6 +2123,13 @@ class Api:
             # ---- reader-portal v2: reading history (#133) ----
             if method == 'GET' and path == '/api/history':
                 return self.history(session)
+            # ---- privacy: consent + right-to-erasure (V9, 152-ФЗ) ----
+            if method == 'GET' and path == '/api/reader/consent':
+                return self.get_consent(session)
+            if method == 'POST' and path == '/api/reader/consent':
+                return self.set_consent(session, body or {})
+            if method == 'POST' and path == '/api/reader/erase':
+                return self.erase_me(session, body or {})
             # ---- reader-portal v2: saved searches (#133) ----
             if method == 'POST' and path == '/api/savedsearch/delete':
                 return self.delete_search(session, body or {})
@@ -2089,6 +2183,10 @@ class Api:
                 return self.admin_audit(session, limit)
             if method == 'GET' and path == '/api/admin/databases':
                 return self.admin_databases(session)
+            # ---- privacy: ПДн-access journal (V5, super-admin only) ----
+            if method == 'GET' and path == '/api/admin/pdn-access':
+                limit = min(500, max(1, int(query.get('limit', ['50'])[0])))
+                return self.admin_pdn_access(session, limit)
             # ---- Platform admin: tenant provisioning + billing (#207/#209) ----
             if method == 'GET' and path == '/api/admin/tenants':
                 return self.admin_tenants(session)
