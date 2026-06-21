@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biblio — 01 Фундамент дизайн-системы</title>
+<!-- TODO(secure-contour): self-host Source Serif 4 + Onest (@fontsource) — стек уже готов к подмене -->
+<link rel="stylesheet" href="./biblio-tokens.css">
+<style>
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg); color:var(--text-primary);
+    font-family:var(--font-sans); font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    transition:background .18s ease, color .18s ease;
+  }
+  ::selection{ background:rgba(201,100,66,.18); }
+  @keyframes spin   { to { transform:rotate(360deg); } }
+  @keyframes shimmer{ 0% { background-position:-400px 0; } 100% { background-position:400px 0; } }
+
+  .wrap{ max-width:1120px; margin:0 auto; padding:0 32px 96px; }
+  .serif{ font-family:var(--font-serif); }
+  .section{ margin-top:72px; }
+  .sec-head{ display:flex; align-items:baseline; gap:12px; margin-bottom:24px; flex-wrap:wrap; }
+  .sec-num{ font-weight:600; font-size:12px; letter-spacing:.16em; color:var(--accent); }
+  .sec-title{ font-family:var(--font-serif); font-weight:600; font-size:27px; letter-spacing:-.02em; margin:0; }
+  .sec-note{ font-size:13px; color:var(--text-subtle); }
+  .eyebrow{ font-weight:600; font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--text-subtle); }
+  .card{ background:var(--surface-1); border:1px solid var(--border); border-radius:16px; }
+  .divider{ height:1px; background:var(--border); }
+
+  /* focus visibility — accessibility */
+  a:focus-visible, button:focus-visible, input:focus-visible,
+  select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible{
+    outline:2px solid var(--ring); outline-offset:2px;
+  }
+
+  /* header */
+  header.site{ position:sticky; top:0; z-index:20; background:var(--header-bg, rgba(243,241,234,.82)); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); }
+  [data-mode="dark"] header.site{ --header-bg:rgba(26,23,18,.82); }
+  .header-inner{ max-width:1120px; margin:0 auto; padding:14px 32px; display:flex; align-items:center; justify-content:space-between; gap:24px; flex-wrap:wrap; }
+  .logo{ width:34px; height:34px; border-radius:9px; background:var(--accent); display:flex; align-items:center; justify-content:center; box-shadow:0 1px 2px rgba(40,36,28,.18); }
+
+  .tenant-chip{
+    display:flex; align-items:center; gap:8px; padding:6px 12px 6px 10px; border-radius:9999px;
+    cursor:pointer; border:1px solid var(--border); background:var(--surface-1);
+    font-family:var(--font-sans); color:var(--text-primary); transition:all .12s ease;
+  }
+  .tenant-chip[aria-pressed="true"]{ border-color:var(--tc-accent); background:var(--tc-tint); box-shadow:inset 0 0 0 1px var(--tc-accent); }
+  .tenant-dot{ width:11px; height:11px; border-radius:9999px; flex:none; }
+
+  .mode-toggle{ display:flex; gap:3px; padding:3px; background:var(--surface-2); border:1px solid var(--border); border-radius:9px; }
+  .mode-btn{ display:flex; align-items:center; justify-content:center; width:32px; height:28px; border-radius:7px; border:none; cursor:pointer; background:transparent; color:var(--text-subtle); transition:all .12s; }
+  .mode-btn[aria-pressed="true"]{ background:var(--accent); color:#fff; }
+
+  /* swatches / generic */
+  .grid-fill{ display:grid; grid-template-columns:repeat(auto-fill,minmax(118px,1fr)); gap:12px; }
+  .btn-primary{ border:none; background:var(--accent); color:var(--accent-contrast); border-radius:10px; padding:10px 18px; font:500 14px var(--font-sans); cursor:pointer; box-shadow:0 1px 2px rgba(40,36,28,.12); transition:background .12s; }
+  .btn-primary:hover{ background:var(--accent-hover); }
+  .btn-neutral{ background:var(--surface-2); color:var(--text-primary); border:1px solid var(--border-strong); border-radius:10px; padding:10px 18px; font:500 14px var(--font-sans); cursor:pointer; transition:background .12s; }
+  .btn-neutral:hover{ background:var(--surface-3); }
+  .btn-outline{ background:transparent; color:var(--text-primary); border:1px solid var(--border-strong); border-radius:10px; padding:10px 18px; font:500 14px var(--font-sans); cursor:pointer; transition:background .12s; }
+  .btn-outline:hover{ background:var(--surface-2); }
+  .btn-ghost{ background:transparent; color:var(--text-secondary); border:none; border-radius:10px; padding:10px 14px; font:500 14px var(--font-sans); cursor:pointer; transition:background .12s; }
+  .btn-ghost:hover{ background:var(--surface-2); }
+
+  .density-toggle{ margin-left:auto; display:flex; gap:3px; padding:3px; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; }
+  .density-btn{ padding:6px 14px; border-radius:8px; cursor:pointer; border:none; background:transparent; color:var(--text-secondary); font:500 13px var(--font-sans); transition:all .12s ease; }
+  .density-btn[aria-pressed="true"]{ background:var(--text-primary); color:var(--text-inverse); }
+
+  .tbl-head, .tbl-row{ display:grid; grid-template-columns:36px 110px 1fr 160px 64px 110px 150px; }
+  .tbl-head{ padding:11px 16px; background:var(--surface-2); border-bottom:1px solid var(--border); font:600 11.5px var(--font-sans); letter-spacing:.04em; text-transform:uppercase; color:var(--text-subtle); }
+  .tbl-row{ align-items:center; padding:var(--row-py) 16px; border-bottom:1px solid var(--border); font-size:var(--cell-fs); }
+  .check-box{ width:16px; height:16px; border-radius:5px; border:1.5px solid var(--border-strong); display:inline-block; vertical-align:middle; }
+
+  @media (max-width:760px){
+    .wrap{ padding:0 18px 64px; }
+    .two-col{ grid-template-columns:1fr !important; }
+  }
+</style>
+</head>
+<body>
+<!-- ============ HEADER ============ -->
+<header class="site">
+  <div class="header-inner">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <span class="logo" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+      <span style="display:flex; flex-direction:column; line-height:1.1;">
+        <span class="serif" style="font-weight:600; font-size:19px; letter-spacing:-.02em;">Biblio</span>
+        <span style="font-size:11px; color:var(--text-subtle);">Дизайн-система · Стиль A</span>
+      </span>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="eyebrow" style="letter-spacing:.1em;">Тенант</span>
+        <nav id="tenantChips" aria-label="Переключатель тенанта" style="display:flex; gap:6px; flex-wrap:wrap;"></nav>
+      </div>
+      <div class="mode-toggle" role="group" aria-label="Светлая или тёмная тема">
+        <button type="button" class="mode-btn" data-mode-val="light" aria-pressed="true" aria-label="Светлая тема">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
+        <button type="button" class="mode-btn" data-mode-val="dark" aria-pressed="false" aria-label="Тёмная тема">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ============ HERO ============ -->
+  <section style="padding:64px 0 28px; border-bottom:1px solid var(--border);">
+    <span style="display:inline-flex; align-items:center; gap:8px; padding:5px 12px; border-radius:9999px; background:var(--accent-tint); border:1px solid var(--accent-tint-border); font-size:12px; font-weight:600; color:var(--accent-hover);">
+      <span style="width:7px; height:7px; border-radius:9999px; background:var(--accent);"></span>
+      Biblio — мультиарендная библиотечная платформа
+    </span>
+    <h1 class="serif" style="font-weight:600; font-size:clamp(38px,5.5vw,60px); line-height:1.02; letter-spacing:-.025em; margin:22px 0 0; max-width:18ch;">Фундамент дизайн-системы</h1>
+    <p style="font-size:18px; line-height:1.55; color:var(--text-secondary); margin:18px 0 0; max-width:62ch;">Тёплый, content-first язык в духе Claude: серифный дисплей, чистый гротеск, мягкие 1px-границы и спокойные микровзаимодействия. Токены перекрашиваются под тенанта без потери контраста — переключите бренд в шапке.</p>
+    <div style="display:flex; gap:28px; margin-top:32px; flex-wrap:wrap;">
+      <div style="display:flex; flex-direction:column; gap:2px;"><span class="serif" style="font-weight:600; font-size:26px; color:var(--accent);">3</span><span style="font-size:12px; color:var(--text-subtle);">оси тем: стиль · режим · бренд</span></div>
+      <div style="width:1px; background:var(--border);"></div>
+      <div style="display:flex; flex-direction:column; gap:2px;"><span class="serif" style="font-weight:600; font-size:26px; color:var(--accent);">AA</span><span style="font-size:12px; color:var(--text-subtle);">WCAG 2.2 + ГОСТ Р 52872</span></div>
+      <div style="width:1px; background:var(--border);"></div>
+      <div style="display:flex; flex-direction:column; gap:2px;"><span class="serif" style="font-weight:600; font-size:26px; color:var(--accent);">2</span><span style="font-size:12px; color:var(--text-subtle);">плотности: comfortable · compact</span></div>
+    </div>
+  </section>
+
+  <!-- ============ 01 COLOR ============ -->
+  <section class="section" style="margin-top:64px;">
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2 class="sec-title">Цвет</h2>
+      <span class="sec-note">тёплые нейтрали · акцент из seed · доменные статусы</span>
+    </div>
+
+    <p class="eyebrow" style="margin:0 0 12px;">Нейтрали (warm grayscale)</p>
+    <div id="neutralsGrid" class="grid-fill"></div>
+
+    <p class="eyebrow" style="margin:32px 0 12px;">Акцент — Biblio clay (ramp 50→900)</p>
+    <div id="accentRamp" style="display:flex; border-radius:12px; overflow:hidden; border:1px solid var(--border); box-shadow:0 1px 2px rgba(40,36,28,.06);"></div>
+
+    <div class="two-col" style="display:grid; grid-template-columns:1fr 1fr; gap:32px; margin-top:32px;">
+      <div>
+        <p class="eyebrow" style="margin:0 0 12px;">Семантика</p>
+        <div id="semantics" style="display:flex; flex-direction:column; gap:10px;"></div>
+      </div>
+      <div>
+        <p class="eyebrow" style="margin:0 0 12px;">Доменные статусы <span style="font-weight:400; text-transform:none; letter-spacing:0;">— цвет + иконка + текст</span></p>
+        <div id="domainStatuses" style="display:flex; flex-direction:column; gap:10px;"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:32px; padding:20px 22px; background:var(--surface-2); border:1px solid var(--border); border-radius:14px;">
+      <p class="eyebrow" style="margin:0 0 4px;">Мультиарендность — seed → доступная палитра</p>
+      <p style="font-size:13px; color:var(--text-secondary); margin:0 0 16px; max-width:70ch;">Каждый тенант задаёт один seed-цвет, из которого генерируется ramp и контрастная пара. Contrast-guard блокирует недоступные сочетания. Переключатель в шапке перекрашивает всю систему вживую.</p>
+      <div id="tenantSeeds" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:14px;"></div>
+    </div>
+  </section>
+
+  <!-- ============ 02 TYPOGRAPHY ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2 class="sec-title">Типографика</h2>
+      <span class="sec-note">Source Serif 4 (дисплей) · Onest (интерфейс) — latin + cyrillic</span>
+    </div>
+    <div id="typeScale" class="card" style="padding:8px 28px;"></div>
+  </section>
+
+  <!-- ============ 03 SPACING / RADIUS / ELEVATION ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2 class="sec-title">Spacing · радиусы · тени</h2>
+      <span class="sec-note">4-pt сетка · мягкая система теней</span>
+    </div>
+    <div class="two-col" style="display:grid; grid-template-columns:1.2fr 1fr; gap:28px;">
+      <div class="card" style="padding:22px;">
+        <p class="eyebrow" style="margin:0 0 16px;">Spacing — 4pt</p>
+        <div id="spacingScale" style="display:flex; flex-direction:column; gap:10px;"></div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:24px;">
+        <div class="card" style="padding:22px;">
+          <p class="eyebrow" style="margin:0 0 16px;">Радиусы</p>
+          <div id="radiiScale" style="display:flex; gap:14px; flex-wrap:wrap;"></div>
+        </div>
+        <div class="card" style="padding:22px;">
+          <p class="eyebrow" style="margin:0 0 18px;">Тени (elevation)</p>
+          <div id="shadowScale" style="display:flex; gap:18px; flex-wrap:wrap;"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 04 BUTTONS ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2 class="sec-title">Кнопки</h2>
+      <span class="sec-note">варианты · размеры · состояния</span>
+    </div>
+    <div class="card" style="padding:28px; display:flex; flex-direction:column; gap:24px;">
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <button type="button" class="btn-primary">Открыть документы</button>
+        <button type="button" class="btn-neutral">Сохранить черновик</button>
+        <button type="button" class="btn-outline">Outline</button>
+        <button type="button" class="btn-ghost">Ghost</button>
+        <button type="button" style="border:none; background:var(--error); color:#fff; border-radius:10px; padding:10px 18px; font:500 14px var(--font-sans); cursor:pointer;">Удалить</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <button type="button" style="border:none; background:var(--accent); color:var(--accent-contrast); border-radius:8px; padding:6px 12px; font:500 12.5px var(--font-sans); cursor:pointer;">Small</button>
+        <button type="button" class="btn-primary" style="box-shadow:none;">Medium</button>
+        <button type="button" style="border:none; background:var(--accent); color:var(--accent-contrast); border-radius:12px; padding:14px 26px; font:600 16px var(--font-sans); cursor:pointer;">Large</button>
+        <button type="button" style="display:inline-flex; align-items:center; gap:8px; border:none; background:var(--accent); color:var(--accent-contrast); border-radius:10px; padding:10px 16px; font:500 14px var(--font-sans); cursor:pointer;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>С иконкой</button>
+        <button type="button" aria-label="Поиск" style="display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; border:1px solid var(--border-strong); background:var(--surface-1); border-radius:10px; cursor:pointer; color:var(--text-primary);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <button type="button" disabled style="border:none; background:var(--accent); color:var(--accent-contrast); border-radius:10px; padding:10px 18px; font:500 14px var(--font-sans); opacity:.42; cursor:not-allowed;">Disabled</button>
+        <button type="button" style="display:inline-flex; align-items:center; gap:9px; border:none; background:var(--accent); color:var(--accent-contrast); border-radius:10px; padding:10px 18px; font:500 14px var(--font-sans); cursor:wait; opacity:.92;"><span style="width:15px; height:15px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:9999px; animation:spin .7s linear infinite;" aria-hidden="true"></span>Загрузка…</button>
+        <button type="button" style="border:2px solid var(--accent); background:var(--accent); color:#fff; border-radius:10px; padding:9px 17px; font:500 14px var(--font-sans); cursor:pointer; outline:none; box-shadow:0 0 0 3px var(--accent-tint);">Focus-visible</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 05 FORMS ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">05</span>
+      <h2 class="sec-title">Формы и контролы</h2>
+      <span class="sec-note">поля · выбор · переключатели</span>
+    </div>
+    <div class="two-col" style="display:grid; grid-template-columns:1fr 1fr; gap:24px;">
+      <div class="card" style="padding:26px; display:flex; flex-direction:column; gap:20px;">
+        <div style="display:flex; flex-direction:column; gap:7px;">
+          <label for="f-title" style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">Заглавие издания</label>
+          <input id="f-title" type="text" value="Чистый код" style="background:var(--surface-1); border:1px solid var(--border-strong); border-radius:8px; padding:10px 12px; font:14px var(--font-sans); color:var(--text-primary); outline:none;" />
+        </div>
+        <div style="display:flex; flex-direction:column; gap:7px;">
+          <label for="f-author" style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">Поле в фокусе</label>
+          <input id="f-author" type="text" value="Роберт Мартин" style="background:var(--surface-1); border:1px solid var(--accent); border-radius:8px; padding:10px 12px; font:14px var(--font-sans); color:var(--text-primary); outline:none; box-shadow:0 0 0 3px var(--accent-tint);" />
+        </div>
+        <div style="display:flex; flex-direction:column; gap:7px;">
+          <label for="f-isbn" style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">Ошибка ФЛК</label>
+          <input id="f-isbn" type="text" value="978-5-4461" aria-invalid="true" aria-describedby="f-isbn-err" style="background:var(--surface-1); border:1px solid var(--error); border-radius:8px; padding:10px 12px; font:14px var(--font-sans); color:var(--text-primary); outline:none; box-shadow:0 0 0 3px rgba(192,57,43,.12);" />
+          <span id="f-isbn-err" style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--error);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>ISBN неполный — проверьте контрольную цифру</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:7px;">
+          <label for="f-kind" style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">Вид документа</label>
+          <div style="position:relative;">
+            <select id="f-kind" style="appearance:none; width:100%; background:var(--surface-1); border:1px solid var(--border-strong); border-radius:8px; padding:10px 36px 10px 12px; font:14px var(--font-sans); color:var(--text-primary); outline:none; cursor:pointer;"><option>Книга</option><option>Справочник</option><option>Учебник</option><option>Электронный ресурс</option></select>
+            <svg style="position:absolute; right:12px; top:50%; transform:translateY(-50%); pointer-events:none;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-subtle)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:7px;">
+          <label for="f-note" style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">Примечание</label>
+          <textarea id="f-note" rows="2" style="resize:none; background:var(--surface-1); border:1px solid var(--border-strong); border-radius:8px; padding:10px 12px; font:14px var(--font-sans); color:var(--text-primary); outline:none; line-height:1.5;">Пер. с англ. — 2-е изд.</textarea>
+        </div>
+      </div>
+
+      <div class="card" style="padding:26px; display:flex; flex-direction:column; gap:22px;">
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">Checkbox</span>
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><span style="width:19px; height:19px; border-radius:6px; background:var(--accent); display:flex; align-items:center; justify-content:center;" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span style="font-size:14px;">Доступно для выдачи</span></label>
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><span style="width:19px; height:19px; border-radius:6px; border:1.5px solid var(--border-strong); background:var(--surface-1);" aria-hidden="true"></span><span style="font-size:14px;">Только для чит. зала</span></label>
+        </div>
+        <div class="divider"></div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">Radio</span>
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><span style="width:19px; height:19px; border-radius:9999px; border:5px solid var(--accent); background:var(--surface-1);" aria-hidden="true"></span><span style="font-size:14px;">Comfortable</span></label>
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><span style="width:19px; height:19px; border-radius:9999px; border:1.5px solid var(--border-strong); background:var(--surface-1);" aria-hidden="true"></span><span style="font-size:14px;">Compact</span></label>
+        </div>
+        <div class="divider"></div>
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:14px; font-weight:500;">Доступ офлайн (PWA)</span>
+          <span role="switch" aria-checked="true" tabindex="0" style="width:42px; height:24px; border-radius:9999px; background:var(--accent); position:relative; cursor:pointer;"><span style="position:absolute; top:2px; left:20px; width:20px; height:20px; border-radius:9999px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.2);"></span></span>
+        </div>
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:14px; font-weight:500; color:var(--text-secondary);">Показывать raw-MARC</span>
+          <span role="switch" aria-checked="false" tabindex="0" style="width:42px; height:24px; border-radius:9999px; background:var(--surface-3); border:1px solid var(--border-strong); position:relative; cursor:pointer;"><span style="position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:9999px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.15);"></span></span>
+        </div>
+        <div class="divider"></div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <span style="font-size:12.5px; font-weight:600; color:var(--text-secondary);">Slider — год издания</span>
+          <div style="position:relative; height:6px; border-radius:9999px; background:var(--surface-3);"><div style="position:absolute; left:0; top:0; height:6px; width:62%; border-radius:9999px; background:var(--accent);"></div><span style="position:absolute; left:62%; top:50%; transform:translate(-50%,-50%); width:18px; height:18px; border-radius:9999px; background:#fff; border:2px solid var(--accent); box-shadow:0 1px 3px rgba(0,0,0,.18);"></span></div>
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-subtle); font-variant-numeric:tabular-nums;"><span>1990</span><span>2018</span><span>2026</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 06 CHIPS / BADGES / AVATARS ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">06</span>
+      <h2 class="sec-title">Чипы · бейджи · аватары</h2>
+    </div>
+    <div class="card" style="padding:26px; display:flex; flex-direction:column; gap:22px;">
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <span style="display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border-radius:9999px; background:var(--accent-tint); border:1px solid var(--accent-tint-border); font-size:13px; font-weight:500; color:var(--accent-hover);">Естественные науки<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+        <span style="display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border-radius:9999px; background:var(--surface-2); border:1px solid var(--border-strong); font-size:13px; font-weight:500;">2018–2024<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+        <span style="display:inline-flex; align-items:center; padding:6px 13px; border-radius:9999px; background:var(--surface-2); border:1px solid var(--border); font-size:13px; color:var(--text-secondary);">Электронные</span>
+        <span style="display:inline-flex; align-items:center; padding:6px 13px; border-radius:9999px; background:var(--surface-2); border:1px solid var(--border); font-size:13px; color:var(--text-secondary);">На русском</span>
+      </div>
+      <div class="divider"></div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:6px; background:var(--status-available-bg); color:var(--status-available); font:600 12px var(--font-sans);"><span style="width:6px; height:6px; border-radius:9999px; background:var(--status-available);"></span>В наличии</span>
+        <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:6px; background:var(--status-issued-bg); color:var(--status-issued); font:600 12px var(--font-sans);"><span style="width:6px; height:6px; border-radius:9999px; background:var(--status-issued);"></span>На руках</span>
+        <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:6px; background:var(--status-postamat-bg); color:var(--status-postamat); font:600 12px var(--font-sans);"><span style="width:6px; height:6px; border-radius:9999px; background:var(--status-postamat);"></span>В постамате</span>
+        <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:6px; background:var(--status-return-bg); color:var(--status-return); font:600 12px var(--font-sans);"><span style="width:6px; height:6px; border-radius:9999px; background:var(--status-return);"></span>Книгоприём</span>
+        <span style="display:inline-flex; align-items:center; padding:3px 8px; border-radius:9999px; background:var(--accent); color:#fff; font:600 11px var(--font-sans); font-variant-numeric:tabular-nums;">12</span>
+        <span style="display:inline-flex; align-items:center; padding:3px 8px; border-radius:6px; border:1px solid var(--border-strong); background:var(--surface-1); color:var(--text-secondary); font:600 11px var(--font-sans);">УДК 004.4</span>
+      </div>
+      <div class="divider"></div>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <span style="width:40px; height:40px; border-radius:9999px; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font:600 15px var(--font-sans);">МК</span>
+        <span style="width:40px; height:40px; border-radius:9999px; background:#4F5BD5; color:#fff; display:flex; align-items:center; justify-content:center; font:600 15px var(--font-sans);">АП</span>
+        <span style="width:40px; height:40px; border-radius:9999px; background:#1F8A5B; color:#fff; display:flex; align-items:center; justify-content:center; font:600 15px var(--font-sans);">ДВ</span>
+        <div style="display:flex; align-items:center; margin-left:4px;">
+          <span style="width:34px; height:34px; border-radius:9999px; background:var(--surface-3); border:2px solid var(--surface-1); display:flex; align-items:center; justify-content:center; font:600 12px var(--font-sans); color:var(--text-secondary);">+5</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 07 NAV ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">07</span>
+      <h2 class="sec-title">Навигация</h2>
+      <span class="sec-note">табы · хлебные крошки · пагинация</span>
+    </div>
+    <div class="card" style="padding:26px; display:flex; flex-direction:column; gap:24px;">
+      <nav aria-label="Хлебные крошки" style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-subtle);"><span style="color:var(--text-secondary);">Каталог</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg><span style="color:var(--text-secondary);">Естественные науки</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg><span style="color:var(--text-primary); font-weight:600;" aria-current="page">Физика</span></nav>
+      <div role="tablist" aria-label="Разделы записи" style="display:flex; gap:4px; border-bottom:1px solid var(--border);">
+        <button type="button" role="tab" aria-selected="true" style="border:none; background:transparent; padding:11px 16px; font:600 14px var(--font-sans); color:var(--accent); cursor:pointer; border-bottom:2px solid var(--accent); margin-bottom:-1px;">Запись</button>
+        <button type="button" role="tab" aria-selected="false" style="border:none; background:transparent; padding:11px 16px; font:500 14px var(--font-sans); color:var(--text-secondary); cursor:pointer;">Экземпляры</button>
+        <button type="button" role="tab" aria-selected="false" style="border:none; background:transparent; padding:11px 16px; font:500 14px var(--font-sans); color:var(--text-secondary); cursor:pointer;">MARC</button>
+        <button type="button" role="tab" aria-selected="false" style="border:none; background:transparent; padding:11px 16px; font:500 14px var(--font-sans); color:var(--text-secondary); cursor:pointer;">История</button>
+      </div>
+      <nav aria-label="Пагинация" style="display:flex; align-items:center; gap:6px;">
+        <button type="button" aria-label="Назад" style="width:34px; height:34px; border:1px solid var(--border-strong); background:var(--surface-1); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--text-secondary);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <button type="button" aria-current="page" style="min-width:34px; height:34px; border:none; background:var(--accent); color:#fff; border-radius:8px; font:600 13px var(--font-sans); cursor:pointer;">1</button>
+        <button type="button" style="min-width:34px; height:34px; border:1px solid var(--border-strong); background:var(--surface-1); border-radius:8px; font:500 13px var(--font-sans); cursor:pointer; color:var(--text-primary);">2</button>
+        <button type="button" style="min-width:34px; height:34px; border:1px solid var(--border-strong); background:var(--surface-1); border-radius:8px; font:500 13px var(--font-sans); cursor:pointer; color:var(--text-primary);">3</button>
+        <span style="padding:0 6px; color:var(--text-subtle);">…</span>
+        <button type="button" style="min-width:34px; height:34px; border:1px solid var(--border-strong); background:var(--surface-1); border-radius:8px; font:500 13px var(--font-sans); cursor:pointer; color:var(--text-primary);">48</button>
+        <button type="button" aria-label="Вперёд" style="width:34px; height:34px; border:1px solid var(--border-strong); background:var(--surface-1); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--text-secondary);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></button>
+      </nav>
+    </div>
+  </section>
+
+  <!-- ============ 08 CARDS ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">08</span>
+      <h2 class="sec-title">Карточки данных</h2>
+      <span class="sec-note">ResultCard (читатель) · RecordCard (курированная)</span>
+    </div>
+    <div class="two-col" style="display:grid; grid-template-columns:340px 1fr; gap:24px; align-items:start;">
+      <!-- ResultCard -->
+      <div class="card" style="padding:18px; box-shadow:0 1px 2px rgba(40,36,28,.06);">
+        <div style="display:flex; gap:16px;">
+          <div style="width:78px; height:112px; flex:none; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent-hover)); display:flex; align-items:flex-end; padding:9px; box-shadow:0 4px 12px rgba(40,36,28,.16);"><span class="serif" style="font-weight:600; font-size:15px; color:#fff; line-height:1.1;">Чистый код</span></div>
+          <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
+            <h3 class="serif" style="font-weight:600; font-size:18px; letter-spacing:-.01em; margin:0; line-height:1.2;">Чистый код</h3>
+            <span style="font-size:13px; color:var(--text-secondary);">Роберт Мартин</span>
+            <span style="font-size:12px; color:var(--text-subtle);">Книга · 2019 · 464 с.</span>
+            <span style="display:inline-flex; align-items:center; gap:6px; margin-top:4px; padding:3px 9px; border-radius:6px; background:var(--status-available-bg); color:var(--status-available); font:600 12px var(--font-sans); width:fit-content;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>В наличии · 3 экз.</span>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:16px;">
+          <button type="button" style="flex:1; border:none; background:var(--accent); color:#fff; border-radius:9px; padding:9px; font:500 13px var(--font-sans); cursor:pointer;">Открыть запись</button>
+          <button type="button" aria-label="В список чтения" style="width:38px; border:1px solid var(--border-strong); background:var(--surface-1); border-radius:9px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--text-secondary);"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
+        </div>
+      </div>
+
+      <!-- RecordCard -->
+      <div class="card" style="padding:24px; box-shadow:0 1px 2px rgba(40,36,28,.06);">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+          <div>
+            <h3 class="serif" style="font-weight:600; font-size:22px; letter-spacing:-.015em; margin:0 0 4px; line-height:1.18;">Фейнмановские лекции по физике</h3>
+            <p style="font-size:14px; color:var(--text-secondary); margin:0;">Ричард Фейнман, Роберт Лейтон, Мэттью Сэндс</p>
+          </div>
+          <span style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:6px; background:var(--status-postamat-bg); color:var(--status-postamat); font:600 12px var(--font-sans); white-space:nowrap;"><span style="width:6px; height:6px; border-radius:9999px; background:var(--status-postamat);"></span>В постамате №14</span>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:16px 28px; margin-top:20px; padding-top:20px; border-top:1px solid var(--border);">
+          <div style="display:flex; flex-direction:column; gap:2px;"><span style="font:600 11px var(--font-sans); letter-spacing:.08em; text-transform:uppercase; color:var(--text-subtle);">Выходные данные</span><span style="font-size:13.5px;">М.: Мир, 2018</span></div>
+          <div style="display:flex; flex-direction:column; gap:2px;"><span style="font:600 11px var(--font-sans); letter-spacing:.08em; text-transform:uppercase; color:var(--text-subtle);">Объём</span><span style="font-size:13.5px; font-variant-numeric:tabular-nums;">760 с. : ил.</span></div>
+          <div style="display:flex; flex-direction:column; gap:2px;"><span style="font:600 11px var(--font-sans); letter-spacing:.08em; text-transform:uppercase; color:var(--text-subtle);">ISBN</span><span style="font-size:13.5px; font-variant-numeric:tabular-nums;">978-5-03-006334-7</span></div>
+          <div style="display:flex; flex-direction:column; gap:2px;"><span style="font:600 11px var(--font-sans); letter-spacing:.08em; text-transform:uppercase; color:var(--text-subtle);">Язык</span><span style="font-size:13.5px;">Русский</span></div>
+          <div style="display:flex; flex-direction:column; gap:2px;"><span style="font:600 11px var(--font-sans); letter-spacing:.08em; text-transform:uppercase; color:var(--text-subtle);">УДК</span><span style="font-size:13.5px; font-variant-numeric:tabular-nums;">53(075.8)</span></div>
+          <div style="display:flex; flex-direction:column; gap:2px;"><span style="font:600 11px var(--font-sans); letter-spacing:.08em; text-transform:uppercase; color:var(--text-subtle);">Хранение</span><span style="font-size:13.5px;">Чит. зал №2 · стеллаж Г-12</span></div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:18px;">
+          <span style="padding:4px 11px; border-radius:9999px; background:var(--accent-tint); border:1px solid var(--accent-tint-border); font-size:12.5px; color:var(--accent-hover);">Физика</span>
+          <span style="padding:4px 11px; border-radius:9999px; background:var(--surface-2); border:1px solid var(--border); font-size:12.5px; color:var(--text-secondary);">Квантовая механика</span>
+          <span style="padding:4px 11px; border-radius:9999px; background:var(--surface-2); border:1px solid var(--border); font-size:12.5px; color:var(--text-secondary);">Учебное пособие</span>
+        </div>
+        <button type="button" style="display:inline-flex; align-items:center; gap:7px; margin-top:18px; border:none; background:transparent; color:var(--accent); font:600 13px var(--font-sans); cursor:pointer; padding:0;">Показать raw-MARC<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 09 DATATABLE w/ density ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">09</span>
+      <h2 class="sec-title">Таблица каталога</h2>
+      <span class="sec-note">плотность переключается →</span>
+      <div class="density-toggle" id="densityChips" role="group" aria-label="Плотность таблицы"></div>
+    </div>
+    <div class="card" style="overflow:hidden; box-shadow:0 1px 2px rgba(40,36,28,.06);">
+      <div class="tbl-head">
+        <span><span class="check-box"></span></span>
+        <span>Шифр</span><span>Заглавие</span><span>Автор</span><span>Год</span><span>Вид</span><span>Статус</span>
+      </div>
+      <div id="tableRows"></div>
+    </div>
+  </section>
+
+  <!-- ============ 10 FEEDBACK ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">10</span>
+      <h2 class="sec-title">Обратная связь и состояния</h2>
+    </div>
+    <div class="two-col" style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <!-- alerts -->
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div role="status" style="display:flex; gap:11px; padding:13px 15px; border-radius:11px; background:var(--status-available-bg); border:1px solid var(--accent-tint-border);"><svg width="18" height="18" style="flex:none; margin-top:1px;" viewBox="0 0 24 24" fill="none" stroke="var(--status-available)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><div><div style="font-weight:600; font-size:13.5px; color:var(--status-available);">Запись сохранена</div><div style="font-size:12.5px; color:var(--status-available);">Изменения в каталоге опубликованы.</div></div></div>
+        <div role="status" style="display:flex; gap:11px; padding:13px 15px; border-radius:11px; background:var(--status-postamat-bg); border:1px solid var(--accent-tint-border);"><svg width="18" height="18" style="flex:none; margin-top:1px;" viewBox="0 0 24 24" fill="none" stroke="var(--status-postamat)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div><div style="font-weight:600; font-size:13.5px; color:var(--status-postamat);">3 экземпляра в постамате</div><div style="font-size:12.5px; color:var(--status-postamat);">Срок хранения — до 28 июн 2026.</div></div></div>
+        <div role="alert" style="display:flex; gap:11px; padding:13px 15px; border-radius:11px; background:var(--status-issued-bg); border:1px solid var(--accent-tint-border);"><svg width="18" height="18" style="flex:none; margin-top:1px;" viewBox="0 0 24 24" fill="none" stroke="var(--status-issued)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><div><div style="font-weight:600; font-size:13.5px; color:var(--status-issued);">Не пройдена ФЛК</div><div style="font-size:12.5px; color:var(--status-issued);">Поле 700 (автор) обязательно для вида «Книга».</div></div></div>
+      </div>
+      <!-- toast + offline + empty -->
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; align-items:center; gap:12px; padding:13px 16px; border-radius:12px; background:var(--text-primary); color:var(--surface-1); box-shadow:0 8px 24px rgba(40,36,28,.18);"><span style="width:24px; height:24px; border-radius:9999px; background:var(--success); display:flex; align-items:center; justify-content:center; flex:none;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span><span style="font-size:13.5px; font-weight:500;">Экземпляр выдан читателю · билет №40213</span><button type="button" style="margin-left:auto; background:transparent; border:none; color:var(--surface-3); cursor:pointer; font:500 13px var(--font-sans);">Отмена</button></div>
+        <div style="display:flex; align-items:center; gap:10px; padding:11px 15px; border-radius:11px; background:var(--surface-2); border:1px dashed var(--border-strong);"><span style="display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--warning);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l22 22"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>Нет сети</span><span style="font-size:12.5px; color:var(--text-secondary);">Изменения в очереди — отправим, как появится сеть.</span></div>
+        <div style="display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px; padding:28px 20px; border-radius:14px; background:var(--surface-1); border:1px solid var(--border);"><span style="width:46px; height:46px; border-radius:13px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--text-subtle);"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div style="font-weight:600; font-size:15px;">Ничего не найдено</div><div style="font-size:13px; color:var(--text-secondary); max-width:32ch;">Уточните запрос или снимите часть фильтров. Попробуйте искать по автору.</div><button type="button" style="margin-top:4px; border:1px solid var(--border-strong); background:var(--surface-1); border-radius:9px; padding:8px 16px; font:500 13px var(--font-sans); cursor:pointer;">Сбросить фильтры</button></div>
+      </div>
+    </div>
+    <!-- skeleton -->
+    <div style="margin-top:20px; display:flex; gap:16px; padding:18px; background:var(--surface-1); border:1px solid var(--border); border-radius:14px;">
+      <div style="width:60px; height:84px; border-radius:8px; background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%); background-size:400px 100%; animation:shimmer 1.4s infinite;"></div>
+      <div style="flex:1; display:flex; flex-direction:column; gap:9px; justify-content:center;">
+        <div style="height:14px; width:50%; border-radius:6px; background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%); background-size:400px 100%; animation:shimmer 1.4s infinite;"></div>
+        <div style="height:11px; width:32%; border-radius:6px; background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%); background-size:400px 100%; animation:shimmer 1.4s infinite;"></div>
+        <div style="height:11px; width:24%; border-radius:6px; background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%); background-size:400px 100%; animation:shimmer 1.4s infinite;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 11 i18n ============ -->
+  <section class="section">
+    <div class="sec-head">
+      <span class="sec-num">11</span>
+      <h2 class="sec-title">i18n — RU / EN</h2>
+      <span class="sec-note">локализация строк, чисел и дат</span>
+    </div>
+    <div class="two-col" style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <div class="card" style="border-radius:14px; padding:20px;">
+        <span style="display:inline-block; padding:3px 9px; border-radius:6px; background:var(--surface-2); border:1px solid var(--border); font:600 11px var(--font-sans); color:var(--text-secondary); margin-bottom:14px;">RU · ru-RU</span>
+        <div style="display:flex; flex-direction:column; gap:9px;">
+          <div style="display:flex; justify-content:space-between; font-size:14px;"><span style="color:var(--text-secondary);">Залог за читательский билет</span><span style="font-weight:600; font-variant-numeric:tabular-nums;">1 200 ₽</span></div>
+          <div style="display:flex; justify-content:space-between; font-size:14px;"><span style="color:var(--text-secondary);">Срок возврата</span><span style="font-weight:600; font-variant-numeric:tabular-nums;">30 июн 2026, 18:00</span></div>
+          <div style="display:flex; justify-content:space-between; font-size:14px;"><span style="color:var(--text-secondary);">Выдано книг</span><span style="font-weight:600; font-variant-numeric:tabular-nums;">12 из 15</span></div>
+        </div>
+      </div>
+      <div class="card" style="border-radius:14px; padding:20px;">
+        <span style="display:inline-block; padding:3px 9px; border-radius:6px; background:var(--surface-2); border:1px solid var(--border); font:600 11px var(--font-sans); color:var(--text-secondary); margin-bottom:14px;">EN · en-US</span>
+        <div style="display:flex; flex-direction:column; gap:9px;">
+          <div style="display:flex; justify-content:space-between; font-size:14px;"><span style="color:var(--text-secondary);">Library card deposit</span><span style="font-weight:600; font-variant-numeric:tabular-nums;">$15.00</span></div>
+          <div style="display:flex; justify-content:space-between; font-size:14px;"><span style="color:var(--text-secondary);">Due date</span><span style="font-weight:600; font-variant-numeric:tabular-nums;">Jun 30, 2026, 6:00 PM</span></div>
+          <div style="display:flex; justify-content:space-between; font-size:14px;"><span style="color:var(--text-secondary);">Books on loan</span><span style="font-weight:600; font-variant-numeric:tabular-nums;">12 of 15</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- footer -->
+  <footer style="margin-top:80px; padding-top:28px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+    <span style="font-size:12.5px; color:var(--text-subtle);">Biblio Design System · Стиль A (Claude-like) · v0.1 · <a href="./00-overview.html" style="color:var(--accent); text-decoration:none;">← обзор</a></span>
+    <span style="font-size:12.5px; color:var(--text-subtle);">WCAG 2.2 AA · ГОСТ Р 52872 · prefers-reduced-motion</span>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- tenant seeds (from the design's `tenants` map) ----
+  var tenants = {
+    clay:    { label: 'Biblio',  sub: 'проект',    accent: '#C96442', hover: '#AE5235' },
+    indigo:  { label: 'Индиго',  sub: 'городская', accent: '#4F5BD5', hover: '#3F4ABF' },
+    emerald: { label: 'Изумруд', sub: 'вузовская', accent: '#1F8A5B', hover: '#16744B' },
+    plum:    { label: 'Слива',   sub: 'школьная',  accent: '#8A4F9E', hover: '#763F89' }
+  };
+
+  // ---- color math (mirrors DCLogic _mix / _ramp) ----
+  function hx(n){ n = Math.max(0, Math.min(255, Math.round(n))); return n.toString(16).padStart(2,'0'); }
+  function mix(a, b, t){
+    var pa = [parseInt(a.slice(1,3),16), parseInt(a.slice(3,5),16), parseInt(a.slice(5,7),16)];
+    var pb = [parseInt(b.slice(1,3),16), parseInt(b.slice(3,5),16), parseInt(b.slice(5,7),16)];
+    return '#' + pa.map(function(v,i){ return hx(v + (pb[i]-v)*t); }).join('');
+  }
+  function ramp(hex){
+    var W = '#ffffff', K = '#14120f';
+    return [ mix(hex,W,.92), mix(hex,W,.82), mix(hex,W,.64), mix(hex,W,.42), mix(hex,W,.20),
+             hex, mix(hex,K,.14), mix(hex,K,.28), mix(hex,K,.44), mix(hex,K,.60) ];
+  }
+
+  var el = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+
+  // ---- domain status token map (drives swatches/badges) ----
+  var dom = {
+    available: { v:'--status-available', label:'В наличии'  },
+    issued:    { v:'--status-issued',    label:'На руках'   },
+    postamat:  { v:'--status-postamat',  label:'В постамате'},
+    return:    { v:'--status-return',    label:'Книгоприём' }
+  };
+
+  // =========================================================================
+  // 01 — Neutrals
+  // =========================================================================
+  (function(){
+    var defs = [
+      ['bg','#F3F1EA'],['surface-1','#FBFAF7'],['surface-2','#F0EEE6'],['surface-3','#E9E6DD'],
+      ['border','#E4E0D6'],['border-strong','#D6D1C4'],['text-subtle','#8A857A'],
+      ['text-secondary','#5C5850'],['text-primary','#26241F']
+    ];
+    el('neutralsGrid').innerHTML = defs.map(function(d){
+      return '<div style="display:flex; flex-direction:column; gap:7px;">' +
+        '<div style="height:56px; border-radius:10px; background:' + d[1] + '; border:1px solid var(--border);"></div>' +
+        '<div style="display:flex; flex-direction:column;"><span style="font-size:12px; font-weight:600;">' + esc(d[0]) + '</span>' +
+        '<span style="font-size:11px; color:var(--text-subtle); font-variant-numeric:tabular-nums;">' + d[1] + '</span></div></div>';
+    }).join('');
+  })();
+
+  // 01 — Accent ramp (Biblio clay)
+  (function(){
+    var steps = [50,100,200,300,400,500,600,700,800,900];
+    el('accentRamp').innerHTML = ramp('#C96442').map(function(hex,i){
+      return '<div style="flex:1; display:flex; flex-direction:column;">' +
+        '<div style="height:64px; background:' + hex + ';"></div>' +
+        '<div style="padding:7px 8px; background:var(--surface-1); border-top:1px solid var(--border);">' +
+        '<div style="font-size:11px; font-weight:600;">' + steps[i] + '</div>' +
+        '<div style="font-size:9.5px; color:var(--text-subtle); font-variant-numeric:tabular-nums;">' + hex + '</div></div></div>';
+    }).join('');
+  })();
+
+  // 01 — Semantics
+  (function(){
+    var sem = [['success','#2E7D52'],['warning','#9A6A12'],['error','#C0392B'],['info','#2F6DB5']];
+    el('semantics').innerHTML = sem.map(function(s){
+      return '<div style="display:flex; align-items:center; gap:12px; padding:11px 14px; background:var(--surface-1); border:1px solid var(--border); border-radius:10px;">' +
+        '<span style="width:22px; height:22px; border-radius:7px; background:' + s[1] + ';"></span>' +
+        '<span style="font-weight:600; font-size:13.5px;">' + s[0] + '</span>' +
+        '<span style="margin-left:auto; font-size:12px; color:var(--text-subtle); font-variant-numeric:tabular-nums;">' + s[1] + '</span></div>';
+    }).join('');
+  })();
+
+  // 01 — Domain statuses
+  (function(){
+    var order = ['available','issued','postamat','return'];
+    el('domainStatuses').innerHTML = order.map(function(k){
+      var d = dom[k];
+      return '<div style="display:flex; align-items:center; gap:12px; padding:11px 14px; background:var(--surface-1); border:1px solid var(--border); border-radius:10px;">' +
+        '<span style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:6px; background:var(' + d.v + '-bg); color:var(' + d.v + '); font:600 12px var(--font-sans);">' +
+        '<span style="width:6px; height:6px; border-radius:9999px; background:var(' + d.v + ');"></span>' + d.label + '</span>' +
+        '<span style="margin-left:auto; font-size:12px; color:var(--text-subtle);">' + d.v + '</span></div>';
+    }).join('');
+  })();
+
+  // 01 — Tenant seeds
+  (function(){
+    var html = Object.keys(tenants).map(function(k){
+      var v = tenants[k];
+      var sw = ramp(v.accent).filter(function(_, i){ return [1,3,5,7,8].indexOf(i) >= 0; });
+      var label = v.accent === '#C96442' ? 'Biblio · clay' : v.label;
+      return '<div style="display:flex; flex-direction:column; gap:8px; padding:14px; background:var(--surface-1); border:1px solid var(--border); border-radius:12px;">' +
+        '<div style="display:flex; align-items:center; gap:9px;"><span style="width:18px; height:18px; border-radius:6px; background:' + v.accent + ';"></span>' +
+        '<span style="font-weight:600; font-size:13px;">' + esc(label) + '</span></div>' +
+        '<div style="display:flex; height:14px; border-radius:5px; overflow:hidden;">' +
+        sw.map(function(c){ return '<div style="flex:1; background:' + c + ';"></div>'; }).join('') + '</div>' +
+        '<span style="font-size:11px; color:var(--text-subtle);">' + esc(v.sub) + '</span></div>';
+    }).join('');
+    el('tenantSeeds').innerHTML = html;
+  })();
+
+  // =========================================================================
+  // 02 — Type scale
+  // =========================================================================
+  (function(){
+    var sf = "var(--font-serif)", sans = "var(--font-sans)";
+    var scale = [
+      ['Display','60 / 1.02 / 600','Каталог библиотеки', 'font-family:'+sf+'; font-weight:600; font-size:46px; line-height:1.02; letter-spacing:-.025em;'],
+      ['H1','40 / 1.1 / 600','Фейнмановские лекции', 'font-family:'+sf+'; font-weight:600; font-size:34px; line-height:1.1; letter-spacing:-.02em;'],
+      ['H2','28 / 1.2 / 600','Расширенный поиск', 'font-family:'+sf+'; font-weight:600; font-size:26px; letter-spacing:-.015em;'],
+      ['H3','22 / 1.3 / 600','Сведения об издании', 'font-family:'+sf+'; font-weight:600; font-size:21px;'],
+      ['Body-lg','18 / 1.55 / 400','Спокойная иерархия и много воздуха для чтения.', 'font-family:'+sans+'; font-size:18px; line-height:1.55;'],
+      ['Body','14 / 1.5 / 400','Базовый интерфейсный текст — Onest, читаемая кириллица.', 'font-family:'+sans+'; font-size:14px; line-height:1.5;'],
+      ['Overline','12 / .14em / 600','ВЫХОДНЫЕ ДАННЫЕ', 'font-family:'+sans+'; font-size:12px; font-weight:600; letter-spacing:.14em; color:var(--text-subtle);']
+    ];
+    el('typeScale').innerHTML = scale.map(function(t, i){
+      var border = i === scale.length - 1 ? 'none' : '1px solid var(--border)';
+      return '<div style="display:flex; align-items:baseline; gap:24px; padding:18px 0; border-bottom:' + border + ';">' +
+        '<div style="width:130px; flex:none; display:flex; flex-direction:column; gap:2px;">' +
+        '<span style="font-size:12px; font-weight:600; color:var(--accent);">' + t[0] + '</span>' +
+        '<span style="font-size:11px; color:var(--text-subtle); font-variant-numeric:tabular-nums;">' + t[1] + '</span></div>' +
+        '<div style="' + t[3] + '">' + esc(t[2]) + '</div></div>';
+    }).join('');
+  })();
+
+  // =========================================================================
+  // 03 — Spacing / radii / shadows
+  // =========================================================================
+  (function(){
+    var spacing = [['1','4px','12px'],['2','8px','22px'],['3','12px','34px'],['4','16px','48px'],
+                   ['6','24px','72px'],['8','32px','100px'],['12','48px','150px'],['16','64px','210px']];
+    el('spacingScale').innerHTML = spacing.map(function(s){
+      return '<div style="display:flex; align-items:center; gap:14px;">' +
+        '<span style="width:28px; font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--text-secondary);">' + s[0] + '</span>' +
+        '<div style="height:14px; border-radius:4px; background:var(--accent); width:' + s[2] + ';"></div>' +
+        '<span style="font-size:11px; color:var(--text-subtle);">' + s[1] + '</span></div>';
+    }).join('');
+
+    var radii = [['sm','6px'],['md','10px'],['lg','14px'],['xl','20px'],['pill','9999px']];
+    el('radiiScale').innerHTML = radii.map(function(r){
+      return '<div style="display:flex; flex-direction:column; align-items:center; gap:7px;">' +
+        '<div style="width:52px; height:52px; background:var(--accent-tint); border:1px solid var(--accent-tint-border); border-top-left-radius:' + r[1] + '; border-bottom-left-radius:' + r[1] + ';"></div>' +
+        '<span style="font-size:11px; color:var(--text-subtle);">' + r[0] + '</span></div>';
+    }).join('');
+
+    var shadows = [['sm','0 1px 2px rgba(40,36,28,.06)'],['md','0 2px 8px rgba(40,36,28,.09)'],
+                   ['lg','0 8px 24px rgba(40,36,28,.11)'],['xl','0 16px 48px rgba(40,36,28,.15)']];
+    el('shadowScale').innerHTML = shadows.map(function(sh){
+      return '<div style="display:flex; flex-direction:column; align-items:center; gap:9px;">' +
+        '<div style="width:56px; height:56px; border-radius:12px; background:var(--surface-1); border:1px solid var(--border); box-shadow:' + sh[1] + ';"></div>' +
+        '<span style="font-size:11px; color:var(--text-subtle);">' + sh[0] + '</span></div>';
+    }).join('');
+  })();
+
+  // =========================================================================
+  // 09 — Catalog table rows
+  // =========================================================================
+  (function(){
+    var rows = [
+      ['004.4 М29','Чистый код','Роберт Мартин','2019','Книга','available','В наличии'],
+      ['821.16 Д70','Преступление и наказание','Ф. М. Достоевский','2021','Книга','issued','До 30 июн'],
+      ['53 Ф33','Фейнмановские лекции по физике','Р. Фейнман','2018','Книга','postamat','Постамат №14'],
+      ['81.2 Б79','Большой толковый словарь','Коллектив авторов','2020','Справочник','return','Книгоприём'],
+      ['004.7 Т18','Компьютерные сети','Э. Таненбаум','2022','Книга','available','В наличии'],
+      ['51 З-86','Математический анализ','В. А. Зорич','2017','Учебник','issued','До 12 июл']
+    ];
+    el('tableRows').innerHTML = rows.map(function(r){
+      var v = dom[r[5]].v;
+      return '<div class="tbl-row">' +
+        '<span><span class="check-box"></span></span>' +
+        '<span style="font-variant-numeric:tabular-nums; color:var(--text-secondary); font-size:calc(var(--cell-fs) - 1px);">' + esc(r[0]) + '</span>' +
+        '<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:12px;">' + esc(r[1]) + '</span>' +
+        '<span style="color:var(--text-secondary);">' + esc(r[2]) + '</span>' +
+        '<span style="font-variant-numeric:tabular-nums; color:var(--text-secondary);">' + r[3] + '</span>' +
+        '<span style="color:var(--text-secondary);">' + esc(r[4]) + '</span>' +
+        '<span style="display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:6px; background:var(' + v + '-bg); color:var(' + v + '); font:600 12px var(--font-sans); white-space:nowrap; width:fit-content;">' +
+        '<span style="width:6px; height:6px; border-radius:9999px; background:var(' + v + '); flex:none;"></span>' + esc(r[6]) + '</span></div>';
+    }).join('');
+  })();
+
+  // =========================================================================
+  // INTERACTIVITY — tenant switcher · density · light/dark
+  // =========================================================================
+  var root = document.documentElement;
+
+  // tenant chips
+  var current = 'clay';
+  function renderTenantChips(){
+    el('tenantChips').innerHTML = Object.keys(tenants).map(function(k){
+      var v = tenants[k];
+      var active = k === current;
+      var tint = mix(v.accent, '#ffffff', .90);
+      return '<button type="button" class="tenant-chip" data-tenant-key="' + k + '" aria-pressed="' + active + '" ' +
+        'style="--tc-accent:' + v.accent + '; --tc-tint:' + tint + ';">' +
+        '<span class="tenant-dot" style="background:' + v.accent + ';"></span>' +
+        '<span style="display:flex; flex-direction:column; line-height:1.05; text-align:left;">' +
+        '<span style="font-weight:600; font-size:12px;">' + esc(v.label) + '</span>' +
+        '<span style="font-size:10px; color:var(--text-subtle);">' + esc(v.sub) + '</span></span></button>';
+    }).join('');
+  }
+  function applyTenant(k){
+    current = k;
+    root.setAttribute('data-tenant', k);   // hook into biblio-tokens.css presets
+    renderTenantChips();
+  }
+  el('tenantChips').addEventListener('click', function(e){
+    var btn = e.target.closest('[data-tenant-key]');
+    if (btn) applyTenant(btn.getAttribute('data-tenant-key'));
+  });
+
+  // density chips
+  var density = 'comfortable';
+  function renderDensityChips(){
+    var defs = [['comfortable','Comfortable'],['compact','Compact']];
+    el('densityChips').innerHTML = defs.map(function(d){
+      var active = d[0] === density;
+      return '<button type="button" class="density-btn" data-density-key="' + d[0] + '" aria-pressed="' + active + '">' + d[1] + '</button>';
+    }).join('');
+  }
+  function applyDensity(k){
+    density = k;
+    var dense = k === 'compact';
+    root.style.setProperty('--row-py', dense ? '7px' : '13px');
+    root.style.setProperty('--cell-fs', dense ? '13px' : '14px');
+    renderDensityChips();
+  }
+  el('densityChips').addEventListener('click', function(e){
+    var btn = e.target.closest('[data-density-key]');
+    if (btn) applyDensity(btn.getAttribute('data-density-key'));
+  });
+
+  // light/dark mode
+  function applyMode(m){
+    if (m === 'dark') root.setAttribute('data-mode', 'dark');
+    else root.removeAttribute('data-mode');
+    document.querySelectorAll('.mode-btn').forEach(function(b){
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-mode-val') === m));
+    });
+  }
+  document.querySelectorAll('.mode-btn').forEach(function(b){
+    b.addEventListener('click', function(){ applyMode(b.getAttribute('data-mode-val')); });
+  });
+
+  // switch controls (toggle aria-checked + thumb position, demo)
+  document.querySelectorAll('[role="switch"]').forEach(function(sw){
+    function toggle(){
+      var on = sw.getAttribute('aria-checked') !== 'true';
+      sw.setAttribute('aria-checked', String(on));
+      var thumb = sw.firstElementChild;
+      if (on){ sw.style.background = 'var(--accent)'; sw.style.border = 'none'; thumb.style.left = '20px'; }
+      else   { sw.style.background = 'var(--surface-3)'; sw.style.border = '1px solid var(--border-strong)'; thumb.style.left = '2px'; }
+    }
+    sw.addEventListener('click', toggle);
+    sw.addEventListener('keydown', function(e){ if (e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); toggle(); } });
+  });
+
+  // init
+  applyTenant('clay');
+  renderDensityChips();
+})();
+</script>
+</body>
+</html>

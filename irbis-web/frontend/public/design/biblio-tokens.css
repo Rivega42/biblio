@@ -1,0 +1,196 @@
+/* ============================================================================
+   Biblio Design System — Style A token layer (reusable)
+   ----------------------------------------------------------------------------
+   Three theming axes: STYLE (A, fixed here) · MODE (light / dark) · TENANT (accent).
+   Import once per screen:  <link rel="stylesheet" href="./biblio-tokens.css">
+   - Light tokens live on :root.
+   - Dark mode under [data-mode="dark"] (exact warm-dark values extracted from the
+     "06 Reader Cabinet (Dark)" design artifact — not invented).
+   - Tenant re-tint via [data-tenant="…"] presets OR inline override of
+     --accent / --accent-hover / --accent-tint / --accent-tint-border / --ring.
+   No external CDN / @import (secure contour). Fonts are self-host-ready: drop
+   Source Serif 4 + Onest @font-face files in and the stacks pick them up.
+   ============================================================================ */
+
+:root {
+  /* ---- Neutrals (warm grayscale) — light ---- */
+  --bg:             #F3F1EA;
+  --surface-1:      #FBFAF7;
+  --surface-2:      #F0EEE6;
+  --surface-3:      #E9E6DD;
+  --border:         #E4E0D6;
+  --border-strong:  #D6D1C4;
+
+  /* ---- Text — light ---- */
+  --text-primary:   #26241F;
+  --text-secondary: #5C5850;
+  --text-subtle:    #8A857A;
+  --text-inverse:   #FBFAF7;
+
+  /* ---- Accent (Biblio clay) — light. Tenant-overridable. ---- */
+  --accent:             #C96442;
+  --accent-hover:       #AE5235;
+  --accent-contrast:    #ffffff;
+  --accent-tint:        #F6E7DF;
+  --accent-tint-border: #ECC9B9;
+  --ring:               #C96442;
+
+  /* ---- Semantic ---- */
+  --success: #2E7D52;
+  --warning: #9A6A12;
+  --error:   #C0392B;
+  --info:    #2F6DB5;
+
+  /* ---- Domain status pairs (foreground + background) — light ---- */
+  --status-available:    #2E7D52;  --status-available-bg: #E4F0E8;  /* В наличии */
+  --status-issued:       #9A6A12;  --status-issued-bg:    #F7ECD6;  /* На руках  */
+  --status-postamat:     #2F6DB5;  --status-postamat-bg:  #E3ECF8;  /* В постамате */
+  --status-return:       #6B5CA5;  --status-return-bg:    #ECE8F6;  /* Книгоприём */
+
+  /* ---- Radius scale ---- */
+  --radius-sm:   4px;
+  --radius-md:   6px;
+  --radius-lg:   10px;
+  --radius-xl:   16px;
+  --radius-full: 9999px;
+
+  /* ---- Elevation / shadow scale ---- */
+  --shadow-sm: 0 1px 2px rgba(40, 36, 28, .06);
+  --shadow-md: 0 2px 8px rgba(40, 36, 28, .09);
+  --shadow-lg: 0 8px 24px rgba(40, 36, 28, .11);
+
+  /* ---- Spacing (4-pt grid) ---- */
+  --space-0:  0;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ---- Density (table rows etc.) — comfortable defaults ---- */
+  --row-py:  13px;
+  --cell-fs: 14px;
+
+  /* ---- Typography (self-host-ready fallbacks) ---- */
+  --font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --font-sans:  'Onest', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ============================================================================
+   DARK MODE — warm-dark palette, exact values from "06 Reader Cabinet (Dark)".
+   Toggle by setting data-mode="dark" on <html> (or any ancestor of the UI).
+   ============================================================================ */
+[data-mode="dark"] {
+  --bg:             #1A1712;
+  --surface-1:      #221E18;
+  --surface-2:      #2A251E;
+  --surface-3:      #332D24;
+  --border:         #383128;
+  --border-strong:  #473E33;
+
+  --text-primary:   #F0EBE0;
+  --text-secondary: #B8B0A0;
+  --text-subtle:    #857D6E;
+  --text-inverse:   #1A1712;
+
+  /* Accent (warm-dark default). Tenant presets re-tint below. */
+  --accent:             #D8754F;
+  --accent-hover:       #E08A5C;
+  --accent-contrast:    #ffffff;
+  --accent-tint:        #3A271E;
+  --accent-tint-border: #5A3B2B;
+  --ring:               #D8754F;
+
+  /* Semantic — lifted for dark contrast */
+  --success: #7FC79B;
+  --warning: #E2B65E;
+  --error:   #EE9387;
+  --info:    #84B2EC;
+
+  /* Domain status pairs — dark (translucent bg + lifted fg) */
+  --status-available:    #7FC79B;  --status-available-bg: rgba(46, 125, 82, .18);
+  --status-issued:       #E2B65E;  --status-issued-bg:    rgba(154, 106, 18, .22);
+  --status-postamat:     #84B2EC;  --status-postamat-bg:  rgba(47, 109, 181, .20);
+  --status-return:       #B6A9E0;  --status-return-bg:    rgba(107, 92, 165, .26);
+
+  /* Shadows read darker on the warm-dark canvas */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, .34);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, .40);
+}
+
+/* ============================================================================
+   TENANT ACCENT PRESETS (matching the design's tenantSeeds).
+   Each tenant sets one seed; the tint pair is derived to keep AA contrast.
+   Apply with data-tenant="indigo" etc. (Light + dark variants provided.)
+   You may also override --accent / --accent-hover / --accent-tint inline.
+   ============================================================================ */
+
+/* clay — Biblio (project) is the :root default; explicit hook for completeness */
+[data-tenant="clay"] {
+  --accent:             #C96442;
+  --accent-hover:       #AE5235;
+  --accent-tint:        #F6E7DF;
+  --accent-tint-border: #ECC9B9;
+  --ring:               #C96442;
+}
+[data-tenant="indigo"] {            /* Индиго · городская */
+  --accent:             #4F5BD5;
+  --accent-hover:       #3F4ABF;
+  --accent-tint:        #E4E6F9;
+  --accent-tint-border: #C2C7F0;
+  --ring:               #4F5BD5;
+}
+[data-tenant="emerald"] {           /* Изумруд · вузовская */
+  --accent:             #1F8A5B;
+  --accent-hover:       #16744B;
+  --accent-tint:        #DBF0E6;
+  --accent-tint-border: #B3E0CA;
+  --ring:               #1F8A5B;
+}
+[data-tenant="plum"] {              /* Слива · школьная */
+  --accent:             #8A4F9E;
+  --accent-hover:       #763F89;
+  --accent-tint:        #F0E4F3;
+  --accent-tint-border: #DCC2E6;
+  --ring:               #8A4F9E;
+}
+
+/* Dark-mode tenant tints (translucent, derived from the same seeds) */
+[data-mode="dark"][data-tenant="clay"],
+[data-mode="dark"] [data-tenant="clay"] {
+  --accent: #D8754F; --accent-hover: #E08A5C;
+  --accent-tint: #3A271E; --accent-tint-border: #5A3B2B; --ring: #D8754F;
+}
+[data-mode="dark"][data-tenant="indigo"],
+[data-mode="dark"] [data-tenant="indigo"] {
+  --accent: #7C86E6; --accent-hover: #939BEC;
+  --accent-tint: rgba(79, 91, 213, .22); --accent-tint-border: rgba(79, 91, 213, .42); --ring: #7C86E6;
+}
+[data-mode="dark"][data-tenant="emerald"],
+[data-mode="dark"] [data-tenant="emerald"] {
+  --accent: #4FB888; --accent-hover: #66C79B;
+  --accent-tint: rgba(31, 138, 91, .22); --accent-tint-border: rgba(31, 138, 91, .42); --ring: #4FB888;
+}
+[data-mode="dark"][data-tenant="plum"],
+[data-mode="dark"] [data-tenant="plum"] {
+  --accent: #B884CC; --accent-hover: #C79AD8;
+  --accent-tint: rgba(138, 79, 158, .24); --accent-tint-border: rgba(138, 79, 158, .44); --ring: #B884CC;
+}
+
+/* ============================================================================
+   Accessibility — reduced motion reset (secure contour requirement)
+   ============================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
