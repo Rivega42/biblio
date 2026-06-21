@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.normpath(os.path.join(HERE, '..', 'backend')))
 sys.path.insert(0, HERE)
 from irbis.client import IrbisClient            # noqa: E402
 from irbis.parser import field, fields as fields_of  # noqa: E402
-from store import OwnStore, cell_address          # noqa: E402
+from pgstore import make_store                   # noqa: E402
 
 
 def sf(f, c):
@@ -68,8 +68,11 @@ def main():
     r = c.connect(a.user, a.password)
     if r.return_code != 0:
         print('connect failed: %s' % r.return_code); return
-    st = OwnStore(a.store)
+    os.environ.setdefault('OWN_DB', a.store)
+    st = make_store()                            # sqlite (default) or pg via OWN_STORE_BACKEND=pg
     st.add_db(a.db, a.name, 1)
+    slots = st.seed_storage()                    # построить дерево хранения, получить листья
+    cells, post, ret = slots['cells'], slots['postamat'], slots['return']
     count, mfns = c.search(a.db, '"I=$"')
     if a.limit:
         mfns = mfns[:a.limit]
@@ -87,9 +90,17 @@ def main():
                 brief = '%s%s%s' % (item['author'] + '. ' if item['author'] else '', item['title'],
                                     '. ' + item['year'] if item['year'] else '')
             st.upsert(a.db, mfn, item, brief, rec['fields'], cover, kw)
-            # ячеистое хранение (наша модель): один адресуемый экземпляр на запись
-            st.add_holding(a.db, mfn, '%s-%06d' % (a.db, mfn), item['availability'],
-                           cell_address(i), 'RFID%08X' % (mfn * 2654435761 & 0xFFFFFFFF))
+            # разместить экземпляр: большинство — в ячейках; часть — в постамате/станции/на руках
+            inv = '%s-%06d' % (a.db, mfn)
+            rfid = 'RFID%08X' % (mfn * 2654435761 & 0xFFFFFFFF)
+            if post and i % 17 == 5:
+                st.place_holding(a.db, mfn, inv, 'hold', post[i % len(post)], rfid)        # ждёт в постамате
+            elif ret and i % 23 == 7:
+                st.place_holding(a.db, mfn, inv, 'returned', ret[i % len(ret)], rfid)       # на станции приёма
+            elif i % 11 == 3:
+                st.place_holding(a.db, mfn, inv, 'issued', None, rfid)                       # на руках у читателя
+            elif cells:
+                st.place_holding(a.db, mfn, inv, 'available', cells[i % len(cells)], rfid)   # в ячейке
             done += 1
             if done % 50 == 0:
                 print('  %d/%d' % (done, len(mfns)))

@@ -89,40 +89,54 @@ function StaffStub({ title, onBack }: { title: string; onBack: () => void }) {
   );
 }
 
+const KIND_RU: Record<string, string> = { building: "🏛 Здание", floor: "Этаж", room: "Помещение", rack: "Стеллаж", shelf: "Полка", postamat: "📦 Постамат выдачи", return: "↩ Станция книгоприёма" };
+const cellColor = (c: any) => !c.occupied ? "var(--surface-sunken,#e8e4da)"
+  : ({ available: "#2f855a", hold: "#2c5e8a", returned: "#7a6a55", issued: "#b7791f" } as any)[c.status] || "#888";
+
+function StorageNode({ node, depth }: { node: any; depth: number }) {
+  const [open, setOpen] = React.useState(depth < 2);
+  const kids: any[] = node.children || [];
+  const leaves = kids.filter((k) => k.kind === "cell" || k.kind === "slot");
+  const conts = kids.filter((k) => k.kind !== "cell" && k.kind !== "slot");
+  const head = (KIND_RU[node.kind] || node.kind) + " " + node.code + (node.name ? " · " + node.name : "") + (node.address ? " · " + node.address : "");
+  return (
+    <div style={{ marginLeft: depth ? 14 : 0, borderLeft: depth ? "1px solid var(--border-subtle)" : "none", paddingLeft: depth ? 8 : 0 }}>
+      <div onClick={() => setOpen((o) => !o)} style={{ cursor: "pointer", fontWeight: depth < 3 ? 600 : 500, fontSize: depth < 2 ? "var(--text-base,15px)" : "var(--text-sm)", display: "flex", gap: 6, alignItems: "center", margin: "5px 0" }}>
+        <span style={{ color: "var(--text-subtle)", width: 10 }}>{(leaves.length || conts.length) ? (open ? "▾" : "▸") : "·"}</span>
+        <span>{head}</span>
+        {leaves.length > 0 && <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-xs)", fontWeight: 400 }}>· занято {leaves.filter((c) => c.occupied).length}/{leaves.length}</span>}
+      </div>
+      {open && <>
+        {leaves.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "2px 0 8px 16px" }}>
+          {leaves.map((c, i) => <span key={i} title={c.occupied ? ((c.title || "") + " · " + c.inv) : "свободно"} style={{ fontFamily: "var(--font-mono)", fontSize: 11, padding: "3px 6px", borderRadius: 5, color: c.occupied ? "#fff" : "var(--text-subtle)", background: cellColor(c), cursor: "default" }}>{c.code}</span>)}
+        </div>}
+        {conts.map((k, i) => <StorageNode key={i} node={k} depth={depth + 1} />)}
+      </>}
+    </div>
+  );
+}
+
 function CellMap({ onBack }: { onBack: () => void }) {
   const [data, setData] = React.useState<any>(null);
   const [err, setErr] = React.useState(false);
-  React.useEffect(() => { (async () => { const r = await api.cells("IBIS"); if (r.json && r.json.ok && r.json.data) setData(r.json.data); else setErr(true); })(); }, []);
-  const color = (s: string) => s === "available" ? "var(--status-available-strong,#2f855a)" : s === "issued" ? "var(--status-issued-strong,#b7791f)" : "#888";
+  React.useEffect(() => { (async () => { const r = await api.storage("IBIS"); if (r.json && r.json.ok && r.json.data) setData(r.json.data); else setErr(true); })(); }, []);
   if (err) return (
     <div>
       <Button iconLeft="arrow-left" onClick={onBack}>К рабочему столу</Button>
-      <EmptyState icon="archive" title="Ячеистое хранение" description="Доступно на нашем сервере (server-own). На адаптере к ИРБИС ячеек нет — это наша модель хранения." />
+      <EmptyState icon="archive" title="Ячеистое хранение" description="Доступно на нашем сервере (server-own). На адаптере к ИРБИС иерархии хранения нет — это наша модель." />
     </div>
   );
-  if (!data) return <div style={{ color: "var(--text-subtle)" }}>Загрузка карты ячеек…</div>;
-  const cells: any[] = data.cells || [];
-  const racks: Record<string, any[]> = {};
-  cells.forEach((c) => { const rack = String(c.cell).split("-").slice(0, 2).join("-"); (racks[rack] = racks[rack] || []).push(c); });
+  if (!data) return <div style={{ color: "var(--text-subtle)" }}>Загрузка карты хранения…</div>;
+  const legend: [string, string][] = [["В ячейке", "#2f855a"], ["В постамате", "#2c5e8a"], ["Книгоприём", "#7a6a55"], ["Свободно", "var(--surface-sunken,#e8e4da)"]];
   return (
     <div>
       <Button iconLeft="arrow-left" onClick={onBack}>К рабочему столу</Button>
       <h2 style={{ fontSize: "var(--text-2xl,1.5rem)", margin: "8px 0 2px" }}>Ячеистое хранение</h2>
-      <p style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", marginTop: 0 }}>Занято ячеек: {cells.length} · адрес «Зона-Стеллаж-Ячейка» · цвет = статус экземпляра · наведи — издание. В ИРБИС такого нет.</p>
-      <div style={{ display: "flex", gap: 14, margin: "8px 0 14px", fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: color("available"), marginRight: 5 }} />доступен</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: color("issued"), marginRight: 5 }} />выдан</span>
+      <p style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", marginTop: 0 }}>Размещено экземпляров: {data.holdings} · здания → этажи → помещения → стеллажи → полки → ячейки (число ячеек на полке разное) + постамат/книгоприём. В ИРБИС такого нет.</p>
+      <div style={{ display: "flex", gap: 14, margin: "8px 0 14px", flexWrap: "wrap", fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>
+        {legend.map(([l, c], i) => <span key={i}><span style={{ display: "inline-block", width: 11, height: 11, borderRadius: 3, background: c, marginRight: 5, verticalAlign: "middle" }} />{l}</span>)}
       </div>
-      {Object.keys(racks).sort().slice(0, 30).map((rack) => (
-        <div key={rack} style={{ marginBottom: 12 }}>
-          <div style={{ fontWeight: 600, fontSize: "var(--text-sm)", margin: "6px 0 4px" }}>Стеллаж {rack}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-            {racks[rack].map((c, i) => (
-              <span key={i} title={(c.title || "") + " · " + c.inv_no} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", padding: "4px 7px", borderRadius: 6, color: "#fff", background: color(c.status), cursor: "default" }}>{String(c.cell).split("-")[2]}</span>
-            ))}
-          </div>
-        </div>
-      ))}
+      {(data.tree || []).map((n: any, i: number) => <StorageNode key={i} node={n} depth={0} />)}
     </div>
   );
 }

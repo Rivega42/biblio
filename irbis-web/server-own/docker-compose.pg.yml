@@ -1,0 +1,15 @@
+# PostgreSQL для собственного сервера (прод-стор). Подними БД, затем мигрируй и запусти own-server.
+services:
+  pg:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: "${OWN_PG_PASSWORD:-pg}"
+      POSTGRES_DB: irbisweb
+    ports:
+      - "${OWN_PG_PORT:-5433}:5432"
+    volumes:
+      - irbis-own-pg:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  irbis-own-pg:

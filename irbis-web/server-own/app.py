@@ -13,7 +13,7 @@ import posixpath
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from store import OwnStore
+from pgstore import make_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.normpath(os.path.join(HERE, '..', 'backend')))
@@ -26,7 +26,7 @@ STAFF_GRANTS = [{'function': fn, 'db': '*', 'level': 'admin'} for fn in (
     'search', 'record.read', 'record.write', 'record.delete', 'terms', 'file',
     'order', 'cabinet', 'circ.issue', 'circ.return', 'admin.users', 'admin.db')]
 DIST = os.path.normpath(os.path.join(HERE, '..', 'frontend', 'dist'))
-STORE = OwnStore(os.environ.get('OWN_DB', os.path.join(HERE, 'own.db')))
+STORE = make_store()
 DEFAULT_DB = os.environ.get('OWN_DEFAULT_DB', 'IBIS')
 PORT = int(os.environ.get('OWN_PORT', '8081'))
 
@@ -106,16 +106,15 @@ class H(BaseHTTPRequestHandler):
             if p.startswith('/assets/'):
                 return self._serve_dist(p)
             if p == '/api/health':
-                return self._send(200, ok({'server': 'own-server (sqlite)', 'version': 'own-0.1',
-                                           'db': DEFAULT_DB, 'maxmfn': STORE.count(DEFAULT_DB)}))
+                return self._send(200, ok({'server': 'own-server (%s)' % os.environ.get('OWN_STORE_BACKEND', 'sqlite'),
+                                           'version': 'own-0.1', 'db': DEFAULT_DB, 'maxmfn': STORE.count(DEFAULT_DB)}))
             if p == '/api/databases':
                 items = [{'code': d['code'], 'name': d['name'], 'public': bool(d['public'])} for d in STORE.databases()]
                 return self._send(200, ok({'items': items, 'default': DEFAULT_DB}))
-            if p == '/api/cells':
+            if p == '/api/storage':
                 db = q.get('db', [DEFAULT_DB])[0]
-                zone = q.get('zone', [None])[0]
-                return self._send(200, ok({'db': db, 'zones': ['А', 'Б', 'В', 'Г', 'Д'],
-                                           'cells': STORE.cell_map(db, zone)}))
+                return self._send(200, ok({'db': db, 'tree': STORE.storage_tree(db),
+                                           'holdings': STORE.count_holdings(db)}))
             if p == '/api/search':
                 db = q.get('db', [DEFAULT_DB])[0]
                 prefix, term, expr = build_expr(q)

@@ -9,9 +9,13 @@ export interface ResultItem {
 }
 export interface SearchResult { db: string; expr: string; total: number; page: number; pageSize: number; items: ResultItem[]; }
 export interface FieldVal { tag: string; value: string; text?: string; subfields: Record<string, string>; }
-export interface Holding { inv_no: string; status: string; cell: string; rfid: string; }
+export interface Holding { inv_no: string; status: string; cell: string; rfid: string; location?: string; }
 export interface RecordData { db: string; mfn: number; version?: string; brief?: string; hasCover?: boolean; fields: FieldVal[]; holdings?: Holding[]; }
-export interface CellEntry { cell: string; inv_no: string; status: string; mfn: number; title: string; }
+export interface StorageNode {
+  id: number; kind: string; code: string; name?: string; address?: string; size?: string;
+  occupied?: boolean; status?: string; title?: string; inv?: string; mfn?: number;
+  children?: StorageNode[];
+}
 export interface Term { count: number; term: string; }
 export interface Grant { function: string; db: string; level: string; }
 export interface DbItem { code: string; name: string; public: boolean; }
@@ -55,8 +59,7 @@ export const api = {
   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),
   order: (db: string, mfn: number) => jpost("/api/order", { db, mfn }),
   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
-  cells: (db: string, zone?: string) => jget<{ db: string; zones: string[]; cells: CellEntry[] }>(
-    "/api/cells?" + qs(zone ? { db, zone } : { db })),
+  storage: (db: string) => jget<{ db: string; tree: StorageNode[]; holdings: number }>("/api/storage?" + qs({ db })),
   async loginReader(ticket: string) {
     const r = await jpost<{ token: string; name?: string }>("/api/auth/reader", { ticket });
     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;

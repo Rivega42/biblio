@@ -19,29 +19,49 @@ CREATE TABLE IF NOT EXISTS dbs(code TEXT PRIMARY KEY, name TEXT, public INTEGER 
 CREATE VIRTUAL TABLE IF NOT EXISTS rec_fts USING fts5(
   db UNINDEXED, mfn UNINDEXED, title, author, keywords, doctype, tokenize='unicode61'
 );
--- Ячеистое хранение (наша фишка — в ИРБИС нет): экземпляр живёт в адресуемой ячейке.
+-- Иерархия размещения: здание→этаж→помещение→стеллаж→полка→ячейка (+постамат/станция→слоты).
+-- Число ячеек на полке РАЗНОЕ (зависит от размера книг). В ИРБИС такого нет.
+CREATE TABLE IF NOT EXISTS location(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  parent_id INTEGER, kind TEXT, code TEXT, name TEXT, size TEXT, address TEXT
+);
+CREATE INDEX IF NOT EXISTS loc_parent ON location(parent_id);
+-- Экземпляр живёт в листовой локации (ячейка/слот) либо нигде (на руках).
 CREATE TABLE IF NOT EXISTS holding(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   db TEXT NOT NULL, mfn INTEGER NOT NULL,
-  inv_no TEXT, status TEXT, cell TEXT, rfid TEXT,
+  inv_no TEXT, status TEXT, location_id INTEGER, rfid TEXT,
   UNIQUE(db, inv_no)
 );
 CREATE INDEX IF NOT EXISTS holding_rec ON holding(db, mfn);
-CREATE INDEX IF NOT EXISTS holding_cell ON holding(cell);
+CREATE INDEX IF NOT EXISTS holding_loc ON holding(location_id);
 """
 
-ZONES = ['А', 'Б', 'В', 'Г', 'Д']
-RACKS = 20
-CELLS = 30
-
-
-def cell_address(idx):
-    """Линейный индекс -> адрес ячейки Зона-Стеллаж-Ячейка (напр. 'А-03-12')."""
-    per_zone = RACKS * CELLS
-    z = ZONES[(idx // per_zone) % len(ZONES)]
-    rack = (idx // CELLS) % RACKS + 1
-    cell = idx % CELLS + 1
-    return '%s-%02d-%02d' % (z, rack, cell)
+# Демо-конфиг структуры хранения. shelves = список «число ячеек на каждой полке стеллажа»
+# (разное — под размер книг). machines — системы выдачи/приёма (постамат, станция).
+STORAGE = {
+    'buildings': [
+        {'code': 'Главное здание', 'address': 'СПб, пл. Островского, 6', 'floors': [
+            {'code': '1', 'rooms': [
+                {'code': 'Зал А', 'racks': 3, 'shelves': [12, 12, 8, 6]},
+                {'code': 'Зал Б', 'racks': 2, 'shelves': [10, 10, 6]},
+            ]},
+            {'code': '2', 'rooms': [
+                {'code': 'Основное хранилище', 'racks': 5, 'shelves': [14, 14, 12, 10, 8]},
+            ]},
+        ]},
+        {'code': 'Филиал на Фонтанке', 'address': 'наб. Фонтанки, 41', 'floors': [
+            {'code': '1', 'rooms': [{'code': 'Абонемент', 'racks': 2, 'shelves': [8, 8, 6]}]},
+        ]},
+    ],
+    'machines': [
+        {'kind': 'postamat', 'code': 'Постамат выдачи', 'slots': 18},
+        {'kind': 'return', 'code': 'Станция книгоприёма', 'slots': 6},
+    ],
+}
+KIND_RU = {'building': 'Здание', 'floor': 'Этаж', 'room': 'Помещение', 'rack': 'Стеллаж',
+           'shelf': 'Полка', 'cell': 'Ячейка', 'postamat': 'Постамат', 'return': 'Книгоприём', 'slot': 'Слот'}
+CELL_SIZES = ['L', 'L', 'M', 'M', 'S']
 
 
 class OwnStore:
@@ -152,31 +172,106 @@ class OwnStore:
         r = self._conn().execute("SELECT cover FROM rec WHERE db=? AND mfn=?", (db, mfn)).fetchone()
         return r['cover'] if r and r['cover'] else None
 
-    # ---- holdings / cells (ячеистое хранение) ----
-    def add_holding(self, db, mfn, inv_no, status, cell, rfid):
+    # ---- размещение: иерархия локаций + экземпляры ----
+    def add_location(self, parent_id, kind, code, name=None, size=None, address=None):
         c = self._conn()
-        c.execute("INSERT OR REPLACE INTO holding(db,mfn,inv_no,status,cell,rfid) VALUES(?,?,?,?,?,?)",
-                  (db, mfn, inv_no, status, cell, rfid))
+        cur = c.execute("INSERT INTO location(parent_id,kind,code,name,size,address) VALUES(?,?,?,?,?,?)",
+                        (parent_id, kind, code, name, size, address))
+        c.commit()
+        return cur.lastrowid
+
+    def seed_storage(self, config=None):
+        """Построить дерево локаций (однократно). Вернуть листья для размещения экземпляров."""
+        config = config or STORAGE
+        if self._conn().execute("SELECT count(*) n FROM location").fetchone()['n'] == 0:
+            for b in config['buildings']:
+                bid = self.add_location(None, 'building', b['code'], address=b.get('address'))
+                for fl in b['floors']:
+                    fid = self.add_location(bid, 'floor', fl['code'])
+                    for rm in fl['rooms']:
+                        rid = self.add_location(fid, 'room', rm['code'])
+                        for ri in range(1, rm['racks'] + 1):
+                            rkid = self.add_location(rid, 'rack', '%02d' % ri)
+                            for si, ncells in enumerate(rm['shelves'], start=1):
+                                shid = self.add_location(rkid, 'shelf', '%d' % si)
+                                for ci in range(1, ncells + 1):
+                                    self.add_location(shid, 'cell', '%02d' % ci, size=CELL_SIZES[(ci - 1) % len(CELL_SIZES)])
+            for m in config['machines']:
+                mid = self.add_location(None, m['kind'], m['code'])
+                for si in range(1, m['slots'] + 1):
+                    self.add_location(mid, 'slot', '%02d' % si)
+        return self.leaves()
+
+    def leaves(self):
+        c = self._conn()
+        sub = lambda k: [r['id'] for r in c.execute(
+            "SELECT s.id FROM location s JOIN location m ON s.parent_id=m.id WHERE m.kind=? ORDER BY s.id", (k,))]
+        return {'cells': [r['id'] for r in c.execute("SELECT id FROM location WHERE kind='cell' ORDER BY id")],
+                'postamat': sub('postamat'), 'return': sub('return')}
+
+    def place_holding(self, db, mfn, inv_no, status, location_id, rfid):
+        c = self._conn()
+        c.execute("INSERT OR REPLACE INTO holding(db,mfn,inv_no,status,location_id,rfid) VALUES(?,?,?,?,?,?)",
+                  (db, mfn, inv_no, status, location_id, rfid))
         c.commit()
 
+    # back-compat alias (older callers)
+    def add_holding(self, db, mfn, inv_no, status, location_id, rfid):
+        self.place_holding(db, mfn, inv_no, status, location_id, rfid)
+
+    def _loc_index(self):
+        return {r['id']: dict(r) for r in self._conn().execute(
+            "SELECT id,parent_id,kind,code,name,address FROM location")}
+
+    def location_path(self, loc_id, idx=None):
+        idx = idx if idx is not None else self._loc_index()
+        chain, cur = [], idx.get(loc_id)
+        while cur:
+            chain.append({'kind': cur['kind'], 'code': cur['code'], 'name': cur['name']})
+            cur = idx.get(cur['parent_id'])
+        chain.reverse()
+        return chain
+
     def holdings(self, db, mfn):
-        return [dict(r) for r in self._conn().execute(
-            "SELECT inv_no,status,cell,rfid FROM holding WHERE db=? AND mfn=? ORDER BY cell", (db, mfn))]
+        idx = self._loc_index()
+        out = []
+        for r in self._conn().execute(
+                "SELECT inv_no,status,location_id,rfid FROM holding WHERE db=? AND mfn=? ORDER BY inv_no", (db, mfn)):
+            path = self.location_path(r['location_id'], idx) if r['location_id'] else []
+            addr = ' / '.join('%s %s' % (KIND_RU.get(p['kind'], p['kind']), p['code']) for p in path)
+            out.append({'inv_no': r['inv_no'], 'status': r['status'], 'rfid': r['rfid'],
+                        'location': addr, 'cell': path[-1]['code'] if path else '', 'path': path})
+        return out
 
     def count_holdings(self, db):
         r = self._conn().execute("SELECT count(*) n FROM holding WHERE db=?", (db,)).fetchone()
         return r['n'] if r else 0
 
-    def cell_map(self, db, zone=None, limit=400):
-        q = ("SELECT h.cell, h.inv_no, h.status, h.mfn, r.title "
-             "FROM holding h LEFT JOIN rec r ON r.db=h.db AND r.mfn=h.mfn WHERE h.db=?")
-        args = [db]
-        if zone:
-            q += " AND h.cell LIKE ?"
-            args.append(zone + '-%')
-        q += " ORDER BY h.cell LIMIT ?"
-        args.append(limit)
-        return [dict(r) for r in self._conn().execute(q, args)]
+    def storage_tree(self, db=None):
+        """Полное дерево размещения с занятостью листьев (для карты хранения)."""
+        c = self._conn()
+        locs = [dict(r) for r in c.execute("SELECT id,parent_id,kind,code,name,address,size FROM location ORDER BY id")]
+        children = {}
+        for loc in locs:
+            children.setdefault(loc['parent_id'], []).append(loc)
+        occ = {}
+        for r in c.execute("""SELECT h.location_id lid, h.status, h.inv_no, h.mfn, rec.title
+                              FROM holding h LEFT JOIN rec ON rec.db=h.db AND rec.mfn=h.mfn
+                              WHERE h.location_id IS NOT NULL"""):
+            occ[r['lid']] = {'status': r['status'], 'inv': r['inv_no'], 'mfn': r['mfn'], 'title': r['title']}
+
+        def build(node):
+            n = {'id': node['id'], 'kind': node['kind'], 'code': node['code'],
+                 'name': node['name'], 'address': node['address'], 'size': node['size']}
+            if node['kind'] in ('cell', 'slot'):
+                o = occ.get(node['id'])
+                n['occupied'] = bool(o)
+                if o:
+                    n.update({'status': o['status'], 'inv': o['inv'], 'mfn': o['mfn'], 'title': o['title']})
+            else:
+                n['children'] = [build(k) for k in children.get(node['id'], [])]
+            return n
+        return [build(r) for r in children.get(None, [])]
 
     # ---- write (cataloging on OUR server) ----
     def next_mfn(self, db):
