@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biblio — дизайн-система · обзор</title>
+<!-- TODO(secure-contour): self-host Source Serif 4 + Onest (@fontsource) вместо системного fallback -->
+<style>
+  :root{
+    --bg:#F3F1EA; --surface-1:#FBFAF7; --surface-2:#F0EEE6; --surface-3:#E9E6DD;
+    --border:#E4E0D6; --border-strong:#D6D1C4;
+    --text-primary:#26241F; --text-secondary:#5C5850; --text-subtle:#8A857A;
+    --accent:#C96442; --accent-hover:#AE5235; --accent-tint:#F6E7DF; --accent-tint-border:#ECC9B9;
+    --serif:'Source Serif 4', Georgia, 'Times New Roman', serif;
+    --sans:'Onest', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{ background:var(--bg); color:var(--text-primary); font-family:var(--sans); font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  ::selection{ background:rgba(201,100,66,.18); }
+  .wrap{ max-width:1080px; margin:0 auto; padding:64px 32px 80px; }
+  .brand{ display:flex; align-items:center; gap:13px; }
+  .logo{ width:38px; height:38px; border-radius:10px; background:var(--accent); display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(201,100,66,.3); }
+  .brand-name{ font-family:var(--serif); font-weight:600; font-size:21px; letter-spacing:-.02em; }
+  .brand-sub{ font-size:12px; color:var(--text-subtle); }
+  h1{ font-family:var(--serif); font-weight:600; font-size:clamp(36px,5vw,54px); line-height:1.04; letter-spacing:-.025em; margin:36px 0 0; max-width:20ch; }
+  .lede{ font-size:18px; line-height:1.6; color:var(--text-secondary); margin:18px 0 0; max-width:64ch; }
+  .chips{ display:flex; gap:10px; flex-wrap:wrap; margin-top:24px; }
+  .chip{ display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:9999px; background:var(--surface-1); border:1px solid var(--border); font-size:12.5px; font-weight:500; color:var(--text-secondary); }
+  .sw{ width:10px; height:10px; border-radius:3px; }
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:44px; }
+  @media (max-width:720px){ .grid{ grid-template-columns:1fr; } .wrap{ padding:48px 20px 64px; } }
+  a.card{ text-decoration:none; color:inherit; display:flex; flex-direction:column; background:var(--surface-1); border:1px solid var(--border); border-radius:18px; padding:24px; box-shadow:0 1px 2px rgba(40,36,28,.05); transition:transform .14s ease, box-shadow .14s ease, border-color .14s ease; }
+  a.card:hover{ transform:translateY(-3px); box-shadow:0 16px 40px rgba(40,36,28,.12); border-color:var(--border-strong); }
+  a.card:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; }
+  .card-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+  .thumb{ width:46px; height:46px; border-radius:13px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; }
+  .num{ font-family:var(--serif); font-weight:600; font-size:15px; color:var(--text-subtle); }
+  .card h2{ font-family:var(--serif); font-weight:600; font-size:21px; letter-spacing:-.015em; margin:18px 0 0; }
+  .card p{ font-size:14px; line-height:1.55; color:var(--text-secondary); margin:8px 0 0; flex:1; }
+  .tags{ display:flex; gap:7px; flex-wrap:wrap; margin-top:16px; }
+  .tag{ padding:3px 10px; border-radius:9999px; background:var(--surface-2); border:1px solid var(--border); font-size:11.5px; color:var(--text-secondary); }
+  .open{ display:flex; align-items:center; gap:7px; margin-top:18px; color:var(--accent); font-size:13.5px; font-weight:600; }
+  footer{ margin-top:48px; padding-top:26px; border-top:1px solid var(--border); display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+  footer span{ font-size:12.5px; color:var(--text-subtle); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="brand">
+    <span class="logo" aria-hidden="true"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+    <span style="display:flex; flex-direction:column; line-height:1.1;">
+      <span class="brand-name">Biblio</span>
+      <span class="brand-sub">Дизайн-система · обзор</span>
+    </span>
+  </header>
+
+  <h1>Дизайн-система библиотечной платформы</h1>
+  <p class="lede">Единый токен-фундамент и два визуальных языка: спокойный content-first интерфейс приложения (Стиль A, Claude-like) и «вау»-сайт на матовом стекле (Стиль B, Apple Glass). Мультиарендность, доступность WCAG 2.2 AA, light и dark.</p>
+
+  <div class="chips">
+    <span class="chip"><span class="sw" style="background:#C96442;"></span>Стиль A · приложение</span>
+    <span class="chip"><span class="sw" style="background:linear-gradient(135deg,#E08A5C,#8A4F9E);"></span>Стиль B · сайт</span>
+    <span class="chip">6 артефактов</span>
+  </div>
+
+  <nav class="grid" aria-label="Артефакты дизайн-системы">
+    <a class="card" href="./01-foundations.html">
+      <div class="card-top">
+        <span class="thumb" style="background:linear-gradient(135deg,#F6E7DF,#FBFAF7); color:#C96442;" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2a10 10 0 1 0 0 20 2.5 2.5 0 0 0 0-5 2.5 2.5 0 0 1 0-5h2a6 6 0 0 0 0-10z"/></svg></span>
+        <span class="num">01</span>
+      </div>
+      <h2>Фундамент и компоненты</h2>
+      <p>Токены, тёплая палитра, типографика Source Serif + Onest, spacing, тени и вся библиотека компонентов Стиля A. Переключатель тенанта и плотности.</p>
+      <div class="tags"><span class="tag">Tokens</span><span class="tag">Components</span><span class="tag">Multi-tenant</span></div>
+      <div class="open">Открыть макет<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+    </a>
+
+    <a class="card" href="./02-reader-web.html">
+      <div class="card-top">
+        <span class="thumb" style="background:linear-gradient(135deg,#E3ECF8,#FBFAF7); color:#2F6DB5;" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+        <span class="num">02</span>
+      </div>
+      <h2>Читательский веб</h2>
+      <p>Поиск с фасетами и активными чипами, ResultCard с обложками и доменными статусами, пагинация. Content-first, спокойно и читаемо.</p>
+      <div class="tags"><span class="tag">Читатель</span><span class="tag">Light</span><span class="tag">Style A</span></div>
+      <div class="open">Открыть макет<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+    </a>
+
+    <a class="card" href="./03-staff-arm.html">
+      <div class="card-top">
+        <span class="thumb" style="background:linear-gradient(135deg,#E9E6DD,#FBFAF7); color:#5C5850;" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></span>
+        <span class="num">03</span>
+      </div>
+      <h2>Рабочее пространство сотрудника</h2>
+      <p>Плотный AppShell: каталогизация RUSMARC с DynamicField и ФЛК, ячеистое хранение с планом помещения и сеткой постамата. Compact-режим.</p>
+      <div class="tags"><span class="tag">Сотрудник</span><span class="tag">Compact</span><span class="tag">RUSMARC</span></div>
+      <div class="open">Открыть макет<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+    </a>
+
+    <a class="card" href="./04-theme-editor.html">
+      <div class="card-top">
+        <span class="thumb" style="background:linear-gradient(135deg,#ECE8F6,#FBFAF7); color:#6B5CA5;" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2a10 10 0 1 0 0 20 2.5 2.5 0 0 0 0-5 2.5 2.5 0 0 1 0-5h2a6 6 0 0 0 0-10z"/></svg></span>
+        <span class="num">04</span>
+      </div>
+      <h2>Редактор тем</h2>
+      <p>Self-serve кастомизация тенанта: пресеты, seed-цвет, live-превью на реальных компонентах, light/dark и contrast-guard с реальными WCAG-расчётами.</p>
+      <div class="tags"><span class="tag">Админ</span><span class="tag">Contrast-guard</span><span class="tag">White-label</span></div>
+      <div class="open">Открыть макет<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+    </a>
+
+    <a class="card" href="./05-marketing-glass.html">
+      <div class="card-top">
+        <span class="thumb" style="background:linear-gradient(135deg,#E08A5C,#8A4F9E); color:#fff;" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-6.1 1.2L12 17l-1.9-5.8L4 10l6.1-1.2z"/></svg></span>
+        <span class="num">05</span>
+      </div>
+      <h2>Маркетинговый лендинг</h2>
+      <p>Стиль B — Apple Glass: mesh-фон, матовое стекло, hero, фичи, тарифы, отзыв и CTA. Фолбэк prefers-reduced-transparency.</p>
+      <div class="tags"><span class="tag">Style B</span><span class="tag">Glass</span><span class="tag">Dark</span></div>
+      <div class="open">Открыть макет<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+    </a>
+
+    <a class="card" href="./06-reader-cabinet.html">
+      <div class="card-top">
+        <span class="thumb" style="background:linear-gradient(135deg,#2A251E,#1A1712); color:#D8754F;" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+        <span class="num">06</span>
+      </div>
+      <h2>Кабинет читателя</h2>
+      <p>Личный формуляр: книги на руках со сроками, очередь брони, полки и reading-challenge. Демонстрация тёмного режима Стиля A с тоглом light/dark.</p>
+      <div class="tags"><span class="tag">Читатель</span><span class="tag">Dark</span><span class="tag">Light/Dark</span></div>
+      <div class="open">Открыть макет<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+    </a>
+  </nav>
+
+  <footer>
+    <span>Biblio Design System · primitive → semantic → component токены</span>
+    <span>Source Serif 4 + Onest · self-host · PWA · i18n RU/EN</span>
+  </footer>
+</div>
+</body>
+</html>
