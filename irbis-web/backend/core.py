@@ -5,6 +5,7 @@
 Pipeline: authn (bearer token -> session) -> authorize (grant function x db x level)
 -> IRBIS call -> normalize -> audit (write/admin). Server -3338 -> 403.
 """
+import json
 import os
 import random
 import socket
@@ -1592,6 +1593,141 @@ class Api:
                         'currency': self.circulation.policy['fine']['currency'],
                         'items': items})
 
+    # ---- АРМ Администратор — staff-only, admin.users/admin.db guards (#187) ---- #
+    # The administration workstation over the EXISTING access store: staff accounts,
+    # their roles/grants, the audit log, and the full database list. Every surface is
+    # staff-only (a reader/guest is refused) AND gated by an 'admin'-module function
+    # (admin.users for account/role administration, admin.db for the DB list) at the
+    # 'admin' level — only an account carrying the seeded 'administrator' role (which
+    # holds admin.users/admin.db at admin) passes. A non-admin staff session lacks
+    # those grants, so the per-function _guard 403s it. State lives in OUR access
+    # store (self._store_for(tenant)) — the same store auth/audit already use.
+    def _require_admin(self, session, function):
+        """Staff gate + ``function`` (admin.users|admin.db) at admin level, or raise.
+
+        ``_require_staff`` rejects a reader/guest up front (403); ``_guard`` then
+        enforces the admin grant + the 'admin' module entitlement, auditing the
+        denial (level 'admin' is a write/admin op). Returns the tenant-scoped store
+        the handler operates on, so account/role/audit reads hit the same schema
+        the session authenticated against."""
+        self._require_staff(session)
+        self._guard(session, function, '*', 'admin')
+        return self._store_for(session.get('tenant', DEFAULT_TENANT))
+
+    @staticmethod
+    def _account_view(store, acc):
+        """Shape one staff account row as the admin list item (roles + grants)."""
+        return {'id': acc['id'], 'login': acc['login'],
+                'fullName': acc.get('full_name') or '',
+                'active': bool(acc['is_active']),
+                'roles': store.account_roles(acc['id']),
+                'grants': [{'function': g['function'], 'db': g['db'], 'level': g['level']}
+                           for g in store.effective_grants(acc['id'])]}
+
+    def admin_users(self, session):
+        """GET /api/admin/users — every staff account with its roles + effective grants."""
+        store = self._require_admin(session, 'admin.users')
+        users = [self._account_view(store, a) for a in store.list_accounts()]
+        return 200, ok({'users': users})
+
+    def admin_create_user(self, session, body):
+        """POST /api/admin/users — create a staff account (hashed pw) + assign roles.
+
+        Hashes the password exactly as seed.py does (``store.create_account`` ->
+        ``hash_password`` pbkdf2-sha256; plaintext is never stored). The dev-default
+        password is env-overridable (ADMIN_DEFAULT_PASSWORD) so a created account is
+        usable in dev without a secret in the request. Roles are assigned the same
+        way the seed does (``set_account_roles`` -> add_role/assign). Audited."""
+        store = self._require_admin(session, 'admin.users')
+        login = (body.get('login') or '').strip()
+        if not login:
+            return 400, err('bad_request', 'login required')
+        if store.get_account(login):
+            return 409, err('conflict', 'login exists: %s' % login)
+        password = body.get('password') or os.environ.get('ADMIN_DEFAULT_PASSWORD', 'changeme')
+        full_name = (body.get('fullName') or '').strip()
+        acc = store.create_account(login, password, full_name)
+        roles = body.get('roles') or []
+        if roles:
+            store.set_account_roles(acc['id'], [str(r) for r in roles])
+        store.audit(session['actor'], 'admin.users', None, acc['id'], 'ok',
+                    {'op': 'create', 'login': login, 'roles': list(roles)})
+        return 200, ok({'id': acc['id'], 'login': login,
+                        'roles': store.account_roles(acc['id'])})
+
+    def admin_set_roles(self, session, body):
+        """POST /api/admin/users/roles {userId, roles:[]} — replace an account's roles."""
+        store = self._require_admin(session, 'admin.users')
+        try:
+            user_id = int(body.get('userId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'userId required')
+        if store.get_account_by_id(user_id) is None:
+            return 404, err('not_found', 'unknown user %r' % user_id)
+        roles = [str(r) for r in (body.get('roles') or [])]
+        applied = store.set_account_roles(user_id, roles)
+        store.audit(session['actor'], 'admin.users', None, user_id, 'ok',
+                    {'op': 'roles', 'roles': applied})
+        return 200, ok({'ok': True, 'userId': user_id, 'roles': applied})
+
+    def admin_set_active(self, session, body):
+        """POST /api/admin/users/active {userId, active:bool} — enable/disable an account."""
+        store = self._require_admin(session, 'admin.users')
+        try:
+            user_id = int(body.get('userId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'userId required')
+        if store.get_account_by_id(user_id) is None:
+            return 404, err('not_found', 'unknown user %r' % user_id)
+        active = bool(body.get('active'))
+        store.set_account_active(user_id, active)
+        store.audit(session['actor'], 'admin.users', None, user_id, 'ok',
+                    {'op': 'active', 'active': active})
+        return 200, ok({'ok': True, 'userId': user_id, 'active': active})
+
+    def admin_roles(self, session):
+        """GET /api/admin/roles — every role with its grants."""
+        store = self._require_admin(session, 'admin.users')
+        return 200, ok({'roles': store.list_roles()})
+
+    def admin_audit(self, session, limit):
+        """GET /api/admin/audit?limit= — the most-recent audit entries, capped.
+
+        ``recent_audit`` returns newest-first (ORDER BY id DESC); detail is
+        normalized to a parsed object (sqlite stores it as a JSON string, PG as
+        JSONB) and ts to a float epoch so the payload is backend-uniform."""
+        store = self._require_admin(session, 'admin.db')
+        items = [self._audit_view(r) for r in store.recent_audit(limit)]
+        return 200, ok({'items': items})
+
+    @staticmethod
+    def _audit_view(r):
+        """Backend-uniform audit row: parse detail, coerce ts to a float epoch."""
+        detail = r.get('detail')
+        if isinstance(detail, str):
+            try:
+                detail = json.loads(detail) if detail else {}
+            except ValueError:
+                detail = {'raw': detail}
+        ts = r.get('ts')
+        if hasattr(ts, 'timestamp'):              # PG TIMESTAMPTZ -> datetime
+            ts = ts.timestamp()
+        return {'ts': ts, 'actor': r.get('actor'), 'function': r.get('function'),
+                'db': r.get('db'), 'mfn': r.get('mfn'), 'result': r.get('result'),
+                'detail': detail or {}}
+
+    def admin_databases(self, session):
+        """GET /api/admin/databases — the FULL database list (staff admin view).
+
+        Reuses ``databases()`` (which already returns every base for a staff/non-public
+        session — the public-only filter applies to guest/reader only), gated here by
+        admin.db so only an administrator reaches the admin DB surface. Returns the
+        same item shape {code,name,public,count?} under ``items``."""
+        store = self._require_admin(session, 'admin.db')   # noqa: F841 (gate only)
+        _st, payload = self.databases(session, with_counts=True)
+        return 200, ok({'items': payload['data']['items'],
+                        'default': payload['data'].get('default')})
+
     def vocab_list(self, session):
         """List the session tenant's dictionaries (name/title/kind/seed_version).
 
@@ -1788,6 +1924,22 @@ class Api:
                 norm = query.get('normalize', ['0'])[0] in ('1', 'true', 'yes')
                 return self.bp_specialty_provision(
                     session, int(query.get('id', ['0'])[0]), norm)
+            # ---- АРМ Администратор — staff-only, admin.users/admin.db (#187) ----
+            if method == 'GET' and path == '/api/admin/users':
+                return self.admin_users(session)
+            if method == 'POST' and path == '/api/admin/users/roles':
+                return self.admin_set_roles(session, body or {})
+            if method == 'POST' and path == '/api/admin/users/active':
+                return self.admin_set_active(session, body or {})
+            if method == 'POST' and path == '/api/admin/users':
+                return self.admin_create_user(session, body or {})
+            if method == 'GET' and path == '/api/admin/roles':
+                return self.admin_roles(session)
+            if method == 'GET' and path == '/api/admin/audit':
+                limit = min(500, max(1, int(query.get('limit', ['50'])[0])))
+                return self.admin_audit(session, limit)
+            if method == 'GET' and path == '/api/admin/databases':
+                return self.admin_databases(session)
             # ---- Циркуляция / выдача (circulation desk) — staff-only (#185) ----
             if method == 'GET' and path == '/api/circ/reader':
                 return self.circ_reader(session, (query.get('ticket', [''])[0] or '').strip())

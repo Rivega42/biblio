@@ -171,6 +171,49 @@ class PgAccessStore:
                WHERE ar.account_id=%s''', (account_id,)).fetchall()]
         return grants
 
+    # ---- admin: account/role administration (АРМ Администратор, #187) ----
+    def get_account_by_id(self, account_id):
+        r = self._conn().execute(
+            'SELECT * FROM staff_account WHERE id=%s', (account_id,)).fetchone()
+        return dict(r) if r else None
+
+    def list_accounts(self):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT id,login,full_name,is_active FROM staff_account '
+            'ORDER BY login').fetchall()]
+
+    def account_roles(self, account_id):
+        return [r['name'] for r in self._conn().execute(
+            'SELECT ro.name FROM role ro JOIN account_role ar ON ar.role_id=ro.id '
+            'WHERE ar.account_id=%s ORDER BY ro.name', (account_id,)).fetchall()]
+
+    def set_account_roles(self, account_id, role_names):
+        """Replace an account's role set with ``role_names`` (creates missing roles)."""
+        c = self._conn()
+        c.execute('DELETE FROM account_role WHERE account_id=%s', (account_id,))
+        for name in role_names:
+            rid = self.add_role(name)
+            c.execute('INSERT INTO account_role(account_id,role_id) VALUES(%s,%s) '
+                      'ON CONFLICT(account_id,role_id) DO NOTHING', (account_id, rid))
+        return self.account_roles(account_id)
+
+    def set_account_active(self, account_id, active):
+        c = self._conn()
+        c.execute('UPDATE staff_account SET is_active=%s WHERE id=%s',
+                  (bool(active), account_id))
+        a = self.get_account_by_id(account_id)
+        return a['is_active'] if a else None
+
+    def list_roles(self):
+        c = self._conn()
+        out = []
+        for ro in c.execute('SELECT id,name FROM role ORDER BY name').fetchall():
+            grants = [dict(r) for r in c.execute(
+                'SELECT function,db,level FROM role_grant WHERE role_id=%s '
+                'ORDER BY function, db', (ro['id'],)).fetchall()]
+            out.append({'name': ro['name'], 'grants': grants})
+        return out
+
     # ---- audit ----
     def audit(self, actor, function, db, mfn, result, detail=None):
         from psycopg.types.json import Jsonb

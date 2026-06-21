@@ -255,6 +255,59 @@ class AccessStore:
                WHERE ar.account_id=?''', (account_id,)).fetchall()]
         return grants
 
+    # ---- admin: account/role administration (АРМ Администратор, #187) ----
+    def get_account_by_id(self, account_id):
+        r = self._conn().execute(
+            'SELECT * FROM staff_account WHERE id=?', (account_id,)).fetchone()
+        return dict(r) if r else None
+
+    def list_accounts(self):
+        """All staff accounts (id/login/full_name/is_active), login-ordered."""
+        return [dict(r) for r in self._conn().execute(
+            'SELECT id,login,full_name,is_active FROM staff_account '
+            'ORDER BY login').fetchall()]
+
+    def account_roles(self, account_id):
+        """Role names assigned to an account (sorted)."""
+        return [r['name'] for r in self._conn().execute(
+            'SELECT ro.name FROM role ro JOIN account_role ar ON ar.role_id=ro.id '
+            'WHERE ar.account_id=? ORDER BY ro.name', (account_id,)).fetchall()]
+
+    def set_account_roles(self, account_id, role_names):
+        """Replace an account's role set with ``role_names`` (creates missing roles).
+
+        Idempotent and atomic: clears the account's account_role rows then assigns
+        the requested roles, minting a role row for any unknown name (mirrors how
+        ``add_role`` is used by the seed). Returns the resolved role-name list."""
+        c = self._conn()
+        c.execute('DELETE FROM account_role WHERE account_id=?', (account_id,))
+        for name in role_names:
+            rid = self.add_role(name)
+            c.execute('INSERT OR IGNORE INTO account_role(account_id,role_id) VALUES(?,?)',
+                      (account_id, rid))
+        c.commit()
+        return self.account_roles(account_id)
+
+    def set_account_active(self, account_id, active):
+        """Enable/disable an account; returns the new is_active (0/1)."""
+        c = self._conn()
+        c.execute('UPDATE staff_account SET is_active=? WHERE id=?',
+                  (1 if active else 0, account_id))
+        c.commit()
+        a = self.get_account_by_id(account_id)
+        return a['is_active'] if a else None
+
+    def list_roles(self):
+        """All roles with their grants: [{name, grants:[{function,db,level}]}]."""
+        c = self._conn()
+        out = []
+        for ro in c.execute('SELECT id,name FROM role ORDER BY name').fetchall():
+            grants = [dict(r) for r in c.execute(
+                'SELECT function,db,level FROM role_grant WHERE role_id=? '
+                'ORDER BY function, db', (ro['id'],)).fetchall()]
+            out.append({'name': ro['name'], 'grants': grants})
+        return out
+
     # ---- audit ----
     def audit(self, actor, function, db, mfn, result, detail=None):
         c = self._conn()
