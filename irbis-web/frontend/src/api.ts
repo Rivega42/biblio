@@ -51,6 +51,18 @@ export interface Notification {
 // «Избранное»), их нельзя удалять; пользовательские списки — system=false.
 export interface ShelfItem { db: string; mfn: number; title?: string; }
 export interface Shelf { id: string; name: string; system?: boolean; items: ShelfItem[]; }
+// Отзывы и оценки (#134). avg/count — агрегат по записи; mine — отзыв текущего
+// читателя (если оставлял), для режима «редактировать/удалить свой».
+export interface Review { id: string | number; readerName?: string; rating: number; text?: string; ts?: string; mine?: boolean; }
+export interface ReviewsResult { avg: number; count: number; mine?: Review | null; items: Review[]; }
+// Рекомендации (#133). reason — человекочитаемое обоснование («похоже по теме»,
+// «читатели также брали», «новинка по вашим интересам»).
+export interface Recommendation { db: string; mfn: number; title: string; author?: string; reason?: string; }
+// История просмотров (#134). Недавно открытые записи с временной меткой.
+export interface HistoryItem { db: string; mfn: number; title?: string; ts?: string; }
+// Сохранённые запросы (#133). prefix/query задают простой поиск; query может
+// нести готовое выражение, тогда prefix пуст. db — база, в которой искать.
+export interface SavedSearch { id: string | number; name: string; db: string; prefix?: string; query: string; ts?: string; }
 
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
@@ -136,6 +148,29 @@ export const api = {
   worklist: (db: string) => jget<{ db: string; fields: any[] }>("/api/worklist/" + db),
   saveRecord: (db: string, mfn: number, fields: { tag: string; value: string }[]) =>
     jpost<{ db: string; mfn: number; created: boolean; returnCode: number }>("/api/record/" + db + "/" + mfn, { fields }),
+  // --- Отзывы и оценки (#134) ----------------------------------------------
+  // Отзывы по записи: средняя оценка, число, список и (если вошёл) свой отзыв.
+  reviews: (db: string, mfn: number) =>
+    jget<ReviewsResult>("/api/reviews?" + qs({ db, mfn })),
+  // Оставить / обновить свой отзыв (1–5 звёзд + опц. текст). 404/501 → degrade.
+  postReview: (db: string, mfn: number, rating: number, text?: string) =>
+    jpost<Review>("/api/review", { db, mfn, rating, text }),
+  // Удалить свой отзыв по идентификатору.
+  deleteReview: (id: string | number) => jpost("/api/review/delete", { id }),
+  // --- Рекомендации (#133) -------------------------------------------------
+  // «Похожие издания» к конкретной записи.
+  recommendations: (db: string, mfn: number) =>
+    jget<{ items: Recommendation[] }>("/api/recommendations?" + qs({ db, mfn })),
+  // «Для вас» — персональная подборка на главной (по истории/интересам).
+  recommendationsForYou: () =>
+    jget<{ items: Recommendation[] }>("/api/recommendations/foryou"),
+  // --- История просмотров (#134) -------------------------------------------
+  history: () => jget<{ items: HistoryItem[] }>("/api/history"),
+  // --- Сохранённые запросы (#133) ------------------------------------------
+  savedSearches: () => jget<{ items: SavedSearch[] }>("/api/savedsearch"),
+  saveSearch: (name: string, db: string, prefix: string, query: string) =>
+    jpost<SavedSearch>("/api/savedsearch", { name, db, prefix, query }),
+  deleteSavedSearch: (id: string | number) => jpost("/api/savedsearch/delete", { id }),
 };
 
 export const LANG: Record<string, string> = {

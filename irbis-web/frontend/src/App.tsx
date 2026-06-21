@@ -25,6 +25,13 @@ import { OrdersTab } from "./reader/OrdersTab";
 import { NotificationInbox } from "./reader/NotificationInbox";
 import { HoldsTab } from "./reader/HoldsTab";
 import { ShelvesPanel, ShelfMenu } from "./reader/Shelves";
+import { ReviewPanel } from "./reader/ReviewPanel";
+import { SimilarRecommendations, ForYouRecommendations } from "./reader/Recommendations";
+import { HistoryTab } from "./reader/HistoryTab";
+import { SaveSearchButton, SavedSearchMenu, SavedSearchesPanel } from "./reader/SavedSearches";
+import { DocViewer } from "./reader/DocViewer";
+import type { DocPage } from "./reader/DocViewer";
+import type { SavedSearch } from "./api";
 import { layoutProfile, defaultLayout, layoutAllows } from "./reader/dbLayout";
 import type { LayoutKind } from "./reader/dbLayout";
 
@@ -120,6 +127,8 @@ export function App() {
   const [rec, setRec] = React.useState<RecordData | null>(null);
   const [recTab, setRecTab] = React.useState(0);
   const [shareOpen, setShareOpen] = React.useState(false);
+  // Постраничный просмотрщик (#222): открытый документ/набор страниц или null.
+  const [docView, setDocView] = React.useState<{ pages: DocPage[]; idx: number; title?: string } | null>(null);
   // Корзина (отбор) — только в памяти, без localStorage (защищённый контур).
   const [basket, setBasket] = React.useState<ResultItem[]>([]);
   const [basketOpen, setBasketOpen] = React.useState(false);
@@ -144,6 +153,10 @@ export function App() {
   const [layout, setLayout] = React.useState<LayoutKind>("list");
   // Тик для перезагрузки списка броней в кабинете после новой брони (#222).
   const [holdsRefresh, setHoldsRefresh] = React.useState(0);
+  // Тик для перезагрузки полок «Для вас» (#133) — обновляем после просмотра записей,
+  // т.к. подборка зависит от истории. Сохранённые запросы (#133) — после сохранения.
+  const [forYouRefresh, setForYouRefresh] = React.useState(0);
+  const [savedRefresh, setSavedRefresh] = React.useState(0);
   const tRef = React.useRef<any>(null);
   const toast = (t: Omit<Toast, "id">) => { const id = Math.random(); setToasts((x) => [...x, { ...t, id }]); setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 4000); };
 
@@ -198,6 +211,14 @@ export function App() {
   function goSearch(px: string, query: string) {
     setHome(false); setMode("simple"); setPrefix(px); setQ(query); setRec(null);
     runSearch(db, px, query, 1);
+  }
+  // Сохранённые запросы (#133): повторно запустить сохранённый поиск. Если задан
+  // префикс — простой поиск; иначе query трактуется как поисковое выражение.
+  function runSavedSearch(s: SavedSearch) {
+    const useDb = s.db || db;
+    setDb(useDb); setView("search"); setRec(null); setHome(false);
+    if (s.prefix) { setMode("simple"); setPrefix(s.prefix); setQ(s.query); runSearch(useDb, s.prefix, s.query, 1); }
+    else { setMode("expert"); setExpertExpr(s.query); runExpr(useDb, s.query, 1, true); }
   }
   // Логотип / «Главная» — вернуться на лендинг (G1).
   function goHome() {
@@ -285,6 +306,8 @@ export function App() {
       // Постоянная ссылка: ?db=<db>&mfn=<mfn> в адресной строке без перезагрузки.
       try { const u = new URL(window.location.href); u.searchParams.set("db", database); u.searchParams.set("mfn", String(mfn)); window.history.replaceState(null, "", u.toString()); } catch { /* ignore */ }
       window.scrollTo(0, 0);
+      // Просмотр записи влияет на историю и подборку «Для вас» (#133/#134) — обновим тик.
+      setForYouRefresh((n) => n + 1);
     }
   }
   function closeRecord() {
@@ -400,15 +423,21 @@ export function App() {
         ) : view === "cabinet" ? (
           <CabinetScreen cab={cab} ticket={account.ticket} toast={toast} holdsRefresh={holdsRefresh}
             onOpenRecord={(database, mfn) => { setView("search"); setHome(false); openRecord(mfn, database); }}
+            onRunSearch={(s) => runSavedSearch(s)}
             onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
         ) : home && !rec ? (
           /* Discovery façade (G1-G3, G17) — лендинг до первого поиска. */
-          <HomeScreen
-            databases={databases} db={db}
-            onPickDb={(code) => setDb(code)}
-            onSearch={(px, query) => goSearch(px, query)}
-            onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }}
-          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <HomeScreen
+              databases={databases} db={db}
+              onPickDb={(code) => setDb(code)}
+              onSearch={(px, query) => goSearch(px, query)}
+              onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }}
+            />
+            {/* «Для вас» (#133) — персональная подборка; скрыта, если эндпойнт пуст/404. */}
+            <ForYouRecommendations refreshKey={forYouRefresh}
+              onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }} />
+          </div>
         ) : (
         <>
         {!rec && (
@@ -424,10 +453,22 @@ export function App() {
                 <button role="tab" aria-selected={mode === "advanced"} onClick={() => setMode("advanced")} style={modeBtn(mode === "advanced")}>Расширенный</button>
                 <button role="tab" aria-selected={mode === "expert"} onClick={() => setMode("expert")} style={modeBtn(mode === "expert")}>Экспертный</button>
               </div>
-              <button onClick={() => setBasketOpen(true)} title="Корзина отбора"
-                style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, background: basket.length ? "var(--accent)" : "transparent", color: basket.length ? "#fff" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
-                <Icon name="bookmark" size={16} /> Корзина{basket.length ? " · " + basket.length : ""}
-              </button>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {/* Сохранённые запросы (#133): меню повтора + сохранение текущего поиска. */}
+                <SavedSearchMenu toast={toast} onRun={runSavedSearch} refreshKey={savedRefresh} />
+                {(total > 0 || baseExpr != null) && (
+                  <SaveSearchButton
+                    db={db}
+                    prefix={mode === "simple" ? prefix : ""}
+                    query={mode === "simple" ? q : (baseExpr || expertExpr)}
+                    defaultName={mode === "simple" ? q : undefined}
+                    toast={toast} onSaved={() => setSavedRefresh((n) => n + 1)} />
+                )}
+                <button onClick={() => setBasketOpen(true)} title="Корзина отбора"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, background: basket.length ? "var(--accent)" : "transparent", color: basket.length ? "#fff" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+                  <Icon name="bookmark" size={16} /> Корзина{basket.length ? " · " + basket.length : ""}
+                </button>
+              </div>
             </div>
             {mode === "simple" ? (
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -551,7 +592,9 @@ export function App() {
             permalink={permalink()} onCopyPermalink={copyPermalink}
             onBack={closeRecord} onOrder={() => order(rec.mfn)} onHold={() => hold(rec.mfn, rec.db)}
             onSubject={(t: string) => { setMode("simple"); setPrefix("K"); setQ(t); closeRecord(); runSearch(db, "K", t, 1); }}
-            loggedIn={account.loggedIn} toast={toast}
+            loggedIn={account.loggedIn} readerName={cab?.name} toast={toast}
+            onOpenRecord={(database, mfn) => openRecord(mfn, database)}
+            onViewDoc={(pages, idx, title) => setDocView({ pages, idx, title })}
             inBasket={inBasket(rec.mfn)}
             onToggleBasket={() => toggleBasket({ mfn: rec.mfn, title: rec.brief || "", author: recView(rec).meta.find((m) => m.label === "Авторы")?.value, year: recView(rec).meta.find((m) => m.label === "Выходные данные")?.value })}
           />
@@ -568,6 +611,7 @@ export function App() {
       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
       {basketOpen && <BasketPanel items={basket} onClose={() => setBasketOpen(false)} onRemove={removeFromBasket} onClear={() => setBasket([])} toast={toast} />}
+      {docView && <DocViewer pages={docView.pages} startIndex={docView.idx} title={docView.title} onClose={() => setDocView(null)} />}
       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
     </div>
   );
@@ -714,8 +758,8 @@ function toneDot(tone: LoanView["tone"]): React.CSSProperties {
   return { width: 6, height: 6, borderRadius: 999, background: c, flex: "none" };
 }
 
-function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; holdsRefresh?: number; onOpenRecord?: (db: string, mfn: number) => void; onBack: () => void; onLogout: () => void }) {
-  const [cabTab, setCabTab] = React.useState<"formular" | "orders">("formular");
+function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSearch, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; holdsRefresh?: number; onOpenRecord?: (db: string, mfn: number) => void; onRunSearch?: (s: SavedSearch) => void; onBack: () => void; onLogout: () => void }) {
+  const [cabTab, setCabTab] = React.useState<"formular" | "orders" | "history" | "saved">("formular");
   const today = React.useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const loans = React.useMemo(() => (cab?.loans || []).map((l) => buildLoan(l, today)), [cab, today]);
   const onHand = loans.filter((l) => l.onHand);
@@ -791,9 +835,9 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onBack,
         {/* ===== Основная колонка ===== */}
         <main style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
 
-          {/* Вкладки кабинета: Формуляр / Заказы (G12) */}
-          <div role="tablist" aria-label="Разделы кабинета" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)" }}>
-            {([["formular", "Формуляр"], ["orders", "Заказы"]] as const).map(([key, label]) => {
+          {/* Вкладки кабинета: Формуляр / Заказы (G12) / История (#134) / Запросы (#133) */}
+          <div role="tablist" aria-label="Разделы кабинета" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", flexWrap: "wrap" }}>
+            {([["formular", "Формуляр"], ["orders", "Заказы"], ["history", "История"], ["saved", "Запросы"]] as const).map(([key, label]) => {
               const on = cabTab === key;
               return (
                 <button key={key} role="tab" aria-selected={on} onClick={() => setCabTab(key)}
@@ -811,6 +855,16 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onBack,
               </div>
               <OrdersTab toast={toast} cardSx={cardSx} />
             </section>
+          ) : cabTab === "history" ? (
+            /* История просмотров (#134) — реальные данные GET /api/history. */
+            <HistoryTab cardSx={cardSx} standalone
+              h2Sx={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}
+              onOpenRecord={onOpenRecord} />
+          ) : cabTab === "saved" ? (
+            /* Сохранённые запросы (#133) — повтор/удаление, реальные данные GET /api/savedsearch. */
+            <SavedSearchesPanel cardSx={cardSx} standalone
+              h2Sx={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}
+              toast={toast} onRun={(s) => onRunSearch?.(s)} />
           ) : (
           <>
           {/* На руках сейчас — LIVE формуляр */}
@@ -898,15 +952,24 @@ function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (t
 // --- Карточка записи с вкладками ------------------------------------------
 const REC_TABS = ["Описание", "Экземпляры", "Электронные версии", "Метки MARC"];
 
-function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, loggedIn, toast, inBasket, onToggleBasket }: {
+function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, loggedIn, readerName, toast, onOpenRecord, onViewDoc, inBasket, onToggleBasket }: {
   rec: RecordData; db: string; tab: number; setTab: (n: number) => void;
   shareOpen: boolean; setShareOpen: (b: boolean) => void;
   permalink: string; onCopyPermalink: () => void;
   onBack: () => void; onOrder: () => void; onHold: () => void; onSubject: (t: string) => void;
-  loggedIn: boolean; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
+  loggedIn: boolean; readerName?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
+  onOpenRecord: (db: string, mfn: number) => void;
+  onViewDoc: (pages: DocPage[], idx: number, title?: string) => void;
   inBasket: boolean; onToggleBasket: () => void;
 }) {
   const v = recView(rec);
+  // Страницы для постраничного просмотрщика (#222): из электронных версий записи.
+  // Картинки (по расширению) — листаются и зумируются во вьюере; прочие файлы —
+  // открываются по ссылке. Только записи со страницами получают кнопку «Открыть просмотр».
+  const docPages: DocPage[] = v.files
+    .filter((f) => f.url)
+    .map((f) => ({ name: f.name || f.url, url: f.url, kind: /\.(png|jpe?g|gif|webp|bmp|tiff?|svg)(\?|#|$)/i.test(f.url) ? ("image" as const) : ("file" as const) }));
+  const hasImagePages = docPages.some((p) => p.kind === "image");
   const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
   const lbl: React.CSSProperties = { fontWeight: 600, fontSize: "var(--text-sm)", margin: "0 0 8px" };
   const onTabKey = (e: React.KeyboardEvent, i: number) => {
@@ -1004,12 +1067,31 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
             {tab === 2 && (
               v.files.length ?
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {v.files.map((f, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)" }}>
-                    <Icon name="file-text" size={16} style={{ color: "var(--text-subtle)", flexShrink: 0 }} />
-                    {f.url
-                      ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 5 }}>{f.name || f.url} <Icon name="external-link" size={13} /></a>
-                      : <span>{f.name}</span>}
-                  </div>)}
+                  {/* Постраничный просмотрщик (#222): доступен, если есть страницы-файлы. */}
+                  {docPages.length > 0 && (
+                    <div style={{ marginBottom: 6 }}>
+                      <Button size="sm" iconLeft={hasImagePages ? "images" : "book-open"}
+                        onClick={() => onViewDoc(docPages, 0, rec.brief || "")}>
+                        Открыть просмотр{docPages.length > 1 ? " · " + docPages.length + " стр." : ""}
+                      </Button>
+                    </div>
+                  )}
+                  {v.files.map((f, i) => {
+                    const pageIdx = docPages.findIndex((p) => p.url === f.url);
+                    return (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)" }}>
+                        <Icon name="file-text" size={16} style={{ color: "var(--text-subtle)", flexShrink: 0 }} />
+                        {f.url && pageIdx >= 0
+                          ? <button type="button" onClick={() => onViewDoc(docPages, pageIdx, rec.brief || "")}
+                              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", font: "inherit", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                              {f.name || f.url} <Icon name="eye" size={13} />
+                            </button>
+                          : f.url
+                            ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 5 }}>{f.name || f.url} <Icon name="external-link" size={13} /></a>
+                            : <span>{f.name}</span>}
+                      </div>
+                    );
+                  })}
                 </div> :
                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Электронные версии к записи не прикреплены.</div>
             )}
@@ -1017,6 +1099,12 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
               <div dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />
             )}
           </div>
+
+          {/* Отзывы и оценки (#134) — скрыто при отсутствии эндпойнта. */}
+          <ReviewPanel db={rec.db} mfn={rec.mfn} loggedIn={loggedIn} readerName={readerName} toast={toast} />
+
+          {/* «Похожие издания» (#133) — скрыто, если рекомендаций нет/404. */}
+          <SimilarRecommendations db={rec.db} mfn={rec.mfn} onOpen={(mfn, database) => onOpenRecord(database, mfn)} />
         </div>
       </div>
     </div>
