@@ -20,3 +20,18 @@ CREATE TABLE IF NOT EXISTS control.tenant (
   kind        TEXT NOT NULL,             -- публичная|школьная|вузовская|ведомственная
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Licensing / entitlements (issue #101): which functional MODULES a tenant is
+-- licensed for. SEPARATE axis from grants — grants are "can-do" (per account),
+-- entitlements are "is-licensed" (per tenant). A request to a disabled module is
+-- refused (403/404) even with a valid grant. Billing (I7) consumes this table;
+-- it is kept independent of billing here. Default-enabled rows are seeded at
+-- provisioning (see access/entitlements.py); an operator flips `enabled` to
+-- revoke a module. `module` is TEXT (not an enum) so adding a module needs no
+-- migration.
+CREATE TABLE IF NOT EXISTS control.tenant_module (
+  tenant_id  BIGINT NOT NULL REFERENCES control.tenant(id) ON DELETE CASCADE,
+  module     TEXT NOT NULL,             -- opac|cataloging|circulation|acquisition|reader|admin|analytics|...
+  enabled    BOOLEAN NOT NULL DEFAULT true,
+  PRIMARY KEY(tenant_id, module)
+);

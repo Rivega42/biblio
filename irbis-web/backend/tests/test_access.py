@@ -133,6 +133,29 @@ def tenancy_checks():
     FAIL[0] += test_tenancy.FAIL[0]
 
 
+def identity_checks():
+    """Run the Identity/Tenancy/Licensing suite (issue #101) and fold its tally in.
+
+    The JWT + entitlement-default + _guard gating checks always run (no DB); the
+    PG-only data-scoping + real tenant_module gating run when postgres is
+    reachable and skip cleanly otherwise. Lives in its own module
+    (test_identity.py) but is invoked here so the existing CI step that runs
+    test_access.py also exercises identity/licensing without a workflow change.
+    """
+    try:
+        import test_identity
+    except Exception as e:
+        print('-- identity suite NOT RUN (import failed: %s)' % e)
+        FAIL[0] += 1                # importable suite is mandatory; surface the failure
+        return
+    test_identity.jwt_checks()
+    test_identity.api_session_checks()
+    test_identity.entitlement_default_checks()
+    test_identity.run_pg()
+    PASS[0] += test_identity.PASS[0]
+    FAIL[0] += test_identity.FAIL[0]
+
+
 def main():
     pure_checks()
     store_checks('sqlite', sqlite_store())
@@ -140,6 +163,7 @@ def main():
     if pg is not None:
         store_checks('postgres', pg)
     tenancy_checks()
+    identity_checks()
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)

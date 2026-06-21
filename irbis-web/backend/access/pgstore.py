@@ -285,6 +285,10 @@ def provision_tenant(slug, name, kind, dsn=None, do_seed=True):
     if do_seed:
         from .seed import seed
         seed(store)
+        # Licensing (#101): turn the default module set ON for the new tenant.
+        # Idempotent; leaves any operator-disabled module untouched on re-provision.
+        from . import entitlements
+        entitlements.seed_modules(slug, dsn)
     return store
 
 

@@ -5,8 +5,7 @@
 Pipeline: authn (bearer token -> session) -> authorize (grant function x db x level)
 -> IRBIS call -> normalize -> audit (write/admin). Server -3338 -> 403.
 """
-import secrets
-import threading
+import os
 from urllib.parse import unquote_to_bytes
 
 from config import Config
@@ -14,9 +13,27 @@ from irbis import SessionManager
 from irbis.client import IrbisError
 from irbis.parser import field, fields
 from access.store import AccessStore
-from access.pgstore import make_store as make_access_store
+from access.pgstore import make_store as make_access_store, PgAccessStore
 from access.authz import authorize, READER_GRANTS, GUEST_GRANTS
 from access.seed import seed
+from access import jwt as _jwt
+from access import entitlements
+
+# Default tenant slug when running single-tenant / sqlite dev (no control plane).
+DEFAULT_TENANT = os.environ.get('DEFAULT_TENANT', 'public')
+
+# Map an authz function to the functional MODULE that must be licensed for it
+# (issue #101 entitlements). Functions not listed are not module-gated (always
+# allowed if the grant passes). Entitlements are a SEPARATE axis from grants:
+# even with a valid grant, a request to a disabled module is refused.
+FUNCTION_MODULE = {
+    'search': 'opac', 'record.read': 'opac', 'terms': 'opac', 'file': 'opac',
+    'record.write': 'cataloging', 'record.delete': 'cataloging', 'cat.gbl': 'cataloging',
+    'order': 'reader', 'cabinet': 'reader',
+    'circ.issue': 'circulation', 'circ.return': 'circulation',
+    'acq.receipt': 'acquisition',
+    'admin.db': 'admin', 'admin.users': 'admin',
+}
 
 
 def ok(data):
@@ -72,34 +89,91 @@ class Api:
                                     self.cfg.irbis_pass, self.cfg.timeout)
         self.access = make_access_store(self.cfg)   # sqlite (default) or Postgres via ACCESS_BACKEND
         seed(self.access)                      # idempotent dev seed
-        self._sessions = {}
-        self._lock = threading.Lock()
+        # JWT signing secret from env (non-secret dev default ok). The token is a
+        # plain signed bearer string — the frontend (api.ts) needs no change.
+        self.jwt_secret = os.environ.get('JWT_SECRET', 'dev-insecure-jwt-secret')
+        self.jwt_ttl = int(os.environ.get('JWT_TTL_SECONDS', '43200'))   # 12h
 
-    # ---- session helpers ----
+    # ---- session helpers (signed JWT; no server-side session table) ----
     def _new_session(self, kind, actor, grants, **extra):
-        token = secrets.token_urlsafe(24)
-        sess = {'kind': kind, 'actor': actor, 'grants': grants}
-        sess.update(extra)
-        with self._lock:
-            self._sessions[token] = sess
-        return token, sess
+        """Issue a signed JWT bearer token carrying {sub, tenant, kind, grants, ...}.
+
+        The session dict is reconstructed from the verified claims in _session(),
+        so the token is fully self-contained — nothing is held server-side.
+        """
+        claims = {'sub': actor, 'tenant': extra.pop('tenant', DEFAULT_TENANT),
+                  'kind': kind, 'grants': grants}
+        claims.update(extra)
+        token = _jwt.encode(claims, self.jwt_secret, ttl_seconds=self.jwt_ttl)
+        return token, self._claims_to_session(claims)
+
+    @staticmethod
+    def _claims_to_session(claims):
+        """Shape verified JWT claims into the session dict the endpoints expect."""
+        sess = dict(claims)
+        sess['actor'] = claims.get('sub')
+        sess.setdefault('tenant', DEFAULT_TENANT)
+        sess.setdefault('grants', [])
+        return sess
 
     def _session(self, token):
-        with self._lock:
-            return self._sessions.get(token)
+        """Verify the JWT (signature + exp) and return the session, or None.
+
+        A tampered or expired token verifies as invalid -> None -> the route
+        treats it as no session (401). Never raises to the caller.
+        """
+        if not token:
+            return None
+        try:
+            claims = _jwt.decode(token, self.jwt_secret)
+        except _jwt.JwtError:
+            return None
+        return self._claims_to_session(claims)
 
     @staticmethod
     def _bearer(headers):
         h = headers.get('authorization') or headers.get('Authorization') or ''
         return h[7:].strip() if h.lower().startswith('bearer ') else None
 
+    def _store_for(self, tenant):
+        """Access store scoped to ``tenant`` for this request.
+
+        - Single-tenant / sqlite dev (tenant 'public' or none): the default
+          ``self.access`` store, back-compat unchanged.
+        - Multi-tenant on PostgreSQL: a ``PgAccessStore`` pinned to ``t_<slug>``
+          via the existing search_path mechanism, so accounts/grants/audit read
+          and write that tenant's schema only. Falls back to the default store if
+          the tenant store can't be built (keeps dev resilient).
+        """
+        if not tenant or tenant == DEFAULT_TENANT:
+            return self.access
+        if not isinstance(self.access, PgAccessStore):
+            return self.access          # sqlite dev has no per-tenant schemas
+        try:
+            from access.pgstore import make_tenant_store
+            return make_tenant_store(tenant)
+        except Exception:
+            return self.access
+
     def _guard(self, session, function, db, level):
-        """Authorize or raise Denied. Audits denials for write/admin."""
+        """Authorize or raise Denied. Audits denials for write/admin.
+
+        Two independent gates (issue #101):
+          1. entitlement — is the session's tenant LICENSED for this function's
+             module? A disabled module is refused even with a valid grant.
+          2. grant — does the session's grant allow function x db x level?
+        """
         if not session:
             raise Denied(401, 'unauthorized', 'no session')
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        module = FUNCTION_MODULE.get(function)
+        if module and not entitlements.is_module_enabled(tenant, module):
+            if level in ('write', 'admin'):
+                self._store_for(tenant).audit(session['actor'], function, db, None, 'denied')
+            raise Denied(403, 'forbidden', 'module not licensed: %s' % module)
         if not authorize(session['grants'], function, db, level):
             if level in ('write', 'admin'):
-                self.access.audit(session['actor'], function, db, None, 'denied')
+                self._store_for(tenant).audit(session['actor'], function, db, None, 'denied')
             raise Denied(403, 'forbidden', 'grant required: %s/%s/%s' % (function, db, level))
 
     # ---- endpoints ----
@@ -109,24 +183,34 @@ class Api:
                    'db': self.cfg.db_default,
                    'maxmfn': self.irbis.max_mfn(self.cfg.db_default)})
 
-    def auth_guest(self):
-        token, _ = self._new_session('guest', 'guest', GUEST_GRANTS)
+    @staticmethod
+    def _tenant_of(body):
+        """Tenant slug requested at login; defaults to single-tenant 'public'."""
+        return (body.get('tenant') or DEFAULT_TENANT).strip() or DEFAULT_TENANT
+
+    def auth_guest(self, body=None):
+        tenant = self._tenant_of(body or {})
+        token, _ = self._new_session('guest', 'guest', GUEST_GRANTS, tenant=tenant)
         return 200, ok({'token': token, 'kind': 'guest'})
 
     def auth_staff(self, body):
-        acc = self.access.authenticate(body.get('login', ''), body.get('password', ''))
+        tenant = self._tenant_of(body)
+        store = self._store_for(tenant)
+        acc = store.authenticate(body.get('login', ''), body.get('password', ''))
         if not acc:
             return 401, err('auth_failed', 'invalid credentials')
-        grants = self.access.effective_grants(acc['id'])
-        token, _ = self._new_session('staff', acc['login'], grants, account_id=acc['id'])
-        self.access.audit(acc['login'], 'auth.staff', None, None, 'ok')
-        return 200, ok({'token': token, 'kind': 'staff',
+        grants = store.effective_grants(acc['id'])
+        token, _ = self._new_session('staff', acc['login'], grants,
+                                     tenant=tenant, account_id=acc['id'])
+        store.audit(acc['login'], 'auth.staff', None, None, 'ok')
+        return 200, ok({'token': token, 'kind': 'staff', 'tenant': tenant,
                         'login': acc['login'], 'name': acc['full_name'], 'grants': grants})
 
     def auth_reader(self, body):
         ticket = (body.get('ticket', '') or '').strip()
         if not ticket:
             return 400, err('bad_request', 'ticket required')
+        tenant = self._tenant_of(body)
         try:
             _count, mfns = self.irbis.search('RDR', '"RI=%s"' % ticket)
         except IrbisError:
@@ -136,7 +220,8 @@ class Api:
         rec = self.irbis.read_record('RDR', mfns[0])
         name_f = field(rec, '10') or field(rec, '11')
         name = (name_f or {}).get('value', '') if name_f else ''
-        token, _ = self._new_session('reader', 'RI=%s' % ticket, READER_GRANTS, rdr_mfn=mfns[0])
+        token, _ = self._new_session('reader', 'RI=%s' % ticket, READER_GRANTS,
+                                     tenant=tenant, rdr_mfn=mfns[0])
         return 200, ok({'token': token, 'kind': 'reader', 'name': name, 'mfn': mfns[0]})
 
     def _brief_item(self, db, mfn):
@@ -318,7 +403,8 @@ class Api:
         assigned = mfn
         if r.data and '#' in r.data[0] and r.data[0].split('#')[0].isdigit():
             assigned = int(r.data[0].split('#')[0])
-        self.access.audit(session['actor'], 'record.write', db, assigned, 'ok', {'created': mfn == 0})
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'record.write', db, assigned, 'ok', {'created': mfn == 0})
         return 200, ok({'db': db, 'mfn': assigned, 'created': mfn == 0, 'returnCode': r.return_code})
 
     def order(self, session, body):
@@ -327,7 +413,8 @@ class Api:
         self._guard(session, 'order', db, 'write')
         # TODO(order): materialize a real RQST request record + reserve a copy/cell on the
         # live server (needs RQST worklist + reader id). For P0: validate + audit + queue marker.
-        self.access.audit(session['actor'], 'order', db, mfn, 'ok', {'queued': True})
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'order', db, mfn, 'ok', {'queued': True})
         return 200, ok({'db': db, 'mfn': mfn, 'status': 'queued',
                         'note': 'P0: заказ принят (запись RQST — TODO боевой интеграции)'})
 
@@ -343,6 +430,15 @@ class Api:
                         'name': (name_f or {}).get('value', ''),
                         'loans': loans, 'loanCount': len(loans)})
 
+    def modules(self, session):
+        """Licensing read: the functional modules enabled for the session's tenant
+        (issue #101 entitlements). Any authenticated session may read its own
+        tenant's enabled-module list."""
+        if not session:
+            raise Denied(401, 'unauthorized', 'no session')
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        return 200, ok({'tenant': tenant, 'modules': entitlements.enabled_modules(tenant)})
+
     # ---- dispatcher ----
     def route(self, method, path, query, body, headers):
         """Return (status, payload) where payload is dict | Raw | None."""
@@ -354,7 +450,7 @@ class Api:
         session = self._session(token)
         try:
             if method == 'POST' and path == '/api/auth/guest':
-                return self.auth_guest()
+                return self.auth_guest(body or {})
             if method == 'POST' and path == '/api/auth/staff':
                 return self.auth_staff(body or {})
             if method == 'POST' and path == '/api/auth/reader':
@@ -385,6 +481,8 @@ class Api:
                 return self.order(session, body or {})
             if method == 'GET' and path == '/api/me/cabinet':
                 return self.cabinet(session)
+            if method == 'GET' and path == '/api/me/modules':
+                return self.modules(session)
             if method == 'GET' and path == '/api/databases':
                 return self.databases(session)
             if method == 'GET' and len(parts) == 3 and parts[0] == 'api' and parts[1] == 'worklist':
