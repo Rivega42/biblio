@@ -64,6 +64,51 @@ export interface HistoryItem { db: string; mfn: number; title?: string; ts?: str
 // нести готовое выражение, тогда prefix пуст. db — база, в которой искать.
 export interface SavedSearch { id: string | number; name: string; db: string; prefix?: string; query: string; ts?: string; }
 
+// --- Каталогизация: рабочий лист + ФЛК (#183, #188) ------------------------
+// Описание поля рабочего листа (.ws/.wss → FIELD_CATALOG). type определяет
+// контрол в DynamicField: text/menu/dict/tree/bool/authority/date. subfields —
+// вложенные подполя; repeatable — повторяемое поле (массив вхождений).
+export interface WorklistSubfield { code: string; label: string; type: string; options?: string[]; }
+export interface WorklistField {
+  code: string; label: string; type: string;
+  required?: boolean; repeatable?: boolean;
+  options?: string[]; subfields?: WorklistSubfield[];
+  placeholder?: string; hint?: string;
+}
+// Нарушение ФЛК (SPEC §0): severity 0 пройдено · 1 непреодолимая (блокирует
+// сохранение) · 2 преодолимая (сохранение после подтверждения). field/subfield —
+// MARC-адрес для подсветки строки рабочего листа; message — текст оператору.
+export interface FlkViolation {
+  ruleId: string; severity: 0 | 1 | 2; message: string;
+  path?: string; field?: string | null; subfield?: string | null; stub?: boolean;
+}
+export interface FlkResult {
+  db: string; phase: string;
+  overallSeverity: 0 | 1 | 2; canSave: boolean;
+  violations: FlkViolation[];
+}
+// Запись для ФЛК — карта поле→значение: скаляр, {подполе:значение} или массив
+// (повторяемое). Совпадает с record-draft движка flk.py.
+export type FlkRecord = Record<string, string | Record<string, string> | Array<string | Record<string, string>>>;
+
+// --- Книговыдача (#185) ----------------------------------------------------
+// Формуляр читателя: карточка + активные выдачи. blocks/messages — служебные
+// сообщения (должник, превышен лимит, бронеблок), debtor/fine — флаги/сумма.
+export interface CircReader {
+  ticket: string; name?: string; category?: string; status?: string;
+  debtor?: boolean; finesTotal?: number; blocks?: string[];
+}
+export interface CircLoan {
+  db?: string; item: string; title?: string; author?: string;
+  issued?: string; due?: string; overdue?: boolean; renewable?: boolean;
+}
+export interface CircFormular { reader: CircReader; loans: CircLoan[]; messages?: string[]; }
+// Штрафы читателя: список начислений + итог. paid/reason — статус и причина.
+export interface CircFine { id?: string | number; amount: number; reason?: string; date?: string; paid?: boolean; }
+export interface CircFines { ticket: string; total: number; items: CircFine[]; }
+// Результат операции выдачи/возврата/продления: обновлённый займ + сообщение.
+export interface CircActionResult { ok?: boolean; message?: string; loan?: CircLoan; block?: string; }
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -145,9 +190,30 @@ export const api = {
   createShelf: (name: string) => jpost<{ id: string; name: string; system?: boolean }>("/api/shelves", { name }),
   addToShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item", { listId, db, mfn }),
   removeFromShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item/remove", { listId, db, mfn }),
-  worklist: (db: string) => jget<{ db: string; fields: any[] }>("/api/worklist/" + db),
+  worklist: (db: string) => jget<{ db: string; fields: WorklistField[] }>("/api/worklist/" + db),
   saveRecord: (db: string, mfn: number, fields: { tag: string; value: string }[]) =>
-    jpost<{ db: string; mfn: number; created: boolean; returnCode: number }>("/api/record/" + db + "/" + mfn, { fields }),
+    jpost<{ db: string; mfn: number; created: boolean; returnCode: number; violations?: FlkViolation[] }>("/api/record/" + db + "/" + mfn, { fields }),
+  // --- ФЛК «на лету» (#188) ------------------------------------------------
+  // Прогнать декларативный ФЛК по черновику записи. record — карта поле→значение
+  // (см. FlkRecord). phase: 'save' (полная проверка) | 'field' (точечная по
+  // одному полю). 404/501 → деградируем к клиентской проверке обязательных полей.
+  validate: (db: string, record: FlkRecord, phase: "save" | "field" = "save", field?: string, currentMfn?: number) =>
+    jpost<FlkResult>("/api/validate", { db, record, phase, field, currentMfn }),
+  // --- Книговыдача (#185) --------------------------------------------------
+  // Формуляр читателя по билету: карточка + активные выдачи + служебные блоки.
+  circReader: (ticket: string) => jget<CircFormular>("/api/circ/reader?" + qs({ ticket })),
+  // Выдать экземпляр (инв./RFID) читателю. Сервер запускает контроль (должник,
+  // лимит, бронеблок) и возвращает block при отказе.
+  circIssue: (ticket: string, db: string, item: string) =>
+    jpost<CircActionResult>("/api/circ/issue", { ticket, db, item }),
+  // Принять возврат экземпляра.
+  circReturn: (ticket: string, db: string, item: string) =>
+    jpost<CircActionResult>("/api/circ/return", { ticket, db, item }),
+  // Продлить выдачу (новый срок — в loan.due).
+  circRenew: (ticket: string, db: string, item: string) =>
+    jpost<CircActionResult>("/api/circ/renew", { ticket, db, item }),
+  // Штрафы читателя: список начислений + итог.
+  circFines: (ticket: string) => jget<CircFines>("/api/circ/fines?" + qs({ ticket })),
   // --- Отзывы и оценки (#134) ----------------------------------------------
   // Отзывы по записи: средняя оценка, число, список и (если вошёл) свой отзыв.
   reviews: (db: string, mfn: number) =>

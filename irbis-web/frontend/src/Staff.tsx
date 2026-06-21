@@ -1,23 +1,24 @@
 import React from "react";
 import { api } from "./api";
-import type { Grant } from "./api";
+import type { Grant, ResultItem, WorklistField, FlkViolation, FlkRecord } from "./api";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
 import type { IconName } from "../components/icon/Icon.jsx";
 import { EmptyState } from "../components/feedback/EmptyState.jsx";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { DynamicField } from "../components/cataloging/DynamicField.jsx";
+import { CirculationDesk } from "./CirculationDesk";
 
 export interface StaffSession { name?: string; login: string; grants: Grant[]; }
 type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) => void;
 
 // Функциональные модули продукта «Рабочее пространство сотрудника».
 // Собираются ПО ГРАНТАМ учётки (а не «по АРМам»): видны только разрешённые.
-type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: "cataloging" | "cells" | "stub" };
+type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: "cataloging" | "circulation" | "cells" | "stub" };
 const DOMAINS: DomainTile[] = [
   { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей RUSMARC", route: "cataloging" as const },
   { id: "acq", label: "Комплектование", icon: "archive", grant: "acq.receipt", desc: "Заказ, поступление, КСУ, списание", route: "stub" as const },
-  { id: "circ", label: "Книговыдача", icon: "package", grant: "circ.issue", desc: "Выдача, возврат, очередь, бронеполка, ячейки", route: "stub" as const },
+  { id: "circ", label: "Книговыдача", icon: "package", grant: "circ.issue", desc: "Выдача, возврат, продление, штрафы, формуляр читателя", route: "circulation" as const },
   { id: "cells", label: "Ячеистое хранение", icon: "grid", grant: "record.read", desc: "Карта ячеек: занятость, адрес, RFID (наша фишка)", route: "cells" as const },
   { id: "provision", label: "Книгообеспеченность", icon: "bar-chart", grant: "record.read", desc: "Обеспеченность дисциплин учебной литературой", route: "stub" as const },
   { id: "inv", label: "Инвентаризация", icon: "scan-line", grant: "record.read", desc: "Сверка фонда с ТСД", route: "stub" as const },
@@ -25,7 +26,7 @@ const DOMAINS: DomainTile[] = [
 ];
 const hasGrant = (grants: Grant[], fn: string) => (grants || []).some((g) => g.function === fn);
 
-type WLField = { code: string; label: string; type: string; required?: boolean; repeatable?: boolean; subfields?: { code: string; label: string; type: string }[]; options?: string[] };
+type WLField = WorklistField;
 
 function emptyValues(wl: WLField[]) {
   const v: Record<string, any> = {};
@@ -46,6 +47,33 @@ function valuesToFields(wl: WLField[], values: Record<string, any>) {
   });
   return out;
 }
+// values → запись для ФЛК (flk.py): карта поле→значение. Скалярное поле — строка;
+// поле с подполями — {подполе:значение}; повторяемое — массив таких. Пустые
+// вхождения/подполя отбрасываем, чтобы mandatory-правила не путались.
+function valuesToFlkRecord(wl: WLField[], values: Record<string, any>): FlkRecord {
+  const rec: FlkRecord = {};
+  (wl || []).forEach((fd) => {
+    const v = values[fd.code];
+    const occToVal = (occ: any): string | Record<string, string> | null => {
+      if (fd.subfields) {
+        const o: Record<string, string> = {};
+        fd.subfields.forEach((sf) => { const t = ((occ || {})[sf.code] || "").toString().trim(); if (t) o[sf.code] = t; });
+        return Object.keys(o).length ? o : null;
+      }
+      const t = (occ ?? "").toString().trim();
+      return t ? t : null;
+    };
+    if (fd.repeatable) {
+      const arr = (Array.isArray(v) ? v : []).map(occToVal).filter(Boolean) as Array<string | Record<string, string>>;
+      if (arr.length) rec[fd.code] = arr.length === 1 ? arr[0] : arr;
+    } else {
+      const one = occToVal(v);
+      if (one != null) rec[fd.code] = one;
+    }
+  });
+  return rec;
+}
+
 function recordToValues(fields: any[], wl: WLField[]) {
   const values: Record<string, any> = {};
   const pick = (f: any, c: string) => f.subfields[c] || f.subfields[c.toUpperCase()] || f.subfields[c.toLowerCase()] || "";
@@ -125,6 +153,29 @@ const SHELL_CSS = `
    оставляя контрол, подсказку и ФЛК-сообщение. */
 .stf__row .irb-dyn__head{display:none;}
 .stf__row .irb-dyn{gap:6px;}
+.stf__row--bad .stf__row-name{color:var(--danger-500);}
+
+/* search-to-edit — поиск записи в базе и список результатов */
+.stf__search{display:grid;grid-template-columns:150px 1fr auto;gap:8px;align-items:center;
+  background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:12px;}
+.stf__results{border:1px solid var(--border-subtle);border-radius:var(--radius-md);overflow:hidden;margin-bottom:14px;max-height:260px;overflow-y:auto;}
+.stf__res{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:none;cursor:pointer;background:var(--surface-card);
+  padding:9px 12px;border-bottom:1px solid var(--border-subtle);font-family:var(--font-ui);color:var(--text-body);}
+.stf__res:last-child{border-bottom:none;}
+.stf__res:hover{background:var(--surface-hover);}
+.stf__res-mfn{font-family:var(--font-mono);font-size:11px;color:var(--text-subtle);flex:none;min-width:46px;}
+.stf__res-main{min-width:0;flex:1;}
+.stf__res-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.stf__res-sub{font-size:11.5px;color:var(--text-subtle);}
+
+/* экземпляры (910) */
+.stf__exh{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:18px 0 8px;}
+.stf__ex{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-subtle);}
+.stf__ex:last-of-type{border-bottom:none;}
+.stf__ex input{box-sizing:border-box;width:100%;padding:7px 10px;border-radius:var(--radius-md);border:1px solid var(--border-default);
+  background:var(--surface-card);color:var(--text-body);font-family:var(--font-ui);font-size:13px;}
+.stf__ex input:focus{outline:none;border-color:var(--accent);}
+@media (max-width:880px){.stf__search{grid-template-columns:1fr;}.stf__ex{grid-template-columns:1fr 1fr;}}
 
 @media (max-width:880px){
   .stf__cat-grid{grid-template-columns:1fr !important;}
@@ -151,6 +202,7 @@ function initials(name?: string, login?: string): string {
 // Текущий модуль по маршруту (для подсветки nav + хлебных крошек).
 function routeId(route: any): string {
   if (route === "cataloging") return "cataloging";
+  if (route === "circulation") return "circulation";
   if (route === "cells") return "cells";
   if (route === "desktop" || !route) return "desktop";
   return "stub";
@@ -165,6 +217,7 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
 
   const crumbLeaf =
     current === "cataloging" ? "Каталогизация" :
+    current === "circulation" ? "Книговыдача" :
     current === "cells" ? "Ячеистое хранение" :
     current === "stub" ? stubTitle :
     "Рабочий стол";
@@ -221,6 +274,7 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
 
         <div className="stf__body">
           {current === "cataloging" ? <CatalogingWorksheet staff={staff} toast={toast} />
+            : current === "circulation" ? <CirculationDesk toast={toast} />
             : current === "cells" ? <CellMap />
             : current === "stub" ? <StaffStub title={stubTitle} onOpen={() => setRoute("cataloging")} />
             : <StaffDesktop staff={staff} tiles={tiles} onOpen={open} />}
@@ -406,93 +460,255 @@ function CellMap() {
 }
 
 // ============================================================================
-// Каталогизация — рабочий лист RUSMARC: labelled field rows (DynamicField),
-// control-by-type, ФЛК-валидация (ошибка поля + сообщение), панель сводки ФЛК.
-// Live: загрузка из IBIS, сохранение в песочницу WORK.
+// Каталогизация — рабочий лист RUSMARC: поиск записи в базе → правка в редакторе
+// полей/подполей (control-by-type через DynamicField), экземпляры (910), и
+// сохранение с ЖИВЫМ ФЛК (POST /api/validate): severity-1 непреодолимая блокирует
+// сохранение, severity-2 преодолимая — сохранение с подтверждением. Нарушения
+// раскладываются по строкам рабочего листа (field/subfield → подсветка строки).
+// Деградация: нет /api/validate → клиентская проверка обязательных полей; нет
+// /api/worklist → информер. Сохранение — в песочницу WORK (правка не на боевой).
 // ============================================================================
+
+// Строка экземпляра (поле 910): инвентарный номер (^b), штрих-код/RFID (^h),
+// место хранения (^d). Базовый ввод — MVP, расширяется статусом/КСУ позже.
+type Exemplar = { b: string; h: string; d: string };
+const emptyExemplar = (): Exemplar => ({ b: "", h: "", d: "" });
+
+// Ключ строки рабочего листа для нарушения ФЛК: совпадает с кодом поля; саб-поле
+// здесь не разводим по отдельным контролам (DynamicField рисует подполя внутри),
+// поэтому подсвечиваем всю строку поля.
+const flkKey = (v: FlkViolation): string => (v.field || v.path || "").toString();
 
 function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; toast: ToastFn }) {
   const SANDBOX = "WORK";
+  const SEARCH_DB = "IBIS";
   const [wl, setWl] = React.useState<WLField[] | null>(null);
+  const [wlMissing, setWlMissing] = React.useState(false);
   const [values, setValues] = React.useState<Record<string, any>>({});
+  const [exemplars, setExemplars] = React.useState<Exemplar[]>([]);
   const [mfn, setMfn] = React.useState(0);
-  const [openMfn, setOpenMfn] = React.useState("");
   const [saved, setSaved] = React.useState<any>(null);
+  // errors: код поля → текст (для подсветки строки + DynamicField error).
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const [violations, setViolations] = React.useState<FlkViolation[]>([]);
   const [checked, setChecked] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  // search-to-edit
+  const [query, setQuery] = React.useState("");
+  const [prefix, setPrefix] = React.useState("T=");
+  const [results, setResults] = React.useState<ResultItem[] | null>(null);
+  const [searching, setSearching] = React.useState(false);
 
-  React.useEffect(() => { (async () => { const r = await api.worklist(SANDBOX); if (r.json?.ok && r.json.data) { setWl(r.json.data.fields); setValues(emptyValues(r.json.data.fields)); } })(); }, []);
+  React.useEffect(() => { (async () => {
+    const r = await api.worklist(SANDBOX);
+    if (r.json?.ok && r.json.data && r.json.data.fields) { setWl(r.json.data.fields); setValues(emptyValues(r.json.data.fields)); }
+    else setWlMissing(true);
+  })(); }, []);
 
-  const set = (code: string, val: any) => { setValues((v) => ({ ...v, [code]: val })); if (errors[code]) setErrors((e) => { const n = { ...e }; delete n[code]; return n; }); };
-  const newRecord = () => { setValues(emptyValues(wl!)); setMfn(0); setSaved(null); setErrors({}); setChecked(false); };
+  const set = (code: string, val: any) => {
+    setValues((v) => ({ ...v, [code]: val }));
+    if (errors[code]) setErrors((e) => { const n = { ...e }; delete n[code]; return n; });
+  };
+  function resetEditor(keepResults = true) {
+    setValues(emptyValues(wl!)); setExemplars([]); setMfn(0); setSaved(null);
+    setErrors({}); setViolations([]); setChecked(false);
+    if (!keepResults) setResults(null);
+  }
+  const newRecord = () => resetEditor();
 
-  // ФЛК: обязательные поля. Возвращает map ошибок (для подсветки + сводки).
-  function runFlk(): Record<string, string> {
+  // --- поиск записи в базе → список результатов → выбор для правки ---------
+  async function runSearch() {
+    const q = query.trim(); if (!q) return;
+    setSearching(true);
+    const r = await api.search(SEARCH_DB, prefix, q, 1, 25);
+    setSearching(false);
+    if (r.json?.ok && r.json.data) setResults(r.json.data.items);
+    else { setResults([]); toast({ variant: "info", title: "Поиск недоступен", message: "Не удалось выполнить поиск в базе " + SEARCH_DB + "." }); }
+  }
+  async function pickRecord(item: ResultItem) {
+    const r = await api.record(SEARCH_DB, item.mfn);
+    if (r.json?.ok && r.json.data) {
+      setValues(recordToValues(r.json.data.fields, wl!));
+      // экземпляры из поля 910 загруженной записи (b/h/d) — для правки.
+      const ex = (r.json.data.fields || []).filter((f: any) => f.tag === "910").map((f: any) => ({
+        b: f.subfields?.b || f.subfields?.B || "", h: f.subfields?.h || f.subfields?.H || "", d: f.subfields?.d || f.subfields?.D || "",
+      }));
+      setExemplars(ex);
+      setMfn(0); setSaved(null); setErrors({}); setViolations([]); setChecked(false);
+      toast({ variant: "info", title: "Запись загружена в форму", message: SEARCH_DB + " MFN " + item.mfn + " → сохранится в песочницу " + SANDBOX });
+    } else toast({ variant: "warning", title: "Не удалось открыть", message: "MFN " + item.mfn });
+  }
+
+  // --- экземпляры (910) ----------------------------------------------------
+  const addExemplar = () => setExemplars((xs) => xs.concat([emptyExemplar()]));
+  const setExemplar = (i: number, patch: Partial<Exemplar>) => setExemplars((xs) => xs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const delExemplar = (i: number) => setExemplars((xs) => xs.filter((_, j) => j !== i));
+  function exemplarFields(): { tag: string; value: string }[] {
+    return exemplars
+      .map((x) => [["b", x.b], ["h", x.h], ["d", x.d]].filter(([, v]) => (v || "").trim()).map(([c, v]) => "^" + c + (v as string).trim()).join(""))
+      .filter((s) => s).map((value) => ({ tag: "910", value }));
+  }
+
+  // --- клиентский ФЛК (деградация): обязательные поля -----------------------
+  function clientRequired(): Record<string, string> {
     const errs: Record<string, string> = {};
     (wl || []).forEach((fd) => {
       if (fd.required) {
-        const ok = fd.subfields ? (values[fd.code] && Object.values(values[fd.code]).some(Boolean)) : !!values[fd.code];
+        const v = values[fd.code];
+        const ok = fd.subfields ? (v && typeof v === "object" && Object.values(v).some(Boolean)) : !!(v && v.toString().trim());
         if (!ok) errs[fd.code] = "ФЛК: обязательное поле не заполнено";
       }
     });
     return errs;
   }
-  function checkFlk() {
-    const errs = runFlk(); setErrors(errs); setChecked(true);
-    if (Object.keys(errs).length) toast({ variant: "warning", title: "ФЛК: есть замечания", message: "Заполните обязательные поля." });
-    else toast({ variant: "success", title: "ФЛК пройден", message: "Обязательные поля заполнены." });
+
+  // Разложить нарушения сервера по строкам рабочего листа + текст в DynamicField.
+  function applyViolations(vs: FlkViolation[]) {
+    const errs: Record<string, string> = {};
+    vs.forEach((v) => { if (v.severity >= 1) { const k = flkKey(v); if (k) errs[k] = (errs[k] ? errs[k] + " · " : "") + v.message; } });
+    setErrors(errs); setViolations(vs);
   }
 
-  async function loadFromIbis() {
-    const id = parseInt(openMfn, 10); if (!id) return;
-    const r = await api.record("IBIS", id);
-    if (r.json?.ok && r.json.data) { setValues(recordToValues(r.json.data.fields, wl!)); setMfn(0); setSaved(null); setErrors({}); setChecked(false); toast({ variant: "info", title: "Запись загружена в форму", message: "IBIS MFN " + id + " → сохранится в песочницу " + SANDBOX }); }
-    else toast({ variant: "warning", title: "Не найдено", message: "Нет записи MFN " + id + " в IBIS." });
+  // Прогон ФЛК: пробуем сервер (/api/validate), при 404/501 — клиентская проверка.
+  // Возвращает {hardBlocked, ok} для решения «сохранять / блокировать».
+  async function runFlk(): Promise<{ hardBlocked: boolean; soft: boolean; serverUp: boolean }> {
+    const rec = valuesToFlkRecord(wl!, values);
+    const r = await api.validate(SANDBOX, rec, "save", undefined, mfn || undefined);
+    if (r.status === 404 || r.status === 501 || !r.json?.ok || !r.json.data) {
+      // движок ФЛК не развёрнут → клиентская обязательность
+      const errs = clientRequired(); setErrors(errs); setViolations([]);
+      return { hardBlocked: Object.keys(errs).length > 0, soft: false, serverUp: false };
+    }
+    const data = r.json.data;
+    applyViolations(data.violations || []);
+    return { hardBlocked: !data.canSave, soft: data.overallSeverity === 2, serverUp: true };
   }
-  async function save() {
-    const errs = runFlk();
-    setErrors(errs); setChecked(true);
-    if (Object.keys(errs).length) { toast({ variant: "warning", title: "Заполните обязательные поля", message: "ФЛК не пройден." }); return; }
-    const r = await api.saveRecord(SANDBOX, mfn, valuesToFields(wl!, values));
-    if (r.status === 200 && r.json?.ok && r.json.data) { setSaved(r.json.data); setMfn(r.json.data.mfn); toast({ variant: "success", title: r.json.data.created ? "Запись создана" : "Запись обновлена", message: SANDBOX + " · MFN " + r.json.data.mfn }); }
-    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант record.write." });
+
+  async function checkFlk() {
+    setChecked(true);
+    const res = await runFlk();
+    if (res.hardBlocked) toast({ variant: "warning", title: "ФЛК: непреодолимые замечания", message: "Сохранение заблокировано — исправьте отмеченные поля." });
+    else if (res.soft) toast({ variant: "info", title: "ФЛК: преодолимые замечания", message: "Можно сохранить с подтверждением." });
+    else toast({ variant: "success", title: "ФЛК пройден", message: res.serverUp ? "Нарушений нет." : "Обязательные поля заполнены." });
+  }
+
+  async function persist() {
+    setSaving(true);
+    const r = await api.saveRecord(SANDBOX, mfn, valuesToFields(wl!, values).concat(exemplarFields()));
+    setSaving(false);
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      // сервер может вернуть нарушения и при сохранении — покажем их.
+      if (r.json.data.violations && r.json.data.violations.length) applyViolations(r.json.data.violations);
+      setSaved(r.json.data); setMfn(r.json.data.mfn);
+      toast({ variant: "success", title: r.json.data.created ? "Запись создана" : "Запись обновлена", message: SANDBOX + " · MFN " + r.json.data.mfn });
+    } else if (r.status === 422 && r.json?.data?.violations) {
+      applyViolations(r.json.data.violations); setChecked(true);
+      toast({ variant: "warning", title: "ФЛК не пройден на сервере", message: "Запись не сохранена — см. отмеченные поля." });
+    } else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант record.write." });
     else toast({ variant: "error", title: "Не сохранено", message: "Повторите попытку." });
+  }
+
+  async function save() {
+    setChecked(true);
+    const res = await runFlk();
+    if (res.hardBlocked) {
+      toast({ variant: "warning", title: "Сохранение заблокировано (ФЛК)", message: res.serverUp ? "Есть непреодолимые нарушения — исправьте отмеченные поля." : "Заполните обязательные поля." });
+      return; // severity-1 блокирует
+    }
+    if (res.soft) {
+      const okSoft = typeof window === "undefined" ? true : window.confirm("ФЛК: есть преодолимые замечания. Сохранить запись всё равно?");
+      if (!okSoft) return;
+    }
+    await persist();
   }
 
   // Сводка ФЛК для правой панели.
   const requiredFields = (wl || []).filter((f) => f.required);
+  const hardCount = violations.filter((v) => v.severity === 1).length;
+  const softCount = violations.filter((v) => v.severity === 2).length;
   const errCount = Object.keys(errors).length;
 
-  const inputSx: React.CSSProperties = { width: 132, padding: "7px 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)", background: "var(--surface-card)", color: "var(--text-body)", fontFamily: "var(--font-ui)", fontSize: 13 };
+  const exInputs = (i: number, x: Exemplar) => (
+    <div className="stf__ex" key={i}>
+      <input value={x.b} onChange={(e) => setExemplar(i, { b: e.target.value })} placeholder="Инв. номер (^b)" aria-label={"Инвентарный номер экземпляра " + (i + 1)} />
+      <input value={x.h} onChange={(e) => setExemplar(i, { h: e.target.value })} placeholder="Штрих-код / RFID (^h)" aria-label={"Штрих-код экземпляра " + (i + 1)} />
+      <input value={x.d} onChange={(e) => setExemplar(i, { d: e.target.value })} placeholder="Место хранения (^d)" aria-label={"Место хранения экземпляра " + (i + 1)} />
+      <Button variant="ghost" size="sm" iconLeft="trash" aria-label="Удалить экземпляр" onClick={() => delExemplar(i)} />
+    </div>
+  );
+
+  const head = (
+    <div className="stf__pagehead">
+      <div className="stf__h1">
+        <h2>Каталогизация</h2>
+        <span className="stf__pill">Книга · RUSMARC</span>
+        <span className="stf__pill" style={{ background: "var(--status-issued-bg)", color: "var(--status-issued)", borderColor: "transparent" }}>{mfn ? "MFN " + mfn : "Черновик"}</span>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Button variant="secondary" size="sm" iconLeft="check-circle" onClick={checkFlk} disabled={!wl}>Проверить ФЛК</Button>
+        <Button size="sm" iconLeft="check-circle" loading={saving} onClick={save} disabled={!wl}>Сохранить</Button>
+      </div>
+    </div>
+  );
+
+  // нет рабочего листа → информер (движок каталогизации не развёрнут).
+  if (wlMissing) return (
+    <div>
+      {head}
+      <div className="stf__card" style={{ padding: 4 }}>
+        <EmptyState icon="file-text" title="Рабочий лист каталогизации подключается отдельно"
+          description="Редактор библиографической записи свёрстан в Стиле A и работает поверх движка каталогизации (#183/#188). На текущем сервере /api/worklist ещё не опубликован — поле/подполе появятся после его развёртывания." />
+      </div>
+    </div>
+  );
 
   return (
     <div>
-      <div className="stf__pagehead">
-        <div className="stf__h1">
-          <h2>Каталогизация</h2>
-          <span className="stf__pill">Книга · RUSMARC</span>
-          <span className="stf__pill" style={{ background: "var(--status-issued-bg)", color: "var(--status-issued)", borderColor: "transparent" }}>{mfn ? "MFN " + mfn : "Черновик"}</span>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Button variant="secondary" size="sm" iconLeft="check-circle" onClick={checkFlk} disabled={!wl}>Проверить ФЛК</Button>
-          <Button size="sm" iconLeft="check-circle" onClick={save} disabled={!wl}>Сохранить</Button>
+      {head}
+
+      {/* ===== Поиск записи в базе → выбор для правки ===== */}
+      <div className="stf__search">
+        <select value={prefix} onChange={(e) => setPrefix(e.target.value)} aria-label="Точка доступа поиска"
+          style={{ padding: "8px 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)", background: "var(--surface-card)", color: "var(--text-body)", fontFamily: "var(--font-ui)", fontSize: 13 }}>
+          <option value="T=">Заглавие</option>
+          <option value="A=">Автор</option>
+          <option value="K=">Ключевые слова</option>
+          <option value="I=">Инв./шифр</option>
+          <option value="">Свободно (выражение)</option>
+        </select>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={"Поиск записи в базе " + SEARCH_DB + " для правки…"}
+          aria-label="Поисковый запрос" autoComplete="off"
+          onKeyDown={(e) => { if (e.key === "Enter") runSearch(); }}
+          style={{ padding: "8px 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)", background: "var(--surface-card)", color: "var(--text-body)", fontFamily: "var(--font-ui)", fontSize: 13 }} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="secondary" size="sm" iconLeft="search" loading={searching} onClick={runSearch} disabled={!wl}>Найти</Button>
+          <Button variant="secondary" size="sm" iconLeft="plus" onClick={newRecord} disabled={!wl}>Новая</Button>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "0 0 14px", flexWrap: "wrap" }}>
-        <Button variant="secondary" size="sm" iconLeft="plus" onClick={newRecord} disabled={!wl}>Новая запись</Button>
-        <span style={{ color: "var(--text-subtle)" }}>·</span>
-        <input value={openMfn} onChange={(e) => setOpenMfn(e.target.value)} placeholder="MFN из IBIS" aria-label="MFN записи в базе IBIS" style={inputSx} onKeyDown={(e) => { if (e.key === "Enter") loadFromIbis(); }} />
-        <Button variant="secondary" size="sm" onClick={loadFromIbis} disabled={!wl}>Загрузить из IBIS</Button>
-        <span style={{ marginLeft: "auto", color: "var(--text-subtle)", fontSize: 12.5 }}>песочница {SANDBOX} · рабочий лист «Книга»</span>
-      </div>
+      {results !== null && (
+        results.length === 0
+          ? <div style={{ color: "var(--text-subtle)", fontSize: 13, marginBottom: 14 }}>Ничего не найдено — уточните запрос или создайте новую запись.</div>
+          : <div className="stf__results" role="listbox" aria-label="Результаты поиска">
+              {results.map((it) => (
+                <button key={it.mfn} type="button" className="stf__res" onClick={() => pickRecord(it)}>
+                  <span className="stf__res-mfn">MFN {it.mfn}</span>
+                  <span className="stf__res-main">
+                    <span className="stf__res-title">{it.title || "Без заглавия"}</span>
+                    <span className="stf__res-sub">{[it.author, it.year, it.docType].filter(Boolean).join(" · ")}</span>
+                  </span>
+                  <Icon name="edit" size={15} style={{ color: "var(--text-subtle)", flex: "none" }} />
+                </button>
+              ))}
+            </div>
+      )}
 
       {!wl ? <div style={{ color: "var(--text-subtle)", fontSize: 13 }}>Загрузка рабочего листа…</div> : (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 280px", gap: 18, alignItems: "start" }} className="stf__cat-grid">
-          {/* worksheet — labelled field rows */}
+          {/* worksheet — labelled field rows + экземпляры */}
           <div className="stf__card" style={{ padding: "4px 20px" }}>
             {wl.map((fd) => (
-              <div className="stf__row" key={fd.code}>
+              <div className={"stf__row" + (errors[fd.code] ? " stf__row--bad" : "")} key={fd.code}>
                 <div className="stf__row-lab">
                   <span className="stf__row-code">{fd.code}</span>
                   <span className="stf__row-name">{fd.label}{fd.required && <span className="stf__row-req" aria-hidden="true">*</span>}</span>
@@ -500,8 +716,22 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
                 <DynamicField field={{ ...fd, code: undefined } as any} value={values[fd.code]} onChange={(v: any) => set(fd.code, v)} error={errors[fd.code]} />
               </div>
             ))}
+
+            {/* экземпляры (910) */}
+            <div className="stf__exh">
+              <div className="stf__row-lab">
+                <span className="stf__row-code">910</span>
+                <span className="stf__row-name">Экземпляры</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-subtle)" }}>· {exemplars.length}</span>
+              </div>
+              <Button variant="secondary" size="sm" iconLeft="plus" onClick={addExemplar}>Добавить экземпляр</Button>
+            </div>
+            {exemplars.length === 0
+              ? <div style={{ fontSize: 12.5, color: "var(--text-subtle)", paddingBottom: 8 }}>Экземпляров нет. Добавьте инвентарные единицы (инв. номер, штрих-код/RFID, место хранения).</div>
+              : exemplars.map((x, i) => exInputs(i, x))}
+
             <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "14px 0" }}>
-              <Button iconLeft="check-circle" onClick={save}>Сохранить запись</Button>
+              <Button iconLeft="check-circle" loading={saving} onClick={save}>Сохранить запись</Button>
               {saved && <span style={{ color: "var(--success)", fontSize: 13 }}><Icon name="check" size={13} /> сохранено в {saved.db}, MFN {saved.mfn} (код {saved.returnCode})</span>}
             </div>
           </div>
@@ -509,20 +739,35 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
           {/* ФЛК сводка */}
           <aside className="stf__card" style={{ padding: 16, position: "sticky", top: 64 }} aria-label="Сводка проверки ФЛК">
             <span className="stf__card-cap">Проверка ФЛК</span>
-            <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12 }}>
-              {requiredFields.map((fd) => {
-                const bad = !!errors[fd.code];
-                return (
-                  <div key={fd.code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: bad ? "var(--danger-500)" : "var(--text-body)" }}>
-                    <Icon name={bad ? "alert-octagon" : "check-circle"} size={15} style={{ color: bad ? "var(--danger-500)" : "var(--success)", flex: "none" }} />
-                    <span>{fd.label} {bad ? "— не заполнено" : "— заполнено"}</span>
+            {violations.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12 }}>
+                {violations.map((v, i) => (
+                  <div key={v.ruleId + ":" + i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: v.severity === 1 ? "var(--danger-500)" : "var(--text-body)" }}>
+                    <Icon name={v.severity === 1 ? "alert-octagon" : "alert-triangle"} size={15} style={{ color: v.severity === 1 ? "var(--danger-500)" : "var(--status-issued)", flex: "none", marginTop: 1 }} />
+                    <span>{v.path ? <b style={{ fontFamily: "var(--font-mono)", fontWeight: 600 }}>{v.path}</b> : null} {v.message}</span>
                   </div>
-                );
-              })}
-              {!requiredFields.length && <div style={{ fontSize: 12.5, color: "var(--text-subtle)" }}>Обязательных полей нет.</div>}
-            </div>
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-subtle)", fontSize: 12, color: checked ? (errCount ? "var(--danger-500)" : "var(--success)") : "var(--text-subtle)" }}>
-              {!checked ? "Нажмите «Проверить ФЛК» перед сохранением." : errCount ? errCount + " замечани(е/я) ФЛК" : "ФЛК пройден — можно сохранять."}
+                ))}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12 }}>
+                {requiredFields.map((fd) => {
+                  const bad = !!errors[fd.code];
+                  return (
+                    <div key={fd.code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: bad ? "var(--danger-500)" : "var(--text-body)" }}>
+                      <Icon name={bad ? "alert-octagon" : "check-circle"} size={15} style={{ color: bad ? "var(--danger-500)" : "var(--success)", flex: "none" }} />
+                      <span>{fd.label} {bad ? "— не заполнено" : "— заполнено"}</span>
+                    </div>
+                  );
+                })}
+                {!requiredFields.length && <div style={{ fontSize: 12.5, color: "var(--text-subtle)" }}>Обязательных полей нет.</div>}
+              </div>
+            )}
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-subtle)", fontSize: 12, color: checked ? ((hardCount || errCount) ? "var(--danger-500)" : softCount ? "var(--status-issued)" : "var(--success)") : "var(--text-subtle)" }}>
+              {!checked ? "Нажмите «Проверить ФЛК» перед сохранением."
+                : hardCount ? hardCount + " непреодолим(ое/ых) — сохранение блокируется" + (softCount ? ", + " + softCount + " преодолим(ое/ых)" : "")
+                : softCount ? softCount + " преодолим(ое/ых) — можно сохранить с подтверждением"
+                : errCount ? errCount + " замечани(е/я) ФЛК"
+                : "ФЛК пройден — можно сохранять."}
             </div>
           </aside>
         </div>
