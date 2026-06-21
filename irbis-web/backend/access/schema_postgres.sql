@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS vocabulary_value (
   sort          INTEGER NOT NULL DEFAULT 0,
   origin        TEXT NOT NULL DEFAULT 'seed' CHECK (origin IN ('seed','imported','custom')),
   active        BOOLEAN NOT NULL DEFAULT true,
-  PRIMARY KEY (vocab, code)
+  UNIQUE (vocab, code)
 );
 CREATE INDEX IF NOT EXISTS vocabulary_value_vocab_idx ON vocabulary_value(vocab, sort);
 
@@ -99,6 +99,6 @@ CREATE TABLE IF NOT EXISTS classification_node (
   path          TEXT,                        -- materialized 'a.b.c' path of codes
   sort          INTEGER NOT NULL DEFAULT 0,
   origin        TEXT NOT NULL DEFAULT 'seed',
-  PRIMARY KEY (name, code)
+  UNIQUE (name, code)
 );
 CREATE INDEX IF NOT EXISTS classification_node_tree_idx ON classification_node(name, parent);
