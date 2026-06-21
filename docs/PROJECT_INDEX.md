@@ -16,6 +16,7 @@
 | [`design/ROADMAP.md`](design/ROADMAP.md) | Сквозная декомпозиция: **7 инициатив** (milestones I1–I7) → **13 эпиков** → таски → сабтаски; DoD-гейты; порядок старта |
 | [`design/BEST_PRACTICES.md`](design/BEST_PRACTICES.md) | Инженерные практики мирового уровня (14 областей) + 🔴 «решить сейчас» |
 | [`design/PRODUCT_PRACTICES.md`](design/PRODUCT_PRACTICES.md) | **Продуктовые** механики мирового уровня (discovery/вовлечение/логистика/ИИ) + топ-6 ★-differentiators |
+| [`design/TZ_CLAUDEDESIGN_design-system.md`](design/TZ_CLAUDEDESIGN_design-system.md) | **ТЗ для ClaudeDesign**: полноформатная дизайн-система — 2 стиля (Claude-like app light/dark · Apple Glass сайт) + мультиарендная кастомизация |
 | [`design/SYNC_DESIGN.md`](design/SYNC_DESIGN.md) | **ADR-005:** офлайн-синхронизация edge↔облако (событийный журнал, владение по доменам, HLC, конфликты) |
 | [`design/GO_TO_MARKET.md`](design/GO_TO_MARKET.md) | Политика продаж: сегменты, тарифы, оси цены, cloud/on-prem, закупки, миграция-онбординг |
 | [`design/COVERAGE_MATRIX.md`](design/COVERAGE_MATRIX.md) | Поблочное покрытие vs ИРБИС (клиент ≈35%, структура БД 50% …) |
