@@ -87,6 +87,42 @@ CREATE TABLE IF NOT EXISTS classification_node (
   UNIQUE (name, code)
 );
 CREATE INDEX IF NOT EXISTS classification_node_tree_idx ON classification_node(name, parent);
+-- Reader-portal state (#222) — holds + queue and reading-list shelves, persisted
+-- in OUR store (NOT on the live ИРБИС server), reader-scoped by RDR ticket. Mirrors
+-- schema_postgres.sql. A "reader" here is the ticket string (RI=) — readers are NOT
+-- in staff_account, so these tables key on the ticket, not an account id.
+CREATE TABLE IF NOT EXISTS reader_hold (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket TEXT NOT NULL,             -- RDR ticket (RI=) that owns the hold
+  db TEXT NOT NULL,
+  mfn INTEGER NOT NULL,
+  title TEXT,                       -- resolved at place time (brief read), for the inbox card
+  status TEXT NOT NULL DEFAULT 'queued'   -- queued | ready | cancelled
+       CHECK (status IN ('queued','ready','cancelled')),
+  queued_at REAL NOT NULL,
+  until REAL,                       -- pickup-shelf TTL once ready
+  UNIQUE(ticket, db, mfn, status)   -- at most one live hold per reader per item (status-scoped)
+);
+CREATE INDEX IF NOT EXISTS reader_hold_queue_idx ON reader_hold(db, mfn, status, queued_at);
+CREATE INDEX IF NOT EXISTS reader_hold_ticket_idx ON reader_hold(ticket, status);
+CREATE TABLE IF NOT EXISTS reader_shelf (
+  id TEXT NOT NULL,                 -- 'want' | 'fav' (system) | custom 's<n>'
+  ticket TEXT NOT NULL,
+  name TEXT NOT NULL,
+  system INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+  PRIMARY KEY (ticket, id)
+);
+CREATE TABLE IF NOT EXISTS reader_shelf_item (
+  ticket TEXT NOT NULL,
+  list_id TEXT NOT NULL,
+  db TEXT NOT NULL,
+  mfn INTEGER NOT NULL,
+  title TEXT,
+  added_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+  PRIMARY KEY (ticket, list_id, db, mfn)
+);
+CREATE INDEX IF NOT EXISTS reader_shelf_item_list_idx ON reader_shelf_item(ticket, list_id);
 """
 
 
@@ -245,3 +281,100 @@ class AccessStore:
         return [dict(r) for r in self._conn().execute(
             'SELECT code,label,parent,depth,path,sort FROM classification_node '
             'WHERE name=? ORDER BY sort, code', (name,)).fetchall()]
+
+    # ---- reader holds (#222) — reader-scoped by RDR ticket, NOT on live ИРБИС ----
+    def hold_find_live(self, ticket, db, mfn):
+        """The reader's current non-cancelled hold on (db,mfn), or None (idempotency)."""
+        r = self._conn().execute(
+            "SELECT * FROM reader_hold WHERE ticket=? AND db=? AND mfn=? "
+            "AND status IN ('queued','ready') ORDER BY id LIMIT 1",
+            (ticket, db, mfn)).fetchone()
+        return dict(r) if r else None
+
+    def hold_queue(self, db, mfn):
+        """FIFO queue (queued+ready) for (db,mfn), oldest first — drives position."""
+        return [dict(r) for r in self._conn().execute(
+            "SELECT * FROM reader_hold WHERE db=? AND mfn=? "
+            "AND status IN ('queued','ready') ORDER BY queued_at, id",
+            (db, mfn)).fetchall()]
+
+    def hold_add(self, ticket, db, mfn, title, status, queued_at, until=None):
+        c = self._conn()
+        cur = c.execute(
+            'INSERT INTO reader_hold(ticket,db,mfn,title,status,queued_at,until) '
+            'VALUES(?,?,?,?,?,?,?)', (ticket, db, mfn, title, status, queued_at, until))
+        c.commit()
+        return self.hold_get(cur.lastrowid)
+
+    def hold_get(self, hold_id):
+        r = self._conn().execute(
+            'SELECT * FROM reader_hold WHERE id=?', (hold_id,)).fetchone()
+        return dict(r) if r else None
+
+    def holds_for(self, ticket):
+        """All live (queued/ready) holds owned by a reader, oldest first."""
+        return [dict(r) for r in self._conn().execute(
+            "SELECT * FROM reader_hold WHERE ticket=? AND status IN ('queued','ready') "
+            'ORDER BY queued_at, id', (ticket,)).fetchall()]
+
+    def hold_cancel(self, ticket, hold_id):
+        """Cancel a reader's own hold; returns the row if it was theirs and live."""
+        c = self._conn()
+        row = c.execute(
+            "SELECT * FROM reader_hold WHERE id=? AND ticket=? "
+            "AND status IN ('queued','ready')", (hold_id, ticket)).fetchone()
+        if not row:
+            return None
+        c.execute("UPDATE reader_hold SET status='cancelled' WHERE id=?", (hold_id,))
+        c.commit()
+        return dict(row)
+
+    # ---- reader shelves / reading lists (#222) — reader-scoped by RDR ticket ----
+    def shelf_lists(self, ticket):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT id,name,system,created_at FROM reader_shelf WHERE ticket=? '
+            'ORDER BY system DESC, created_at, id', (ticket,)).fetchall()]
+
+    def shelf_get(self, ticket, list_id):
+        r = self._conn().execute(
+            'SELECT * FROM reader_shelf WHERE ticket=? AND id=?',
+            (ticket, list_id)).fetchone()
+        return dict(r) if r else None
+
+    def shelf_create(self, ticket, list_id, name, system=0):
+        c = self._conn()
+        c.execute('INSERT OR IGNORE INTO reader_shelf(id,ticket,name,system) '
+                  'VALUES(?,?,?,?)', (list_id, ticket, name, 1 if system else 0))
+        c.commit()
+        return self.shelf_get(ticket, list_id)
+
+    def shelf_next_custom_id(self, ticket):
+        """Next free custom-list id 's<n>' for this reader (avoids system ids)."""
+        n = self._conn().execute(
+            "SELECT COUNT(*) AS n FROM reader_shelf WHERE ticket=? AND system=0",
+            (ticket,)).fetchone()['n']
+        existing = {r['id'] for r in self.shelf_lists(ticket)}
+        i = n + 1
+        while ('s%d' % i) in existing:
+            i += 1
+        return 's%d' % i
+
+    def shelf_items(self, ticket, list_id):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT db,mfn,title FROM reader_shelf_item WHERE ticket=? AND list_id=? '
+            'ORDER BY added_at, db, mfn', (ticket, list_id)).fetchall()]
+
+    def shelf_add_item(self, ticket, list_id, db, mfn, title):
+        """Add (db,mfn) to a list, deduped per list (PK upserts title)."""
+        c = self._conn()
+        c.execute(
+            'INSERT INTO reader_shelf_item(ticket,list_id,db,mfn,title) VALUES(?,?,?,?,?) '
+            'ON CONFLICT(ticket,list_id,db,mfn) DO UPDATE SET title=excluded.title',
+            (ticket, list_id, db, mfn, title))
+        c.commit()
+
+    def shelf_remove_item(self, ticket, list_id, db, mfn):
+        c = self._conn()
+        c.execute('DELETE FROM reader_shelf_item WHERE ticket=? AND list_id=? '
+                  'AND db=? AND mfn=?', (ticket, list_id, db, mfn))
+        c.commit()

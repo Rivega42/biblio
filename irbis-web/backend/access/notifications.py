@@ -351,12 +351,15 @@ CREATE TABLE IF NOT EXISTS notification (
   channels_json TEXT NOT NULL DEFAULT '[]',  -- resolved channel-name chain
   last_error TEXT,
   next_attempt_at REAL NOT NULL DEFAULT 0,
+  read_at REAL,                 -- reader inbox: NULL=unread, epoch=when marked read (#222)
   created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
   updated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
   UNIQUE (dedup_key)
 );
 CREATE INDEX IF NOT EXISTS notification_claim_idx
   ON notification(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS notification_inbox_idx
+  ON notification(recipient, read_at);
 """
 
 # attempts -> seconds of advisory backoff before the row is reclaimable.
@@ -412,6 +415,13 @@ class NotificationQueue:
     def ensure_schema(self):
         c = self._conn()
         c.executescript(SCHEMA_SQLITE)
+        # Lazy migration: a persistent queue created before the inbox feature (#222)
+        # lacks read_at — add it so the inbox can mark notices read. Idempotent.
+        cols = {r[1] for r in c.execute('PRAGMA table_info(notification)').fetchall()}
+        if 'read_at' not in cols:
+            c.execute('ALTER TABLE notification ADD COLUMN read_at REAL')
+        c.execute('CREATE INDEX IF NOT EXISTS notification_inbox_idx '
+                  'ON notification(recipient, read_at)')
         c.commit()
 
     # ---- enqueue (idempotent) -------------------------------------------- #
@@ -542,3 +552,55 @@ class NotificationQueue:
         return self._conn().execute(
             "SELECT COUNT(*) AS n FROM notification WHERE status='pending'"
         ).fetchone()['n']
+
+    # ---- reader inbox (#222) — reader-addressable view of dispatched notices ----
+    # A reader sees the notices circulation enqueued FOR THEM (recipient == ticket),
+    # rendered to a {subject, body} card via the event catalog. Suppressed notices
+    # (opted-out, never meant for delivery) are excluded from the inbox view.
+    def _inbox_card(self, row, tenant):
+        """Render one stored notification row into an inbox card (id/ts/event/...)."""
+        payload = json.loads(row['payload_json'])
+        subject, body = '', ''
+        if self.catalog.has(row['event']):
+            tmpl = self.catalog.template(row['event'])
+            subject = render(tmpl.get('subject'), payload)
+            body = render(tmpl.get('body'), payload)
+        return {'id': row['id'], 'ts': row['created_at'], 'event': row['event'],
+                'subject': subject, 'body': body, 'read': row['read_at'] is not None}
+
+    def inbox(self, recipient, unread_only=False, tenant=None):
+        """Dispatched notices addressed to ``recipient`` (newest first), as cards."""
+        tenant = tenant or self.tenant
+        sql = ("SELECT * FROM notification WHERE recipient=? AND tenant=? "
+               "AND status!='suppressed'")
+        params = [recipient, tenant]
+        if unread_only:
+            sql += ' AND read_at IS NULL'
+        sql += ' ORDER BY id DESC'
+        rows = self._conn().execute(sql, params).fetchall()
+        return [self._inbox_card(r, tenant) for r in rows]
+
+    def unread_count(self, recipient, tenant=None):
+        tenant = tenant or self.tenant
+        return self._conn().execute(
+            "SELECT COUNT(*) AS n FROM notification WHERE recipient=? AND tenant=? "
+            "AND status!='suppressed' AND read_at IS NULL",
+            (recipient, tenant)).fetchone()['n']
+
+    def mark_read(self, recipient, notif_id=None, mark_all=False, tenant=None):
+        """Mark one notice (``notif_id``, must belong to ``recipient``) or all of a
+        reader's notices read. Returns the reader's remaining unread count."""
+        tenant = tenant or self.tenant
+        c = self._conn()
+        now = time.time()
+        if mark_all:
+            c.execute(
+                'UPDATE notification SET read_at=? WHERE recipient=? AND tenant=? '
+                'AND read_at IS NULL', (now, recipient, tenant))
+        elif notif_id is not None:
+            c.execute(
+                'UPDATE notification SET read_at=? WHERE id=? AND recipient=? '
+                'AND tenant=? AND read_at IS NULL',
+                (now, notif_id, recipient, tenant))
+        c.commit()
+        return self.unread_count(recipient, tenant)

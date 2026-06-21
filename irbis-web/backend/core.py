@@ -23,6 +23,10 @@ from access.seed import seed
 from access import jwt as _jwt
 from access import entitlements
 from access import flk
+from access import notifications as _notifications
+from access import circulation as _circulation
+from access.holds import HoldService
+from access.shelves import ShelfService
 
 # Default tenant slug when running single-tenant / sqlite dev (no control plane).
 DEFAULT_TENANT = os.environ.get('DEFAULT_TENANT', 'public')
@@ -245,6 +249,37 @@ class Api:
         # plain signed bearer string — the frontend (api.ts) needs no change.
         self.jwt_secret = os.environ.get('JWT_SECRET', 'dev-insecure-jwt-secret')
         self.jwt_ttl = int(os.environ.get('JWT_TTL_SECONDS', '43200'))   # 12h
+
+        # ---- reader-portal: holds, notification inbox, shelves (#222) ----
+        # A PERSISTENT, reader-addressable notification queue (env NOTIFY_DB path,
+        # default a file next to access.db; ':memory:' in tests). Circulation
+        # enqueues reader notices here; the inbox endpoint reads them back keyed by
+        # the reader ticket (recipient). This is what lets a reader SEE the notices
+        # circulation dispatches. Best-effort: a build failure must not break the
+        # API (the inbox then simply reports empty).
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            notify_db = os.environ.get('NOTIFY_DB', os.path.join(here, 'notify.db'))
+            self.notifications = _notifications.NotificationQueue(notify_db)
+        except Exception:
+            self.notifications = None
+        # Circulation engine wired to that queue (notifications=) so its _emit
+        # dispatches reader-addressable notices. Own sqlite store (env CIRC_DB),
+        # standalone from the live ИРБИС server (#222: never write the live server).
+        try:
+            circ_db = os.environ.get('CIRC_DB', ':memory:')
+            self.circulation = _circulation.CirculationEngine(
+                store=_circulation.CirculationStore(circ_db),
+                notifications=self.notifications)
+        except Exception:
+            self.circulation = None
+        # Hold + shelf services over OUR access store, reader-scoped by ticket. The
+        # brief-read seam resolves a display title via the existing OPAC read; no
+        # catalog handle is wired in this slice (availability falls back to the
+        # FIFO queue — first-in-line is surfaced ready).
+        self.holds = HoldService(self.access, catalog=None,
+                                 brief_read=self._hold_brief)
+        self.shelves = ShelfService(self.access, brief_read=self._hold_brief)
 
     # ---- session helpers (signed JWT; no server-side session table) ----
     def _new_session(self, kind, actor, grants, **extra):
@@ -791,6 +826,135 @@ class Api:
                         'name': (name_f or {}).get('value', ''),
                         'loans': loans, 'loanCount': len(loans)})
 
+    # ---- reader-portal: holds, notifications inbox, shelves (#222) -------- #
+    # All reader-scoped by the RDR ticket. Guests (no reader session) get 401/403.
+    # Persisted in OUR access store / notification queue, NOT on the live ИРБИС
+    # server (mirrors core.order's "don't touch the live server" posture).
+    def _reader_ticket(self, session):
+        """The bare RDR ticket for a reader session, or raise Denied.
+
+        Reader sessions carry ``actor='RI=<ticket>'`` (see ``auth_reader``); the
+        ticket itself is the reader-scope key for holds/shelves/inbox. A non-reader
+        (guest/staff) session is refused — these are reader surfaces."""
+        if not session:
+            raise Denied(401, 'unauthorized', 'no session')
+        if session.get('kind') != 'reader':
+            raise Denied(403, 'forbidden', 'reader session required')
+        actor = session.get('actor') or ''
+        return actor[3:] if actor.startswith('RI=') else actor
+
+    def _hold_brief(self, db, mfn):
+        """Title-resolution seam for holds/shelves: reuse the OPAC brief read.
+
+        Returns ``{'title': ...}``; degrades to a stub on any server hiccup so a
+        hold/shelf add never fails for want of a title."""
+        try:
+            return self._brief_item(db, mfn)
+        except Exception:
+            return {'title': 'MFN %d' % mfn}
+
+    def place_hold(self, session, body):
+        """POST /api/hold — place (or return the existing) hold for the reader."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'order', self.cfg.db_default, 'write')
+        db = (body.get('db') or self.cfg.db_default)
+        self._public_db_guard(session, db)
+        try:
+            mfn = int(body.get('mfn'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        res = self.holds.place(ticket, db, mfn)
+        return 200, ok(res)
+
+    def list_holds(self, session):
+        """GET /api/holds — the reader's live holds with queue positions."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'order', self.cfg.db_default, 'write')
+        return 200, ok({'items': self.holds.list_for(ticket)})
+
+    def cancel_hold(self, session, body):
+        """POST /api/hold/cancel — cancel the reader's own hold."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'order', self.cfg.db_default, 'write')
+        try:
+            hold_id = int(body.get('holdId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'holdId required')
+        res = self.holds.cancel(ticket, hold_id)
+        if res is None:
+            return 404, err('not_found', 'hold not found')
+        return 200, ok(res)
+
+    def notifications_inbox(self, session, unread_only):
+        """GET /api/notifications — the reader's dispatched notices + unread count."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        if self.notifications is None:
+            return 200, ok({'items': [], 'unread': 0})
+        items = self.notifications.inbox(ticket, unread_only=unread_only)
+        unread = self.notifications.unread_count(ticket)
+        return 200, ok({'items': items, 'unread': unread})
+
+    def notifications_read(self, session, body):
+        """POST /api/notifications/read — mark one ({id}) or all ({all:true}) read."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        if self.notifications is None:
+            return 200, ok({'unread': 0})
+        mark_all = bool(body.get('all'))
+        notif_id = None
+        if not mark_all:
+            try:
+                notif_id = int(body.get('id'))
+            except (TypeError, ValueError):
+                return 400, err('bad_request', 'id or all:true required')
+        unread = self.notifications.mark_read(ticket, notif_id=notif_id,
+                                              mark_all=mark_all)
+        return 200, ok({'unread': unread})
+
+    def shelves_list(self, session):
+        """GET /api/shelves — the reader's reading lists (system seeded lazily)."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        return 200, ok({'lists': self.shelves.lists(ticket)})
+
+    def shelf_create(self, session, body):
+        """POST /api/shelves — create a custom reading list."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        res = self.shelves.create(ticket, body.get('name'))
+        return 200, ok(res)
+
+    def shelf_add_item(self, session, body):
+        """POST /api/shelves/item — add (db,mfn) to a list (deduped)."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        list_id = (body.get('listId') or '').strip()
+        db = (body.get('db') or self.cfg.db_default)
+        try:
+            mfn = int(body.get('mfn'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        res = self.shelves.add_item(ticket, list_id, db, mfn)
+        if res is None:
+            return 404, err('not_found', 'list not found')
+        return 200, ok(res)
+
+    def shelf_remove_item(self, session, body):
+        """POST /api/shelves/item/remove — remove (db,mfn) from a list."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        list_id = (body.get('listId') or '').strip()
+        db = (body.get('db') or self.cfg.db_default)
+        try:
+            mfn = int(body.get('mfn'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        res = self.shelves.remove_item(ticket, list_id, db, mfn)
+        if res is None:
+            return 404, err('not_found', 'list not found')
+        return 200, ok(res)
+
     def vocab_list(self, session):
         """List the session tenant's dictionaries (name/title/kind/seed_version).
 
@@ -905,6 +1069,26 @@ class Api:
                 return self.validate_record(session, body or {})
             if method == 'POST' and path == '/api/order':
                 return self.order(session, body or {})
+            # ---- reader-portal: holds, notifications inbox, shelves (#222) ----
+            if method == 'POST' and path == '/api/hold':
+                return self.place_hold(session, body or {})
+            if method == 'GET' and path == '/api/holds':
+                return self.list_holds(session)
+            if method == 'POST' and path == '/api/hold/cancel':
+                return self.cancel_hold(session, body or {})
+            if method == 'GET' and path == '/api/notifications':
+                unread_only = query.get('unread', ['0'])[0] in ('1', 'true', 'yes')
+                return self.notifications_inbox(session, unread_only)
+            if method == 'POST' and path == '/api/notifications/read':
+                return self.notifications_read(session, body or {})
+            if method == 'GET' and path == '/api/shelves':
+                return self.shelves_list(session)
+            if method == 'POST' and path == '/api/shelves':
+                return self.shelf_create(session, body or {})
+            if method == 'POST' and path == '/api/shelves/item':
+                return self.shelf_add_item(session, body or {})
+            if method == 'POST' and path == '/api/shelves/item/remove':
+                return self.shelf_remove_item(session, body or {})
             if method == 'GET' and path == '/api/me/cabinet':
                 return self.cabinet(session)
             if method == 'GET' and path == '/api/me/modules':

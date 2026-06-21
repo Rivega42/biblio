@@ -225,6 +225,93 @@ class PgAccessStore:
             'SELECT code,label,parent,depth,path,sort FROM classification_node '
             'WHERE name=%s ORDER BY sort, code', (name,)).fetchall()]
 
+    # ---- reader holds (#222) — reader-scoped by RDR ticket, NOT on live ИРБИС ----
+    def hold_find_live(self, ticket, db, mfn):
+        r = self._conn().execute(
+            "SELECT * FROM reader_hold WHERE ticket=%s AND db=%s AND mfn=%s "
+            "AND status IN ('queued','ready') ORDER BY id LIMIT 1",
+            (ticket, db, mfn)).fetchone()
+        return dict(r) if r else None
+
+    def hold_queue(self, db, mfn):
+        return [dict(r) for r in self._conn().execute(
+            "SELECT * FROM reader_hold WHERE db=%s AND mfn=%s "
+            "AND status IN ('queued','ready') ORDER BY queued_at, id",
+            (db, mfn)).fetchall()]
+
+    def hold_add(self, ticket, db, mfn, title, status, queued_at, until=None):
+        r = self._conn().execute(
+            'INSERT INTO reader_hold(ticket,db,mfn,title,status,queued_at,until) '
+            'VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING id',
+            (ticket, db, mfn, title, status, queued_at, until)).fetchone()
+        return self.hold_get(r['id'])
+
+    def hold_get(self, hold_id):
+        r = self._conn().execute(
+            'SELECT * FROM reader_hold WHERE id=%s', (hold_id,)).fetchone()
+        return dict(r) if r else None
+
+    def holds_for(self, ticket):
+        return [dict(r) for r in self._conn().execute(
+            "SELECT * FROM reader_hold WHERE ticket=%s AND status IN ('queued','ready') "
+            'ORDER BY queued_at, id', (ticket,)).fetchall()]
+
+    def hold_cancel(self, ticket, hold_id):
+        row = self._conn().execute(
+            "SELECT * FROM reader_hold WHERE id=%s AND ticket=%s "
+            "AND status IN ('queued','ready')", (hold_id, ticket)).fetchone()
+        if not row:
+            return None
+        self._conn().execute(
+            "UPDATE reader_hold SET status='cancelled' WHERE id=%s", (hold_id,))
+        return dict(row)
+
+    # ---- reader shelves / reading lists (#222) — reader-scoped by RDR ticket ----
+    def shelf_lists(self, ticket):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT id,name,system,created_at FROM reader_shelf WHERE ticket=%s '
+            'ORDER BY system DESC, created_at, id', (ticket,)).fetchall()]
+
+    def shelf_get(self, ticket, list_id):
+        r = self._conn().execute(
+            'SELECT * FROM reader_shelf WHERE ticket=%s AND id=%s',
+            (ticket, list_id)).fetchone()
+        return dict(r) if r else None
+
+    def shelf_create(self, ticket, list_id, name, system=0):
+        self._conn().execute(
+            'INSERT INTO reader_shelf(id,ticket,name,system) VALUES(%s,%s,%s,%s) '
+            'ON CONFLICT(ticket,id) DO NOTHING',
+            (list_id, ticket, name, bool(system)))
+        return self.shelf_get(ticket, list_id)
+
+    def shelf_next_custom_id(self, ticket):
+        n = self._conn().execute(
+            'SELECT COUNT(*) AS n FROM reader_shelf WHERE ticket=%s AND system=false',
+            (ticket,)).fetchone()['n']
+        existing = {r['id'] for r in self.shelf_lists(ticket)}
+        i = n + 1
+        while ('s%d' % i) in existing:
+            i += 1
+        return 's%d' % i
+
+    def shelf_items(self, ticket, list_id):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT db,mfn,title FROM reader_shelf_item WHERE ticket=%s AND list_id=%s '
+            'ORDER BY added_at, db, mfn', (ticket, list_id)).fetchall()]
+
+    def shelf_add_item(self, ticket, list_id, db, mfn, title):
+        self._conn().execute(
+            'INSERT INTO reader_shelf_item(ticket,list_id,db,mfn,title) '
+            'VALUES(%s,%s,%s,%s,%s) '
+            'ON CONFLICT(ticket,list_id,db,mfn) DO UPDATE SET title=EXCLUDED.title',
+            (ticket, list_id, db, mfn, title))
+
+    def shelf_remove_item(self, ticket, list_id, db, mfn):
+        self._conn().execute(
+            'DELETE FROM reader_shelf_item WHERE ticket=%s AND list_id=%s '
+            'AND db=%s AND mfn=%s', (ticket, list_id, db, mfn))
+
 
 def make_store(cfg=None):
     """Factory: return the Access store for the configured backend.

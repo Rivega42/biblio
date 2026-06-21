@@ -102,3 +102,48 @@ CREATE TABLE IF NOT EXISTS classification_node (
   UNIQUE (name, code)
 );
 CREATE INDEX IF NOT EXISTS classification_node_tree_idx ON classification_node(name, parent);
+
+-- ---------------------------------------------------------------------------
+-- Reader-portal state (#222): holds + queue and reading-list shelves.
+-- Persisted in OUR store (NOT written to the live ИРБИС server), reader-scoped by
+-- RDR ticket (RI=). Readers are NOT in staff_account, so these tables key on the
+-- ticket string, not an account id. Mirrors the sqlite DDL in store.py.
+-- ---------------------------------------------------------------------------
+
+-- One placed hold. status: queued (in line) | ready (free copy on the pickup
+-- shelf) | cancelled. position is computed live from the FIFO queue, not stored.
+CREATE TABLE IF NOT EXISTS reader_hold (
+  id         BIGSERIAL PRIMARY KEY,
+  ticket     TEXT NOT NULL,                -- RDR ticket (RI=) that owns the hold
+  db         TEXT NOT NULL,
+  mfn        INTEGER NOT NULL,
+  title      TEXT,                         -- resolved at place time (brief read)
+  status     TEXT NOT NULL DEFAULT 'queued'
+             CHECK (status IN ('queued','ready','cancelled')),
+  queued_at  DOUBLE PRECISION NOT NULL,
+  until      DOUBLE PRECISION,             -- pickup-shelf TTL once ready
+  UNIQUE(ticket, db, mfn, status)          -- at most one live hold per reader per item
+);
+CREATE INDEX IF NOT EXISTS reader_hold_queue_idx ON reader_hold(db, mfn, status, queued_at);
+CREATE INDEX IF NOT EXISTS reader_hold_ticket_idx ON reader_hold(ticket, status);
+
+-- Reading lists. Two system lists ('want','fav') seeded lazily per reader; the
+-- reader may add custom lists ('s<n>'). Dedup of items is per (ticket,list,db,mfn).
+CREATE TABLE IF NOT EXISTS reader_shelf (
+  id         TEXT NOT NULL,                -- 'want' | 'fav' (system) | custom 's<n>'
+  ticket     TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  system     BOOLEAN NOT NULL DEFAULT false,
+  created_at DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+  PRIMARY KEY (ticket, id)
+);
+CREATE TABLE IF NOT EXISTS reader_shelf_item (
+  ticket    TEXT NOT NULL,
+  list_id   TEXT NOT NULL,
+  db        TEXT NOT NULL,
+  mfn       INTEGER NOT NULL,
+  title     TEXT,
+  added_at  DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+  PRIMARY KEY (ticket, list_id, db, mfn)
+);
+CREATE INDEX IF NOT EXISTS reader_shelf_item_list_idx ON reader_shelf_item(ticket, list_id);
