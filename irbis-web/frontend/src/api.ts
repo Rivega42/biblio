@@ -13,6 +13,8 @@ export interface Holding { inv_no: string; status: string; cell: string; rfid: s
 export interface RecordData { db: string; mfn: number; version?: string; brief?: string; hasCover?: boolean; fields: FieldVal[]; holdings?: Holding[]; }
 export interface StorageNode {
   id: number; kind: string; code: string; name?: string; address?: string; size?: string;
+  gx?: number; gy?: number; gw?: number; gh?: number;
+  cellsTotal?: number; cellsOccupied?: number;
   occupied?: boolean; status?: string; title?: string; inv?: string; mfn?: number;
   children?: StorageNode[];
 }

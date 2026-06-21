@@ -23,7 +23,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS rec_fts USING fts5(
 -- Число ячеек на полке РАЗНОЕ (зависит от размера книг). В ИРБИС такого нет.
 CREATE TABLE IF NOT EXISTS location(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  parent_id INTEGER, kind TEXT, code TEXT, name TEXT, size TEXT, address TEXT
+  parent_id INTEGER, kind TEXT, code TEXT, name TEXT, size TEXT, address TEXT,
+  gx REAL, gy REAL, gw REAL, gh REAL          -- геометрия для плана помещения (top-down)
 );
 CREATE INDEX IF NOT EXISTS loc_parent ON location(parent_id);
 -- Экземпляр живёт в листовой локации (ячейка/слот) либо нигде (на руках).
@@ -62,6 +63,20 @@ STORAGE = {
 KIND_RU = {'building': 'Здание', 'floor': 'Этаж', 'room': 'Помещение', 'rack': 'Стеллаж',
            'shelf': 'Полка', 'cell': 'Ячейка', 'postamat': 'Постамат', 'return': 'Книгоприём', 'slot': 'Слот'}
 CELL_SIZES = ['L', 'L', 'M', 'M', 'S']
+# Геометрия плана помещения (условные единицы): стеллаж — длинный прямоугольник, ряды с проходами.
+RACK_W, RACK_H, COL_GAP, AISLE, MARGIN, PER_ROW = 70, 26, 18, 34, 26, 4
+
+
+def room_geometry(nracks):
+    """Вернуть (room_w, room_h, [(gx,gy,gw,gh) на стеллаж])."""
+    racks = []
+    for i in range(nracks):
+        col, row = i % PER_ROW, i // PER_ROW
+        racks.append((MARGIN + col * (RACK_W + COL_GAP), MARGIN + row * (RACK_H + AISLE), RACK_W, RACK_H))
+    cols = min(PER_ROW, nracks) or 1
+    rows = (nracks + PER_ROW - 1) // PER_ROW or 1
+    return (MARGIN * 2 + cols * (RACK_W + COL_GAP) - COL_GAP,
+            MARGIN * 2 + rows * (RACK_H + AISLE) - AISLE + 16, racks)
 
 
 class OwnStore:
@@ -173,10 +188,12 @@ class OwnStore:
         return r['cover'] if r and r['cover'] else None
 
     # ---- размещение: иерархия локаций + экземпляры ----
-    def add_location(self, parent_id, kind, code, name=None, size=None, address=None):
+    def add_location(self, parent_id, kind, code, name=None, size=None, address=None,
+                     gx=None, gy=None, gw=None, gh=None):
         c = self._conn()
-        cur = c.execute("INSERT INTO location(parent_id,kind,code,name,size,address) VALUES(?,?,?,?,?,?)",
-                        (parent_id, kind, code, name, size, address))
+        cur = c.execute("INSERT INTO location(parent_id,kind,code,name,size,address,gx,gy,gw,gh)"
+                        " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (parent_id, kind, code, name, size, address, gx, gy, gw, gh))
         c.commit()
         return cur.lastrowid
 
@@ -189,9 +206,11 @@ class OwnStore:
                 for fl in b['floors']:
                     fid = self.add_location(bid, 'floor', fl['code'])
                     for rm in fl['rooms']:
-                        rid = self.add_location(fid, 'room', rm['code'])
+                        rw, rh, rack_geom = room_geometry(rm['racks'])
+                        rid = self.add_location(fid, 'room', rm['code'], gx=0, gy=0, gw=rw, gh=rh)
                         for ri in range(1, rm['racks'] + 1):
-                            rkid = self.add_location(rid, 'rack', '%02d' % ri)
+                            gx, gy, gw, gh = rack_geom[ri - 1]
+                            rkid = self.add_location(rid, 'rack', '%02d' % ri, gx=gx, gy=gy, gw=gw, gh=gh)
                             for si, ncells in enumerate(rm['shelves'], start=1):
                                 shid = self.add_location(rkid, 'shelf', '%d' % si)
                                 for ci in range(1, ncells + 1):
@@ -248,9 +267,10 @@ class OwnStore:
         return r['n'] if r else 0
 
     def storage_tree(self, db=None):
-        """Полное дерево размещения с занятостью листьев (для карты хранения)."""
+        """Полное дерево размещения с геометрией и занятостью (для карты/плана помещения)."""
         c = self._conn()
-        locs = [dict(r) for r in c.execute("SELECT id,parent_id,kind,code,name,address,size FROM location ORDER BY id")]
+        locs = [dict(r) for r in c.execute(
+            "SELECT id,parent_id,kind,code,name,address,size,gx,gy,gw,gh FROM location ORDER BY id")]
         children = {}
         for loc in locs:
             children.setdefault(loc['parent_id'], []).append(loc)
@@ -261,8 +281,9 @@ class OwnStore:
             occ[r['lid']] = {'status': r['status'], 'inv': r['inv_no'], 'mfn': r['mfn'], 'title': r['title']}
 
         def build(node):
-            n = {'id': node['id'], 'kind': node['kind'], 'code': node['code'],
-                 'name': node['name'], 'address': node['address'], 'size': node['size']}
+            n = {'id': node['id'], 'kind': node['kind'], 'code': node['code'], 'name': node['name'],
+                 'address': node['address'], 'size': node['size'],
+                 'gx': node['gx'], 'gy': node['gy'], 'gw': node['gw'], 'gh': node['gh']}
             if node['kind'] in ('cell', 'slot'):
                 o = occ.get(node['id'])
                 n['occupied'] = bool(o)
@@ -270,6 +291,15 @@ class OwnStore:
                     n.update({'status': o['status'], 'inv': o['inv'], 'mfn': o['mfn'], 'title': o['title']})
             else:
                 n['children'] = [build(k) for k in children.get(node['id'], [])]
+                tot = on = 0
+                for k in n['children']:
+                    if k['kind'] in ('cell', 'slot'):
+                        tot += 1
+                        on += 1 if k.get('occupied') else 0
+                    else:
+                        tot += k.get('cellsTotal', 0)
+                        on += k.get('cellsOccupied', 0)
+                n['cellsTotal'], n['cellsOccupied'] = tot, on
             return n
         return [build(r) for r in children.get(None, [])]
 

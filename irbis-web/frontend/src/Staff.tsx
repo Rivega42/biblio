@@ -93,25 +93,75 @@ const KIND_RU: Record<string, string> = { building: "🏛 Здание", floor: 
 const cellColor = (c: any) => !c.occupied ? "var(--surface-sunken,#e8e4da)"
   : ({ available: "#2f855a", hold: "#2c5e8a", returned: "#7a6a55", issued: "#b7791f" } as any)[c.status] || "#888";
 
+function rackFill(r: any) {
+  const t = r.cellsTotal || 0, o = r.cellsOccupied || 0, ratio = t ? o / t : 0;
+  return !t ? "#cfc8ba" : ratio >= 0.85 ? "#b7791f" : ratio >= 0.5 ? "#caa53d" : ratio > 0 ? "#3f9d6d" : "#cfc8ba";
+}
+
+function CellGrid({ cells }: { cells: any[] }) {
+  return <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+    {cells.map((c, j) => <span key={j} title={c.occupied ? ((c.title || "") + " · " + c.inv) : "свободно"} style={{ fontFamily: "var(--font-mono)", fontSize: 11, padding: "3px 6px", borderRadius: 5, color: c.occupied ? "#fff" : "var(--text-subtle)", background: cellColor(c), cursor: "default" }}>{c.code}</span>)}
+  </div>;
+}
+
+function RoomPlan({ room, onPick, selId }: { room: any; onPick: (r: any) => void; selId: number | null }) {
+  const racks = (room.children || []).filter((c: any) => c.kind === "rack");
+  const W = room.gw || 300, H = room.gh || 160;
+  return (
+    <div style={{ overflowX: "auto", margin: "4px 0 8px" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width={Math.min(W, 720)} style={{ maxWidth: "100%", border: "1px solid var(--border-subtle)", borderRadius: 8, background: "var(--surface-card,#fff)" }}>
+        <rect x={0} y={H - 13} width={W} height={13} fill="var(--surface-sunken,#eee)" />
+        <text x={6} y={H - 3.5} fontSize={8} fill="var(--text-subtle)">вход</text>
+        {racks.map((r: any, i: number) => (
+          <g key={i} onClick={() => onPick(r)} style={{ cursor: "pointer" }}>
+            <rect x={r.gx} y={r.gy} width={r.gw} height={r.gh} rx={3} fill={rackFill(r)} stroke={selId === r.id ? "#1a1a1a" : "rgba(0,0,0,.18)"} strokeWidth={selId === r.id ? 2 : 1} />
+            <text x={r.gx + r.gw / 2} y={r.gy + r.gh / 2 + 3.5} fontSize={11} fontWeight={700} fill="#fff" textAnchor="middle" pointerEvents="none">{r.code}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function RoomView({ room }: { room: any }) {
+  const [sel, setSel] = React.useState<any>(null);
+  return (
+    <div style={{ marginLeft: 16 }}>
+      <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", margin: "2px 0 4px" }}>План помещения · {(room.children || []).filter((c: any) => c.kind === "rack").length} стеллажей · цвет = заполненность</div>
+      <RoomPlan room={room} onPick={setSel} selId={sel ? sel.id : null} />
+      {sel ? (
+        <div style={{ margin: "2px 0 8px" }}>
+          <div style={{ fontWeight: 600, fontSize: "var(--text-sm)", marginBottom: 4 }}>Стеллаж {sel.code} · занято {sel.cellsOccupied}/{sel.cellsTotal}</div>
+          {(sel.children || []).map((sh: any, i: number) => (
+            <div key={i} style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginBottom: 2 }}>Полка {sh.code}</div>
+              <CellGrid cells={sh.children || []} />
+            </div>
+          ))}
+        </div>
+      ) : <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginBottom: 8 }}>Кликните стеллаж на плане — покажутся его полки и ячейки.</div>}
+    </div>
+  );
+}
+
 function StorageNode({ node, depth }: { node: any; depth: number }) {
   const [open, setOpen] = React.useState(depth < 2);
   const kids: any[] = node.children || [];
   const leaves = kids.filter((k) => k.kind === "cell" || k.kind === "slot");
   const conts = kids.filter((k) => k.kind !== "cell" && k.kind !== "slot");
   const head = (KIND_RU[node.kind] || node.kind) + " " + node.code + (node.name ? " · " + node.name : "") + (node.address ? " · " + node.address : "");
+  const occ = node.cellsTotal ? node.cellsOccupied + "/" + node.cellsTotal : (leaves.length ? leaves.filter((c) => c.occupied).length + "/" + leaves.length : "");
   return (
     <div style={{ marginLeft: depth ? 14 : 0, borderLeft: depth ? "1px solid var(--border-subtle)" : "none", paddingLeft: depth ? 8 : 0 }}>
       <div onClick={() => setOpen((o) => !o)} style={{ cursor: "pointer", fontWeight: depth < 3 ? 600 : 500, fontSize: depth < 2 ? "var(--text-base,15px)" : "var(--text-sm)", display: "flex", gap: 6, alignItems: "center", margin: "5px 0" }}>
-        <span style={{ color: "var(--text-subtle)", width: 10 }}>{(leaves.length || conts.length) ? (open ? "▾" : "▸") : "·"}</span>
+        <span style={{ color: "var(--text-subtle)", width: 10 }}>{kids.length ? (open ? "▾" : "▸") : "·"}</span>
         <span>{head}</span>
-        {leaves.length > 0 && <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-xs)", fontWeight: 400 }}>· занято {leaves.filter((c) => c.occupied).length}/{leaves.length}</span>}
+        {occ && <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-xs)", fontWeight: 400 }}>· занято {occ}</span>}
       </div>
-      {open && <>
-        {leaves.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "2px 0 8px 16px" }}>
-          {leaves.map((c, i) => <span key={i} title={c.occupied ? ((c.title || "") + " · " + c.inv) : "свободно"} style={{ fontFamily: "var(--font-mono)", fontSize: 11, padding: "3px 6px", borderRadius: 5, color: c.occupied ? "#fff" : "var(--text-subtle)", background: cellColor(c), cursor: "default" }}>{c.code}</span>)}
-        </div>}
+      {open && (node.kind === "room" ? <RoomView room={node} /> : <>
+        {leaves.length > 0 && <div style={{ margin: "2px 0 8px 16px" }}><CellGrid cells={leaves} /></div>}
         {conts.map((k, i) => <StorageNode key={i} node={k} depth={depth + 1} />)}
-      </>}
+      </>)}
     </div>
   );
 }

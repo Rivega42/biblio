@@ -17,7 +17,7 @@ try:                                  # psycopg only needed for the pg backend
 except Exception:                     # sqlite mode (e.g. Python 3.14 without psycopg)
     psycopg = None
 
-from store import STORAGE, KIND_RU, CELL_SIZES   # общий конфиг структуры хранения
+from store import STORAGE, KIND_RU, CELL_SIZES, room_geometry   # общий конфиг структуры хранения
 
 DDL = """
 CREATE TABLE IF NOT EXISTS rec(
@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS rec(
 );
 CREATE TABLE IF NOT EXISTS dbs(code text PRIMARY KEY, name text, public boolean DEFAULT true);
 CREATE TABLE IF NOT EXISTS location(
-  id bigserial PRIMARY KEY, parent_id bigint, kind text, code text, name text, size text, address text
+  id bigserial PRIMARY KEY, parent_id bigint, kind text, code text, name text, size text, address text,
+  gx double precision, gy double precision, gw double precision, gh double precision
 );
 CREATE INDEX IF NOT EXISTS loc_parent ON location(parent_id);
 CREATE TABLE IF NOT EXISTS holding(
@@ -160,10 +161,12 @@ class PgStore:
         return mfn
 
     # ---- размещение: иерархия локаций + экземпляры ----
-    def add_location(self, parent_id, kind, code, name=None, size=None, address=None):
+    def add_location(self, parent_id, kind, code, name=None, size=None, address=None,
+                     gx=None, gy=None, gw=None, gh=None):
         return self._c().execute(
-            "INSERT INTO location(parent_id,kind,code,name,size,address) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id",
-            (parent_id, kind, code, name, size, address)).fetchone()['id']
+            "INSERT INTO location(parent_id,kind,code,name,size,address,gx,gy,gw,gh)"
+            " VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (parent_id, kind, code, name, size, address, gx, gy, gw, gh)).fetchone()['id']
 
     def seed_storage(self, config=None):
         config = config or STORAGE
@@ -173,9 +176,11 @@ class PgStore:
                 for fl in b['floors']:
                     fid = self.add_location(bid, 'floor', fl['code'])
                     for rm in fl['rooms']:
-                        rid = self.add_location(fid, 'room', rm['code'])
+                        rw, rh, rack_geom = room_geometry(rm['racks'])
+                        rid = self.add_location(fid, 'room', rm['code'], gx=0, gy=0, gw=rw, gh=rh)
                         for ri in range(1, rm['racks'] + 1):
-                            rkid = self.add_location(rid, 'rack', '%02d' % ri)
+                            gx, gy, gw, gh = rack_geom[ri - 1]
+                            rkid = self.add_location(rid, 'rack', '%02d' % ri, gx=gx, gy=gy, gw=gw, gh=gh)
                             for si, ncells in enumerate(rm['shelves'], start=1):
                                 shid = self.add_location(rkid, 'shelf', '%d' % si)
                                 for ci in range(1, ncells + 1):
@@ -232,7 +237,7 @@ class PgStore:
 
     def storage_tree(self, db=None):
         c = self._c()
-        locs = c.execute("SELECT id,parent_id,kind,code,name,address,size FROM location ORDER BY id").fetchall()
+        locs = c.execute("SELECT id,parent_id,kind,code,name,address,size,gx,gy,gw,gh FROM location ORDER BY id").fetchall()
         children = {}
         for loc in locs:
             children.setdefault(loc['parent_id'], []).append(loc)
@@ -243,8 +248,9 @@ class PgStore:
             occ[r['lid']] = {'status': r['status'], 'inv': r['inv_no'], 'mfn': r['mfn'], 'title': r['title']}
 
         def build(node):
-            n = {'id': node['id'], 'kind': node['kind'], 'code': node['code'],
-                 'name': node['name'], 'address': node['address'], 'size': node['size']}
+            n = {'id': node['id'], 'kind': node['kind'], 'code': node['code'], 'name': node['name'],
+                 'address': node['address'], 'size': node['size'],
+                 'gx': node['gx'], 'gy': node['gy'], 'gw': node['gw'], 'gh': node['gh']}
             if node['kind'] in ('cell', 'slot'):
                 o = occ.get(node['id'])
                 n['occupied'] = bool(o)
@@ -252,6 +258,15 @@ class PgStore:
                     n.update({'status': o['status'], 'inv': o['inv'], 'mfn': o['mfn'], 'title': o['title']})
             else:
                 n['children'] = [build(k) for k in children.get(node['id'], [])]
+                tot = on = 0
+                for k in n['children']:
+                    if k['kind'] in ('cell', 'slot'):
+                        tot += 1
+                        on += 1 if k.get('occupied') else 0
+                    else:
+                        tot += k.get('cellsTotal', 0)
+                        on += k.get('cellsOccupied', 0)
+                n['cellsTotal'], n['cellsOccupied'] = tot, on
             return n
         return [build(r) for r in children.get(None, [])]
 
