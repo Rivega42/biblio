@@ -1,7 +1,30 @@
 # Веб-ИРБИС — Индекс комплекта документов (нить исследования)
 
 > Карта всех материалов проекта: восстановление спецификации ИРБИС64+ и проектирование веб-версии
-> всех функций (организованной по учёткам/грантам). Читать сверху вниз. Обновлено 20.06.2026.
+> всех функций (организованной по учёткам/грантам). Читать сверху вниз. Обновлено 21.06.2026.
+>
+> **Проект перешёл от recon к проектированию/сборке продукта.** Актуальный слой — раздел 0 (архитектура
+> и дорожная карта); recon-находки ниже остаются доказательной базой. Журнал сборки — [`CHANGELOG.md`](CHANGELOG.md) (Фазы 6–10).
+
+---
+
+## 0. Архитектура и план продукта (актуальный слой)
+
+| Файл | О чём |
+| --- | --- |
+| [`design/ARCHITECTURE.md`](design/ARCHITECTURE.md) | Целевая архитектура v2: **мультиарендный SaaS**, облако-ядро + edge-узлы (офлайн+синхронизация), микросервисы+модули, strangler-миграция; C4, данные, фазы, ADR, риски |
+| [`design/ROADMAP.md`](design/ROADMAP.md) | Сквозная декомпозиция: **7 инициатив** (milestones I1–I7) → **13 эпиков** → таски → сабтаски; DoD-гейты; порядок старта |
+| [`design/BEST_PRACTICES.md`](design/BEST_PRACTICES.md) | Ревью против практик мирового уровня (14 областей) + 🔴 «решить сейчас» |
+| [`design/SYNC_DESIGN.md`](design/SYNC_DESIGN.md) | **ADR-005:** офлайн-синхронизация edge↔облако (событийный журнал, владение по доменам, HLC, конфликты) |
+| [`design/GO_TO_MARKET.md`](design/GO_TO_MARKET.md) | Политика продаж: сегменты, тарифы, оси цены, cloud/on-prem, закупки, миграция-онбординг |
+| [`design/COVERAGE_MATRIX.md`](design/COVERAGE_MATRIX.md) | Поблочное покрытие vs ИРБИС (клиент ≈35%, структура БД 50% …) |
+| [`design/OWN_SERVER_ARCHITECTURE.md`](design/OWN_SERVER_ARCHITECTURE.md) | Архитектура своего сервера (JSONB+FTS, ячеистое хранение, миграция) |
+| [`build/API_CONTRACT.md`](build/API_CONTRACT.md) + [`build/openapi.yaml`](build/openapi.yaml) | Шов: один REST-контракт (OpenAPI 3.1, 17 эндпоинтов) для двух бэкендов |
+| [`build/ADR-004_access-store-sqlite-postgres.md`](build/ADR-004_access-store-sqlite-postgres.md) | ADR-004: Access-стор sqlite(dev)/PostgreSQL(prod) |
+| [`design/MIGRATION_BENCHMARK.md`](design/MIGRATION_BENCHMARK.md) | Бенчмарк перелива ИРБИС→наш стор (throughput, узкое место, проекции) |
+| [`design/WHY_REPLACE_IRBIS.md`](design/WHY_REPLACE_IRBIS.md) · [`design/TZ_ClaudeDesign_UI.md`](design/TZ_ClaudeDesign_UI.md) | Обоснование замены · ТЗ на UI |
+
+Бэклог в GitHub: эпики **SA1–SA4** (#112–115), **BP1–BP4** (#128–131) + ранние **#95–99**; milestones **I1–I7**.
 
 ---
 
