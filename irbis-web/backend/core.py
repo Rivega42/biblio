@@ -6,6 +6,10 @@ Pipeline: authn (bearer token -> session) -> authorize (grant function x db x le
 -> IRBIS call -> normalize -> audit (write/admin). Server -3338 -> 403.
 """
 import os
+import random
+import socket
+import threading
+import time
 from urllib.parse import unquote_to_bytes
 
 from config import Config
@@ -82,12 +86,151 @@ WORKLIST_IBIS = [
 ]
 
 
+# IRBIS return codes that mean "this client_id is no longer a valid session" —
+# observed after a server Стоп/Старт, when the demo "max 3 clients" cap drops us,
+# or when the registered session otherwise lapses (see WIRE_PROTOCOL §5/§11 and
+# DLL_API_EXTRACTED IC_reg/IC_unreg). On any of these the right cure is to throw
+# the stale client_id away, re-register, and retry — NOT to surface the error.
+#   -3337  client already registered (a re-register collided with a lingering session)
+#   -3338  CLIENT_NOT_ALLOWED (no ARM access for this session — also raised when the
+#          server forgot us after a restart and rejects the unknown client_id)
+# The range guard (-3300..-3349) catches the sibling -33xx session codes the wire
+# recon flagged as "to be enumerated", so a server restart self-heals even if the
+# exact code isn't in our table yet. Data-level codes (-140 missing MFN, -603
+# deleted record, -202..-204 terms) are NOT here — those are real answers, not a
+# dead session, and must propagate unchanged.
+_STALE_SESSION_CODES = frozenset((-3337, -3338))
+
+
+def _is_stale_session(code):
+    if code in _STALE_SESSION_CODES:
+        return True
+    return code is not None and -3349 <= code <= -3300
+
+
+class ResilientIrbis:
+    """Self-healing wrapper around :class:`irbis.SessionManager`.
+
+    A long-running backend keeps one registered ИРБИС session (client_id) and
+    opens a fresh TCP per command (the protocol's one-connection-per-request
+    model). That session goes STALE when the server is restarted (Стоп/Старт) or
+    the demo "max 3 clients" cap evicts us: every subsequent command then fails —
+    a socket error, or an IRBIS -33xx "not a valid session" return code — and
+    historically only a process restart recovered it.
+
+    This wrapper makes recovery automatic. Every call is funnelled through
+    ``_resilient``: on a connection error OR a stale-session return code it drops
+    the dead client_id (forcing a brand-new client_id so a re-register can't
+    collide with a lingering server-side session as -3337), re-registers, and
+    retries — up to ``retries`` times with a small linear backoff. A transient,
+    a Стоп/Старт, or the client cap thus heals WITHOUT a process restart.
+
+    It also records reachability: ``last_error`` / ``last_ok_ts`` and a cheap
+    ``ping()`` back the ``irbis`` block of /api/health. The underlying
+    SessionManager is already lock-serialized; an extra lock here guards the
+    reset+health bookkeeping so concurrent requests re-register at most once.
+    """
+
+    # Methods proxied 1:1 to the SessionManager, each wrapped with retry.
+    _PROXIED = ('max_mfn', 'search', 'read_record', 'format_record',
+                'read_terms', 'read_file', 'update_record')
+
+    def __init__(self, sm, retries=2, backoff=0.2):
+        self._sm = sm
+        self._retries = max(0, int(retries))
+        self._backoff = max(0.0, float(backoff))
+        self._lock = threading.Lock()
+        self.last_error = None
+        self.last_ok_ts = None
+        for name in self._PROXIED:
+            setattr(self, name, self._make_proxy(name))
+
+    def _make_proxy(self, name):
+        def proxy(*args, **kwargs):
+            return self._resilient(name, lambda: getattr(self._sm, name)(*args, **kwargs))
+        proxy.__name__ = name
+        return proxy
+
+    def _reset_session(self):
+        """Discard the stale registration so the next call re-registers.
+
+        Marks the SessionManager unconnected and rotates the underlying client's
+        client_id, so the re-register starts a genuinely new server session
+        instead of colliding with the lingering old one (-3337)."""
+        with self._lock:
+            try:
+                self._sm.connected = False
+                client = getattr(self._sm, '_client', None)
+                if client is not None:
+                    client.connected = False
+                    # Fresh client_id => the server sees a new session, dodging -3337.
+                    client.client_id = 100000 + random.randint(0, 899999)
+            except Exception:
+                pass
+
+    def _resilient(self, label, fn):
+        attempts = self._retries + 1
+        last_exc = None
+        for i in range(attempts):
+            try:
+                result = fn()
+                self.last_error = None
+                self.last_ok_ts = time.time()
+                return result
+            except (ConnectionError, OSError, socket.error) as e:
+                last_exc = e
+                self.last_error = '%s: %s' % (label, e)
+                self._reset_session()
+            except IrbisError as e:
+                # A dead-session code self-heals; a data-level code (missing MFN,
+                # deleted record, real query error) is a genuine answer — re-raise.
+                if not _is_stale_session(e.code):
+                    raise
+                last_exc = e
+                self.last_error = '%s: irbis %s' % (label, e.code)
+                self._reset_session()
+            if i < attempts - 1 and self._backoff:
+                time.sleep(self._backoff * (i + 1))   # linear backoff
+        # Exhausted retries: surface as an IrbisError so route()'s handler maps it.
+        if isinstance(last_exc, IrbisError):
+            raise last_exc
+        raise IrbisError(-1, 'irbis unreachable after %d attempts: %s' % (attempts, last_exc))
+
+    def server_version(self):
+        return self._resilient('server_version', self._sm.server_version)
+
+    def ping(self):
+        """Cheap reachability probe for /api/health. Returns True if a trivial
+        round-trip (server_version, which forces a register) succeeds; records
+        last_error and returns False otherwise — never raises."""
+        try:
+            self.server_version()
+            return True
+        except Exception as e:
+            self.last_error = 'ping: %s' % e
+            return False
+
+    def health(self):
+        """Reachability snapshot for /api/health."""
+        return {'lastError': self.last_error,
+                'lastOkTs': self.last_ok_ts,
+                'retries': self._retries}
+
+    def close(self):
+        try:
+            self._sm.close()
+        except Exception:
+            pass
+
+
 class Api:
     def __init__(self, cfg=None):
         self.cfg = cfg or Config()
-        self.irbis = SessionManager(self.cfg.irbis_host, self.cfg.irbis_port,
-                                    self.cfg.workstation, self.cfg.irbis_user,
-                                    self.cfg.irbis_pass, self.cfg.timeout)
+        self.irbis = ResilientIrbis(
+            SessionManager(self.cfg.irbis_host, self.cfg.irbis_port,
+                           self.cfg.workstation, self.cfg.irbis_user,
+                           self.cfg.irbis_pass, self.cfg.timeout),
+            retries=self.cfg.irbis_retries, backoff=self.cfg.irbis_backoff)
         self.access = make_access_store(self.cfg)   # sqlite (default) or Postgres via ACCESS_BACKEND
         seed(self.access)                      # idempotent dev seed
         # Seeding engine (A5, #188): seed the single-tenant 'public' store's vocabs
@@ -185,12 +328,53 @@ class Api:
                 self._store_for(tenant).audit(session['actor'], function, db, None, 'denied')
             raise Denied(403, 'forbidden', 'grant required: %s/%s/%s' % (function, db, level))
 
+    # ---- public-DB policy (reader OPAC must never reach service/ПДн bases) ----
+    # Non-staff sessions (guest, reader) may only touch databases on the configured
+    # PUBLIC allow-list (Config.public_dbs, default {IBIS}). Everything else — RDR,
+    # RQST, CMPL/PODB/POST/VUZ, PAY, RIGHT, LICH, LOG*, RDR_ARH, COUNT, WORK, ZAPR,
+    # MBA*, the ATHR*/TEZ/URUB authority files — is non-public and is refused (403)
+    # for a reader and hidden from their /api/databases. A reader must never be able
+    # to query RDR/LICH. Staff are governed by their grants instead (per-ARM access),
+    # so they keep reaching service bases they're entitled to.
+    _PUBLIC_KINDS = ('guest', 'reader')
+
+    def _is_public_session(self, session):
+        """True for guest/reader sessions, which are confined to public DBs."""
+        return bool(session) and session.get('kind') in self._PUBLIC_KINDS
+
+    def _is_public_db(self, db):
+        return (db or '').strip().upper() in self.cfg.public_dbs
+
+    def _public_db_guard(self, session, db):
+        """Reject a non-public ``db`` for a guest/reader session (403).
+
+        Runs BEFORE the per-record IRBIS read so a reader can never even probe a
+        service/ПДн base. Staff bypass this gate — their grants decide. Called by
+        every public OPAC read endpoint (search/record/render/terms/showcase/
+        rubricator/facets/cover/example-queries)."""
+        if self._is_public_session(session) and not self._is_public_db(db):
+            raise Denied(403, 'forbidden', 'database not public: %s' % (db or ''))
+
     # ---- endpoints ----
     def health(self):
-        return ok({'server': '%s:%d' % (self.cfg.irbis_host, self.cfg.irbis_port),
-                   'version': self.irbis.server_version(),
-                   'db': self.cfg.db_default,
-                   'maxmfn': self.irbis.max_mfn(self.cfg.db_default)})
+        """Liveness + ИРБИС reachability. Never raises: if the ИРБИС server is
+        down/restarting it reports ``irbis.reachable=False`` with the last error
+        and HTTP 200, so a monitor sees a structured 'degraded' rather than a 500.
+        After a server Стоп/Старт the ResilientIrbis wrapper re-registers on the
+        next call, so health flips back to reachable without a process restart."""
+        info = {'server': '%s:%d' % (self.cfg.irbis_host, self.cfg.irbis_port),
+                'db': self.cfg.db_default}
+        try:
+            info['version'] = self.irbis.server_version()
+            info['maxmfn'] = self.irbis.max_mfn(self.cfg.db_default)
+            reachable = True
+        except (IrbisError, OSError, socket.error):
+            reachable = False
+        h = self.irbis.health() if hasattr(self.irbis, 'health') else {}
+        info['irbis'] = {'reachable': reachable,
+                         'lastError': h.get('lastError'),
+                         'lastOkTs': h.get('lastOkTs')}
+        return ok(info)
 
     @staticmethod
     def _tenant_of(body):
@@ -258,6 +442,7 @@ class Api:
 
     def search(self, session, db, expr, page, page_size):
         self._guard(session, 'search', db, 'read')
+        self._public_db_guard(session, db)
         count, mfns = self.irbis.search(db, expr)
         start = (page - 1) * page_size
         items = [self._brief_item(db, mfn) for mfn in mfns[start:start + page_size]]
@@ -266,6 +451,7 @@ class Api:
 
     def record(self, session, db, mfn):
         self._guard(session, 'record.read', db, 'read')
+        self._public_db_guard(session, db)
         rec = self.irbis.read_record(db, mfn)
         try:
             rec['brief'] = self.irbis.format_record(db, mfn, '@brief')
@@ -277,11 +463,13 @@ class Api:
 
     def render(self, session, db, mfn, fmt):
         self._guard(session, 'record.read', db, 'read')
+        self._public_db_guard(session, db)
         return 200, ok({'db': db, 'mfn': mfn, 'fmt': fmt,
                         'rendered': self.irbis.format_record(db, mfn, fmt)})
 
     def terms(self, session, db, start, count):
         self._guard(session, 'terms', db, 'read')
+        self._public_db_guard(session, db)
         rows = self.irbis.read_terms(db, start, count)
         return 200, ok({'db': db, 'start': start,
                         'terms': [{'count': c, 'term': t} for c, t in rows]})
@@ -298,6 +486,7 @@ class Api:
         degrades to an empty list — never raises — when the DB is empty or the
         server is briefly unreachable, so the homepage still renders."""
         self._guard(session, 'search', db, 'read')
+        self._public_db_guard(session, db)
         kind = (kind or 'new').lower()
         if kind not in ('new', 'popular'):
             kind = 'new'
@@ -327,6 +516,7 @@ class Api:
         ``terms``/read (public — guests browse navigators). Empty list, never a
         raise, when the prefix has no terms or the server is briefly absent."""
         self._guard(session, 'terms', db, 'read')
+        self._public_db_guard(session, db)
         prefix = (prefix or '').strip()
         seek = prefix + (start or '')
         try:
@@ -379,6 +569,7 @@ class Api:
         with the base query. Skips values that don't co-occur (count 0) and any
         facet whose prefix yields no usable terms. Never raises on a sub-failure."""
         self._guard(session, 'search', db, 'read')
+        self._public_db_guard(session, db)
         out = []
         for fieldname, prefix, label, labelmap in self._FACETS:
             try:
@@ -410,6 +601,7 @@ class Api:
     def cover(self, session, db, mfn):
         """Embedded cover from field 953 (^B is URL-encoded image bytes)."""
         self._guard(session, 'record.read', db, 'read')
+        self._public_db_guard(session, db)
         rec = self.irbis.read_record(db, mfn)
         f = field(rec, '953')
         if not f or 'B' not in f['subfields']:
@@ -426,8 +618,14 @@ class Api:
         text = self.irbis.read_file('3.%s.%s' % (db, spec_file))
         return 200, ok({'db': db, 'file': spec_file, 'text': text})
 
-    # service/authority DBs not meant for public reader search
-    _SERVICE_DBS = {'RDR', 'RQST', 'CMPL', 'PODB', 'POST', 'VISIT', 'LOG', 'COUNT'}
+    # Service / authority / ПДн DBs that must never surface to a reader. Kept for
+    # reference + back-compat, but the authoritative reader-visibility decision is
+    # now the PUBLIC allow-list in Config.public_dbs (deny-by-default): a base is
+    # public iff it is on that list, so additions like PAY/RIGHT/LICH/RDR_ARH/ZAPR/
+    # WORK/MBA*/VUZ are non-public without having to be enumerated here.
+    _SERVICE_DBS = {'RDR', 'RQST', 'CMPL', 'PODB', 'POST', 'VISIT', 'VUZ', 'PAY',
+                    'RIGHT', 'LICH', 'RDR_ARH', 'ZAPR', 'COUNT', 'WORK', 'LOG',
+                    'LOGB', 'LOGC', 'LOGP', 'LOGDB', 'MBA', 'MBA_ARH'}
 
     # Seeded example search chips per DB for the portal — static config for now
     # (a future iteration can derive these from the most-used dictionary terms).
@@ -463,8 +661,13 @@ class Api:
         return max(0, top - 1)
 
     def databases(self, session, with_counts=True):
+        """List databases. A guest/reader session sees ONLY public (OPAC) bases —
+        the service/ПДн bases (RDR, LICH, PAY, LOG*, …) are filtered out entirely
+        so a reader's DB picker can never even name them. Staff (and any non-public
+        kind) see every base in the menu, governed by their grants downstream."""
         if not session:
             raise Denied(401, 'unauthorized', 'no session')
+        public_only = self._is_public_session(session)
         txt = self.irbis.read_file(self.cfg.db_menu)
         lines = [x.strip() for x in txt.splitlines() if x.strip() and x.strip() != '*****']
         items = []
@@ -473,7 +676,9 @@ class Api:
             name = lines[i + 1]
             if not code:
                 continue
-            public = code not in self._SERVICE_DBS and not code.upper().startswith('ATHR')
+            public = self._is_public_db(code)
+            if public_only and not public:
+                continue                       # hide service/ПДн bases from readers
             item = {'code': code, 'name': name, 'public': public}
             if with_counts:
                 cnt = self._db_count(code)
@@ -491,6 +696,7 @@ class Api:
         precomputed ``expr`` so the frontend can run it verbatim through
         /api/search. Never touches IRBIS, so it cannot fail on a server hiccup."""
         self._guard(session, 'search', db, 'read')
+        self._public_db_guard(session, db)
         chips = self._EXAMPLE_QUERIES.get(db) or self._EXAMPLE_QUERIES.get(
             (db or '').upper()) or self._EX_DEFAULT
         out = []

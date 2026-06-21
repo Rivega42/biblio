@@ -293,8 +293,12 @@ def example_queries_checks():
     check('author chip expr is right-truncated',
           (not a_chips) or a_chips[0]['expr'].endswith('$"'))
 
-    # unknown DB -> default chip set (graceful), still 200
-    status, payload = api.example_queries(guest, 'NOPE')
+    # unknown DB -> default chip set (graceful), still 200. Uses a STAFF session:
+    # the public-DB policy (test_resilience) confines guest/reader to public bases,
+    # so the "DB without a specific chip config" fallback is exercised with a staff
+    # session that may legitimately address any DB.
+    _stok, staff = _staff(api)
+    status, payload = api.example_queries(staff, 'NOPE')
     check('example-queries falls back to default chips for unknown DB',
           status == 200 and len(payload['data']['examples']) >= 1)
 
