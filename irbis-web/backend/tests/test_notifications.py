@@ -49,6 +49,15 @@ def _q(catalog=None):
 # --------------------------------------------------------------------------- #
 # 1. Event catalog.
 # --------------------------------------------------------------------------- #
+# Every event CirculationEngine._emit raises (grep circulation.py for `_emit(`).
+# A name here with no catalog entry is an intent that falls through silently —
+# rendered/sent never. Keep this list in lock-step with circulation.py.
+CIRCULATION_EVENTS = (
+    'hold_ready', 'due_soon', 'overdue', 'fine_charged',
+    'renewal_confirmed', 'fine_paid', 'lost_confirmed', 'staff_alert',
+)
+
+
 def catalog_checks():
     print('-- event catalog')
     cat = nt.EventCatalog()
@@ -61,6 +70,25 @@ def catalog_checks():
           and cat.default_channels('hold_ready'))
     check('overdue prioritises sms first',
           cat.default_channels('overdue')[0] == 'sms')
+
+    # No circulation event may fall through for lack of a template: each must
+    # have a non-empty subject+body and at least one default channel.
+    for ev in CIRCULATION_EVENTS:
+        check('catalog covers circulation event %s' % ev, cat.has(ev))
+        if not cat.has(ev):
+            continue
+        tmpl = cat.template(ev)
+        check('%s has non-empty subject+body' % ev,
+              bool(tmpl.get('subject')) and bool(tmpl.get('body')))
+        check('%s has a non-empty channel chain' % ev,
+              isinstance(cat.default_channels(ev), list)
+              and bool(cat.default_channels(ev)))
+
+    # staff_alert is staff-facing: an e-mail default, and addressed to the
+    # librarian (not a reader-style greeting / SMS).
+    check('staff_alert defaults to email', cat.default_channels('staff_alert') == ['email'])
+    check('staff_alert subject reads as a staff notice',
+          'Служебное' in cat.template('staff_alert')['subject'])
 
     # register/override does not leak into the class-level DEFAULTS
     cat.register('renewal_ok', {'subject': 'OK', 'body': 'Renewed {title}'},

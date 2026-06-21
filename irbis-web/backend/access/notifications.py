@@ -175,8 +175,12 @@ class SmsChannel(Channel):
 class EventCatalog:
     """Maps reader-account events to their template + default channel chain.
 
-    Seeded with the SPEC event set (hold_ready / due_soon / overdue /
-    fine_charged / hold_cancelled / account_blocked). ``register`` lets a tenant
+    Seeded with the SPEC event set: the reader-facing hold/loan/fine notices
+    (hold_ready / due_soon / overdue / fine_charged / hold_cancelled /
+    account_blocked / renewal_confirmed / fine_paid / lost_confirmed) plus the
+    staff-facing ``staff_alert`` (write-off candidate). The set must cover every
+    event ``CirculationEngine._emit`` raises, or that intent falls through
+    silently (no template → never rendered/sent). ``register`` lets a tenant
     add/override an entry. Each entry is ``{'template': {'subject','body'},
     'default_channels': [<name>, ...]}`` — channel *names*, resolved to live
     :class:`Channel` objects at send time.
@@ -229,6 +233,44 @@ class EventCatalog:
                          'заблокирован. Причина: {reason}.'),
             },
             'default_channels': ['email', 'sms'],
+        },
+        'renewal_confirmed': {
+            'template': {
+                'subject': 'Срок продлён: {title}',
+                'body': ('Здравствуйте, {reader_name}. Срок пользования '
+                         'документом «{title}» продлён до {due_date}.'),
+            },
+            'default_channels': ['email', 'sms'],
+        },
+        'fine_paid': {
+            'template': {
+                'subject': 'Оплата принята: {amount} {currency}',
+                'body': ('Здравствуйте, {reader_name}. Оплата штрафа '
+                         '{amount} {currency} принята, спасибо. '
+                         'Текущая задолженность: {balance}.'),
+            },
+            'default_channels': ['email', 'sms'],
+        },
+        'lost_confirmed': {
+            'template': {
+                'subject': 'Документ признан утерянным: {title}',
+                'body': ('Здравствуйте, {reader_name}. Документ «{title}» '
+                         'признан утерянным. К возмещению начислена стоимость '
+                         'замены: {amount} {currency}.'),
+            },
+            'default_channels': ['email', 'sms'],
+        },
+        # Addressed to library staff, not the reader: a freed-shelf / write-off
+        # candidate needs a librarian to action it. E-mail only (no reader SMS).
+        'staff_alert': {
+            'template': {
+                'subject': 'Служебное: кандидат на списание — {title}',
+                'body': ('Служебное уведомление. Документ «{title}» (формуляр '
+                         'читателя {reader_name}) числится в просрочке сверх '
+                         'допустимого срока и помечен как кандидат на списание. '
+                         'Требуется проверка формуляра.'),
+            },
+            'default_channels': ['email'],
         },
     }
 
