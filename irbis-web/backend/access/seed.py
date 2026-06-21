@@ -19,6 +19,9 @@ ROLE_GRANTS = {
         ('order', '*', 'write'), ('cabinet', '*', 'read'),
         ('circ.issue', '*', 'write'), ('circ.return', '*', 'write'),
         ('admin.db', '*', 'admin'), ('admin.users', '*', 'admin'),
+        ('acq.receipt', '*', 'write'), ('acq.read', '*', 'read'),
+        ('bp.write', '*', 'write'), ('bp.read', '*', 'read'),
+        ('cat.gbl', '*', 'write'),
     ],
 }
 
