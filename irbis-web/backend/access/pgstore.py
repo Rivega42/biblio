@@ -15,13 +15,32 @@ lazily so this module still imports on a Python without psycopg installed
 ``PgAccessStore`` requires the driver.
 """
 import os
+import re
 import threading
 
 from .store import AccessStore   # reuse pbkdf2 hash/verify (interchangeable hashes)
 
 # DDL lives next to this module as the shared production schema.
-_SCHEMA_SQL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                'schema_postgres.sql')
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SCHEMA_SQL_PATH = os.path.join(_HERE, 'schema_postgres.sql')      # Access DDL (per tenant)
+_CONTROL_SQL_PATH = os.path.join(_HERE, 'schema_control.sql')      # control.tenant catalog
+
+# A slug is the tenant key and becomes part of a SQL identifier (t_<slug>). It is
+# NEVER interpolated into SQL without passing this gate, so schema names can't be
+# used for injection. Lowercase letters/digits/underscore, must start with a letter.
+_SLUG_RE = re.compile(r'^[a-z][a-z0-9_]{0,40}$')
+
+
+def _validate_slug(slug):
+    if not isinstance(slug, str) or not _SLUG_RE.match(slug):
+        raise ValueError(
+            'invalid tenant slug %r (need ^[a-z][a-z0-9_]{0,40}$)' % (slug,))
+    return slug
+
+
+def schema_for(slug):
+    """Schema name that holds tenant <slug>'s Access data: ``t_<slug>``."""
+    return 't_' + _validate_slug(slug)
 
 
 class PgAccessStore:
@@ -30,11 +49,20 @@ class PgAccessStore:
     A dedicated database/schema is expected (default DSN points at
     ``irbis_access``) so the Access tables never collide with own-server
     catalog data.
+
+    **Multi-tenant (issue #100):** pass ``tenant_schema='t_<slug>'`` to scope the
+    SAME store class to one tenant. Every connection checkout then runs
+    ``SET search_path = <schema>, public`` so all unqualified table access reads/
+    writes that tenant's schema only — data is fully separated by schema, with no
+    leakage when a pooled connection is reused (the path is set on every checkout).
+    ``tenant_schema=None`` (the default) keeps the back-compat single-``public``
+    behaviour unchanged. Prefer ``make_tenant_store(dsn, slug)`` to construct one.
     """
 
-    def __init__(self, dsn):
+    def __init__(self, dsn, tenant_schema=None):
         self.dsn = dsn
         self.db_path = dsn          # parity with AccessStore.db_path (a few callers introspect it)
+        self.tenant_schema = tenant_schema   # 't_<slug>' for a tenant, or None for public
         self._local = threading.local()
         self.ensure_schema()
 
@@ -45,13 +73,39 @@ class PgAccessStore:
         conn = getattr(self._local, 'conn', None)
         if conn is None or conn.closed:
             conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
+            self._apply_search_path(conn)
             self._local.conn = conn
         return conn
 
+    def _apply_search_path(self, conn):
+        """Pin this connection to the tenant schema (then ``public``).
+
+        Called on every checkout of a fresh connection, so a connection reused
+        across tenants never leaks: the search_path is (re)set deterministically.
+        The schema identifier is built only from a validated slug (see
+        ``schema_for``), so it is safe to embed without quoting injection risk.
+        Run only when this store is tenant-scoped; the public store keeps PG's
+        default search_path untouched (back-compat).
+        """
+        if self.tenant_schema:
+            from psycopg import sql
+            conn.execute(
+                sql.SQL('SET search_path = {}, public').format(
+                    sql.Identifier(self.tenant_schema)))
+
     def ensure_schema(self):
+        """Create the Access tables. For a tenant store, create the schema first
+        and apply the (unqualified) Access DDL *into* it via ``search_path``."""
+        conn = self._conn()   # also applies search_path = t_<slug>, public
+        if self.tenant_schema:
+            from psycopg import sql
+            conn.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(
+                sql.Identifier(self.tenant_schema)))
+            # search_path is already pinned (PG resolves it lazily at query time),
+            # so the unqualified DDL below creates tables inside t_<slug>.
         with open(_SCHEMA_SQL_PATH, encoding='utf-8') as f:
             ddl = f.read()
-        self._conn().execute(ddl)
+        conn.execute(ddl)
 
     # ---- password hashing — reuse the sqlite store's pbkdf2 (hashes interchangeable) ----
     @staticmethod
@@ -151,3 +205,105 @@ def make_store(cfg=None):
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         path = os.environ.get('ACCESS_DB', os.path.join(here, 'access.db'))
     return AccessStore(path)
+
+
+# --------------------------------------------------------------------------- #
+# Multi-tenancy: control schema + provisioning (issue #100, I1).
+# --------------------------------------------------------------------------- #
+def default_pg_dsn():
+    """DSN used by tenancy helpers — the same env knob the Access store reads."""
+    return os.environ.get(
+        'ACCESS_PG_DSN', 'postgresql://postgres:pg@127.0.0.1:5433/irbis_access')
+
+
+def _admin_conn(dsn):
+    """A short-lived autocommit connection for cross-tenant (control-plane) DDL.
+
+    Kept separate from any store's thread-local connection so its search_path
+    stays at PG's default — provisioning addresses schemas explicitly.
+    """
+    import psycopg
+    from psycopg.rows import dict_row
+    return psycopg.connect(dsn, row_factory=dict_row, autocommit=True)
+
+
+def ensure_control_schema(dsn=None):
+    """Create the ``control`` schema + ``control.tenant`` table (idempotent)."""
+    dsn = dsn or default_pg_dsn()
+    with open(_CONTROL_SQL_PATH, encoding='utf-8') as f:
+        ddl = f.read()
+    conn = _admin_conn(dsn)
+    try:
+        conn.execute(ddl)
+    finally:
+        conn.close()
+
+
+def make_tenant_store(slug, dsn=None):
+    """A ``PgAccessStore`` scoped to tenant ``<slug>`` (schema ``t_<slug>``)."""
+    return PgAccessStore(dsn or default_pg_dsn(), tenant_schema=schema_for(slug))
+
+
+def list_tenants(dsn=None):
+    """All provisioned tenants from the control catalog (ordered by slug)."""
+    dsn = dsn or default_pg_dsn()
+    ensure_control_schema(dsn)
+    conn = _admin_conn(dsn)
+    try:
+        return [dict(r) for r in conn.execute(
+            'SELECT id, slug, name, kind, created_at FROM control.tenant '
+            'ORDER BY slug').fetchall()]
+    finally:
+        conn.close()
+
+
+def provision_tenant(slug, name, kind, dsn=None, do_seed=True):
+    """Create (or re-create idempotently) tenant ``<slug>`` and return its store.
+
+    Steps (all idempotent — safe to re-run):
+      1. ensure ``control`` schema + record the tenant row (upsert on slug);
+      2. ``CREATE SCHEMA IF NOT EXISTS t_<slug>`` and apply the Access DDL into it
+         (done by ``PgAccessStore(tenant_schema=...)`` on construction);
+      3. run the idempotent seed (admin/admin, librarian/librarian) *inside* that
+         tenant schema.
+
+    Returns the tenant-scoped ``PgAccessStore``.
+    """
+    _validate_slug(slug)
+    dsn = dsn or default_pg_dsn()
+    ensure_control_schema(dsn)
+    conn = _admin_conn(dsn)
+    try:
+        conn.execute(
+            'INSERT INTO control.tenant(slug, name, kind) VALUES(%s,%s,%s) '
+            'ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name, kind=EXCLUDED.kind',
+            (slug, name, kind))
+    finally:
+        conn.close()
+    # Constructing the store creates t_<slug> and the Access tables within it.
+    store = make_tenant_store(slug, dsn)
+    if do_seed:
+        from .seed import seed
+        seed(store)
+    return store
+
+
+def deprovision_tenant(slug, dsn=None):
+    """Drop tenant ``<slug>``: ``DROP SCHEMA t_<slug> CASCADE`` + remove its
+    control row. Idempotent (no error if the tenant was never provisioned)."""
+    _validate_slug(slug)
+    dsn = dsn or default_pg_dsn()
+    from psycopg import sql
+    conn = _admin_conn(dsn)
+    try:
+        conn.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(
+            sql.Identifier(schema_for(slug))))
+        # control.tenant may not exist yet on a clean DB; referencing a missing
+        # table errors at plan time, so check existence before deleting the row.
+        has_ctl = conn.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='control' AND table_name='tenant'").fetchone()
+        if has_ctl:
+            conn.execute('DELETE FROM control.tenant WHERE slug=%s', (slug,))
+    finally:
+        conn.close()

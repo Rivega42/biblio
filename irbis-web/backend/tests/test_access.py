@@ -110,12 +110,36 @@ def pg_store_or_none():
         return None
 
 
+def tenancy_checks():
+    """Run the tenant-isolation suite (issue #100) and fold its tally in.
+
+    Only does anything on the postgres backend with a reachable server; on the
+    sqlite dev box it skips cleanly (returns 0/0). Imported lazily so a Python
+    without psycopg still runs the sqlite path. Lives in its own module
+    (test_tenancy.py) but is invoked here so the existing CI step that runs
+    test_access.py also exercises tenancy without a workflow change.
+    """
+    try:
+        import test_tenancy
+    except Exception as e:
+        print('-- tenancy suite NOT RUN (import failed: %s)' % e)
+        return
+    dsn = test_tenancy.pgstore.default_pg_dsn()
+    if not test_tenancy.pg_reachable(dsn):
+        return
+    print('-- tenancy: postgres', dsn.rsplit('@', 1)[-1])
+    test_tenancy.run(dsn)
+    PASS[0] += test_tenancy.PASS[0]
+    FAIL[0] += test_tenancy.FAIL[0]
+
+
 def main():
     pure_checks()
     store_checks('sqlite', sqlite_store())
     pg = pg_store_or_none()
     if pg is not None:
         store_checks('postgres', pg)
+    tenancy_checks()
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
