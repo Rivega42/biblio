@@ -367,16 +367,24 @@ def erasure_checks():
 # Postgres parity — pgcrypto encryption + consent + erasure on real PG.
 # --------------------------------------------------------------------------- #
 def pg_parity_checks():
+    # Gate on the PG intent. NB: a sibling suite (test_platform/test_admin_routes)
+    # mutates os.environ['ACCESS_BACKEND'] to 'sqlite' before this module runs in
+    # the test_access.py runner, so we must NOT rely on ACCESS_BACKEND alone — we
+    # also honour an explicit ACCESS_PG_DSN (set by the CI postgres job) and
+    # ACCESS_TEST_PG so the pgcrypto leg still runs there.
     want = os.environ.get('ACCESS_BACKEND', '').lower() in ('postgres', 'pg') \
-        or os.environ.get('ACCESS_TEST_PG') == '1'
+        or os.environ.get('ACCESS_TEST_PG') == '1' \
+        or bool(os.environ.get('ACCESS_PG_DSN'))
     if not want:
         return
     try:
         from access.pgstore import PgAccessStore, default_pg_dsn
         st = PgAccessStore(os.environ.get('ACCESS_PG_DSN', default_pg_dsn()))
+        # Truncate audit_log too so the pdn.read journal assertion is isolation-safe
+        # (this suite's own pdn.read entries go to an in-memory store, not PG).
         st._conn().execute('TRUNCATE reader_review, reader_hold, reader_shelf, '
                            'reader_shelf_item, reader_history, saved_search, '
-                           'reader_consent RESTART IDENTITY')
+                           'reader_consent, audit_log RESTART IDENTITY')
     except Exception as e:
         print('-- compliance pg parity SKIPPED (%s: %s)'
               % (type(e).__name__, str(e).splitlines()[0]))
