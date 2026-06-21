@@ -1,0 +1,1058 @@
+openapi: 3.1.0
+info:
+  title: IRBIS64 web backend API
+  version: "0.1.0"
+  license:
+    name: Proprietary
+    url: https://github.com/Rivega42/biblio
+  description: |
+    Contract-first REST API for the `irbis-web` project (GitHub issue #116).
+
+    This document is the **single source of truth** for the request/response
+    contract between the Vite/React/TS frontend (`frontend/src/api.ts`) and any
+    backend that implements it. Two backends exist today:
+
+    - `backend/` — adapter over a live IRBIS64 server (`core.py` `Api.route()`).
+    - `server-own/` — our own PostgreSQL/SQLite server (`server-own/app.py`),
+      implementing the same contract (strangler migration).
+
+    The schemas below mirror the TypeScript interfaces in `frontend/src/api.ts`
+    exactly (types and optionality). The prose guide lives in `API_CONTRACT.md`.
+
+    ## Response envelope
+    Every JSON response is wrapped in an envelope:
+    - success: `{ "ok": true, "data": <T> }`
+    - error:   `{ "ok": false, "error": { "code": string, "message": string } }`
+
+    Binary responses (cover image) return raw bytes with a `Content-Type`.
+
+    ## Authentication
+    Bearer token obtained from `POST /api/auth/{guest|staff|reader}` and sent as
+    `Authorization: Bearer <token>`. Because `<img>`/`<a>` cannot set headers, the
+    cover endpoint additionally accepts the token as a `?t=<token>` query param.
+
+    Authorization is `(function x db x level)` grants. Guest sessions get
+    read-only `search`/`record.read`/`terms`/`file`; reader sessions add
+    `order` (write) and `cabinet` (read); staff sessions get DB-stored grants.
+
+servers:
+  - url: /
+    description: Same-origin (frontend talks to `/api/*` on its own host).
+
+tags:
+  - name: auth
+    description: Session creation. Endpoints are public (no token required).
+  - name: catalog
+    description: Search, browse, and read catalog records. Requires a session.
+  - name: reader
+    description: Reader self-service (orders, personal cabinet).
+  - name: cataloging
+    description: Staff cataloging (worklist, record write). Requires grants.
+  - name: system
+    description: Health and database metadata.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: Server health and default-database stats.
+      description: Public. Returns IRBIS server address, version, default db and max MFN.
+      security: []
+      responses:
+        "200":
+          description: Health snapshot.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Health"
+        "4XX":
+          $ref: "#/components/responses/ApiErrorResponse"
+
+  /api/auth/guest:
+    post:
+      tags: [auth]
+      operationId: authGuest
+      summary: Create a guest session.
+      description: Public. Returns a bearer token with the implicit guest grant set.
+      security: []
+      responses:
+        "200":
+          description: Guest session created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuthResult"
+        "4XX":
+          $ref: "#/components/responses/ApiErrorResponse"
+
+  /api/auth/staff:
+    post:
+      tags: [auth]
+      operationId: authStaff
+      summary: Authenticate a staff account.
+      description: Public. Validates login/password against the access store.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Staff session created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuthResult"
+        "401":
+          description: Invalid credentials (`auth_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/auth/reader:
+    post:
+      tags: [auth]
+      operationId: authReader
+      summary: Authenticate a reader by library-ticket number.
+      description: |
+        Public. Looks the ticket up in the RDR database (`RI=<ticket>`).
+        Returns a reader session bound to the reader record MFN.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket]
+              properties:
+                ticket:
+                  type: string
+                  description: Library ticket number (RDR field RI).
+      responses:
+        "200":
+          description: Reader session created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuthResult"
+        "400":
+          description: Missing ticket (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          description: Reader not found (`auth_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/databases:
+    get:
+      tags: [system]
+      operationId: listDatabases
+      summary: List accessible databases.
+      description: |
+        Requires a session (any kind). Reads the server database-list menu and
+        flags each entry `public` (false for service/authority DBs).
+      responses:
+        "200":
+          description: Database list with the default db.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [items, default]
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/DbItem"
+                          default:
+                            type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/search:
+    get:
+      tags: [catalog]
+      operationId: search
+      summary: Search a database.
+      description: |
+        Requires grant `search/<db>/read`. Provide either a prefix+term pair
+        (`prefix`,`q`) or a raw IRBIS expression (`expr`). The server builds the
+        expression as `"<prefix>=<q>"` (A/T prefixes get a trailing `$` for
+        right-truncation) when `expr` is absent. Results are paginated.
+      parameters:
+        - $ref: "#/components/parameters/Db"
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            type: string
+            default: K
+          description: Dictionary prefix (e.g. K=keyword, A=author, T=title). Used with `q`.
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Search term. Mutually combined with `prefix`; ignored if `expr` is set.
+        - name: expr
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Raw IRBIS search expression. Takes precedence over `prefix`/`q`.
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Search result page.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SearchResult"
+        "400":
+          description: Neither `q` nor `expr` supplied (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/facets:
+    get:
+      tags: [catalog]
+      operationId: facets
+      summary: Compute facet value counts for a query.
+      description: |
+        Requires grant `search/<db>/read`. Same query input as `/api/search`
+        (`prefix`+`q` or `expr`). Returns facet groups (docType, lang, author)
+        with per-value counts derived from sub-search COUNTs.
+      parameters:
+        - $ref: "#/components/parameters/Db"
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            type: string
+            default: K
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: expr
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Facet groups for the query.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/FacetsResult"
+        "400":
+          description: Neither `q` nor `expr` supplied (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/terms:
+    get:
+      tags: [catalog]
+      operationId: terms
+      summary: Read dictionary terms from a database.
+      description: |
+        Requires grant `terms/<db>/read`. Reads `count` terms starting at `start`
+        from the database dictionary (used for autocomplete / browse).
+      parameters:
+        - $ref: "#/components/parameters/Db"
+        - name: start
+          in: query
+          required: false
+          schema:
+            type: string
+            default: ""
+          description: Dictionary start term (e.g. `A=`). Empty starts from the top.
+        - name: count
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 15
+          description: Number of terms to return (clamped to 1..50).
+      responses:
+        "200":
+          description: Dictionary terms.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [db, terms]
+                        properties:
+                          db:
+                            type: string
+                          start:
+                            type: string
+                          terms:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Term"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/record/{db}/{mfn}:
+    parameters:
+      - $ref: "#/components/parameters/PathDb"
+      - $ref: "#/components/parameters/PathMfn"
+    get:
+      tags: [catalog]
+      operationId: getRecord
+      summary: Read a full record.
+      description: Requires grant `record.read/<db>/read`. Returns all fields plus a brief format.
+      responses:
+        "200":
+          description: Record data.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RecordData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [cataloging]
+      operationId: saveRecord
+      summary: Create or overwrite a record.
+      description: |
+        Requires grant `record.write/<db>/write` (staff). `mfn=0` creates a new
+        record (the assigned MFN is returned). Each field `value` already carries
+        its `^`-prefixed subfields. Writes are audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fields]
+              properties:
+                fields:
+                  type: array
+                  items:
+                    type: object
+                    required: [tag, value]
+                    properties:
+                      tag:
+                        type: string
+                      value:
+                        type: string
+      responses:
+        "200":
+          description: Save result (assigned MFN, created flag, IRBIS return code).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [db, mfn, created, returnCode]
+                        properties:
+                          db:
+                            type: string
+                          mfn:
+                            type: integer
+                          created:
+                            type: boolean
+                          returnCode:
+                            type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/cover/{db}/{mfn}:
+    get:
+      tags: [catalog]
+      operationId: getCover
+      summary: Embedded cover image (binary).
+      description: |
+        Requires grant `record.read/<db>/read`. Returns the cover image bytes
+        embedded in field 953 (subfield ^B). Because `<img>` cannot send an
+        `Authorization` header, the token may be passed as `?t=<token>`.
+      parameters:
+        - $ref: "#/components/parameters/PathDb"
+        - $ref: "#/components/parameters/PathMfn"
+        - name: t
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Bearer token alternative for `<img>`/`<a>` requests.
+      responses:
+        "200":
+          description: Image bytes.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No embedded cover (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/order:
+    post:
+      tags: [reader]
+      operationId: createOrder
+      summary: Place an order (reservation) for a record.
+      description: |
+        Requires grant `order/<db>/write` (reader). P0 validates and audits the
+        order and returns a queued marker; the RQST integration is a TODO.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfn]
+              properties:
+                db:
+                  type: string
+                  description: Database code. Defaults to the server default db when omitted.
+                mfn:
+                  type: integer
+      responses:
+        "200":
+          description: Order queued.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [db, mfn, status]
+                        properties:
+                          db:
+                            type: string
+                          mfn:
+                            type: integer
+                          status:
+                            type: string
+                            examples: [queued]
+                          note:
+                            type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/me/cabinet:
+    get:
+      tags: [reader]
+      operationId: getCabinet
+      summary: Reader personal cabinet (loans / formulary).
+      description: |
+        Reader session only. Requires grant `cabinet/*/read`. Returns the
+        reader's name and current loans (RDR field 40).
+      responses:
+        "200":
+          description: Cabinet data.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CabinetData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Non-reader session (`forbidden`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/worklist/{db}:
+    get:
+      tags: [cataloging]
+      operationId: getWorklist
+      summary: Cataloging worklist (DynamicField profile) for a database.
+      description: |
+        Requires a session (any kind). Returns the field worklist that drives the
+        cataloging form. Field entries are loosely typed (`any[]` in the client).
+      parameters:
+        - $ref: "#/components/parameters/PathDb"
+      responses:
+        "200":
+          description: Worklist profile.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [db, fields]
+                        properties:
+                          db:
+                            type: string
+                          fields:
+                            type: array
+                            items:
+                              type: object
+                              additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/storage:
+    get:
+      tags: [catalog]
+      operationId: getStorage
+      summary: Physical storage tree with geometry and occupancy.
+      description: |
+        Returns the full location tree (rooms/shelves/cells) with geometry and
+        occupancy, for the storage map view.
+
+        NOTE: This endpoint is part of the typed client contract (`api.ts`) and
+        is implemented by `server-own/app.py`. The IRBIS adapter (`core.py`
+        `Api.route()`) does **not** currently implement it — calls there return
+        `404 not_found`. See the discrepancy note in `API_CONTRACT.md`.
+      parameters:
+        - $ref: "#/components/parameters/Db"
+      responses:
+        "200":
+          description: Storage tree.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [db, tree, holdings]
+                        properties:
+                          db:
+                            type: string
+                          tree:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/StorageNode"
+                          holdings:
+                            type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Bearer token from `POST /api/auth/{guest|staff|reader}`. The cover
+        endpoint also accepts the same token via the `?t=` query parameter.
+
+  parameters:
+    Db:
+      name: db
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Database code. Defaults to the server default db (e.g. IBIS) when omitted.
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: 1-based page number.
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+      description: Page size (clamped to 1..50).
+    PathDb:
+      name: db
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Database code.
+    PathMfn:
+      name: mfn
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Master file number (record id within the database).
+
+  responses:
+    ApiErrorResponse:
+      description: Error envelope (e.g. bad_request, internal).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+    Unauthorized:
+      description: No / invalid session (`unauthorized`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+    Forbidden:
+      description: Required grant missing (`forbidden`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+
+  schemas:
+    Envelope:
+      type: object
+      description: Base response envelope. `ok` discriminates success vs error.
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+
+    EnvelopeOk:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [ok, data]
+          properties:
+            ok:
+              type: boolean
+              const: true
+            data:
+              description: Endpoint-specific payload (refined per operation).
+
+    EnvelopeError:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [ok, error]
+          properties:
+            ok:
+              type: boolean
+              const: false
+            error:
+              $ref: "#/components/schemas/ApiError"
+
+    ApiError:
+      type: object
+      description: Error detail (no internal specifics leaked).
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code (e.g. unauthorized, forbidden, bad_request, not_found, irbis, internal).
+        message:
+          type: string
+
+    Health:
+      type: object
+      required: [server, version, db, maxmfn]
+      properties:
+        server:
+          type: string
+          description: IRBIS server address `host:port`.
+        version:
+          type: string
+        db:
+          type: string
+          description: Default database code.
+        maxmfn:
+          type: integer
+
+    AuthResult:
+      type: object
+      description: |
+        Session payload. Shape varies by session kind: guest -> `{token, kind}`;
+        reader -> `{token, kind, name, mfn}`; staff -> `{token, kind, login, name, grants}`.
+      required: [token, kind]
+      properties:
+        token:
+          type: string
+        kind:
+          type: string
+          enum: [guest, reader, staff]
+        name:
+          type: string
+          description: Display name (reader/staff).
+        login:
+          type: string
+          description: Staff login.
+        mfn:
+          type: integer
+          description: Reader record MFN.
+        grants:
+          type: array
+          description: Effective staff grants.
+          items:
+            $ref: "#/components/schemas/Grant"
+
+    DbItem:
+      type: object
+      required: [code, name, public]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        public:
+          type: boolean
+          description: false for service/authority databases hidden from public reader search.
+
+    ResultItem:
+      type: object
+      description: Brief catalog card (one search hit).
+      required: [mfn, title]
+      properties:
+        mfn:
+          type: integer
+        title:
+          type: string
+        author:
+          type: string
+        year:
+          type: string
+        docType:
+          type: string
+        availability:
+          type: string
+          enum: [available, issued, unknown]
+        hasCover:
+          type: boolean
+
+    SearchResult:
+      type: object
+      required: [db, expr, total, page, pageSize, items]
+      properties:
+        db:
+          type: string
+        expr:
+          type: string
+          description: Effective IRBIS expression used for the search.
+        total:
+          type: integer
+          description: Total hit count (across all pages).
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResultItem"
+
+    FieldVal:
+      type: object
+      description: One record field. `value` is the raw field; `subfields` maps `^`-codes.
+      required: [tag, value, subfields]
+      properties:
+        tag:
+          type: string
+        value:
+          type: string
+        text:
+          type: string
+        subfields:
+          type: object
+          additionalProperties:
+            type: string
+
+    Holding:
+      type: object
+      description: |
+        Copy/holding row. Produced by the own-server backend; optional on
+        `RecordData`. Not populated by the IRBIS adapter's record read.
+      required: [inv_no, status, cell, rfid]
+      properties:
+        inv_no:
+          type: string
+        status:
+          type: string
+        cell:
+          type: string
+        rfid:
+          type: string
+        location:
+          type: string
+
+    RecordData:
+      type: object
+      required: [db, mfn, fields]
+      properties:
+        db:
+          type: string
+        mfn:
+          type: integer
+        version:
+          type: string
+        brief:
+          type: string
+          description: Server-formatted brief (@brief), empty on format failure.
+        hasCover:
+          type: boolean
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldVal"
+        holdings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Holding"
+
+    StorageNode:
+      type: object
+      description: |
+        Location-tree node. Container nodes (room/shelf) carry `children` and
+        `cellsTotal`/`cellsOccupied`; leaf nodes (cell/slot) carry occupancy.
+      required: [id, kind, code]
+      properties:
+        id:
+          type: integer
+        kind:
+          type: string
+          description: room | shelf | cell | slot | ...
+        code:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        size:
+          type: string
+        gx:
+          type: number
+        gy:
+          type: number
+        gw:
+          type: number
+        gh:
+          type: number
+        cellsTotal:
+          type: integer
+        cellsOccupied:
+          type: integer
+        occupied:
+          type: boolean
+        status:
+          type: string
+        title:
+          type: string
+        inv:
+          type: string
+        mfn:
+          type: integer
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageNode"
+
+    Term:
+      type: object
+      required: [count, term]
+      properties:
+        count:
+          type: integer
+        term:
+          type: string
+
+    FacetValue:
+      type: object
+      required: [value, label, count]
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+
+    Facet:
+      type: object
+      required: [field, prefix, label, values]
+      properties:
+        field:
+          type: string
+          description: Logical facet name (docType, lang, author).
+        prefix:
+          type: string
+          description: Dictionary prefix used to derive values (V, J, A).
+        label:
+          type: string
+        values:
+          type: array
+          items:
+            $ref: "#/components/schemas/FacetValue"
+
+    FacetsResult:
+      type: object
+      required: [db, expr, facets]
+      properties:
+        db:
+          type: string
+        expr:
+          type: string
+        facets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Facet"
+
+    Grant:
+      type: object
+      description: Authorization grant `(function x db x level)`.
+      required: [function, db, level]
+      properties:
+        function:
+          type: string
+        db:
+          type: string
+          description: Database code or `*` (wildcard).
+        level:
+          type: string
+          enum: [read, write, admin]
+
+    Loan:
+      type: object
+      required: [value, subfields]
+      properties:
+        value:
+          type: string
+        subfields:
+          type: object
+          additionalProperties:
+            type: string
+
+    CabinetData:
+      type: object
+      required: [mfn, name, loans, loanCount]
+      properties:
+        mfn:
+          type: integer
+        name:
+          type: string
+        loans:
+          type: array
+          items:
+            $ref: "#/components/schemas/Loan"
+        loanCount:
+          type: integer
