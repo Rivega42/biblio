@@ -300,7 +300,7 @@ class Api:
         # separate store from the live ИРБИС server (same posture as circ/holds,
         # #222). Best-effort: a build failure must not break the API.
         try:
-            cat_db = os.environ.get('CATALOG_DB', ':memory:')
+            cat_db = os.environ.get('CATALOG_DB', os.path.join(here, 'catalog.db'))
             self.catalog = CatalogStore(cat_db, access_store=self.access)
         except Exception:
             self.catalog = None
@@ -310,7 +310,7 @@ class Api:
         # in the shared ЭК. Own sqlite store (env CIRC_DB), standalone from the live
         # ИРБИС server (#222: never write the live server).
         try:
-            circ_db = os.environ.get('CIRC_DB', ':memory:')
+            circ_db = os.environ.get('CIRC_DB', os.path.join(here, 'circ.db'))
             self.circulation = _circulation.CirculationEngine(
                 store=_circulation.CirculationStore(circ_db),
                 notifications=self.notifications,
@@ -343,7 +343,7 @@ class Api:
         # Acquisition engine (order → receipt → КСУ → ToCat). Own sqlite store (env
         # ACQ_DB), the catalog handle wired so receipt reflects ToCat into the ЭК.
         try:
-            acq_db = os.environ.get('ACQ_DB', ':memory:')
+            acq_db = os.environ.get('ACQ_DB', os.path.join(here, 'acq.db'))
             self.acquisition = _acquisition.AcquisitionEngine(
                 store=_acquisition.AcquisitionStore(acq_db),
                 catalog=self.catalog, catalog_db=self.cfg.db_default)
@@ -352,7 +352,7 @@ class Api:
         # Book-provision engine (связка + Кко). Own sqlite store (env BP_DB); the
         # SAME catalog handle wired READ-ONLY so live 910 exemplar counts back Кко.
         try:
-            bp_db = os.environ.get('BP_DB', ':memory:')
+            bp_db = os.environ.get('BP_DB', os.path.join(here, 'bp.db'))
             self.bookprovision = _bookprovision.BookProvisionEngine(
                 bp_db, catalog=self.catalog)
         except Exception:
