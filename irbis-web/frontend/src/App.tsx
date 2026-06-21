@@ -115,6 +115,7 @@ export function App() {
   const [loginOpen, setLoginOpen] = React.useState(false);
   const [view, setView] = React.useState<"search" | "cabinet">("search");
   const [cab, setCab] = React.useState<CabinetData | null>(null);
+  const [cabinetSeen, setCabinetSeen] = React.useState(false);
   const [context, setContext] = React.useState<"reader" | "staff">("reader");
   const [staff, setStaff] = React.useState<StaffSession | null>(null);
   const [staffRoute, setStaffRoute] = React.useState<any>("desktop");
@@ -259,8 +260,12 @@ export function App() {
   }
   async function loadCabinet() {
     const r = await api.cabinet();
-    if (r.json?.ok && r.json.data) { setCab(r.json.data); setView("cabinet"); setRec(null); }
-    else toast({ variant: "info", title: "Кабинет недоступен", message: "Войдите по читательскому билету." });
+    if (r.json?.ok && r.json.data) {
+      setCab(r.json.data); setView("cabinet"); setRec(null);
+      // «06» — тёмная витрина: показываем кабинет в тёмной теме (если не a11y и
+      // пользователь сам ещё не выбрал светлую в этой сессии). Тумблер остаётся рабочим.
+      if (!a11y && !cabinetSeen) { setDarkMode(true); setCabinetSeen(true); }
+    } else toast({ variant: "info", title: "Кабинет недоступен", message: "Войдите по читательскому билету." });
   }
   async function doLogin(ticket: string) {
     const r = await api.loginReader(ticket);
@@ -468,26 +473,290 @@ function FacetRail({ facets, active, onToggle }: {
   );
 }
 
+// --- Личный кабинет (экран «06 Reader Cabinet») ----------------------------
+// Формуляр читателя из живого ИРБИС: поле 40 с подполями
+//   ^A шифр · ^B инв · ^C краткое описание · ^D дата выдачи · ^E план. возврата
+//   ^F факт. возврата (****** = на руках) · ^L продление.
+// Очередь брони / полки / челлендж — backend пока не отдаёт: показываем как
+// демонстрационный UI (помечено «демо»), без обращения к несуществующим эндпойнтам.
+const RU_MONTH = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+// Разбор даты ИРБИС YYYYMMDD → Date (локальная полночь) либо null.
+function parseIrbisDate(s: string): Date | null {
+  if (!s || !/^\d{8}$/.test(s)) return null;
+  const y = +s.slice(0, 4), m = +s.slice(4, 6), d = +s.slice(6, 8);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(y, m - 1, d);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+function fmtDate(dt: Date | null): string {
+  return dt ? dt.getDate() + " " + RU_MONTH[dt.getMonth()] : "";
+}
+const COVER_TINTS = ["#2F5D62", "#C96442", "#6B5CA5", "#3E4C7E", "#1F8A5B", "#8A4F9E"];
+
+// Адаптив кабинета: на узких экранах профиль уезжает наверх, сетки в одну колонку.
+const CAB_CSS = `
+@media (max-width: 860px){
+  .irb-cab-grid{grid-template-columns:1fr !important;}
+  .irb-cab-2col,.irb-cab-3col{grid-template-columns:1fr !important;}
+}`;
+if (typeof document !== "undefined" && !document.getElementById("irb-cab-css")) {
+  const s = document.createElement("style"); s.id = "irb-cab-css"; s.textContent = CAB_CSS; document.head.appendChild(s);
+}
+
+interface LoanView {
+  title: string;
+  meta: string;          // шифр · инв
+  issued: Date | null;   // ^D
+  due: Date | null;      // ^E
+  returned: boolean;     // ^F != ******
+  onHand: boolean;       // выдано и не возвращено
+  renewals: number;      // ^L (число продлений), если есть
+  tone: "ok" | "soon" | "over" | "done";
+  dueLabel: string;
+  daysWord: string;
+}
+// Краткое описание ^C обычно содержит «Автор. Заглавие [Текст] : … / …, ГОД. - … с.»
+// Берём заглавную часть до первого « [» или « : » как заголовок; остальное служит подписью.
+function loanTitle(desc: string, code: string): { title: string; sub: string } {
+  const raw = (desc || "").trim();
+  if (!raw) return { title: code || "Издание", sub: "" };
+  let head = raw.split(/\s\[|\s:\s|\s\/\s/)[0].trim();
+  if (head.length > 90) head = head.slice(0, 88).trim() + "…";
+  // Подпись: остаток после заголовка (год / автор), ограниченный по длине.
+  let sub = raw.slice(head.length).replace(/^[\s\[\]:/.,–-]+/, "").trim();
+  if (sub.length > 70) sub = sub.slice(0, 68).trim() + "…";
+  return { title: head || code || "Издание", sub };
+}
+function buildLoan(l: { value: string; subfields: Record<string, string> }, today: Date): LoanView {
+  const sub = l.subfields || {};
+  const get = (c: string) => sub[c] || sub[c.toUpperCase()] || sub[c.toLowerCase()] || "";
+  const code = get("A"), inv = get("B"), desc = get("C");
+  const issued = parseIrbisDate(get("D"));
+  const due = parseIrbisDate(get("E"));
+  const fact = get("F");
+  const returned = !!fact && fact.indexOf("*") < 0; // реальная дата возврата
+  const onHand = !returned;                          // ****** или пусто → на руках
+  const renewals = (() => { const v = get("L"); const n = parseInt(v, 10); return isNaN(n) ? 0 : n; })();
+  const t = loanTitle(desc, code);
+  let tone: LoanView["tone"] = "ok";
+  let dueLabel = due ? "до " + fmtDate(due) : "";
+  let daysWord = "";
+  if (returned) {
+    tone = "done"; dueLabel = "возвращено";
+  } else if (due) {
+    const ms = due.getTime() - today.getTime();
+    const days = Math.round(ms / 86400000);
+    if (days < 0) {
+      tone = "over"; daysWord = Math.abs(days) + " " + plural(Math.abs(days), "день", "дня", "дней"); dueLabel = "просрочено · " + daysWord;
+    } else if (days <= 3) {
+      tone = "soon"; daysWord = days === 0 ? "сегодня" : days + " " + plural(days, "день", "дня", "дней"); dueLabel = "до " + fmtDate(due) + " · скоро";
+    } else {
+      tone = "ok"; dueLabel = "до " + fmtDate(due);
+    }
+  }
+  return {
+    title: t.title, meta: [code, inv ? "инв. " + inv : ""].filter(Boolean).join(" · "),
+    issued, due, returned, onHand, renewals, tone, dueLabel, daysWord,
+  };
+}
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
+function initials(name: string): string {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "ЧТ";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+const TONE_STATUS: Record<LoanView["tone"], string> = { ok: "available", soon: "issued", over: "unknown", done: "returned" };
+function toneChip(tone: LoanView["tone"]): React.CSSProperties {
+  if (tone === "over") return { display: "inline-flex", alignItems: "center", gap: 6, background: "color-mix(in srgb, var(--error) 18%, transparent)", color: "var(--error)", borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
+  return statusChip(TONE_STATUS[tone]);
+}
+function toneDot(tone: LoanView["tone"]): React.CSSProperties {
+  const c = tone === "over" ? "var(--error)" : (STATUS[TONE_STATUS[tone]] || STATUS.unknown).fg;
+  return { width: 6, height: 6, borderRadius: 999, background: c, flex: "none" };
+}
+
 function CabinetScreen({ cab, ticket, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; onBack: () => void; onLogout: () => void }) {
-  const loanLine = (l: any) => Object.values(l.subfields).filter(Boolean).join(" · ") || l.value;
+  const today = React.useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  const loans = React.useMemo(() => (cab?.loans || []).map((l) => buildLoan(l, today)), [cab, today]);
+  const onHand = loans.filter((l) => l.onHand);
+  const returnedCount = loans.length - onHand.length;
+  const overdue = onHand.filter((l) => l.tone === "over").length;
+  const name = cab?.name || "Читатель";
+  const cardSx: React.CSSProperties = { background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-xl,16px)", boxShadow: "var(--shadow-sm)" };
+  const h2Sx: React.CSSProperties = { fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-xl,1.25rem)", letterSpacing: "-.02em", margin: 0 };
+  const demoHint: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 999, background: "var(--surface-sunken)", color: "var(--text-subtle)", fontSize: "var(--text-2xs,11px)", fontWeight: 600, letterSpacing: ".02em" };
+
+  // Демо-данные (помечены «демо»): backend очереди/полок/челленджа ещё нет.
+  const challengeGoal = 50, challengeDone = Math.min(returnedCount + 35, 49);
+  const pct = Math.round((challengeDone / challengeGoal) * 100);
+  const queue = [
+    { title: "Совершенный код", author: "С. Макконнелл", note: "ожидание", pos: 2, of: 5, info: true },
+    { title: "Искусство программирования", author: "Д. Кнут", note: "скоро ваша", pos: 1, of: 3, info: false },
+  ];
+  const shelves = [
+    { name: "Хочу прочитать", count: 12, icon: "book" },
+    { name: "Избранное", count: 8, icon: "star" },
+    { name: "По работе", count: 23, icon: "briefcase" },
+  ];
+
   return (
     <div>
-      <Button iconLeft="arrow-left" onClick={onBack}>К поиску</Button>
-      <h2 style={{ fontSize: "var(--text-2xl,1.5rem)", margin: "8px 0 2px" }}>Личный кабинет</h2>
-      <p style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", marginTop: 0 }}>{cab?.name || "Читатель"}{ticket ? " · билет № " + ticket : ""}</p>
-      <div style={{ fontWeight: 600, margin: "16px 0 8px" }}>Формуляр · книги на руках: {cab?.loanCount ?? 0}</div>
-      {cab && cab.loans.length ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {cab.loans.map((l, i) => (
-            <div key={i} style={{ background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: "10px 14px", fontSize: "var(--text-sm)", display: "flex", gap: 10, alignItems: "center" }}>
-              <Icon name="book" size={15} style={{ color: "var(--text-subtle)", flexShrink: 0 }} />
-              <span style={{ flex: 1 }}>{loanLine(l)}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+        <Button variant="secondary" size="sm" iconLeft="arrow-left" onClick={onBack}>К каталогу</Button>
+        <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Мой кабинет</span>
+      </div>
+      <div className="irb-cab-grid" style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 24, alignItems: "start" }}>
+
+        {/* ===== Профиль + челлендж ===== */}
+        <aside aria-label="Профиль читателя" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ ...cardSx, padding: 22, textAlign: "center" }}>
+            <span aria-hidden="true" style={{ width: 64, height: 64, borderRadius: 999, background: "linear-gradient(150deg, var(--accent), var(--accent-hover))", color: "var(--accent-fg,#fff)", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "600 24px var(--font-ui)", margin: "0 auto" }}>{initials(name)}</span>
+            <h2 style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-lg,19px)", margin: "14px 0 2px" }}>{name}</h2>
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>{ticket ? "Билет № " + ticket : "Читательский билет"}</span>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "4px 11px", borderRadius: 999, ...statusChip("available") }}>
+              <span style={statusDot("available")} aria-hidden="true" />Активен
             </div>
-          ))}
-        </div>
-      ) : <EmptyState icon="check-circle" title="На руках книг нет" description="Все издания возвращены, либо формуляр пуст." />}
-      <div style={{ marginTop: 20 }}><Button variant="ghost" onClick={onLogout}>Выйти из кабинета</Button></div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border-subtle)" }}>
+              {[{ n: onHand.length, l: "на руках" }, { n: queue.length, l: "в очереди", demo: true }, { n: challengeDone, l: "прочитано", demo: true }].map((s, i) => (
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: 21, fontVariantNumeric: "tabular-nums" }}>{s.n}</span>
+                  <span style={{ fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)" }}>{s.l}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Reading challenge (демо) */}
+          <div style={{ ...cardSx, padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon name="star" size={16} style={{ color: "var(--accent)" }} />
+              <span style={{ fontWeight: 600, fontSize: "var(--text-sm)" }}>Челлендж 2026</span>
+              <span style={{ ...demoHint, marginLeft: "auto" }} title="Раздел в разработке">демо</span>
+            </div>
+            <p style={{ fontSize: "var(--text-sm)", color: "var(--text-muted,var(--text-secondary))", margin: "10px 0 14px" }}>Прочитать {challengeGoal} книг за год</p>
+            <div style={{ height: 9, borderRadius: 999, background: "var(--surface-hover,var(--surface-3))", overflow: "hidden" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Прогресс челленджа">
+              <div style={{ height: "100%", width: pct + "%", borderRadius: 999, background: "linear-gradient(90deg, var(--accent), var(--accent-hover))" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 9 }}>
+              <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--accent)" }}>{challengeDone} из {challengeGoal}</span>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
+            </div>
+          </div>
+        </aside>
+
+        {/* ===== Основная колонка ===== */}
+        <main style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
+
+          {/* На руках сейчас — LIVE формуляр */}
+          <section aria-labelledby="cab-onhand">
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+              <h1 id="cab-onhand" style={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}>На руках сейчас</h1>
+              <span style={{ fontSize: "var(--text-sm)", color: "var(--text-subtle)" }}>
+                Формуляр · {onHand.length} {plural(onHand.length, "издание", "издания", "изданий")}
+                {overdue ? " · " : ""}{overdue ? <span style={{ color: "var(--error)", fontWeight: 600 }}>{overdue} {plural(overdue, "просрочено", "просрочены", "просрочено")}</span> : null}
+              </span>
+            </div>
+            {onHand.length ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {onHand.map((l, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: "14px 16px" }}>
+                    <div aria-hidden="true" style={{ width: 40, height: 56, flex: "none", borderRadius: 6, background: "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.35))", boxShadow: "var(--shadow-md)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 4 }}>
+                      <Icon name="book" size={13} style={{ color: "rgba(255,255,255,.85)" }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-base,15.5px)", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{l.title}</div>
+                      <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: "var(--font-mono)" }}>{l.meta || "—"}</span>
+                        {l.issued && <span>выдано {fmtDate(l.issued)}</span>}
+                        {l.renewals > 0 && <span>продлений: {l.renewals}</span>}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 7, flex: "none" }}>
+                      <span style={toneChip(l.tone)}><span style={toneDot(l.tone)} aria-hidden="true" />{l.dueLabel || "срок не указан"}</span>
+                      <RenewButton />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={cardSx}><EmptyState icon="check-circle" title="На руках книг нет" description={returnedCount ? "Все издания возвращены." : "Формуляр пуст — закажите издание в каталоге."} /></div>
+            )}
+          </section>
+
+          {/* Очередь брони — backend брони пока нет → placeholder */}
+          <section aria-labelledby="cab-queue">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+              <h2 id="cab-queue" style={h2Sx}>Очередь брони</h2>
+              <span style={demoHint} title="Раздел в разработке">демо</span>
+            </div>
+            <div className="irb-cab-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {queue.map((q, i) => {
+                const frac = (q.of - q.pos + 1) / q.of;
+                return (
+                  <div key={i} style={{ ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-sm,15px)", lineHeight: 1.25 }}>{q.title}</div>
+                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2 }}>{q.author}</div>
+                      </div>
+                      <span style={statusChip(q.info ? "hold" : "available")}>{q.note}</span>
+                    </div>
+                    <div style={{ marginTop: 13 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted,var(--text-secondary))" }}>Ваша позиция</span>
+                        <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{q.pos} из {q.of}</span>
+                      </div>
+                      <div style={{ height: 6, borderRadius: 999, background: "var(--surface-hover,var(--surface-3))", overflow: "hidden" }} role="progressbar" aria-valuenow={q.pos} aria-valuemin={1} aria-valuemax={q.of} aria-label={"Позиция в очереди: " + q.pos + " из " + q.of}>
+                        <div style={{ height: "100%", width: Math.round(frac * 100) + "%", borderRadius: 999, background: q.info ? "var(--accent)" : (STATUS.available.fg) }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", margin: "10px 2px 0" }}>Очередь брони появится после подключения модуля бронирования. Сейчас показан демонстрационный вид.</p>
+          </section>
+
+          {/* Мои полки — демо */}
+          <section aria-labelledby="cab-shelves">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+              <h2 id="cab-shelves" style={h2Sx}>Мои полки</h2>
+              <span style={demoHint} title="Раздел в разработке">демо</span>
+            </div>
+            <div className="irb-cab-3col" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+              {shelves.map((s, i) => (
+                <button key={i} type="button" disabled title="Списки чтения — в разработке"
+                  style={{ textAlign: "left", ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: 18, cursor: "not-allowed", display: "flex", flexDirection: "column", gap: 12, opacity: .92 }}>
+                  <span aria-hidden="true" style={{ width: 38, height: 38, borderRadius: 11, background: "var(--accent-weak,var(--accent-tint))", border: "1px solid var(--accent-weak-border,var(--accent-tint-border))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent)" }}><Icon name={s.icon} size={18} /></span>
+                  <div><div style={{ fontWeight: 600, fontSize: "var(--text-sm)" }}>{s.name}</div><div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2 }}>{s.count} {plural(s.count, "издание", "издания", "изданий")}</div></div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <div style={{ marginTop: 4 }}><Button variant="ghost" iconLeft="log-out" onClick={onLogout}>Выйти из кабинета</Button></div>
+        </main>
+      </div>
     </div>
+  );
+}
+
+// «Продлить» — реальное продление это запись в backend, которой ещё нет.
+// Кнопка задизейблена с подсказкой «скоро»; write-эндпойнты не вызываются.
+function RenewButton() {
+  return (
+    <span title="Онлайн-продление появится скоро" style={{ display: "inline-block" }}>
+      <button type="button" disabled aria-disabled="true" aria-label="Продлить (скоро)"
+        style={{ border: "1px solid var(--border-default,var(--border-strong))", background: "transparent", color: "var(--text-muted,var(--text-secondary))", borderRadius: 8, padding: "6px 13px", fontFamily: "var(--font-ui)", fontWeight: 500, fontSize: "var(--text-xs,12px)", cursor: "not-allowed", opacity: .7, display: "inline-flex", alignItems: "center", gap: 5 }}>
+        <Icon name="refresh-cw" size={13} /> Продлить
+      </button>
+    </span>
   );
 }
 
