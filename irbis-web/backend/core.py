@@ -27,6 +27,9 @@ from access import notifications as _notifications
 from access import circulation as _circulation
 from access.holds import HoldService
 from access.shelves import ShelfService
+from access import acquisition as _acquisition
+from access import bookprovision as _bookprovision
+from access.catalog import CatalogStore
 
 # Default tenant slug when running single-tenant / sqlite dev (no control plane).
 DEFAULT_TENANT = os.environ.get('DEFAULT_TENANT', 'public')
@@ -40,7 +43,13 @@ FUNCTION_MODULE = {
     'record.write': 'cataloging', 'record.delete': 'cataloging', 'cat.gbl': 'cataloging',
     'order': 'reader', 'cabinet': 'reader',
     'circ.issue': 'circulation', 'circ.return': 'circulation',
-    'acq.receipt': 'acquisition',
+    # АРМ Комплектатор (acquisition): order/receive/КСУ — staff-only, module-gated.
+    # acq.receipt already existed for the receipt write; acq.read gates the КСУ /
+    # order-status reads on the same 'acquisition' module.
+    'acq.receipt': 'acquisition', 'acq.read': 'acquisition',
+    # Книгообеспеченность (book-provision, ВУЗ): связка writes + Кко reads, gated on
+    # the 'bookprovision' module (issue #101 licensing).
+    'bp.write': 'bookprovision', 'bp.read': 'bookprovision',
     'admin.db': 'admin', 'admin.users': 'admin',
 }
 
@@ -280,6 +289,37 @@ class Api:
         self.holds = HoldService(self.access, catalog=None,
                                  brief_read=self._hold_brief)
         self.shelves = ShelfService(self.access, brief_read=self._hold_brief)
+
+        # ---- АРМ Комплектатор + Книгообеспеченность (acquisition + book-provision) ----
+        # A shared CatalogStore (own sqlite, env CATALOG_DB; ':memory:' in tests) is
+        # the ToCat / exemplar-read seam for both engines: acquisition WRITES into it
+        # (receipt → bib record + 910 exemplars + field-66 КСУ link), book-provision
+        # READS exemplar counts from it (910^A availability). It is a separate store
+        # from the live ИРБИС server — these АРМ functions never touch the live
+        # server (same posture as circulation/holds, #222). Best-effort: a build
+        # failure must not break the API (the engines then run standalone / degraded).
+        try:
+            cat_db = os.environ.get('CATALOG_DB', ':memory:')
+            self.catalog = CatalogStore(cat_db, access_store=self.access)
+        except Exception:
+            self.catalog = None
+        # Acquisition engine (order → receipt → КСУ → ToCat). Own sqlite store (env
+        # ACQ_DB), the catalog handle wired so receipt reflects ToCat into the ЭК.
+        try:
+            acq_db = os.environ.get('ACQ_DB', ':memory:')
+            self.acquisition = _acquisition.AcquisitionEngine(
+                store=_acquisition.AcquisitionStore(acq_db),
+                catalog=self.catalog, catalog_db=self.cfg.db_default)
+        except Exception:
+            self.acquisition = None
+        # Book-provision engine (связка + Кко). Own sqlite store (env BP_DB); the
+        # SAME catalog handle wired READ-ONLY so live 910 exemplar counts back Кко.
+        try:
+            bp_db = os.environ.get('BP_DB', ':memory:')
+            self.bookprovision = _bookprovision.BookProvisionEngine(
+                bp_db, catalog=self.catalog)
+        except Exception:
+            self.bookprovision = None
 
     # ---- session helpers (signed JWT; no server-side session table) ----
     def _new_session(self, kind, actor, grants, **extra):
@@ -955,6 +995,196 @@ class Api:
             return 404, err('not_found', 'list not found')
         return 200, ok(res)
 
+    # ---- АРМ Комплектатор (acquisition) + Книгообеспеченность (book-provision) ----
+    # Staff surfaces (NOT public): guest/reader sessions are refused. Each handler
+    # is guarded by an acquisition / book-provision function whose module must be
+    # licensed (FUNCTION_MODULE → entitlements). State lives in OUR own engine
+    # stores, never the live ИРБИС server (mirrors circulation/holds posture).
+    def _require_staff(self, session):
+        """Reject a guest/reader session on a staff-only АРМ surface (403).
+
+        These are АРМ Комплектатор / Книгообеспеченность functions — only a staff
+        session may reach them. A reader/guest carries the public OPAC grant set
+        which lacks acq.*/bp.*, so the per-function ``_guard`` would 403 anyway;
+        this is an explicit, uniform early refusal so the surface is unambiguous."""
+        if not session:
+            raise Denied(401, 'unauthorized', 'no session')
+        if session.get('kind') != 'staff':
+            raise Denied(403, 'forbidden', 'staff session required')
+
+    def acq_order(self, session, body):
+        """POST /api/acq/order — open an order line (заказ). Staff + acq.receipt."""
+        self._require_staff(session)
+        self._guard(session, 'acq.receipt', self.cfg.db_default, 'write')
+        try:
+            order = self.acquisition.create_order(
+                title=body.get('title'), author=body.get('author'),
+                supplier=body.get('supplier'), copies=int(body.get('copies', 1)),
+                price=body.get('price'), funding_source=body.get('fundingSource'))
+        except _acquisition.AcquisitionError as e:
+            return 400, err('bad_request', str(e))
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'acq.receipt', self.cfg.db_default, order['id'], 'ok',
+            {'op': 'order'})
+        return 200, ok(order)
+
+    def acq_cancel(self, session, body):
+        """POST /api/acq/order/cancel — cancel an order (refused if anything received)."""
+        self._require_staff(session)
+        self._guard(session, 'acq.receipt', self.cfg.db_default, 'write')
+        try:
+            order_id = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        try:
+            order = self.acquisition.cancel_order(order_id)
+        except _acquisition.AcquisitionError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok(order)
+
+    def acq_receive(self, session, body):
+        """POST /api/acq/receive — register received copies → КСУ → ToCat. acq.receipt."""
+        self._require_staff(session)
+        self._guard(session, 'acq.receipt', self.cfg.db_default, 'write')
+        try:
+            order_id = int(body.get('orderId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'orderId required')
+        ksu_no = (body.get('ksuNo') or '').strip()
+        if not ksu_no:
+            return 400, err('bad_request', 'ksuNo required')
+        try:
+            copies = int(body.get('copies'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'copies required')
+        try:
+            res = self.acquisition.receive(
+                order_id, ksu_no, copies, unit_price=body.get('unitPrice'),
+                inv_numbers=body.get('invNumbers'), act_ref=body.get('actRef'))
+        except _acquisition.AcquisitionError as e:
+            return 400, err('bad_request', str(e))
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'acq.receipt', self.cfg.db_default,
+            res.get('catalog_mfn'), 'ok',
+            {'op': 'receive', 'ksu': ksu_no, 'copies': copies})
+        return 200, ok(res)
+
+    def acq_order_status(self, session, order_id):
+        """GET /api/acq/order?id= — the order row + its status. acq.read."""
+        self._require_staff(session)
+        self._guard(session, 'acq.read', self.cfg.db_default, 'read')
+        order = self.acquisition.store.get_order(order_id)
+        if order is None:
+            return 404, err('not_found', 'unknown order %r' % order_id)
+        return 200, ok(order)
+
+    def acq_ksu(self, session, ksu_no):
+        """GET /api/acq/ksu?no= — the КСУ summary row (88^E/^F/^G). acq.read."""
+        self._require_staff(session)
+        self._guard(session, 'acq.read', self.cfg.db_default, 'read')
+        ksu = self.acquisition.ksu_summary(ksu_no)
+        if ksu is None:
+            return 404, err('not_found', 'unknown КСУ %r' % ksu_no)
+        return 200, ok(ksu)
+
+    def bp_faculty(self, session, body):
+        """POST /api/bp/faculty — create/fetch a Факультет (связка ^A root). bp.write."""
+        self._require_staff(session)
+        self._guard(session, 'bp.write', self.cfg.db_default, 'write')
+        try:
+            fid = self.bookprovision.add_faculty(body.get('code'),
+                                                 name=body.get('name', ''))
+        except _bookprovision.BookProvisionError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'id': fid})
+
+    def bp_specialty(self, session, body):
+        """POST /api/bp/specialty — bind a Направление/Специальность. bp.write."""
+        self._require_staff(session)
+        self._guard(session, 'bp.write', self.cfg.db_default, 'write')
+        try:
+            sid = self.bookprovision.add_specialty(
+                int(body.get('facultyId')), napr=body.get('napr', ''),
+                spec=body.get('spec', ''), vid=body.get('vid', ''),
+                form=body.get('form', ''), name=body.get('name', ''))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'facultyId required')
+        except _bookprovision.BookProvisionError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'id': sid})
+
+    def bp_discipline(self, session, body):
+        """POST /api/bp/discipline — attach a дисциплина + contingent. bp.write."""
+        self._require_staff(session)
+        self._guard(session, 'bp.write', self.cfg.db_default, 'write')
+        try:
+            did = self.bookprovision.add_discipline(
+                int(body.get('specialtyId')), body.get('discId'),
+                name=body.get('name', ''), semester=body.get('semester', ''),
+                students=int(body.get('students', 0)),
+                students_source=body.get('studentsSource', '68z'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'specialtyId required')
+        except _bookprovision.BookProvisionError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'id': did})
+
+    def bp_contingent(self, session, body):
+        """POST /api/bp/contingent — refresh a discipline's student count. bp.write."""
+        self._require_staff(session)
+        self._guard(session, 'bp.write', self.cfg.db_default, 'write')
+        try:
+            did = int(body.get('disciplineId'))
+            students = int(body.get('students'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'disciplineId and students required')
+        try:
+            self.bookprovision.set_contingent(
+                did, students, source=body.get('source', '68z'))
+        except _bookprovision.BookProvisionError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'disciplineId': did, 'students': students})
+
+    def bp_bind(self, session, body):
+        """POST /api/bp/bind — bind recommended literature to a discipline. bp.write."""
+        self._require_staff(session)
+        self._guard(session, 'bp.write', self.cfg.db_default, 'write')
+        try:
+            did = int(body.get('disciplineId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'disciplineId required')
+        try:
+            bid = self.bookprovision.bind_literature(
+                did, body.get('title', ''),
+                kind=body.get('kind', _bookprovision.KIND_MAIN),
+                copies=int(body.get('copies', 0)),
+                catalog_db=body.get('catalogDb'), inv_key=body.get('invKey'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'invalid copies')
+        except _bookprovision.BookProvisionError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'id': bid})
+
+    def bp_discipline_provision(self, session, discipline_id, normalize):
+        """GET /api/bp/discipline?id=&normalize= — per-discipline Кко report. bp.read."""
+        self._require_staff(session)
+        self._guard(session, 'bp.read', self.cfg.db_default, 'read')
+        try:
+            return 200, ok(self.bookprovision.discipline_provision(
+                discipline_id, normalize=normalize))
+        except _bookprovision.BookProvisionError as e:
+            return 404, err('not_found', str(e))
+
+    def bp_specialty_provision(self, session, specialty_id, normalize):
+        """GET /api/bp/specialty?id= — per-specialty rollup report. bp.read."""
+        self._require_staff(session)
+        self._guard(session, 'bp.read', self.cfg.db_default, 'read')
+        try:
+            return 200, ok(self.bookprovision.specialty_provision(
+                specialty_id, normalize=normalize))
+        except _bookprovision.BookProvisionError as e:
+            return 404, err('not_found', str(e))
+
     def vocab_list(self, session):
         """List the session tenant's dictionaries (name/title/kind/seed_version).
 
@@ -1089,6 +1319,36 @@ class Api:
                 return self.shelf_add_item(session, body or {})
             if method == 'POST' and path == '/api/shelves/item/remove':
                 return self.shelf_remove_item(session, body or {})
+            # ---- АРМ Комплектатор (acquisition) — staff-only, module-gated ----
+            if method == 'POST' and path == '/api/acq/order':
+                return self.acq_order(session, body or {})
+            if method == 'POST' and path == '/api/acq/order/cancel':
+                return self.acq_cancel(session, body or {})
+            if method == 'POST' and path == '/api/acq/receive':
+                return self.acq_receive(session, body or {})
+            if method == 'GET' and path == '/api/acq/order':
+                return self.acq_order_status(session, int(query.get('id', ['0'])[0]))
+            if method == 'GET' and path == '/api/acq/ksu':
+                return self.acq_ksu(session, (query.get('no', [''])[0] or '').strip())
+            # ---- Книгообеспеченность (book-provision) — staff-only, module-gated ----
+            if method == 'POST' and path == '/api/bp/faculty':
+                return self.bp_faculty(session, body or {})
+            if method == 'POST' and path == '/api/bp/specialty':
+                return self.bp_specialty(session, body or {})
+            if method == 'POST' and path == '/api/bp/discipline':
+                return self.bp_discipline(session, body or {})
+            if method == 'POST' and path == '/api/bp/contingent':
+                return self.bp_contingent(session, body or {})
+            if method == 'POST' and path == '/api/bp/bind':
+                return self.bp_bind(session, body or {})
+            if method == 'GET' and path == '/api/bp/discipline':
+                norm = query.get('normalize', ['0'])[0] in ('1', 'true', 'yes')
+                return self.bp_discipline_provision(
+                    session, int(query.get('id', ['0'])[0]), norm)
+            if method == 'GET' and path == '/api/bp/specialty':
+                norm = query.get('normalize', ['0'])[0] in ('1', 'true', 'yes')
+                return self.bp_specialty_provision(
+                    session, int(query.get('id', ['0'])[0]), norm)
             if method == 'GET' and path == '/api/me/cabinet':
                 return self.cabinet(session)
             if method == 'GET' and path == '/api/me/modules':
