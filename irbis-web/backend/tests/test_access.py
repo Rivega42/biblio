@@ -238,7 +238,7 @@ def main():
                'test_catalog', 'test_circulation', 'test_circ_notify',
                'test_discovery', 'test_integration', 'test_resilience',
                'test_portal222', 'test_acquisition', 'test_bookprovision',
-               'test_acq_bp_routes'):
+               'test_acq_bp_routes', 'test_social'):
         module_checks(_m)
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))

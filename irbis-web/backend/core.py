@@ -27,6 +27,7 @@ from access import notifications as _notifications
 from access import circulation as _circulation
 from access.holds import HoldService
 from access.shelves import ShelfService
+from access.social import SocialService
 from access import acquisition as _acquisition
 from access import bookprovision as _bookprovision
 from access.catalog import CatalogStore
@@ -289,6 +290,14 @@ class Api:
         self.holds = HoldService(self.access, catalog=None,
                                  brief_read=self._hold_brief)
         self.shelves = ShelfService(self.access, brief_read=self._hold_brief)
+        # Reader-portal v2 social layer (#134 reviews/ratings + #133 recommendations,
+        # reading history, saved searches). Reader-scoped by ticket in OUR access
+        # store; the recommendation seams READ the live OPAC (606/700/610 + index
+        # search) but never WRITE the live ИРБИС server (same posture as holds/#222).
+        self.social = SocialService(
+            self.access,
+            read_terms=self._social_terms, search=self._social_search,
+            brief_read=self._hold_brief, reader_name=self._social_reader_name)
 
         # ---- АРМ Комплектатор + Книгообеспеченность (acquisition + book-provision) ----
         # A shared CatalogStore (own sqlite, env CATALOG_DB; ':memory:' in tests) is
@@ -534,6 +543,9 @@ class Api:
             rec['brief'] = ''
         rec['db'] = db
         rec['hasCover'] = any(f['tag'] == '953' for f in rec['fields'])
+        # Reading-history hook (#133): auto-log a record-open for a reader session.
+        # Best-effort — never breaks the read.
+        self._log_history(session, db, mfn)
         return 200, ok(rec)
 
     def render(self, session, db, mfn, fmt):
@@ -893,6 +905,58 @@ class Api:
         except Exception:
             return {'title': 'MFN %d' % mfn}
 
+    # ---- social (#134/#133) seams over the live OPAC (READ-ONLY) ---------- #
+    def _social_terms(self, db, mfn):
+        """Seed-record terms for recommendations: 606 subjects, 700 authors, 610
+        collectives. Reads the live record (never writes); degrades to empty on any
+        server hiccup so recommendations never raise."""
+        try:
+            rec = self.irbis.read_record(db, mfn)
+        except (IrbisError, OSError, socket.error):
+            return {'subjects': [], 'authors': [], 'collectives': []}
+        subjects = []
+        for f in fields(rec, '606'):
+            head = sf(f, 'A') or sf(f, 'a') or (f.get('text') or '').strip()
+            if head:
+                subjects.append(head)
+        authors = []
+        for f in fields(rec, '700'):
+            a = sf(f, 'A') or sf(f, 'a')
+            if a:
+                authors.append(a)
+        collectives = []
+        for f in fields(rec, '610'):
+            v = (f.get('text') or '').strip() or sf(f, 'A') or sf(f, 'a')
+            if v:
+                collectives.append(v)
+        return {'subjects': subjects, 'authors': authors, 'collectives': collectives}
+
+    def _social_search(self, db, prefix, term):
+        """Index search for one term under ``prefix`` (S/A/K) -> candidate mfns.
+
+        Wraps the live OPAC search with a bounded result set; returns [] on any
+        error so a single bad term never breaks a recommendation run."""
+        term = (term or '').strip()
+        if not term:
+            return []
+        try:
+            _count, mfns = self.irbis.search(db, '"%s=%s"' % (prefix, term))
+        except (IrbisError, OSError, socket.error):
+            return []
+        return mfns
+
+    def _social_reader_name(self, ticket):
+        """Resolve a reader's display name (RDR 10/11) for review labels; '' on miss."""
+        try:
+            _count, mfns = self.irbis.search('RDR', '"RI=%s"' % ticket)
+            if not mfns:
+                return ''
+            rec = self.irbis.read_record('RDR', mfns[0])
+            name_f = field(rec, '10') or field(rec, '11')
+            return (name_f or {}).get('value', '') if name_f else ''
+        except (IrbisError, OSError, socket.error):
+            return ''
+
     def place_hold(self, session, body):
         """POST /api/hold — place (or return the existing) hold for the reader."""
         ticket = self._reader_ticket(session)
@@ -994,6 +1058,100 @@ class Api:
         if res is None:
             return 404, err('not_found', 'list not found')
         return 200, ok(res)
+
+    # ---- reader-portal v2 social: reviews/ratings (#134), recommendations + ----
+    # history + saved searches (#133). Reviews + recommendations are READABLE by a
+    # guest (public OPAC engagement); all WRITES + history + saved-search require a
+    # reader session (401/403 for a guest). Reader-scoped by ticket in OUR store.
+    def post_review(self, session, body):
+        """POST /api/review — upsert the reader's review of (db, mfn)."""
+        ticket = self._reader_ticket(session)
+        db = (body.get('db') or self.cfg.db_default)
+        self._public_db_guard(session, db)
+        try:
+            mfn = int(body.get('mfn'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        try:
+            res = self.social.post_review(ticket, db, mfn, body.get('rating'),
+                                          body.get('text'))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok(res)
+
+    def list_reviews(self, session, db, mfn):
+        """GET /api/reviews — avg/count + cards (+ mine for a reader). Guest-readable."""
+        self._guard(session, 'search', db, 'read')
+        self._public_db_guard(session, db)
+        ticket = None
+        if session and session.get('kind') == 'reader':
+            ticket = self._reader_ticket(session)
+        return 200, ok(self.social.reviews(db, mfn, ticket=ticket))
+
+    def delete_review(self, session, body):
+        """POST /api/review/delete — delete the reader's OWN review (403 otherwise)."""
+        ticket = self._reader_ticket(session)
+        try:
+            review_id = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        res = self.social.delete_review(ticket, review_id)
+        if res is None:
+            return 403, err('forbidden', 'not your review')
+        return 200, ok(res)
+
+    def recommendations(self, session, db, mfn):
+        """GET /api/recommendations — "similar" records to the seed. Guest-readable."""
+        self._guard(session, 'search', db, 'read')
+        self._public_db_guard(session, db)
+        return 200, ok(self.social.similar(db, mfn))
+
+    def recommendations_foryou(self, session):
+        """GET /api/recommendations/foryou — from the reader's history (reader-only)."""
+        ticket = self._reader_ticket(session)
+        return 200, ok(self.social.for_you(ticket))
+
+    def history(self, session):
+        """GET /api/history — the reader's reading history (deduped, capped)."""
+        ticket = self._reader_ticket(session)
+        return 200, ok(self.social.history(ticket))
+
+    def saved_searches(self, session):
+        """GET /api/savedsearch — the reader's saved searches."""
+        ticket = self._reader_ticket(session)
+        return 200, ok(self.social.saved_searches(ticket))
+
+    def save_search(self, session, body):
+        """POST /api/savedsearch — persist a saved search."""
+        ticket = self._reader_ticket(session)
+        try:
+            res = self.social.save_search(ticket, body.get('name'), body.get('db'),
+                                          body.get('prefix'), body.get('query'))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok(res)
+
+    def delete_search(self, session, body):
+        """POST /api/savedsearch/delete — delete the reader's own saved search."""
+        ticket = self._reader_ticket(session)
+        try:
+            search_id = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        res = self.social.delete_search(ticket, search_id)
+        if res is None:
+            return 404, err('not_found', 'saved search not found')
+        return 200, ok(res)
+
+    def _log_history(self, session, db, mfn):
+        """Best-effort reading-history hook for the record-open path. Logs only for
+        a reader session and never raises — a logging hiccup must not break the read."""
+        try:
+            if session and session.get('kind') == 'reader':
+                ticket = self._reader_ticket(session)
+                self.social.log_open(ticket, db, mfn)
+        except Exception:
+            pass
 
     # ---- АРМ Комплектатор (acquisition) + Книгообеспеченность (book-provision) ----
     # Staff surfaces (NOT public): guest/reader sessions are refused. Each handler
@@ -1319,6 +1477,38 @@ class Api:
                 return self.shelf_add_item(session, body or {})
             if method == 'POST' and path == '/api/shelves/item/remove':
                 return self.shelf_remove_item(session, body or {})
+            # ---- reader-portal v2 social: reviews/ratings (#134) ----
+            if method == 'POST' and path == '/api/review/delete':
+                return self.delete_review(session, body or {})
+            if method == 'POST' and path == '/api/review':
+                return self.post_review(session, body or {})
+            if method == 'GET' and path == '/api/reviews':
+                db = query.get('db', [self.cfg.db_default])[0]
+                try:
+                    mfn = int(query.get('mfn', ['0'])[0])
+                except ValueError:
+                    return 400, err('bad_request', 'mfn required')
+                return self.list_reviews(session, db, mfn)
+            # ---- reader-portal v2: recommendations (#133) ----
+            if method == 'GET' and path == '/api/recommendations/foryou':
+                return self.recommendations_foryou(session)
+            if method == 'GET' and path == '/api/recommendations':
+                db = query.get('db', [self.cfg.db_default])[0]
+                try:
+                    mfn = int(query.get('mfn', ['0'])[0])
+                except ValueError:
+                    return 400, err('bad_request', 'mfn required')
+                return self.recommendations(session, db, mfn)
+            # ---- reader-portal v2: reading history (#133) ----
+            if method == 'GET' and path == '/api/history':
+                return self.history(session)
+            # ---- reader-portal v2: saved searches (#133) ----
+            if method == 'POST' and path == '/api/savedsearch/delete':
+                return self.delete_search(session, body or {})
+            if method == 'GET' and path == '/api/savedsearch':
+                return self.saved_searches(session)
+            if method == 'POST' and path == '/api/savedsearch':
+                return self.save_search(session, body or {})
             # ---- АРМ Комплектатор (acquisition) — staff-only, module-gated ----
             if method == 'POST' and path == '/api/acq/order':
                 return self.acq_order(session, body or {})

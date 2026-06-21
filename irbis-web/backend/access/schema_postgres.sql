@@ -147,3 +147,46 @@ CREATE TABLE IF NOT EXISTS reader_shelf_item (
   PRIMARY KEY (ticket, list_id, db, mfn)
 );
 CREATE INDEX IF NOT EXISTS reader_shelf_item_list_idx ON reader_shelf_item(ticket, list_id);
+
+-- ---------------------------------------------------------------------------
+-- Reader-portal v2 social layer (#134 engagement / #133 discovery).
+-- Reader-scoped by RDR ticket, persisted in OUR store (NOT on the live ИРБИС
+-- server). Mirrors the sqlite DDL in store.py.
+-- ---------------------------------------------------------------------------
+
+-- One editable review per (ticket, db, mfn) — a re-post upserts on that key.
+CREATE TABLE IF NOT EXISTS reader_review (
+  id          BIGSERIAL PRIMARY KEY,
+  ticket      TEXT NOT NULL,
+  db          TEXT NOT NULL,
+  mfn         INTEGER NOT NULL,
+  rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  text        TEXT,
+  reader_name TEXT,
+  ts          DOUBLE PRECISION NOT NULL,
+  UNIQUE(ticket, db, mfn)
+);
+CREATE INDEX IF NOT EXISTS reader_review_item_idx ON reader_review(db, mfn);
+
+-- Auto-logged record-opens, deduped by (ticket,db,mfn); latest open updates ts.
+CREATE TABLE IF NOT EXISTS reader_history (
+  ticket TEXT NOT NULL,
+  db     TEXT NOT NULL,
+  mfn    INTEGER NOT NULL,
+  title  TEXT,
+  ts     DOUBLE PRECISION NOT NULL,
+  PRIMARY KEY (ticket, db, mfn)
+);
+CREATE INDEX IF NOT EXISTS reader_history_ticket_idx ON reader_history(ticket, ts);
+
+-- A reader's stored query (name/db/prefix/query).
+CREATE TABLE IF NOT EXISTS saved_search (
+  id         BIGSERIAL PRIMARY KEY,
+  ticket     TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  db         TEXT,
+  prefix     TEXT,
+  query      TEXT NOT NULL,
+  created_at DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS saved_search_ticket_idx ON saved_search(ticket, id);

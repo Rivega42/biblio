@@ -123,6 +123,44 @@ CREATE TABLE IF NOT EXISTS reader_shelf_item (
   PRIMARY KEY (ticket, list_id, db, mfn)
 );
 CREATE INDEX IF NOT EXISTS reader_shelf_item_list_idx ON reader_shelf_item(ticket, list_id);
+-- Reader-portal v2 social layer (#134 engagement / #133 discovery), reader-scoped
+-- by RDR ticket, persisted in OUR store (NOT on the live ИРБИС server). Mirrors
+-- schema_postgres.sql.
+-- reader_review: one editable review per (ticket, db, mfn) — upsert on that key.
+CREATE TABLE IF NOT EXISTS reader_review (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket TEXT NOT NULL,
+  db TEXT NOT NULL,
+  mfn INTEGER NOT NULL,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  text TEXT,
+  reader_name TEXT,
+  ts REAL NOT NULL,
+  UNIQUE(ticket, db, mfn)
+);
+CREATE INDEX IF NOT EXISTS reader_review_item_idx ON reader_review(db, mfn);
+-- reader_history: every record-open, auto-logged. Dedup by (db,mfn) is done at
+-- read time (latest ts wins); we append rows so the latest open updates ts.
+CREATE TABLE IF NOT EXISTS reader_history (
+  ticket TEXT NOT NULL,
+  db TEXT NOT NULL,
+  mfn INTEGER NOT NULL,
+  title TEXT,
+  ts REAL NOT NULL,
+  PRIMARY KEY (ticket, db, mfn)
+);
+CREATE INDEX IF NOT EXISTS reader_history_ticket_idx ON reader_history(ticket, ts);
+-- saved_search: a reader's stored query (name/db/prefix/query).
+CREATE TABLE IF NOT EXISTS saved_search (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket TEXT NOT NULL,
+  name TEXT NOT NULL,
+  db TEXT,
+  prefix TEXT,
+  query TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS saved_search_ticket_idx ON saved_search(ticket, id);
 """
 
 
@@ -378,3 +416,86 @@ class AccessStore:
         c.execute('DELETE FROM reader_shelf_item WHERE ticket=? AND list_id=? '
                   'AND db=? AND mfn=?', (ticket, list_id, db, mfn))
         c.commit()
+
+    # ---- reader-portal v2 social (#134/#133) — reviews / history / saved searches ----
+    def review_upsert(self, ticket, db, mfn, rating, text, reader_name, ts):
+        """Insert/replace the reader's review of (db,mfn) (one per reader+item)."""
+        c = self._conn()
+        c.execute(
+            'INSERT INTO reader_review(ticket,db,mfn,rating,text,reader_name,ts) '
+            'VALUES(?,?,?,?,?,?,?) ON CONFLICT(ticket,db,mfn) DO UPDATE SET '
+            'rating=excluded.rating, text=excluded.text, '
+            'reader_name=excluded.reader_name, ts=excluded.ts',
+            (ticket, db, mfn, rating, text, reader_name, ts))
+        c.commit()
+        r = c.execute('SELECT * FROM reader_review WHERE ticket=? AND db=? AND mfn=?',
+                      (ticket, db, mfn)).fetchone()
+        return dict(r)
+
+    def reviews_for(self, db, mfn):
+        """All reviews of (db,mfn), newest first — feeds avg/count + cards."""
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM reader_review WHERE db=? AND mfn=? ORDER BY ts DESC, id DESC',
+            (db, mfn)).fetchall()]
+
+    def review_mine(self, ticket, db, mfn):
+        """The reader's own review of (db,mfn), or None."""
+        r = self._conn().execute(
+            'SELECT * FROM reader_review WHERE ticket=? AND db=? AND mfn=?',
+            (ticket, db, mfn)).fetchone()
+        return dict(r) if r else None
+
+    def review_delete(self, ticket, review_id):
+        """Delete the reader's OWN review by id; returns the row, or None when the
+        id isn't theirs (so the route can 403 on someone else's review)."""
+        c = self._conn()
+        row = c.execute('SELECT * FROM reader_review WHERE id=? AND ticket=?',
+                        (review_id, ticket)).fetchone()
+        if not row:
+            return None
+        c.execute('DELETE FROM reader_review WHERE id=?', (review_id,))
+        c.commit()
+        return dict(row)
+
+    def history_log(self, ticket, db, mfn, title, ts):
+        """Record a record-open, deduped by (ticket,db,mfn) — the latest open
+        updates ts (and refreshes the resolved title when we have one)."""
+        c = self._conn()
+        c.execute(
+            'INSERT INTO reader_history(ticket,db,mfn,title,ts) VALUES(?,?,?,?,?) '
+            'ON CONFLICT(ticket,db,mfn) DO UPDATE SET ts=excluded.ts, '
+            'title=COALESCE(NULLIF(excluded.title,\'\'), reader_history.title)',
+            (ticket, db, mfn, title, ts))
+        c.commit()
+
+    def history_for(self, ticket, limit=50):
+        """The reader's history, newest first (already deduped by PK), capped."""
+        return [dict(r) for r in self._conn().execute(
+            'SELECT db,mfn,title,ts FROM reader_history WHERE ticket=? '
+            'ORDER BY ts DESC, db, mfn LIMIT ?', (ticket, limit)).fetchall()]
+
+    def saved_search_list(self, ticket):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT id,name,db,prefix,query FROM saved_search WHERE ticket=? '
+            'ORDER BY id', (ticket,)).fetchall()]
+
+    def saved_search_add(self, ticket, name, db, prefix, query, ts):
+        c = self._conn()
+        cur = c.execute(
+            'INSERT INTO saved_search(ticket,name,db,prefix,query,created_at) '
+            'VALUES(?,?,?,?,?,?)', (ticket, name, db, prefix, query, ts))
+        c.commit()
+        r = c.execute('SELECT * FROM saved_search WHERE id=?',
+                      (cur.lastrowid,)).fetchone()
+        return dict(r)
+
+    def saved_search_delete(self, ticket, search_id):
+        """Delete the reader's own saved search; returns the row, or None."""
+        c = self._conn()
+        row = c.execute('SELECT * FROM saved_search WHERE id=? AND ticket=?',
+                        (search_id, ticket)).fetchone()
+        if not row:
+            return None
+        c.execute('DELETE FROM saved_search WHERE id=?', (search_id,))
+        c.commit()
+        return dict(row)

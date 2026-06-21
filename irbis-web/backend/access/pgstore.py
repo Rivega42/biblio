@@ -312,6 +312,72 @@ class PgAccessStore:
             'DELETE FROM reader_shelf_item WHERE ticket=%s AND list_id=%s '
             'AND db=%s AND mfn=%s', (ticket, list_id, db, mfn))
 
+    # ---- reader-portal v2 social (#134/#133) — reviews / history / saved searches ----
+    def review_upsert(self, ticket, db, mfn, rating, text, reader_name, ts):
+        r = self._conn().execute(
+            'INSERT INTO reader_review(ticket,db,mfn,rating,text,reader_name,ts) '
+            'VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(ticket,db,mfn) DO UPDATE SET '
+            'rating=EXCLUDED.rating, text=EXCLUDED.text, '
+            'reader_name=EXCLUDED.reader_name, ts=EXCLUDED.ts RETURNING id',
+            (ticket, db, mfn, rating, text, reader_name, ts)).fetchone()
+        return self._conn().execute(
+            'SELECT * FROM reader_review WHERE id=%s', (r['id'],)).fetchone()
+
+    def reviews_for(self, db, mfn):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM reader_review WHERE db=%s AND mfn=%s '
+            'ORDER BY ts DESC, id DESC', (db, mfn)).fetchall()]
+
+    def review_mine(self, ticket, db, mfn):
+        r = self._conn().execute(
+            'SELECT * FROM reader_review WHERE ticket=%s AND db=%s AND mfn=%s',
+            (ticket, db, mfn)).fetchone()
+        return dict(r) if r else None
+
+    def review_delete(self, ticket, review_id):
+        row = self._conn().execute(
+            'SELECT * FROM reader_review WHERE id=%s AND ticket=%s',
+            (review_id, ticket)).fetchone()
+        if not row:
+            return None
+        self._conn().execute('DELETE FROM reader_review WHERE id=%s', (review_id,))
+        return dict(row)
+
+    def history_log(self, ticket, db, mfn, title, ts):
+        self._conn().execute(
+            'INSERT INTO reader_history(ticket,db,mfn,title,ts) '
+            'VALUES(%s,%s,%s,%s,%s) ON CONFLICT(ticket,db,mfn) DO UPDATE SET '
+            'ts=EXCLUDED.ts, '
+            "title=COALESCE(NULLIF(EXCLUDED.title,''), reader_history.title)",
+            (ticket, db, mfn, title, ts))
+
+    def history_for(self, ticket, limit=50):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT db,mfn,title,ts FROM reader_history WHERE ticket=%s '
+            'ORDER BY ts DESC, db, mfn LIMIT %s', (ticket, limit)).fetchall()]
+
+    def saved_search_list(self, ticket):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT id,name,db,prefix,query FROM saved_search WHERE ticket=%s '
+            'ORDER BY id', (ticket,)).fetchall()]
+
+    def saved_search_add(self, ticket, name, db, prefix, query, ts):
+        r = self._conn().execute(
+            'INSERT INTO saved_search(ticket,name,db,prefix,query,created_at) '
+            'VALUES(%s,%s,%s,%s,%s,%s) RETURNING id',
+            (ticket, name, db, prefix, query, ts)).fetchone()
+        return self._conn().execute(
+            'SELECT * FROM saved_search WHERE id=%s', (r['id'],)).fetchone()
+
+    def saved_search_delete(self, ticket, search_id):
+        row = self._conn().execute(
+            'SELECT * FROM saved_search WHERE id=%s AND ticket=%s',
+            (search_id, ticket)).fetchone()
+        if not row:
+            return None
+        self._conn().execute('DELETE FROM saved_search WHERE id=%s', (search_id,))
+        return dict(row)
+
 
 def make_store(cfg=None):
     """Factory: return the Access store for the configured backend.
