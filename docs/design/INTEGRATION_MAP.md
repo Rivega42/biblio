@@ -1,6 +1,6 @@
 # INTEGRATION_MAP — карта межмодульных связей («связующая ткань»)
 
-> Назначение: перечислить **КАЖДУЮ** межмодульную / межбазовую связь САБ ИРБИС64+ (ребро графа), и для каждой проверить — **сохранена ли она в нашем дизайне** и **разведена ли в коде**. Риск, который закрывает эта карта: «мы перенесём отдельные функции, но ПОТЕРЯЕМ связи между ними». Один такой разрыв уже найден: `circulation.py` не подключён к статусу экземпляра каталога `910^A`.
+> Назначение: перечислить **КАЖДУЮ** межмодульную / межбазовую связь САБ ИРБИС64+ (ребро графа), и для каждой проверить — **сохранена ли она в нашем дизайне** и **разведена ли в коде**. Риск, который закрывает эта карта: «мы перенесём отдельные функции, но ПОТЕРЯЕМ связи между ними». Первый найденный разрыв — `circulation.py` не подключён к статусу экземпляра каталога `910^A` — **уже устранён** (рёбра 2.1/2.2 замкнуты, commit `cf97183`); шов Authority↔Catalog `^3` (6.1) и кросс-БД `.gbl` (11.2) тоже разведены. Карта продолжает отслеживать оставшиеся незамкнутые рёбра.
 >
 > **Грунтовано на recon:** [CAPABILITY_MAP §4/§11](../recon/deep/CAPABILITY_MAP.md), [GLOBAL_CORRECTION](../recon/deep/reference/format/GLOBAL_CORRECTION.md) (.gbl-задания, ПЕРЕНОСящие данные между БД), [DB_CIRCULATION](../recon/deep/reference/databases/DB_CIRCULATION.md), [DB_ACQUISITION](../recon/deep/reference/databases/DB_ACQUISITION.md), [DB_AUTHORITY](../recon/deep/reference/databases/DB_AUTHORITY.md), [DB_VUZ](../recon/deep/reference/databases/DB_VUZ.md), [DB_SERVICE](../recon/deep/reference/databases/DB_SERVICE.md), [DB_CATALOG_VARIANTS](../recon/deep/reference/databases/DB_CATALOG_VARIANTS.md), [FIELD_DICTIONARY](../recon/deep/reference/format/FIELD_DICTIONARY.md), [FINDINGS_09](../recon/deep/FINDINGS_09_web_reader.md).
 > **Наше покрытие:** [ARCHITECTURE](ARCHITECTURE.md), [SPEC_ws1..ws5](specs/), [SPEC_engine_gbl](specs/engines/SPEC_engine_gbl.md), [SPEC_service_authority](specs/engines/SPEC_service_authority.md), [SPEC_engine_notifications](specs/engines/SPEC_engine_notifications.md), и реализованный код в `irbis-web/backend/access/` (catalog.py, circulation.py, authority.py, gbl.py, flk.py, pft.py, notifications.py, seed_vocab.py).
@@ -10,7 +10,7 @@
 - **🟡 designed-not-wired** — связь спроектирована (есть §), но код этого модуля **не вызывает** другой модуль / поле другой БД (заглушка, событие-намерение или TODO).
 - **❌ at-risk-of-loss** — связь **не разведена в коде** и/или **слабо/неполно спроектирована**; есть риск, что при сборке продукта ребро исчезнет.
 
-> Принципиальное наблюдение о коде: реализованные модули (`catalog.py`, `circulation.py`, `authority.py`) — **самодостаточные sqlite-сторы со своими таблицами**, между собой **не связанные**. `catalog.record` хранит поле 910 как JSON, `circulation.loan` хранит экземпляр как голую строку-шифр (`item TEXT`), и **никакой записи назад в каталог нет**. Поэтому почти все межмодульные рёбра в коде сейчас **🟡 / ❌**, даже когда дизайн их описывает. Это и есть «связующая ткань», которую нельзя потерять.
+> Принципиальное наблюдение о коде (обновлено): реализованные модули (`catalog.py`, `circulation.py`, `authority.py`) изначально были **самодостаточными sqlite-сторами со своими таблицами**, между собой не связанными. Теперь появились **первые реальные швы между ними**: `circulation` получил опциональный catalog-хендл и пишет статус экземпляра назад в каталог (`910^A` flip, 2.1/2.2), а `catalog.save()` протягивает `^3` из авторитетов (6.1). `circulation.loan` по-прежнему хранит экземпляр как строку-шифр (`item TEXT`), но теперь резолвит её в запись каталога по инв.№ `910^b`. Бо́льшая часть остальных межмодульных рёбер всё ещё **🟡 / ❌** (особенно те, что требуют отсутствующих acquisition/КО/DAM-модулей) — это и есть «связующая ткань», которую нельзя потерять.
 
 ---
 
@@ -71,7 +71,7 @@ flowchart TB
   CMPL --> SRCH
   VUZ --> SRCH
   CIRC --> NOTIF
-  GBL -.->|"NEWMFN/CORREC = кросс-БД (не исполняется)"| CMPL
+  GBL -->|"NEWMFN/NEWREC/CORREC = кросс-БД (исполняется, cbde540)"| CMPL
 ```
 
 ---
@@ -97,8 +97,8 @@ flowchart TB
 
 | # | Источник (поле/запись) → цель | Триггер / семантика | Дизайн? (§) | Код? (модуль / «нет») | Статус | Примечание |
 |---|---|---|---|---|---|---|
-| 2.1 | RQST → IBIS поле **910^A** (0↔1) | **Выдача:** свободный экз `910^A=0/U/C` → `910^A=1` (выдан). **Возврат:** обратно в свободный статус (`ste.mnu`) | ws3 §4 (AC1), §6; DB_CIRCULATION §5 | 🟡 спроектировано — **код не пишет в каталог** (`circulation.py` ведёт свой sqlite `loan`, `item TEXT`, нет обращения к `catalog.py`) | **❌** | **Это и есть исходный пример потери связи.** Нужен write-back checkout/return → `catalog` 910^A. |
-| 2.2 | IBIS свободные экз (`freekz`) → RQST подбор | Подбор свободного экз: статусы 910 + учёт мест выдачи 56/57; `DBNFREEEKZ=0` | ws3 §3 (AC1), DB_CIRCULATION §5/§6 | 🟡 ws3 описывает; код не читает каталог (нет `free_ekz` запроса к `catalog`) | ❌ | Без этого выдача «вслепую», не зная реальных экз. |
+| 2.1 | RQST → IBIS поле **910^A** (0↔1) | **Выдача:** свободный экз `910^A=0/U/C` → `910^A=1` (выдан). **Возврат:** обратно в свободный статус (`ste.mnu`) | ws3 §4 (AC1), §6; DB_CIRCULATION §5 | ✅ разведено: `circulation.checkout` флипает `910^A` 0→1, `return_item` 1→0 через `_flip_catalog_status`→`catalog.set_exemplar_status`; экз резолвится по инв.№ `910^b` (`catalog.find_exemplar`) | **✅** | **Исходный разрыв замкнут** (commit `cf97183`, тест `test_integration.py::checkout_return_flip_checks`). Каталог-хендл опционален: без него `circulation` работает standalone (back-compat). |
+| 2.2 | IBIS свободные экз (`freekz`) → RQST подбор | Подбор свободного экз: статусы 910 + учёт мест выдачи 56/57; `DBNFREEEKZ=0` | ws3 §3 (AC1), DB_CIRCULATION §5/§6 | ✅ разведено частично: `place_hold` чтит доступность каталога через `catalog_available`→`is_available`/`exemplar_status` (экз, помеченный в каталоге `910^A=1`, не выдаётся как ready); места выдачи 56/57 пока не учитываются | **✅** | Чтение `910^A` из каталога разведено (commit `cf97183`, тест `test_integration.py::availability_read_checks`). Полный подбор по 56/57 — остаётся TODO. |
 | 2.3 | RQST поле **903** → IBIS `I=` (шифр) | Шифр заказа = шифр документа в ЭК (`DBNPREFSHIFR=I=`); RQST.1 = имя БД ЭК | ws3 §3, DB_CIRCULATION §8 | 🟡 ws3 описывает; код хранит `item` как шифр-строку, без резолва в `catalog` | ❌ | Шов «заказ↔запись каталога». |
 | 2.4 | RQST → RDR поле **40** (материализация) | **`RQSTRDR.pft`** строит RDR.40: `^A`=903, `^B`=910^B, `^H`=910^H, `^K`=910^D, `^D`=41, `^E`=42, `^F`=`******`, `^G`=БД, `^C`=brief | ws3 §4 (ключевой), DB_CIRCULATION §5/§8 | 🟡 спроектировано — код моделирует loan своими колонками, но **не как поле 40 RDR** и без PFT-материализации | 🟡 | Семантика выдачи присутствует (due/returned), но не как RDR.40-структура. |
 | 2.5 | RDR поле 40 ↔ **RDR_ARH** (архив) | **Возврат:** запись о выдаче переносится в RDR_ARH (`autoin_light.gbl`/`AUTOARH`) | ws3 §4 (AC2, opt-in), DB_CIRCULATION §5/§8 | 🟡 ws3 «архив opt-in»; код: `mark_returned` ставит `returned=1` в той же таблице, отдельного архива нет | 🟡 | Архивация выдач = отдельная сущность (152-ФЗ ретенция). |
@@ -148,7 +148,7 @@ flowchart TB
 
 | # | Источник (поле/запись) → цель | Триггер / семантика | Дизайн? (§) | Код? (модуль / «нет») | Статус | Примечание |
 |---|---|---|---|---|---|---|
-| 6.1 | ATHR* → IBIS поля **700/701/710/606/607** подполе **^3** | При выборе авторитета — автозаполнение подполей + протягивание `^3` = номер авторитетной записи | SPEC_service_authority §3.1/§3.2 (карта), DB_AUTHORITY §5.2 | 🟡 `authority.substitute()` строит патч с `^3`; но **`catalog.save()` его не вызывает** — нет шва каталог↔авторитет в save-пайплайне | 🟡 | Функция есть, **связь в коде не замкнута**: каталог сохраняет ^3 только если клиент сам прислал. |
+| 6.1 | ATHR* → IBIS поля **700/701/710/606/607** подполе **^3** | При выборе авторитета — автозаполнение подполей + протягивание `^3` = номер авторитетной записи | SPEC_service_authority §3.1/§3.2 (карта), DB_AUTHORITY §5.2 | ✅ разведено: `catalog.save()` вызывает `resolve_authority_refs`→`apply_authority`→`authority.substitute()`, заполняя `^a/^b/^g` + протягивая `^3` ДО ФЛК/индекса; битый `^3` (неизвестный id) поднимает `AuthorityNotFound` | **✅** | **Шов каталог↔авторитет замкнут в save-пайплайне** (commit `cf97183`, тесты `test_integration.py::authority_on_save_checks` / `apply_authority_helper_checks`). Запись с `_authority_ref` достраивается на сохранении; авторитет-хендл опционален (back-compat). |
 | 6.2 | IBIS save → пополнение **ATHRA/ATHR*** (autoin) | **autoin.gbl**: при сохранении БО авто-создаются связанные авторитетные записи (510/710 без `^3`) | SPEC_service_authority §3.4 (системный хук на save), DB_AUTHORITY | 🟡 спроектировано как хук; код: ни `catalog.py`, ни `authority.py` не реализуют autoin-хук на сохранение | 🟡 | «Обратное» ребро каталог→авторитеты не разведено. |
 | 6.3 | ФЛК `!700/!606/!964` ↔ authority-сервис | ФЛК валидирует связь `^3` (битая ссылка → нарушение) | SPEC_service_authority §0 (ФЛК вызывает), flk.py | 🟡 flk.py есть; но правила проверки `^3` против authority-стора не подключены к `catalog.validate()` | 🟡 | flk вызывается на save, но без authority-проверки `^3`. |
 | 6.4 | Поиск по авторитету (навигаторы `WnLink`) → IBIS | Поиск записей каталога по выбранному авторитету (`^3`/`H=`) | SPEC_service_authority §2, CAPABILITY_MAP §5 | 🟡 `authority.search()` ищет авторитеты; обратный поиск «каталог по ^3» в catalog.py не реализован (INDEX_SPEC не индексирует ^3/606/607) | 🟡 | Каталог не findable по авторитетному `^3`. |
@@ -205,7 +205,7 @@ flowchart TB
 |---|---|---|---|---|---|---|
 | 11.1 | **Каждая БД** → поисковый индекс (FST-инверсия) | Все модули зависят от инвертированных префиксов (`K=/A=/T=/I=/RI=/IN=/VUZ=/KSU=…`); у нас — PG FTS вместо инвертированного файла | ARCHITECTURE §3/§6 (Поиск), CAPABILITY_MAP §5 | 🟡 catalog.py: `record_index` + `INDEX_SPEC` (только T/A/K/IN); authority: `authority_term`; circulation: нет инверсии | 🟡 | Поиск разведён частично (4 префикса каталога из 109 IBIS); RDR/CMPL/VUZ-поиск кода не имеет. |
 | 11.2 | **.gbl** (NEWMFN/NEWREC/CORREC) → другая БД | Кросс-БД задания (ToCat/Move691/MoveZakKp/CreateSZ/InsteadLost/autoin) | SPEC_engine_gbl §1.2 (операторы др. БД), GLOBAL_CORRECTION | 🟡 gbl.py **парсит** NEWMFN/NEWREC/CORREC, но помечает `supported=False` («later A3 slice») — **не исполняет** | **❌** | **Один движок блокирует ВСЕ кросс-БД задания** (1.1–1.10, 4.1–4.7, 5.x). Высший приоритет бэклога. |
-| 11.3 | circulation → **NotificationQueue** (A6) | События выдачи (`hold_ready/fine_charged/renewal_confirmed/lost_confirmed/staff_alert/fine_paid`) | SPEC_engine_notifications, ws3 §8 | 🟡 `circulation._emit` вызывает `notifier.enqueue`; но EventCatalog имеет только 6 шаблонов (`hold_ready/due_soon/overdue/fine_charged/hold_cancelled/account_blocked`) | 🟡 | Эмитятся события **без шаблона**: `renewal_confirmed/lost_confirmed/staff_alert/fine_paid` → пройдут вхолостую (нет template). |
+| 11.3 | circulation → **NotificationQueue** (A6) | События выдачи (`hold_ready/fine_charged/renewal_confirmed/lost_confirmed/staff_alert/fine_paid`) | SPEC_engine_notifications, ws3 §8 | 🟡 `circulation._emit` вызывает `notifier.enqueue` (enqueue замкнут); набор шаблонов EventCatalog уже расширен до полного (commit `e0818d3`). **Диспетч очереди (отправка enqueued → каналы) прошивается в этой сессии — IN PROGRESS** (параллельный агент). | 🟡 (in-progress) | Эмиссия и шаблоны замкнуты; **доставка** (dispatch очереди в каналы) пишется сейчас — пометить ✅ только после её прошивки. |
 | 11.4 | **seed_vocab** (словари 50.mnu/ste.mnu/…) → все модули | Категории/статусы/места из общих `.mnu`/`.tre` питают ФЛК, лимиты, выдачу | SPEC_seeding, seed_vocab.py | 🟡 seed_vocab грузит словари; circulation `_LIMIT_MATRIX` хардкодит 50.mnu (не из стора), catalog flk берёт store | 🟡 | Часть словарей зашита в код вместо чтения из seed-стора. |
 | 11.5 | ФЛК дублетности → инвертированный индекс (кросс-запись) | `!910` дубль инв.№/штрих-кода ловится поиском по `IN=`/`H=` в той же БД | SPEC_engine_flk, ws2 §3 (AC3) | ✅ catalog `_dup_index` подключён к flk как `dup_index`-колбэк (по `IN=`) | ✅ | Единственная «межзаписевая» связь, реально разведённая в коде. |
 
@@ -215,14 +215,16 @@ flowchart TB
 
 | Статус | Кол-во рёбер | Доля |
 |---|---|---|
-| ✅ preserved (дизайн + код) | **4** | ~9% |
-| 🟡 designed-not-wired | **16** | ~36% |
-| ❌ at-risk-of-loss | **24** | ~55% |
-| **Итого рёбер** | **44** | 100% |
+| ✅ preserved (дизайн + код) | **6** | ~10% |
+| 🟡 designed-not-wired | **12** | ~21% |
+| ❌ at-risk-of-loss | **40** | ~69% |
+| **Итого рёбер** | **58** | 100% |
 
-✅ (4): 3.2 долг/лимиты · 3.4 категория→политика · 11.5 ФЛК-дублетность→индекс · (и единственная «положительная» межзаписевая) — все **внутри** одного модуля circulation/catalog, не межмодульные.
+> Примечание о счёте: фактический пересчёт строк таблицы даёт **58** рёбер (кластеры 1–11); прежний заголовок «44» был занижен. Текущие итоги выше получены прямым подсчётом статусов.
 
-> Вывод: **ни одно подлинно межмодульное ребро (между разными модулями/БД) сейчас не замкнуто в коде полностью.** Реализованные модули — изолированные сторы. Это в точности тот риск, ради которого делалась карта.
+✅ (6): 2.1 / 2.2 Catalog↔Circulation `910^A` flip (**первое подлинно межмодульное ребро**, commit `cf97183`) · 6.1 Authority↔Catalog `^3`-on-save (commit `cf97183`) · 3.2 долг/лимиты · 3.4 категория→политика · 11.5 ФЛК-дублетность→индекс. Из них **2.1/2.2/6.1 — реально межмодульные** (circulation↔catalog, authority↔catalog); 3.2/3.4/11.5 — внутримодульные.
+
+> Вывод (обновлён): **первые подлинно межмодульные рёбра теперь замкнуты в коде.** Catalog↔Circulation (`910^A` flip, 2.1/2.2) и Authority↔Catalog (`^3`-on-save, 6.1) разведены и покрыты тестами (`test_integration.py`, 47 проверок, commit `cf97183`); кросс-БД `.gbl` (NEWMFN/NEWREC/CORREC) уже **исполняется** (commit `cbde540`, ребро 11.2 — снят P0-блокер). Реализованные модули перестали быть полностью изолированными сторами. **Остаётся 🟡:** диспетч уведомлений A6 (11.3, in-progress), индексация `^3`/606/607 (6.4), autoin-хук каталог→авторитеты (6.2), ФЛК-проверка `^3` (6.3), частичная инверсия поиска (11.1), RDR.40-материализация/архив (2.4/2.5). **Остаётся ❌:** весь комплектование→каталог (ToCat, кластер 1), книгообеспеченность (кластер 4), КСУ↔экземпляры (кластер 5), ПТ↔права (кластер 7), сводный каталог (кластер 8) — большинство ждёт acquisition/КО/DAM-модулей, которых ещё нет в коде.
 
 ---
 
@@ -232,13 +234,13 @@ flowchart TB
 
 ### P0 — разблокираторы и уже-найденные разрывы
 
-1. **[2.1/2.2/2.3] Catalog↔Circulation: статус 910^A + свободные экз + резолв 903→запись.** `circulation.checkout/return_item` должны (а) читать свободные экземпляры из `catalog` по статусам `ste.mnu`, (б) флипать `910^A` 0↔1 при выдаче/возврате, (в) резолвить `item` (903/шифр) в запись каталога. — *исходный разрыв, ❌→✅.*
-2. **[11.2] gbl-движок: исполнение NEWMFN/NEWREC/CORREC.** Снять `supported=False`; это **единственный блокер** для всех кросс-БД заданий кластеров 1, 4, 5. Без него ToCat/Move691/MoveZakKp/CreateSZ/InsteadLost/autoin неисполнимы.
+1. ✅ **СДЕЛАНО [2.1/2.2] Catalog↔Circulation: статус 910^A + чтение доступности.** `circulation.checkout/return_item` флипают `910^A` 0↔1 при выдаче/возврате, `place_hold` чтит доступность каталога; `item` (903/шифр) резолвится в запись каталога по инв.№ `910^b`. (commit `cf97183`, `test_integration.py`.) *Остаётся [2.3]:* полный резолв 903→запись с местами выдачи 56/57.
+2. ✅ **СДЕЛАНО [11.2] gbl-движок: исполнение NEWMFN/NEWREC/CORREC.** `supported=False` снят — кросс-БД операторы **исполняются** (commit `cbde540`); P0-блокер для кластеров 1, 4, 5 снят. Сами задания (ToCat/Move691/…) ждут своих модулей-источников.
 3. **[2.4/2.5] RDR.40-материализация + архив.** Привести `loan` к структуре поля 40 RDR (`^A/^B/^H/^K/^D/^E/^F/^G/^C`) и реализовать перенос возвращённой выдачи в RDR_ARH (opt-in, 152-ФЗ).
 
 ### P1 — авторитеты и комплектование→каталог
 
-4. **[6.1/6.2/6.3] Authority↔Catalog шов.** Вызвать `authority.substitute()` из `catalog.save()` (протяжка `^3`); реализовать autoin-хук пополнения ATHR* при сохранении БО; подключить ФЛК-проверку битых `^3`.
+4. ✅ **СДЕЛАНО частично [6.1] Authority↔Catalog шов (`^3`-on-save).** `catalog.save()` вызывает `authority.substitute()` (протяжка `^3` + `^a/^b/^g`), битый `^3` поднимает `AuthorityNotFound` (commit `cf97183`, `test_integration.py`). *Остаётся:* **[6.2]** autoin-хук пополнения ATHR* при сохранении БО; **[6.3]** ФЛК-проверка битых `^3` внутри `catalog.validate()`.
 5. **[6.4/11.1] Индексация `^3`/606/607 в каталоге.** Расширить `INDEX_SPEC` (сейчас только T/A/K/IN) — поиск каталога по авторитету и по предметным рубрикам.
 6. **[1.1–1.5] ToCat (поле 66 → IBIS).** После P0#2: реформат CMPL БО→IBIS, перенос 910, связь 938, техн.путь 901, `VD=DEL` на исходник. *(Требует acquisition-модуля — его нет.)*
 7. **[1.6/3.3/5.2] InsteadLost + утеря→PAY + списание→910.** Цена замены из `910^E` ЭК (не аргументом); проводка штрафа в PAY; списание ставит `910^V/^X` + статус 6.
@@ -254,18 +256,18 @@ flowchart TB
 11. **[8.1–8.3] SK сводный каталог (902 сигла) + бэкрефы IMAGE/VKR (903).**
 12. **[9.1–9.3] Поиск-по-связи (463/461/481/963)** — иерархия журнал↔номер↔статья, многотомники.
 13. **[10.1/10.3] ИРИ/SDI (140→ZAPR) + студент-ЛК (90/69→VUZ).**
-14. **[11.3] EventCatalog: добавить недостающие шаблоны** — `renewal_confirmed/lost_confirmed/staff_alert/fine_paid/payment_received` (сейчас circulation их эмитит вхолостую).
+14. **[11.3] Circulation↔Notifications dispatch — IN PROGRESS (эта сессия, параллельный агент).** Полный набор шаблонов EventCatalog уже добавлен (commit `e0818d3`), `_emit`→`enqueue` замкнут; **сейчас прошивается диспетч очереди (enqueued → каналы доставки)**. Перевести 11.3 в ✅ только после прошивки доставки.
 15. **[11.4] Словари из seed-стора, а не хардкод** — circulation `_LIMIT_MATRIX`/категории читать из seed_vocab (50.mnu), не зашивать.
 
 ---
 
 ## Где смотреть (источники проверки)
 
-- **Каталог-стор и его границы:** `irbis-web/backend/access/catalog.py` (нет API статуса 910^A, нет holdings-аксессора, `INDEX_SPEC` = T/A/K/IN).
-- **Изолированность книговыдачи:** `irbis-web/backend/access/circulation.py` (свой sqlite `reader/loan/hold/fine`, `item TEXT`, ни одного обращения к catalog).
-- **Кросс-БД заглушка gbl:** `irbis-web/backend/access/gbl.py:405` `_parse_other_record` — `supported=False`, «execution … is a later A3 slice».
-- **Authority `^3` не замкнут:** `irbis-web/backend/access/authority.py:267` `substitute()` строит патч, но не вызывается из `catalog.save()`.
-- **EventCatalog без полного набора:** `irbis-web/backend/access/notifications.py:185` `DEFAULTS` (6 событий) vs события, эмитируемые circulation.
+- **Catalog↔Circulation шов (910^A):** `irbis-web/backend/access/catalog.py` `find_exemplar`/`exemplar_status`/`is_available`/`set_exemplar_status` (аксессоры экземпляра по инв.№ `910^b`) ↔ `irbis-web/backend/access/circulation.py` `_flip_catalog_status`/`catalog_available`, вызываемые из `checkout`/`return_item`/`place_hold`. `INDEX_SPEC` каталога всё ещё = T/A/K/IN (см. 6.4/11.1).
+- **Authority↔Catalog шов (`^3`):** `catalog.py` `save()`→`resolve_authority_refs`→`apply_authority`→`authority.substitute()` (заполнение `^a/^b/^g` + `^3` до ФЛК/индекса). Покрытие: `irbis-web/backend/tests/test_integration.py` (47 проверок, CI run 27904621541 ✅).
+- **Кросс-БД gbl (исполняется):** `irbis-web/backend/access/gbl.py` — NEWMFN/NEWREC/CORREC/ALL/UNDOR теперь исполняются (commit `cbde540`); сами задания (ToCat/Move691/…) ждут своих модулей-источников.
+- **Уведомления:** `irbis-web/backend/access/notifications.py` — полный набор шаблонов EventCatalog (commit `e0818d3`); **диспетч очереди в каналы — IN PROGRESS** (11.3, параллельный агент).
+- **Остаётся изолированным:** acquisition (ToCat, кластер 1), книгообеспеченность (кластер 4), КСУ↔экземпляры (кластер 5), ПТ↔права (кластер 7) — соответствующих модулей в `access/` ещё нет.
 - **Дизайн швов:** ws3 §4/§6 (910^A), ws2 §8 (ToCat/66), ws4 §3/§4 (691/ККО), SPEC_service_authority §3 (substitution/autoin), SPEC_engine_gbl §1.2 (кросс-БД операторы), SPEC_engine_notifications.
 
 > Карта живая: при подключении каждого ребра — перевести строку в ✅ и снять пункт бэклога.
