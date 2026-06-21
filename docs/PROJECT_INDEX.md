@@ -14,7 +14,8 @@
 | --- | --- |
 | [`design/ARCHITECTURE.md`](design/ARCHITECTURE.md) | Целевая архитектура v2: **мультиарендный SaaS**, облако-ядро + edge-узлы (офлайн+синхронизация), микросервисы+модули, strangler-миграция; C4, данные, фазы, ADR, риски |
 | [`design/ROADMAP.md`](design/ROADMAP.md) | Сквозная декомпозиция: **7 инициатив** (milestones I1–I7) → **13 эпиков** → таски → сабтаски; DoD-гейты; порядок старта |
-| [`design/BEST_PRACTICES.md`](design/BEST_PRACTICES.md) | Ревью против практик мирового уровня (14 областей) + 🔴 «решить сейчас» |
+| [`design/BEST_PRACTICES.md`](design/BEST_PRACTICES.md) | Инженерные практики мирового уровня (14 областей) + 🔴 «решить сейчас» |
+| [`design/PRODUCT_PRACTICES.md`](design/PRODUCT_PRACTICES.md) | **Продуктовые** механики мирового уровня (discovery/вовлечение/логистика/ИИ) + топ-6 ★-differentiators |
 | [`design/SYNC_DESIGN.md`](design/SYNC_DESIGN.md) | **ADR-005:** офлайн-синхронизация edge↔облако (событийный журнал, владение по доменам, HLC, конфликты) |
 | [`design/GO_TO_MARKET.md`](design/GO_TO_MARKET.md) | Политика продаж: сегменты, тарифы, оси цены, cloud/on-prem, закупки, миграция-онбординг |
 | [`design/COVERAGE_MATRIX.md`](design/COVERAGE_MATRIX.md) | Поблочное покрытие vs ИРБИС (клиент ≈35%, структура БД 50% …) |
@@ -25,6 +26,7 @@
 | [`design/WHY_REPLACE_IRBIS.md`](design/WHY_REPLACE_IRBIS.md) · [`design/TZ_ClaudeDesign_UI.md`](design/TZ_ClaudeDesign_UI.md) | Обоснование замены · ТЗ на UI |
 
 Бэклог в GitHub: эпики **SA1–SA4** (#112–115), **BP1–BP4** (#128–131) + ранние **#95–99**; milestones **I1–I7**.
+Соглашения репозитория (диаграммы-Mermaid в репо, живые индексы, git/безопасность) — [`CONVENTIONS.md`](CONVENTIONS.md).
 
 ---
 
