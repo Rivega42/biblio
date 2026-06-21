@@ -1,0 +1,15 @@
+# Dev / CI dependencies for the backend Access test suite (issue #118, I1).
+#
+# The sqlite backend runs on the Python standard library alone — no install
+# needed (the lazy psycopg import in access/pgstore.py keeps it importable).
+# These deps are only required to exercise the PostgreSQL parity gate in CI
+# (ACCESS_BACKEND=postgres), and to run pytest-style discovery if adopted later.
+#
+#   pip install -r irbis-web/backend/requirements-dev.txt
+#
+# The Access test suite (tests/test_access.py) is a plain __main__ runner today
+# (exits non-zero on any failure) — pytest is listed so the suite can be invoked
+# via `pytest` and to keep room for future test modules.
+
+psycopg[binary]>=3.1   # PostgreSQL driver (psycopg 3.x) for PgAccessStore
+pytest>=8.0            # test runner (suite also runs standalone via __main__)

@@ -1,0 +1,118 @@
+name: CI
+
+# Automated verification gates for every push and PR to main (issue #118, I1).
+#   - backend-tests : Access suite on BOTH backends (sqlite + PostgreSQL parity)
+#   - contract-lint : OpenAPI contract must lint clean (0 errors)
+#   - frontend-build: Vite production build must succeed
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save runner minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Access suite — sqlite (default) AND postgres, for backend parity (issue #92).
+  # The local Windows box can't always run PostgreSQL; this is the durable gate
+  # that the PgAccessStore stays in lockstep with the sqlite AccessStore.
+  # ---------------------------------------------------------------------------
+  backend-tests:
+    name: backend-tests (sqlite + postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: irbis_access
+        ports:
+          - 5432:5432
+        # Wait until the server accepts connections before the job starts.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend test deps (psycopg, pytest)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r irbis-web/backend/requirements-dev.txt
+
+      # sqlite backend — the dev default; needs no DB and no driver.
+      - name: Access suite — sqlite backend
+        run: python irbis-web/backend/tests/test_access.py
+
+      # postgres backend — points at the service container's irbis_access db.
+      # PgAccessStore.ensure_schema() creates the tables on connect, so no
+      # separate migration step is required.
+      - name: Access suite — postgres backend
+        env:
+          ACCESS_BACKEND: postgres
+          ACCESS_PG_DSN: postgresql://postgres:postgres@127.0.0.1:5432/irbis_access
+        run: python irbis-web/backend/tests/test_access.py
+
+  # ---------------------------------------------------------------------------
+  # OpenAPI contract must lint clean. Redocly exits non-zero on any error.
+  # ---------------------------------------------------------------------------
+  contract-lint:
+    name: contract-lint (OpenAPI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Lint docs/build/openapi.yaml
+        run: npx --yes @redocly/cli@latest lint docs/build/openapi.yaml
+
+  # ---------------------------------------------------------------------------
+  # Frontend production build (Vite). Fonts are self-hosted under
+  # public/design/fonts/ (committed), so the build needs no network.
+  # ---------------------------------------------------------------------------
+  frontend-build:
+    name: frontend-build (Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: irbis-web/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix irbis-web/frontend ci
+
+      # Non-blocking: known type-only warnings shouldn't fail the build gate.
+      # Uses the TypeScript installed by `npm ci` (a devDependency).
+      - name: Type-check (non-blocking)
+        working-directory: irbis-web/frontend
+        run: npx tsc --noEmit -p tsconfig.json
+        continue-on-error: true
+
+      - name: Build
+        run: npm --prefix irbis-web/frontend run build
