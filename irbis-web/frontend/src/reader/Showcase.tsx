@@ -38,10 +38,11 @@ const CSS = `
 .irb-showcase__badge{position:absolute;top:8px;left:8px;display:inline-flex;align-items:center;gap:4px;
   background:var(--accent);color:var(--accent-fg,#fff);font-size:var(--text-2xs,11px);font-weight:var(--weight-bold,700);
   padding:2px 8px;border-radius:var(--radius-pill,999px);}
-.irb-showcase__meta{min-width:0;}
-.irb-showcase__name{font-size:var(--text-sm);font-weight:var(--weight-semibold,600);color:var(--text-strong);
-  line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.irb-showcase__by{font-size:var(--text-xs);color:var(--text-subtle);margin-top:2px;
+.irb-showcase__meta{display:block;width:140px;min-width:0;box-sizing:border-box;}
+.irb-showcase__name{display:-webkit-box;width:100%;font-size:var(--text-sm);font-weight:var(--weight-semibold,600);
+  color:var(--text-strong);line-height:1.25;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;overflow-wrap:break-word;word-break:break-word;}
+.irb-showcase__by{display:block;width:100%;font-size:var(--text-xs);color:var(--text-subtle);margin-top:2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 `;
 
