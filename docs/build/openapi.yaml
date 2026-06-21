@@ -48,6 +48,16 @@ tags:
     description: Reader self-service (orders, personal cabinet).
   - name: cataloging
     description: Staff cataloging (worklist, record write). Requires grants.
+  - name: circulation
+    description: Staff circulation desk (issue/return/renew, reader formulary, fines). Requires grants.
+  - name: acquisition
+    description: Staff acquisition desk (АРМ Комплектатор — orders, receipt, КСУ). Staff-only, module-gated.
+  - name: book-provision
+    description: Staff book-provision desk (Книгообеспеченность — faculties, specialties, disciplines, Кко reports). Staff-only, module-gated.
+  - name: admin
+    description: Staff administration (users/roles/audit/databases) and platform control plane (tenants/billing/PDn-access journal). Staff-only; super-admin for the control plane.
+  - name: privacy
+    description: 152-ФЗ privacy layer — reader consent + right-to-erasure, and the staff PDn-access journal (audit finding V9/V5). Reader for self-service; DPO/admin for the journal.
   - name: system
     description: Health and database metadata.
 
@@ -583,8 +593,12 @@ paths:
       operationId: getWorklist
       summary: Cataloging worklist (DynamicField profile) for a database.
       description: |
-        Requires a session (any kind). Returns the field worklist that drives the
-        cataloging form. Field entries are loosely typed (`any[]` in the client).
+        Staff session only (guest/reader -> 403). Requires grant
+        `record.write/<db>/write` and the `cataloging` module entitlement (you
+        load the editor for a base you may write). Returns the field worklist that
+        drives the cataloging DynamicField editor: a curated book worklist for
+        IBIS/PAZK and a small generic fallback for any other base, so a new editor
+        always renders a usable form.
       parameters:
         - $ref: "#/components/parameters/PathDb"
       responses:
@@ -606,10 +620,277 @@ paths:
                           fields:
                             type: array
                             items:
-                              type: object
-                              additionalProperties: true
+                              $ref: "#/components/schemas/WorklistField"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/circ/reader:
+    get:
+      tags: [circulation]
+      operationId: circReader
+      summary: Reader formulary for the circulation desk.
+      description: |
+        Staff session only (guest/reader -> 403). Requires grant
+        `circ.issue/<defaultDb>/read` and the `circulation` module entitlement.
+        Looks the reader up by library-ticket number (a desk read) and returns the
+        reader's debt summary plus on-hand loans (РДР field 40). The reader is
+        lazily registered in the circulation engine on first desk contact.
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Library ticket number (RDR field RI).
+      responses:
+        "200":
+          description: Reader formulary (reader summary, on-hand loans, desk messages).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CircReaderResult"
+        "400":
+          description: Missing ticket (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/circ/issue:
+    post:
+      tags: [circulation]
+      operationId: circIssue
+      summary: Issue (lend) a copy to a reader.
+      description: |
+        Staff session only (guest/reader -> 403). Requires grant
+        `circ.issue/<defaultDb>/write` and the `circulation` module entitlement.
+        Runs the circulation engine's checkout (loan limits + debtor gate) and, on
+        ALLOW, flips the catalog exemplar 910^A 0->1. A denied decision is surfaced
+        `403` (`circ_denied`); a decision that needs a staff override is surfaced
+        `409` (`circ_denied`) with its machine reasons in the error message.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket, item]
+              properties:
+                ticket:
+                  type: string
+                  description: Library ticket number.
+                db:
+                  type: string
+                  description: Database code. Defaults to the server default db when omitted.
+                item:
+                  type: string
+                  description: Copy identifier (shifr / inventory / barcode).
+      responses:
+        "200":
+          description: Loan created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CircIssueResult"
+        "400":
+          description: Missing ticket or item (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Non-staff session / missing grant / module not licensed (`forbidden`),
+            or a denied checkout decision (`circ_denied`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "409":
+          $ref: "#/components/responses/CircDenied"
+
+  /api/circ/return:
+    post:
+      tags: [circulation]
+      operationId: circReturn
+      summary: Return (take back) a copy from a reader.
+      description: |
+        Staff session only (guest/reader -> 403). Requires grant
+        `circ.return/<defaultDb>/write` and the `circulation` module entitlement.
+        Resolves the (ticket, item) on-hand loan and runs the engine's return
+        (fixes any overdue fine, makes the next queued hold ready, flips the
+        catalog exemplar 910^A 1->0).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket, item]
+              properties:
+                ticket:
+                  type: string
+                  description: Library ticket number.
+                db:
+                  type: string
+                  description: Database code. Defaults to the server default db when omitted.
+                item:
+                  type: string
+                  description: Copy identifier (shifr / inventory / barcode).
+      responses:
+        "200":
+          description: Copy returned.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CircReturnResult"
+        "400":
+          description: Missing ticket or item (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No on-hand loan of the item for this reader (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "409":
+          $ref: "#/components/responses/CircDenied"
+
+  /api/circ/renew:
+    post:
+      tags: [circulation]
+      operationId: circRenew
+      summary: Renew (prolong) a loan.
+      description: |
+        Staff session only (guest/reader -> 403). Requires grant
+        `circ.issue/<defaultDb>/write` and the `circulation` module entitlement.
+        Resolves the (ticket, item) on-hand loan and runs the engine's renew
+        (holds-block-renewal + renew cap + debtor gate). A plain block is surfaced
+        `403` (`circ_denied`); a block that needs a staff override is surfaced
+        `409` (`circ_denied`) with its machine reasons in the error message.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket, item]
+              properties:
+                ticket:
+                  type: string
+                  description: Library ticket number.
+                db:
+                  type: string
+                  description: Database code. Defaults to the server default db when omitted.
+                item:
+                  type: string
+                  description: Copy identifier (shifr / inventory / barcode).
+      responses:
+        "200":
+          description: Loan renewed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CircRenewResult"
+        "400":
+          description: Missing ticket or item (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Non-staff session / missing grant / module not licensed (`forbidden`),
+            or a denied renew decision (`circ_denied`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "404":
+          description: No on-hand loan of the item for this reader (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "409":
+          $ref: "#/components/responses/CircDenied"
+
+  /api/circ/fines:
+    get:
+      tags: [circulation]
+      operationId: circFines
+      summary: Outstanding fines for a reader.
+      description: |
+        Staff session only (guest/reader -> 403). Requires grant
+        `circ.issue/<defaultDb>/read` and the `circulation` module entitlement.
+        Returns the reader's outstanding (accrued/charged) fines with the running
+        total and policy currency.
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Library ticket number (RDR field RI).
+      responses:
+        "200":
+          description: Outstanding fines.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CircFinesResult"
+        "400":
+          description: Missing ticket (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/storage:
     get:
@@ -650,6 +931,1891 @@ paths:
                             type: integer
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  # ========================================================================
+  # Catalog read surfaces (showcase / rubricator / example-queries / validate /
+  # record read / cover / render / resource / vocab / classification). All are
+  # session-guarded; the public OPAC ones run the public-DB guard (V11) so a
+  # guest/reader can never reach a service/ПДн base (RDR/LICH/LOG*).
+  # ========================================================================
+  /api/showcase:
+    get:
+      tags: [catalog]
+      operationId: showcase
+      summary: Home-page showcase shelf (new / popular).
+      description: |
+        Requires grant `search/<db>/read` and passes the public-DB guard. Returns
+        a small curated shelf (`kind`=new|popular, clamped `limit`) of brief cards.
+      parameters:
+        - $ref: "#/components/parameters/Db"
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            default: new
+          description: Shelf kind (new | popular).
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 12
+      responses:
+        "200":
+          description: Showcase shelf.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeOk"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          db:
+                            type: string
+                          kind:
+                            type: string
+                          items:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ResultItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/rubricator:
+    get:
+      tags: [catalog]
+      operationId: rubricator
+      summary: Browse a classification/rubricator tree level.
+      description: |
+        Requires grant `search/<db>/read` and passes the public-DB guard. Reads a
+        slice of dictionary terms under a prefix for the rubricator browse view.
+      parameters:
+        - $ref: "#/components/parameters/Db"
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: start
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+      responses:
+        "200":
+          description: Rubricator level.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/example-queries:
+    get:
+      tags: [catalog]
+      operationId: exampleQueries
+      summary: Seeded example queries for a database.
+      description: Requires grant `search/<db>/read`. Returns a static list of example search expressions to seed the search UI.
+      parameters:
+        - $ref: "#/components/parameters/Db"
+      responses:
+        "200":
+          description: Example queries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/validate:
+    post:
+      tags: [cataloging]
+      operationId: validateRecord
+      summary: Validate a draft record against the worklist rules.
+      description: |
+        Requires a session. Runs the cataloging validation rules over a draft
+        record (does not write). Returns a list of validation messages.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                db:
+                  type: string
+                fields:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      tag:
+                        type: string
+                      value:
+                        type: string
+      responses:
+        "200":
+          description: Validation result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/render/{db}/{mfn}:
+    get:
+      tags: [catalog]
+      operationId: renderRecord
+      summary: Server-formatted record (PFT format).
+      description: |
+        Requires grant `record.read/<db>/read` and passes the public-DB guard.
+        Returns the record rendered with a server PFT format (`fmt`, default
+        `@brief`).
+      parameters:
+        - $ref: "#/components/parameters/PathDb"
+        - $ref: "#/components/parameters/PathMfn"
+        - name: fmt
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "@brief"
+          description: Server format name (e.g. @brief, @full).
+      responses:
+        "200":
+          description: Rendered record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/resource/{db}/{name}:
+    get:
+      tags: [catalog]
+      operationId: getResource
+      summary: Read an attached resource (full-text / image) by name.
+      description: |
+        Requires grant `record.read/<db>/read` and passes the public-DB guard.
+        Returns an attached resource stream (full text / embedded file) identified
+        by `name`.
+      parameters:
+        - $ref: "#/components/parameters/PathDb"
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource name (attachment identifier).
+      responses:
+        "200":
+          description: Resource bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such resource (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/vocab:
+    get:
+      tags: [system]
+      operationId: listVocab
+      summary: List available controlled vocabularies.
+      description: Requires a session. Returns the set of vocabulary names the cataloging UI can resolve.
+      responses:
+        "200":
+          description: Vocabulary list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/vocab/{name}:
+    get:
+      tags: [system]
+      operationId: getVocab
+      summary: Read one controlled vocabulary by name.
+      description: Requires a session. Returns the entries of a named controlled vocabulary (menu source).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Vocabulary entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/classification/{name}:
+    get:
+      tags: [system]
+      operationId: getClassification
+      summary: Read a classification tree by name.
+      description: Requires a session. Returns a named classification/rubricator tree for the browse UI.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Classification tree.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/me/modules:
+    get:
+      tags: [system]
+      operationId: getMyModules
+      summary: Module entitlements for the current session/tenant.
+      description: Requires a session. Returns the set of licensed functional modules the session may use (drives which desks render).
+      responses:
+        "200":
+          description: Enabled modules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ========================================================================
+  # Reader portal — holds, notifications inbox, reading lists (shelves),
+  # reviews/ratings, recommendations, reading history, saved searches.
+  # Writes require a reader session; reviews/recommendations are guest-readable.
+  # ========================================================================
+  /api/hold:
+    post:
+      tags: [reader]
+      operationId: placeHold
+      summary: Place (or return the existing) hold for the reader.
+      description: |
+        Reader session. Requires grant `order/<defaultDb>/write` and passes the
+        public-DB guard. Places a hold on `(db, mfn)` and returns the hold with its
+        queue position (idempotent — returns the existing hold if already placed).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfn]
+              properties:
+                db:
+                  type: string
+                mfn:
+                  type: integer
+      responses:
+        "200":
+          description: Hold placed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing mfn (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/holds:
+    get:
+      tags: [reader]
+      operationId: listHolds
+      summary: The reader's live holds with queue positions.
+      description: Reader session. Requires grant `order/<defaultDb>/write`. Returns the reader's active holds.
+      responses:
+        "200":
+          description: Holds list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/hold/cancel:
+    post:
+      tags: [reader]
+      operationId: cancelHold
+      summary: Cancel the reader's own hold.
+      description: Reader session. Requires grant `order/<defaultDb>/write`. Cancels a hold by `holdId` (404 if not the reader's hold).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [holdId]
+              properties:
+                holdId:
+                  type: integer
+      responses:
+        "200":
+          description: Hold cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing holdId (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Hold not found (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/notifications:
+    get:
+      tags: [reader]
+      operationId: notificationsInbox
+      summary: The reader's notifications inbox + unread count.
+      description: Reader session. Requires grant `cabinet/*/read`. Returns dispatched notices (optionally `unread=1` only) and the unread count.
+      parameters:
+        - name: unread
+          in: query
+          required: false
+          schema:
+            type: string
+          description: When 1/true/yes, returns only unread notices.
+      responses:
+        "200":
+          description: Inbox.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/notifications/read:
+    post:
+      tags: [reader]
+      operationId: notificationsRead
+      summary: Mark one or all notifications read.
+      description: Reader session. Requires grant `cabinet/*/read`. Marks one notice (`id`) or all (`all:true`) read; returns the new unread count.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: integer
+                all:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated unread count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Neither id nor all supplied (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/shelves:
+    get:
+      tags: [reader]
+      operationId: shelvesList
+      summary: The reader's reading lists (shelves).
+      description: Reader session. Requires grant `cabinet/*/read`. Returns the reader's reading lists (system lists seeded lazily).
+      responses:
+        "200":
+          description: Reading lists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [reader]
+      operationId: shelfCreate
+      summary: Create a custom reading list.
+      description: Reader session. Requires grant `cabinet/*/read`. Creates a named reading list for the reader.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: List created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/shelves/item:
+    post:
+      tags: [reader]
+      operationId: shelfAddItem
+      summary: Add a record to a reading list.
+      description: Reader session. Requires grant `cabinet/*/read`. Adds `(db, mfn)` to the list `listId` (deduped).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listId, mfn]
+              properties:
+                listId:
+                  type: string
+                db:
+                  type: string
+                mfn:
+                  type: integer
+      responses:
+        "200":
+          description: Item added.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing mfn (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: List not found (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/shelves/item/remove:
+    post:
+      tags: [reader]
+      operationId: shelfRemoveItem
+      summary: Remove a record from a reading list.
+      description: Reader session. Requires grant `cabinet/*/read`. Removes `(db, mfn)` from the list `listId`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [listId, mfn]
+              properties:
+                listId:
+                  type: string
+                db:
+                  type: string
+                mfn:
+                  type: integer
+      responses:
+        "200":
+          description: Item removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing mfn (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: List not found (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/review:
+    post:
+      tags: [reader]
+      operationId: postReview
+      summary: Upsert the reader's review of a record.
+      description: |
+        Reader session. Passes the public-DB guard. Creates or updates the reader's
+        review (rating + text) of `(db, mfn)`. Bound to the reader's ticket in our
+        own store (a reader edits only their own review).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfn]
+              properties:
+                db:
+                  type: string
+                mfn:
+                  type: integer
+                rating:
+                  type: integer
+                text:
+                  type: string
+      responses:
+        "200":
+          description: Review upserted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing mfn / invalid rating (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/review/delete:
+    post:
+      tags: [reader]
+      operationId: deleteReview
+      summary: Delete the reader's own review.
+      description: Reader session. Deletes a review by `id` only if it belongs to the reader (403 otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: integer
+      responses:
+        "200":
+          description: Review deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing id (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not the reader's review (`forbidden`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/reviews:
+    get:
+      tags: [reader]
+      operationId: listReviews
+      summary: Reviews for a record (avg/count + cards).
+      description: |
+        Requires grant `search/<db>/read` and passes the public-DB guard.
+        Guest-readable. Returns the average rating, count and review cards for
+        `(db, mfn)`; a reader session additionally gets its own review (`mine`).
+      parameters:
+        - $ref: "#/components/parameters/Db"
+        - name: mfn
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Reviews.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing mfn (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/recommendations:
+    get:
+      tags: [reader]
+      operationId: recommendations
+      summary: Records similar to a seed record.
+      description: |
+        Requires grant `search/<db>/read` and passes the public-DB guard.
+        Guest-readable. Returns records "similar" to the seed `(db, mfn)`.
+      parameters:
+        - $ref: "#/components/parameters/Db"
+        - name: mfn
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Similar records.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing mfn (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/recommendations/foryou:
+    get:
+      tags: [reader]
+      operationId: recommendationsForYou
+      summary: Personalized recommendations from the reader's history.
+      description: Reader session only. Returns recommendations derived from the reader's reading history (requires the opt-in history).
+      responses:
+        "200":
+          description: Personalized recommendations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/history:
+    get:
+      tags: [reader]
+      operationId: readingHistory
+      summary: The reader's reading history (opt-in).
+      description: |
+        Reader session only. Returns the reader's reading history (deduped, capped).
+        History is an **opt-in** personal record (152-ФЗ minimization + ALA ethics):
+        kept only when the reader enabled it (consent `reading_history`).
+      responses:
+        "200":
+          description: Reading history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/savedsearch:
+    get:
+      tags: [reader]
+      operationId: savedSearches
+      summary: The reader's saved searches.
+      description: Reader session only. Returns the reader's saved search definitions.
+      responses:
+        "200":
+          description: Saved searches.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [reader]
+      operationId: saveSearch
+      summary: Persist a saved search.
+      description: Reader session only. Persists a saved search (name + db + prefix + query).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                db:
+                  type: string
+                prefix:
+                  type: string
+                query:
+                  type: string
+      responses:
+        "200":
+          description: Saved search persisted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Invalid input (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/savedsearch/delete:
+    post:
+      tags: [reader]
+      operationId: deleteSavedSearch
+      summary: Delete the reader's own saved search.
+      description: Reader session only. Deletes a saved search by `id` (404 if not the reader's).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: integer
+      responses:
+        "200":
+          description: Saved search deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing id (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Saved search not found (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  # ========================================================================
+  # АРМ Комплектатор (acquisition) — staff-only, module-gated (`acquisition`).
+  # Guards: write ops `acq.receipt/<defaultDb>/write`, reads `acq.read/.../read`.
+  # State lives in our own acquisition store; the live ИРБИС server is never
+  # written. Order → receive → КСУ → ToCat. Writes are audited.
+  # ========================================================================
+  /api/acq/order:
+    post:
+      tags: [acquisition]
+      operationId: acqOrder
+      summary: Open an acquisition order line (заказ).
+      description: Staff-only, `acquisition` module. Requires grant `acq.receipt/<defaultDb>/write`. Opens an order line. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                author:
+                  type: string
+                supplier:
+                  type: string
+                copies:
+                  type: integer
+                price:
+                  type: number
+                fundingSource:
+                  type: string
+      responses:
+        "200":
+          description: Order opened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Invalid order (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      tags: [acquisition]
+      operationId: acqOrderStatus
+      summary: Read an acquisition order + its status.
+      description: Staff-only, `acquisition` module. Requires grant `acq.read/<defaultDb>/read`. Returns the order row identified by `id`.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Order row.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown order (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/acq/order/cancel:
+    post:
+      tags: [acquisition]
+      operationId: acqCancel
+      summary: Cancel an acquisition order.
+      description: Staff-only, `acquisition` module. Requires grant `acq.receipt/<defaultDb>/write`. Cancels an order (refused if anything was already received).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: integer
+      responses:
+        "200":
+          description: Order cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing id / already received (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/acq/receive:
+    post:
+      tags: [acquisition]
+      operationId: acqReceive
+      summary: Register received copies (→ КСУ → ToCat).
+      description: Staff-only, `acquisition` module. Requires grant `acq.receipt/<defaultDb>/write`. Registers received copies against an order, writes the КСУ summary and queues for cataloging. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, ksuNo, copies]
+              properties:
+                orderId:
+                  type: integer
+                ksuNo:
+                  type: string
+                copies:
+                  type: integer
+                unitPrice:
+                  type: number
+                invNumbers:
+                  type: array
+                  items:
+                    type: string
+                actRef:
+                  type: string
+      responses:
+        "200":
+          description: Copies received.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing/invalid fields (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/acq/ksu:
+    get:
+      tags: [acquisition]
+      operationId: acqKsu
+      summary: КСУ summary row.
+      description: Staff-only, `acquisition` module. Requires grant `acq.read/<defaultDb>/read`. Returns the КСУ summary row (88^E/^F/^G) for `no`.
+      parameters:
+        - name: no
+          in: query
+          required: true
+          schema:
+            type: string
+          description: КСУ number.
+      responses:
+        "200":
+          description: КСУ summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown КСУ (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  # ========================================================================
+  # Книгообеспеченность (book-provision) — staff-only, module-gated (`bookprovision`).
+  # Guards: write ops `bp.write/<defaultDb>/write`, reports `bp.read/.../read`.
+  # Faculty → specialty → discipline (+contingent) → bind literature → Кко report.
+  # ========================================================================
+  /api/bp/faculty:
+    post:
+      tags: [book-provision]
+      operationId: bpFaculty
+      summary: Create/fetch a faculty (Факультет).
+      description: Staff-only, `bookprovision` module. Requires grant `bp.write/<defaultDb>/write`. Creates or fetches a faculty node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                name:
+                  type: string
+      responses:
+        "200":
+          description: Faculty id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Invalid faculty (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/bp/specialty:
+    post:
+      tags: [book-provision]
+      operationId: bpSpecialty
+      summary: Bind a specialty (Направление/Специальность) to a faculty.
+      description: Staff-only, `bookprovision` module. Requires grant `bp.write/<defaultDb>/write`. Binds a specialty under `facultyId`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [facultyId]
+              properties:
+                facultyId:
+                  type: integer
+                napr:
+                  type: string
+                spec:
+                  type: string
+                vid:
+                  type: string
+                form:
+                  type: string
+                name:
+                  type: string
+      responses:
+        "200":
+          description: Specialty id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing facultyId (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      tags: [book-provision]
+      operationId: bpSpecialtyProvision
+      summary: Per-specialty book-provision rollup report.
+      description: Staff-only, `bookprovision` module. Requires grant `bp.read/<defaultDb>/read`. Returns the per-specialty rollup (`normalize` toggles Кко normalization).
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: normalize
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Specialty rollup.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown specialty (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/bp/discipline:
+    post:
+      tags: [book-provision]
+      operationId: bpDiscipline
+      summary: Attach a discipline (+contingent) to a specialty.
+      description: Staff-only, `bookprovision` module. Requires grant `bp.write/<defaultDb>/write`. Attaches a discipline under `specialtyId`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [specialtyId]
+              properties:
+                specialtyId:
+                  type: integer
+                discId:
+                  type: string
+                name:
+                  type: string
+                semester:
+                  type: string
+                students:
+                  type: integer
+                studentsSource:
+                  type: string
+      responses:
+        "200":
+          description: Discipline id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing specialtyId (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      tags: [book-provision]
+      operationId: bpDisciplineProvision
+      summary: Per-discipline Кко (book-provision) report.
+      description: Staff-only, `bookprovision` module. Requires grant `bp.read/<defaultDb>/read`. Returns the per-discipline provision report (`normalize` toggles Кко normalization).
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: normalize
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Discipline report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown discipline (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/bp/contingent:
+    post:
+      tags: [book-provision]
+      operationId: bpContingent
+      summary: Refresh a discipline's student count (contingent).
+      description: Staff-only, `bookprovision` module. Requires grant `bp.write/<defaultDb>/write`. Updates the student count for `disciplineId`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [disciplineId, students]
+              properties:
+                disciplineId:
+                  type: integer
+                students:
+                  type: integer
+                source:
+                  type: string
+      responses:
+        "200":
+          description: Contingent updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing disciplineId/students (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/bp/bind:
+    post:
+      tags: [book-provision]
+      operationId: bpBind
+      summary: Bind recommended literature to a discipline.
+      description: Staff-only, `bookprovision` module. Requires grant `bp.write/<defaultDb>/write`. Binds a literature title (main/extra) to `disciplineId`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [disciplineId]
+              properties:
+                disciplineId:
+                  type: integer
+                title:
+                  type: string
+                kind:
+                  type: string
+                copies:
+                  type: integer
+                catalogDb:
+                  type: string
+                invKey:
+                  type: string
+      responses:
+        "200":
+          description: Binding id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing disciplineId / invalid copies (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ========================================================================
+  # АРМ Администратор — staff-only (#187). Account/role admin under
+  # `admin.users`, audit/database surfaces under `admin.db`. The platform
+  # control plane (tenants/billing) is super-admin (`admin.db` at admin level).
+  # ========================================================================
+  /api/admin/users:
+    get:
+      tags: [admin]
+      operationId: adminUsers
+      summary: List staff accounts with roles + effective grants.
+      description: Staff admin. Requires grant `admin.users`. Returns every staff account with its roles and effective grants.
+      responses:
+        "200":
+          description: Accounts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [admin]
+      operationId: adminCreateUser
+      summary: Create a staff account (hashed password) + assign roles.
+      description: |
+        Staff admin. Requires grant `admin.users`. Creates a staff account; the
+        password is stored as a pbkdf2-sha256 salted hash (never plaintext — audit
+        finding V3). Roles assigned as in the seed. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login]
+              properties:
+                login:
+                  type: string
+                password:
+                  type: string
+                fullName:
+                  type: string
+                roles:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing login (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Login already exists (`conflict`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/admin/users/roles:
+    post:
+      tags: [admin]
+      operationId: adminSetRoles
+      summary: Replace an account's roles.
+      description: Staff admin. Requires grant `admin.users`. Replaces the role set of `userId`. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, roles]
+              properties:
+                userId:
+                  type: integer
+                roles:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Roles replaced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing userId (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown user (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/admin/users/active:
+    post:
+      tags: [admin]
+      operationId: adminSetActive
+      summary: Enable/disable a staff account.
+      description: Staff admin. Requires grant `admin.users`. Sets the active flag of `userId`. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, active]
+              properties:
+                userId:
+                  type: integer
+                active:
+                  type: boolean
+      responses:
+        "200":
+          description: Active flag updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing userId (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown user (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+
+  /api/admin/roles:
+    get:
+      tags: [admin]
+      operationId: adminRoles
+      summary: List roles with their grants.
+      description: Staff admin. Requires grant `admin.users`. Returns every role with its grant set.
+      responses:
+        "200":
+          description: Roles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/audit:
+    get:
+      tags: [admin]
+      operationId: adminAudit
+      summary: Recent audit entries (capped).
+      description: Staff admin. Requires grant `admin.db`. Returns the most-recent audit entries newest-first (`limit` clamped to 1..500).
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        "200":
+          description: Audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/databases:
+    get:
+      tags: [admin]
+      operationId: adminDatabases
+      summary: Full database list (staff admin view).
+      description: Staff admin. Requires grant `admin.db`. Returns every database (no public-only filter) with counts.
+      responses:
+        "200":
+          description: Database list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/tenants:
+    get:
+      tags: [admin]
+      operationId: adminTenants
+      summary: List provisioned tenants (control plane).
+      description: Super-admin only (staff + `admin.db` at admin level). Returns every provisioned tenant `{slug,name,kind,plan}`. Audited.
+      responses:
+        "200":
+          description: Tenants.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/tenant:
+    post:
+      tags: [admin]
+      operationId: adminCreateTenant
+      summary: Provision a new tenant (control plane).
+      description: |
+        Super-admin only (staff + `admin.db` at admin level). Provisions a tenant
+        (schema/seeded store → vocabularies → admin account → plan + entitlements).
+        Idempotent; the admin password defaults to $ADMIN_DEFAULT_PASSWORD. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug:
+                  type: string
+                name:
+                  type: string
+                adminLogin:
+                  type: string
+                adminPassword:
+                  type: string
+                plan:
+                  type: string
+                kind:
+                  type: string
+      responses:
+        "200":
+          description: Tenant provisioned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing slug / unknown plan (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/billing:
+    get:
+      tags: [admin]
+      operationId: adminBilling
+      summary: A tenant's plan, limits, usage, modules.
+      description: Super-admin only (staff + `admin.db` at admin level). Returns the tenant's plan, declared limits, a usage snapshot and the enabled module list. Defaults to the session tenant when `tenant` is omitted.
+      parameters:
+        - name: tenant
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Billing snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/billing/plan:
+    post:
+      tags: [admin]
+      operationId: adminSetPlan
+      summary: Assign a plan to a tenant (+apply modules).
+      description: Super-admin only (staff + `admin.db` at admin level). Records the plan and drives entitlements so exactly the plan's modules are enabled. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant, plan]
+              properties:
+                tenant:
+                  type: string
+                plan:
+                  type: string
+      responses:
+        "200":
+          description: Plan assigned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing tenant / unknown plan (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/billing/module:
+    post:
+      tags: [admin]
+      operationId: adminSetModule
+      summary: Toggle one module entitlement for a tenant.
+      description: Super-admin only (staff + `admin.db` at admin level). A targeted override on top of the plan (e.g. trial-enable acquisition). Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant, module, enabled]
+              properties:
+                tenant:
+                  type: string
+                module:
+                  type: string
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Module toggled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing tenant/module (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/pdn-access:
+    get:
+      tags: [privacy]
+      operationId: pdnAccessLog
+      summary: PDn-access journal export (152-ФЗ / ФСТЭК РСБ — finding V5).
+      description: |
+        DPO / security-admin only (high grant). Exports the append-only journal of
+        access to readers' personal data (`pdn_access_log`) for a subject and/or a
+        period, for Roskomnadzor/ФСТЭК checks and for the ст.14 subject response.
+        By-reference (field categories, not values); the export itself is journaled
+        (meta-audit). Spec: SPEC_compliance_152fz §3; policy: CONSENT_POLICY §5.
+        This route lands the V5 access-journal of the audit baseline.
+      parameters:
+        - name: subjectId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter to one subject (by id; PDn is referenced, not embedded).
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Period start (ISO date/time).
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Period end (ISO date/time).
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        "200":
+          description: PDn-access journal slice (category-level, no PDn values).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ========================================================================
+  # Privacy layer — 152-ФЗ consent + right-to-erasure (audit finding V9).
+  # Reader self-service: grant/list consent, request erasure. Erasure scope is
+  # OUR stored data (reviews/holds/shelves/history/circulation/resolved name),
+  # NOT the source ИРБИС RDR record. Spec: SPEC_compliance_152fz §2/§4;
+  # policy: CONSENT_POLICY.
+  # ========================================================================
+  /api/reader/consent:
+    get:
+      tags: [privacy]
+      operationId: getConsent
+      summary: The reader's effective consents by purpose.
+      description: |
+        Reader session. Returns the reader's effective consent per purpose
+        (base_processing, reading_history, notifications, public_social_profile,
+        transfer_esia/smev/eios, photo_950, marketing) with the policy version each
+        was granted against. Spec: SPEC_compliance_152fz §2; policy: CONSENT_POLICY §2.
+      responses:
+        "200":
+          description: Effective consents.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [privacy]
+      operationId: setConsent
+      summary: Grant or withdraw consent for a purpose.
+      description: |
+        Reader session. Records a consent decision (`status` granted|withdrawn) for
+        a `purpose`, bound to the current privacy-policy version. Append-only: a
+        withdrawal is a new row, never an overwrite (provability). Spec:
+        SPEC_compliance_152fz §2.5; policy: CONSENT_POLICY §2/§4.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose, status]
+              properties:
+                purpose:
+                  type: string
+                  enum:
+                    - base_processing
+                    - reading_history
+                    - notifications
+                    - public_social_profile
+                    - transfer_esia
+                    - transfer_smev
+                    - transfer_eios
+                    - photo_950
+                    - marketing
+                status:
+                  type: string
+                  enum: [granted, withdrawn]
+      responses:
+        "200":
+          description: Consent recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "400":
+          description: Missing/invalid purpose or status (`bad_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/reader/erase:
+    post:
+      tags: [privacy]
+      operationId: requestErasure
+      summary: Request right-to-erasure (право на забвение).
+      description: |
+        Reader session. Opens an `erasure_request` over the reader's OWN stored
+        data: direct identifiers (resolved name, ticket binding), reviews, shelves,
+        saved searches, opt-in history are deleted; completed loans / archive are
+        anonymized (`subject_id`→`anon:`) to keep stats/КСУ valid; consents are
+        kept (provability); the PDn-access journal is pseudonymized. Scope is OUR
+        storage, NOT the source ИРБИС RDR record (managed by the operator). Active
+        loans/debts put the request `on_hold`. Spec: SPEC_compliance_152fz §4;
+        policy: CONSENT_POLICY §3. Lands the V9 erasure path of the audit baseline.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Optional free-text reason for the request.
+      responses:
+        "200":
+          description: Erasure request opened (submitted | on_hold) with its id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeOk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
 components:
   securitySchemes:
@@ -717,6 +2883,15 @@ components:
             $ref: "#/components/schemas/EnvelopeError"
     Forbidden:
       description: Required grant missing (`forbidden`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+    CircDenied:
+      description: |
+        Circulation decision denied (`circ_denied`); the error message carries the
+        engine's machine reasons (comma-separated). For issue/renew this is the
+        override-required path — a plain denial without an override is `403`.
       content:
         application/json:
           schema:
@@ -1056,3 +3231,241 @@ components:
             $ref: "#/components/schemas/Loan"
         loanCount:
           type: integer
+
+    WorklistSubfield:
+      type: object
+      description: One subfield entry inside a worklist field.
+      required: [code, label, type]
+      properties:
+        code:
+          type: string
+          description: Subfield code (e.g. a, e, f).
+        label:
+          type: string
+        type:
+          type: string
+          description: Editor control (text/menu/dict/tree/bool/authority/date).
+
+    WorklistField:
+      type: object
+      description: |
+        One field entry in the cataloging worklist, driving the DynamicField
+        editor. `type` maps to an editor control
+        (text/menu/dict/tree/bool/authority/date).
+      required: [code, label, type]
+      properties:
+        code:
+          type: string
+          description: IRBIS field tag (e.g. 200, 700).
+        label:
+          type: string
+        type:
+          type: string
+          description: Editor control (text/menu/dict/tree/bool/authority/date).
+        required:
+          type: boolean
+        repeatable:
+          type: boolean
+        options:
+          type: array
+          description: Menu options (present when `type` is `menu`).
+          items:
+            type: string
+        subfields:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorklistSubfield"
+
+    CircReaderInfo:
+      type: object
+      description: |
+        Reader debt summary for the circulation desk. Carries both the canonical
+        engine view (`debtLevel`/`onHand`/`outstanding`) and the desk view
+        (`debtor`/`finesTotal`/`blocks`).
+      required: [ticket, name, debtLevel, onHand, outstanding, debtor, finesTotal, blocks]
+      properties:
+        ticket:
+          type: string
+        name:
+          type: string
+          description: Reader display name (may be empty).
+        debtLevel:
+          type: string
+          enum: [none, soft, hard]
+        onHand:
+          type: integer
+          description: Count of on-hand (not returned) loans.
+        outstanding:
+          type: number
+          description: Total outstanding fine amount.
+        debtor:
+          type: boolean
+          description: True when `debtLevel` is `hard`.
+        finesTotal:
+          type: number
+          description: Alias of `outstanding` (desk view).
+        blocks:
+          type: array
+          description: Human-readable desk blocks/warnings (debtor / overdue).
+          items:
+            type: string
+
+    CircLoan:
+      type: object
+      description: One on-hand loan card (РДР field-40 model) for the desk.
+      required: [loanId, db, item, title, issued, due, renewals, lostStatus, returned, overdue, renewable]
+      properties:
+        loanId:
+          type: integer
+        db:
+          type: string
+        item:
+          type: string
+          description: Copy identifier (shifr / inventory).
+        title:
+          type: string
+          description: Resolved brief title (best-effort; may be empty).
+        issued:
+          type: number
+          description: Checkout time (epoch seconds).
+        due:
+          type: number
+          description: Planned return time (epoch seconds).
+        renewals:
+          type: integer
+        lostStatus:
+          type: string
+          enum: [none, lost_candidate, lost]
+        returned:
+          type: boolean
+        overdue:
+          type: boolean
+        renewable:
+          type: boolean
+
+    CircReaderResult:
+      type: object
+      required: [reader, loans, messages]
+      properties:
+        reader:
+          $ref: "#/components/schemas/CircReaderInfo"
+        loans:
+          type: array
+          items:
+            $ref: "#/components/schemas/CircLoan"
+        messages:
+          type: array
+          description: Desk service messages (mirrors `reader.blocks`).
+          items:
+            type: string
+
+    CircIssueResult:
+      type: object
+      description: |
+        Result of a checkout. `catalogMfn`/`exemplarStatus` are present only when
+        the loan resolved to a catalog exemplar (910^A flipped).
+      required: [loanId, ticket, item, due]
+      properties:
+        loanId:
+          type: integer
+        ticket:
+          type: string
+        item:
+          type: string
+        due:
+          type: number
+          description: Planned return time (epoch seconds).
+        catalogMfn:
+          type: integer
+        exemplarStatus:
+          type: string
+          description: Exemplar status flag after issue (910^A; `1` = on loan).
+
+    CircReturnResult:
+      type: object
+      description: |
+        Result of a return. `fineCharged` appears when an overdue fine was fixed,
+        `holdReady` when returning the copy made the next queued hold ready, and
+        `catalogMfn`/`exemplarStatus` when a catalog exemplar was flipped.
+      required: [ok, loanId, ticket, item]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        loanId:
+          type: integer
+        ticket:
+          type: string
+        item:
+          type: string
+        fineCharged:
+          type: number
+          description: Amount of the overdue fine charged on return.
+        holdReady:
+          type: integer
+          description: Hold id made ready by this return, if any.
+        catalogMfn:
+          type: integer
+        exemplarStatus:
+          type: string
+          description: Exemplar status flag after return (910^A; `0` = available).
+
+    CircRenewResult:
+      type: object
+      required: [loanId, ticket, item, due]
+      properties:
+        loanId:
+          type: integer
+        ticket:
+          type: string
+        item:
+          type: string
+        due:
+          type: number
+          description: New planned return time (epoch seconds).
+
+    CircFine:
+      type: object
+      description: One outstanding fine row for a reader.
+      required: [id, fineId, loanId, amount, kind, status, reason, paid]
+      properties:
+        id:
+          type: integer
+        fineId:
+          type: integer
+          description: Alias of `id`.
+        loanId:
+          type: integer
+          description: Loan the fine is attached to.
+        amount:
+          type: number
+        kind:
+          type: string
+          enum: [fine_overdue, lost_replacement]
+        status:
+          type: string
+          enum: [accrued, charged]
+          description: Outstanding statuses only (paid/waived are excluded).
+        reason:
+          type: string
+          description: Alias of `kind`.
+        paid:
+          type: boolean
+          description: True when `status` is `paid` (always false for outstanding rows).
+
+    CircFinesResult:
+      type: object
+      required: [ticket, total, currency, items]
+      properties:
+        ticket:
+          type: string
+        total:
+          type: number
+          description: Total outstanding amount.
+        currency:
+          type: string
+          description: Fine currency (policy, e.g. RUB).
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CircFine"

@@ -30,6 +30,30 @@
 
 ---
 
+## 0bis. Статус-матрица аудита V1–V11 → текущая позиция продукта
+
+> Аудит ([AUDIT_REPORT_IRBIS64_compliance](../../AUDIT_REPORT_IRBIS64_compliance.md)) выявил 11 несоответствий **легаси-установки САБ ИРБИС64+** (`C:\IRBIS64`). Эта матрица отображает каждую находку на **текущую позицию продукта Biblio** (мультиарендный SaaS + edge, `irbis-web/backend` + `server-own`) — что **уже реализовано**, что **landing в этой фазе** (MVP Phase 3, [#199](https://github.com/Rivega42/biblio/issues/199), эпик [#223](https://github.com/Rivega42/biblio/issues/223)), и что **остаётся** (честно — вне MVP). Объект-классификации продукта — [UZ_CLASSIFICATION](../../compliance/UZ_CLASSIFICATION.md); согласия/забвение-политика — [CONSENT_POLICY](../../compliance/CONSENT_POLICY.md).
+>
+> Легенда: ✅ реализовано · 🟡 landing this phase (спроектировано, эндпоинты вводятся) · ⏳ остаётся (вне MVP) · ⚪ организационное (на стороне оператора).
+
+| № | Находка аудита (легаси) | Позиция продукта Biblio | Состояние | Доказательство в коде продукта |
+|---|---|---|---|---|
+| **V1** | ПДн не зашифрованы при хранении (открытые ISIS `.mst/.xrf/.ifp`) | per-tenant envelope-шифрование ПДн at-rest (PostgreSQL/SQLite + KMS), крипто-стирание | 🟡 landing (механика [SPEC_pki_keys §1.4/§5.2](../platform/SPEC_pki_keys.md)); реализован реестр ПДн-полей + минимизация | разд. 5.2; [SPEC_pki_keys §1](../platform/SPEC_pki_keys.md) |
+| **V2** | Пароли/секреты в `*.ini` открытым текстом | секреты в env / `.env.example` (→ Vault/SOPS в проде), `*Ref` в конфиге, никогда plaintext | ✅ реализовано (env) | `.env.example`, `irbis-web/.env.example`, `deploy/.env.example`; [SPEC_pki_keys §5](../platform/SPEC_pki_keys.md) |
+| **V3** | Пароль читателя — plaintext / несолёный MD5 | **pbkdf2-sha256** (200 000 итераций, 16-байт соль, `hmac.compare_digest`) | ✅ реализовано | `irbis-web/backend/access/store.py` (`hash_password`/`verify_password`) |
+| **V4** | Канал клиент↔сервер — открытый TCP без TLS | TLS-терминация в reverse-proxy (TLSv1.2/1.3), HTTPS :443 → backend | ✅ реализовано (deploy) | `deploy/proxy/nginx.conf` (`listen 443 ssl`, `ssl_protocols TLSv1.2 TLSv1.3`) |
+| **V5** | Нет журнала доступа к ПДн; логи редактируемые, без ретенции | append-only журнал доступа к ПДн (`pdn_access_log`), экспорт для проверок, ретенция per-tenant | 🟡 landing — `GET /api/admin/pdn-access` | разд. 3; [CONSENT_POLICY §5](../../compliance/CONSENT_POLICY.md) |
+| **V6** | Сертифицированные СКЗИ не применяются | абстракция крипто-провайдера (AEAD ↔ ГОСТ-СКЗИ по УЗ); сертифицированное СКЗИ для УЗ-2 | ⏳ **вне MVP** — требует CryptoPro/VipNet + орг-процесс лицензиата ФСБ/ФСТЭК | разд. 5.2; [SPEC_pki_keys §4.1/§0.2](../platform/SPEC_pki_keys.md) |
+| **V7** | Орг-режим работы со СКЗИ/ключами отсутствует | ОКЗ, поэкземплярный учёт, хранение/уничтожение ключей, four-eyes на destroy | ⏳ **вне MVP** — орг-процесс оператора (ФАПСИ-152); продукт даёт four-eyes + аудит ключевых операций | ⚪ оператор; [SPEC_pki_keys §5.3/§5.4](../platform/SPEC_pki_keys.md) |
+| **V8** | Электронная подпись не применяется | PKI-ветвь: ЭП ГОСТ Р 34.10-2012 через сертифицированное СКЗИ (СМЭВ/гос-обмен) | ⏳ остаётся (gov-интеграции) — спроектировано, исполнение с СКЗИ вне MVP | [SPEC_pki_keys §4](../platform/SPEC_pki_keys.md); SPEC_gov_exchange |
+| **V9** | Нет слоя согласий / права на удаление / минимизации | слой `consent` (версионируемый, гранулярный) + erasure-workflow + минимизация | 🟡 landing — `POST /api/reader/consent`, `POST /api/reader/erase` | разд. 2/4; [CONSENT_POLICY](../../compliance/CONSENT_POLICY.md) |
+| **V10** | ИСПДн не классифицирована (нет акта УЗ / модели угроз / перечня ПДн) | акт классификации + перечень ПДн + модель угроз + УЗ per-tenant | ✅ **закрыто этим документом-набором** — [UZ_CLASSIFICATION](../../compliance/UZ_CLASSIFICATION.md) | разд. 1; [UZ_CLASSIFICATION](../../compliance/UZ_CLASSIFICATION.md) |
+| **V11** | Широкий доступ по умолчанию, нет гранулярных прав | гранты `(функция×база×уровень)` + **public-DB-guard** (non-staff confined к public allow-list) | ✅ реализовано | `irbis-web/backend/core.py` `_public_db_guard` / `_guard` (RDR/LICH/LOG* недоступны reader) |
+
+**Сводка позиции продукта:** из 11 находок легаси — **5 реализовано** (V2 секреты-в-env, V3 pbkdf2, V4 TLS, V10 классификация, V11 гранулярный доступ), **3 landing в этой фазе** (V1 шифрование at-rest, V5 журнал доступа к ПДн, V9 согласия+забвение — с эндпоинтами `/api/admin/pdn-access`, `/api/reader/consent`, `/api/reader/erase`), **3 остаются вне MVP** (V6/V7 сертифицированные СКЗИ + орг-режим ФАПСИ-152 — требуют CryptoPro + лицензиата ФСБ; V8 ЭП — с gov-интеграциями). Это **не** «всё закрыто»: УЗ-2/защищённый контур требует сертифицированных СКЗИ и аттестации лицензиатом ФСТЭК на объекте оператора (разд. 6).
+
+---
+
 ## 1. Классификация ИСПДн
 
 ### 1.1 Какие данные продукта — ПДн (инвентарь по recon)
