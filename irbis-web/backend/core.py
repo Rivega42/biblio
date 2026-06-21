@@ -23,6 +23,8 @@ from access.authz import authorize, READER_GRANTS, GUEST_GRANTS
 from access.seed import seed
 from access import jwt as _jwt
 from access import entitlements
+from access import billing as _billing
+from access import provision as _provision
 from access import flk
 from access import notifications as _notifications
 from access import circulation as _circulation
@@ -857,6 +859,21 @@ class Api:
         """Create (mfn=0) or overwrite a record. Guarded by record.write + audited.
         body: {fields:[{tag, value}]} where value already carries ^subfields."""
         self._guard(session, 'record.write', db, 'write')
+        # Billing soft enforcement (#209): on a CREATE, refuse if the tenant's plan
+        # caps max_records and we'd exceed it. Best-effort + off by default — a
+        # plan-less tenant (dev/public, or pro/unlimited) always passes; any count
+        # error fails open (never blocks a write because billing couldn't count).
+        if mfn == 0:
+            tenant = session.get('tenant', DEFAULT_TENANT)
+            try:
+                current = int(self.irbis.max_mfn(db)) + 1
+                if not _billing.check_limit(self.access, tenant, 'max_records', current):
+                    raise Denied(402, 'plan_limit',
+                                 'plan record limit reached for %s' % db)
+            except Denied:
+                raise
+            except Exception:
+                pass                # counting failed → fail open (don't block writes)
         version = 0
         if mfn > 0:
             try:
@@ -1728,6 +1745,138 @@ class Api:
         return 200, ok({'items': payload['data']['items'],
                         'default': payload['data'].get('default')})
 
+    # ---- Platform admin: tenant provisioning + billing (MVP Phase 2, #207/#209) ----
+    # These are CROSS-tenant control-plane surfaces (provision a NEW tenant, set a
+    # tenant's plan/modules). They are super-admin only: gated by ``admin.db`` at
+    # the admin level — the highest seeded admin grant (only the 'administrator'
+    # role carries it). A reader/guest is rejected by ``_require_staff`` up front; a
+    # non-admin staff session lacks ``admin.db`` so ``_guard`` 403s it. On the
+    # sqlite dev box there is no control plane, so provisioning/billing degrade
+    # sensibly (single 'public' store; plan reported but not persisted) — the routes
+    # still work end-to-end so the suite runs on sqlite, and bite for real on PG.
+    def _require_super_admin(self, session):
+        """Platform-admin gate (staff + ``admin.db`` at admin), or raise Denied."""
+        self._require_staff(session)
+        self._guard(session, 'admin.db', '*', 'admin')
+
+    def admin_tenants(self, session):
+        """GET /api/admin/tenants — every provisioned tenant {slug,name,kind,plan}.
+
+        Reads the control catalog (``provision.list_tenants`` → joins the billing
+        plan). On sqlite dev there is no control plane, so this returns the single
+        DEFAULT_TENANT with its default plan so the surface is non-empty in dev."""
+        self._require_super_admin(session)
+        tenants = _provision.list_tenants()
+        if not tenants:
+            # sqlite dev / no control plane: surface the single tenant we serve.
+            tenants = [{'slug': DEFAULT_TENANT, 'name': DEFAULT_TENANT,
+                        'kind': None, 'plan': _billing.get_tenant_plan(DEFAULT_TENANT)}]
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok', {'op': 'tenants'})
+        return 200, ok({'tenants': tenants})
+
+    def admin_create_tenant(self, session, body):
+        """POST /api/admin/tenant {slug,name,adminLogin,plan?} — provision a tenant.
+
+        Drives ``provision.provision_tenant``: schema (PG) / seeded store (sqlite) →
+        vocabularies → admin account (administrator role) → plan + entitlements.
+        Idempotent. The admin password defaults to $ADMIN_DEFAULT_PASSWORD (no
+        secret in the request); a caller may pass ``adminPassword``. Audited."""
+        self._require_super_admin(session)
+        slug = (body.get('slug') or '').strip()
+        if not slug:
+            return 400, err('bad_request', 'slug required')
+        name = (body.get('name') or slug).strip()
+        admin_login = (body.get('adminLogin') or 'admin').strip()
+        plan = (body.get('plan') or _billing.DEFAULT_PLAN).strip()
+        if not _billing.is_plan(plan):
+            return 400, err('bad_request', 'unknown plan: %s' % plan)
+        admin_password = body.get('adminPassword')
+        kind = (body.get('kind') or _provision.DEFAULT_KIND).strip()
+        try:
+            report = _provision.provision_tenant(
+                self.access, slug, name, admin_login,
+                admin_password=admin_password, plan=plan, kind=kind)
+        except _billing.BillingError as e:
+            return 400, err('bad_request', str(e))
+        except ValueError as e:                       # invalid slug, etc.
+            return 400, err('bad_request', str(e))
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok',
+            {'op': 'provision', 'slug': slug, 'plan': report['plan']})
+        return 200, ok({'slug': slug, 'name': name, 'plan': report['plan'],
+                        'modules': report['modules'],
+                        'admin': report['admin'], 'postgres': report['postgres']})
+
+    def admin_billing(self, session, tenant):
+        """GET /api/admin/billing?tenant= — a tenant's plan, limits, usage, modules.
+
+        Resolves the plan (``billing.get_tenant_plan``), its declared limits, a
+        best-effort usage snapshot, and the enabled module list. Defaults to the
+        session's own tenant when ``?tenant=`` is omitted."""
+        self._require_super_admin(session)
+        tenant = (tenant or session.get('tenant') or DEFAULT_TENANT).strip() or DEFAULT_TENANT
+        plan = _billing.get_tenant_plan(tenant)
+        store = self._store_for(tenant)
+        usage = _billing.tenant_usage(store, tenant)
+        return 200, ok({
+            'tenant': tenant, 'plan': plan,
+            'limits': _billing.plan_limits(plan),
+            'usage': usage,
+            'modules': entitlements.enabled_modules(tenant),
+            'plans': _billing.plans_catalog(),
+        })
+
+    def admin_set_plan(self, session, body):
+        """POST /api/admin/billing/plan {tenant,plan} — assign a plan + apply modules.
+
+        ``billing.set_tenant_plan`` records the plan and drives entitlements so
+        exactly the plan's modules are enabled. Audited."""
+        self._require_super_admin(session)
+        tenant = (body.get('tenant') or '').strip()
+        if not tenant:
+            return 400, err('bad_request', 'tenant required')
+        plan = (body.get('plan') or '').strip()
+        if not _billing.is_plan(plan):
+            return 400, err('bad_request', 'unknown plan: %s' % plan)
+        info = _billing.set_tenant_plan(self._store_for(tenant), tenant, plan)
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok',
+            {'op': 'plan', 'tenant': tenant, 'plan': plan})
+        return 200, ok({'tenant': tenant, 'plan': info['plan'],
+                        'modules': info['modules'],
+                        'limits': _billing.plan_limits(plan),
+                        'applied': info['applied']})
+
+    def admin_set_module(self, session, body):
+        """POST /api/admin/billing/module {tenant,module,enabled} — toggle one entitlement.
+
+        A targeted override on top of the plan (e.g. trial-enable acquisition).
+        Best-effort on the sqlite dev path (no control plane → reported, not
+        persisted). Audited."""
+        self._require_super_admin(session)
+        tenant = (body.get('tenant') or '').strip()
+        if not tenant:
+            return 400, err('bad_request', 'tenant required')
+        module = (body.get('module') or '').strip()
+        if not module:
+            return 400, err('bad_request', 'module required')
+        enabled = bool(body.get('enabled'))
+        applied = True
+        if entitlements._is_public(tenant):
+            applied = False                  # dev/public: fail-open, nothing to persist
+        else:
+            try:
+                entitlements.set_module(tenant, module, enabled)
+            except Exception as e:
+                return 400, err('bad_request', str(e))
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok',
+            {'op': 'module', 'tenant': tenant, 'module': module, 'enabled': enabled})
+        return 200, ok({'tenant': tenant, 'module': module,
+                        'enabled': enabled, 'applied': applied,
+                        'modules': entitlements.enabled_modules(tenant)})
+
     def vocab_list(self, session):
         """List the session tenant's dictionaries (name/title/kind/seed_version).
 
@@ -1940,6 +2089,17 @@ class Api:
                 return self.admin_audit(session, limit)
             if method == 'GET' and path == '/api/admin/databases':
                 return self.admin_databases(session)
+            # ---- Platform admin: tenant provisioning + billing (#207/#209) ----
+            if method == 'GET' and path == '/api/admin/tenants':
+                return self.admin_tenants(session)
+            if method == 'POST' and path == '/api/admin/tenant':
+                return self.admin_create_tenant(session, body or {})
+            if method == 'GET' and path == '/api/admin/billing':
+                return self.admin_billing(session, query.get('tenant', [''])[0])
+            if method == 'POST' and path == '/api/admin/billing/plan':
+                return self.admin_set_plan(session, body or {})
+            if method == 'POST' and path == '/api/admin/billing/module':
+                return self.admin_set_module(session, body or {})
             # ---- Циркуляция / выдача (circulation desk) — staff-only (#185) ----
             if method == 'GET' and path == '/api/circ/reader':
                 return self.circ_reader(session, (query.get('ticket', [''])[0] or '').strip())
