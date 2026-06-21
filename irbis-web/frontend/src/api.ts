@@ -183,6 +183,25 @@ export interface AuditEntry {
 // База данных контура (для справочника администратора): код, имя, публичность.
 export interface AdminDatabase { code: string; name: string; public: boolean; count?: number; }
 
+// --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) ----------
+// Арендатор (tenant) контура SaaS: слаг (короткий ключ), наименование, тариф,
+// дата создания, опц. список включённых функциональных модулей. Бэкенд
+// (#207/#209) публикуется отдельно — клиент деградирует на 404/501.
+export interface Tenant {
+  slug: string; name: string; plan: string;
+  createdAt?: string; modules?: string[];
+}
+// Лимиты тарифа: верхние границы по записям, читателям и хранилищу (МБ).
+export interface PlanLimits { maxRecords: number; maxReaders: number; maxStorageMb: number; }
+// Тариф и потребление выбранного арендатора: текущий план, лимиты, фактическое
+// потребление (records/readers/storageMb) и карта включённости модулей.
+export interface BillingInfo {
+  plan: string;
+  limits: PlanLimits;
+  usage: { records: number; readers: number; storageMb: number };
+  modules: Record<string, boolean>;
+}
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -370,6 +389,22 @@ export const api = {
   adminAudit: (limit = 50) => jget<{ items: AuditEntry[] }>("/api/admin/audit?" + qs({ limit })),
   // Список баз данных контура (код / имя / публичность).
   adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
+
+  // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) -------
+  // Список арендаторов контура. 404/501 → degrade (информер).
+  adminTenants: () => jget<{ tenants: Tenant[] }>("/api/admin/tenants"),
+  // Создать (провизионировать) арендатора: слаг, наименование, логин админа,
+  // тариф. → {slug}. 404/501/403 → degrade.
+  adminCreateTenant: (t: { slug: string; name: string; adminLogin: string; plan: string }) =>
+    jpost<{ slug: string }>("/api/admin/tenant", t),
+  // Тариф, лимиты, потребление и модули выбранного арендатора.
+  adminBilling: (tenant: string) => jget<BillingInfo>("/api/admin/billing?" + qs({ tenant })),
+  // Сменить тариф арендатора.
+  adminSetPlan: (tenant: string, plan: string) =>
+    jpost<BillingInfo>("/api/admin/billing/plan", { tenant, plan }),
+  // Включить / отключить функциональный модуль арендатора.
+  adminSetModule: (tenant: string, module: string, enabled: boolean) =>
+    jpost<BillingInfo>("/api/admin/billing/module", { tenant, module, enabled }),
 };
 
 export const LANG: Record<string, string> = {
