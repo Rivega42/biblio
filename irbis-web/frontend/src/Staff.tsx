@@ -8,21 +8,25 @@ import { EmptyState } from "../components/feedback/EmptyState.jsx";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { DynamicField } from "../components/cataloging/DynamicField.jsx";
 import { CirculationDesk } from "./CirculationDesk";
+import { AcquisitionDesk } from "./AcquisitionDesk";
+import { BookProvisionDesk } from "./BookProvisionDesk";
+import { AdminDesk } from "./AdminDesk";
 
 export interface StaffSession { name?: string; login: string; grants: Grant[]; }
 type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) => void;
 
 // Функциональные модули продукта «Рабочее пространство сотрудника».
 // Собираются ПО ГРАНТАМ учётки (а не «по АРМам»): видны только разрешённые.
-type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: "cataloging" | "circulation" | "cells" | "stub" };
+type StaffRoute = "cataloging" | "circulation" | "cells" | "acquisition" | "provision" | "admin" | "stub";
+type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: StaffRoute };
 const DOMAINS: DomainTile[] = [
   { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей RUSMARC", route: "cataloging" as const },
-  { id: "acq", label: "Комплектование", icon: "archive", grant: "acq.receipt", desc: "Заказ, поступление, КСУ, списание", route: "stub" as const },
+  { id: "acq", label: "Комплектование", icon: "archive", grant: "acq.receipt", desc: "Заказ, поступление, КСУ, списание", route: "acquisition" as const },
   { id: "circ", label: "Книговыдача", icon: "package", grant: "circ.issue", desc: "Выдача, возврат, продление, штрафы, формуляр читателя", route: "circulation" as const },
   { id: "cells", label: "Ячеистое хранение", icon: "grid", grant: "record.read", desc: "Карта ячеек: занятость, адрес, RFID (наша фишка)", route: "cells" as const },
-  { id: "provision", label: "Книгообеспеченность", icon: "bar-chart", grant: "record.read", desc: "Обеспеченность дисциплин учебной литературой", route: "stub" as const },
+  { id: "provision", label: "Книгообеспеченность", icon: "bar-chart", grant: "record.read", desc: "Обеспеченность дисциплин учебной литературой", route: "provision" as const },
   { id: "inv", label: "Инвентаризация", icon: "scan-line", grant: "record.read", desc: "Сверка фонда с ТСД", route: "stub" as const },
-  { id: "admin", label: "Администрирование", icon: "sliders", grant: "admin.users", desc: "Учётки, гранты, роли, аудит", route: "stub" as const },
+  { id: "admin", label: "Администрирование", icon: "sliders", grant: "admin.users", desc: "Учётки, гранты, роли, аудит", route: "admin" as const },
 ];
 const hasGrant = (grants: Grant[], fn: string) => (grants || []).some((g) => g.function === fn);
 
@@ -204,6 +208,9 @@ function routeId(route: any): string {
   if (route === "cataloging") return "cataloging";
   if (route === "circulation") return "circulation";
   if (route === "cells") return "cells";
+  if (route === "acquisition") return "acquisition";
+  if (route === "provision") return "provision";
+  if (route === "admin") return "admin";
   if (route === "desktop" || !route) return "desktop";
   return "stub";
 }
@@ -219,6 +226,9 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
     current === "cataloging" ? "Каталогизация" :
     current === "circulation" ? "Книговыдача" :
     current === "cells" ? "Ячеистое хранение" :
+    current === "acquisition" ? "Комплектование" :
+    current === "provision" ? "Книгообеспеченность" :
+    current === "admin" ? "Администрирование" :
     current === "stub" ? stubTitle :
     "Рабочий стол";
 
@@ -275,6 +285,9 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
         <div className="stf__body">
           {current === "cataloging" ? <CatalogingWorksheet staff={staff} toast={toast} />
             : current === "circulation" ? <CirculationDesk toast={toast} />
+            : current === "acquisition" ? <AcquisitionDesk toast={toast} />
+            : current === "provision" ? <BookProvisionDesk toast={toast} />
+            : current === "admin" ? <AdminDesk toast={toast} />
             : current === "cells" ? <CellMap />
             : current === "stub" ? <StaffStub title={stubTitle} onOpen={() => setRoute("cataloging")} />
             : <StaffDesktop staff={staff} tiles={tiles} onOpen={open} />}

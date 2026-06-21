@@ -109,6 +109,80 @@ export interface CircFines { ticket: string; total: number; items: CircFine[]; }
 // Результат операции выдачи/возврата/продления: обновлённый займ + сообщение.
 export interface CircActionResult { ok?: boolean; message?: string; loan?: CircLoan; block?: string; }
 
+// --- Комплектование (#184) -------------------------------------------------
+// Заказ на комплектование: издание, поставщик, число экземпляров, цена,
+// источник финансирования. status — стадия (создан / отправлен / частично
+// получен / получен / отменён); statusLabel — человекочитаемая метка.
+export interface AcqOrder {
+  id: string | number; title: string; author?: string; supplier?: string;
+  copies: number; price?: number; funding_source?: string;
+  status?: string; statusLabel?: string; created?: string;
+  received?: number; ksuNo?: string; canceled?: boolean;
+}
+// Строка КСУ (книга суммарного учёта) — итог поступления партии: номер записи
+// КСУ, дата, число и сумма поступивших экземпляров, ссылка на акт/счёт.
+export interface KsuEntry {
+  no: string; date?: string; copies?: number; sum?: number;
+  actRef?: string; orderId?: string | number; supplier?: string;
+}
+// Результат поступления (POST /api/acq/receive): запись КСУ + результат ToCat
+// (создание/правка каталожной записи) с MFN созданной/обновлённой записи.
+export interface AcqReceiveResult {
+  ksu?: KsuEntry; ksuNo?: string;
+  mfn?: number; db?: string; created?: boolean; toCat?: boolean;
+  copies?: number; message?: string;
+}
+
+// --- Книгообеспеченность (#186) --------------------------------------------
+// Структура связки: факультет → специальность → дисциплина. Идентификаторы
+// возвращает сервер при создании; код/наименование — реквизиты карточки.
+export interface BpFaculty { id: string | number; code: string; name: string; }
+export interface BpSpecialty {
+  id: string | number; facultyId?: string | number;
+  napr?: string; spec?: string; vid?: string; form?: string; name: string;
+}
+export interface BpDiscipline {
+  id: string | number; specialtyId?: string | number;
+  discId?: string; name: string; semester?: number; students?: number;
+}
+// Привязанная к дисциплине литература: вид (осн./доп.), число экземпляров.
+//   kind: 'main' — основная, 'extra' — дополнительная.
+export interface BpBinding {
+  id?: string | number; title: string; kind: "main" | "extra";
+  copies: number; mfn?: number; author?: string;
+}
+// Коэффициент книгообеспеченности (Кко). value — сам коэффициент (экз/чел);
+// underProvided — флаг недообеспеченности (value < норматива); shortfall —
+// дефицит экземпляров до норматива; norm — применённый норматив.
+export interface BpKko {
+  value: number; norm?: number; underProvided: boolean; shortfall?: number;
+  students?: number; copies?: number; normalized?: boolean;
+}
+// Карточка дисциплины с расчётом Кко: реквизиты + привязки + коэффициент.
+export interface BpDisciplineCard {
+  discipline: BpDiscipline; bindings: BpBinding[]; kko?: BpKko;
+}
+// Карточка специальности: дисциплины с их Кко + сводный Кко по специальности.
+export interface BpSpecialtyCard {
+  specialty: BpSpecialty; disciplines: BpDisciplineCard[]; kko?: BpKko;
+}
+
+// --- Администрирование (#187) ----------------------------------------------
+// Учётная запись сотрудника: логин, ФИО, активность, набор ролей.
+export interface AdminUser {
+  id: string | number; login: string; fullName?: string;
+  active: boolean; roles: string[]; created?: string; lastLogin?: string;
+}
+// Роль (справочник): код, наименование, состав грантов (для подсказки оператору).
+export interface AdminRole { code: string; name?: string; grants?: string[]; description?: string; }
+// Запись аудита: метка времени, актор (логин), функция (операция), результат.
+export interface AuditEntry {
+  ts?: string; actor?: string; function?: string; fn?: string;
+  result?: string; ok?: boolean; detail?: string; ip?: string;
+}
+// База данных контура (для справочника администратора): код, имя, публичность.
+export interface AdminDatabase { code: string; name: string; public: boolean; count?: number; }
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -237,6 +311,65 @@ export const api = {
   saveSearch: (name: string, db: string, prefix: string, query: string) =>
     jpost<SavedSearch>("/api/savedsearch", { name, db, prefix, query }),
   deleteSavedSearch: (id: string | number) => jpost("/api/savedsearch/delete", { id }),
+
+  // --- Комплектование (#184) ----------------------------------------------
+  // Создать заказ на комплектование. → AcqOrder. 404/501 → degrade (информер).
+  acqOrder: (o: { title: string; author?: string; supplier?: string; copies: number; price?: number; funding_source?: string }) =>
+    jpost<AcqOrder>("/api/acq/order", o),
+  // Отменить заказ (до поступления).
+  acqCancelOrder: (id: string | number) => jpost<AcqOrder>("/api/acq/order/cancel", { id }),
+  // Оформить поступление по заказу → запись КСУ + ToCat (создание/правка
+  // каталожной записи). Возвращает номер КСУ и MFN созданной/обновлённой записи.
+  acqReceive: (r: { orderId: string | number; ksuNo?: string; copies: number; unitPrice?: number; invNumbers?: string[]; actRef?: string }) =>
+    jpost<AcqReceiveResult>("/api/acq/receive", r),
+  // Получить заказ по идентификатору (для обновления карточки / списка).
+  acqGetOrder: (id: string | number) => jget<{ items?: AcqOrder[]; order?: AcqOrder }>("/api/acq/order?" + qs({ id })),
+  // Лента/список заказов (без id). 404 → degrade.
+  acqOrders: () => jget<{ items: AcqOrder[] }>("/api/acq/order"),
+  // Найти запись КСУ по номеру.
+  acqKsu: (no: string) => jget<{ entry?: KsuEntry; items?: KsuEntry[] }>("/api/acq/ksu?" + qs({ no })),
+
+  // --- Книгообеспеченность (#186) -----------------------------------------
+  // Создать факультет связки.
+  bpFaculty: (f: { code: string; name: string }) => jpost<BpFaculty>("/api/bp/faculty", f),
+  // Создать специальность под факультетом.
+  bpSpecialty: (s: { facultyId: string | number; napr?: string; spec?: string; vid?: string; form?: string; name: string }) =>
+    jpost<BpSpecialty>("/api/bp/specialty", s),
+  // Создать дисциплину под специальностью (семестр, число студентов).
+  bpDiscipline: (d: { specialtyId: string | number; discId?: string; name: string; semester?: number; students?: number }) =>
+    jpost<BpDiscipline>("/api/bp/discipline", d),
+  // Задать контингент (число студентов) дисциплины — пересчитывает Кко.
+  bpContingent: (c: { discId: string | number; students: number }) =>
+    jpost<BpDiscipline>("/api/bp/contingent", c),
+  // Привязать литературу (осн./доп.) к дисциплине.
+  bpBind: (b: { disciplineId: string | number; title: string; kind: "main" | "extra"; copies: number }) =>
+    jpost<BpBinding>("/api/bp/bind", b),
+  // Карточка дисциплины с расчётом Кко. normalize — применить нормализацию
+  // (учёт многоразового использования/семестровой нагрузки) при расчёте.
+  bpDisciplineCard: (id: string | number, normalize = false) =>
+    jget<BpDisciplineCard>("/api/bp/discipline?" + qs({ id, normalize: normalize ? 1 : 0 })),
+  // Карточка специальности: дисциплины с Кко + сводный Кко.
+  bpSpecialtyCard: (id: string | number, normalize = false) =>
+    jget<BpSpecialtyCard>("/api/bp/specialty?" + qs({ id, normalize: normalize ? 1 : 0 })),
+
+  // --- Администрирование (#187) -------------------------------------------
+  // Список учётных записей сотрудников.
+  adminUsers: () => jget<{ items: AdminUser[] }>("/api/admin/users"),
+  // Создать учётную запись (логин, ФИО, пароль, опц. роли).
+  adminCreateUser: (u: { login: string; fullName: string; password: string; roles?: string[] }) =>
+    jpost<AdminUser>("/api/admin/users", u),
+  // Назначить набор ролей пользователю.
+  adminSetRoles: (userId: string | number, roles: string[]) =>
+    jpost<AdminUser>("/api/admin/users/roles", { userId, roles }),
+  // Включить / отключить учётную запись.
+  adminSetActive: (userId: string | number, active: boolean) =>
+    jpost<AdminUser>("/api/admin/users/active", { userId, active }),
+  // Справочник ролей.
+  adminRoles: () => jget<{ items: AdminRole[] }>("/api/admin/roles"),
+  // Журнал аудита (последние limit записей).
+  adminAudit: (limit = 50) => jget<{ items: AuditEntry[] }>("/api/admin/audit?" + qs({ limit })),
+  // Список баз данных контура (код / имя / публичность).
+  adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
 };
 
 export const LANG: Record<string, string> = {
