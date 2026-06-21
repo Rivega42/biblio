@@ -29,6 +29,7 @@ import { ReviewPanel } from "./reader/ReviewPanel";
 import { SimilarRecommendations, ForYouRecommendations } from "./reader/Recommendations";
 import { HistoryTab } from "./reader/HistoryTab";
 import { SaveSearchButton, SavedSearchMenu, SavedSearchesPanel } from "./reader/SavedSearches";
+import { ConsentBanner, ConsentToggle, EraseDataCard } from "./reader/Consent";
 import { DocViewer } from "./reader/DocViewer";
 import type { DocPage } from "./reader/DocViewer";
 import type { SavedSearch } from "./api";
@@ -423,7 +424,7 @@ export function App() {
         ) : view === "cabinet" ? (
           <CabinetScreen cab={cab} ticket={account.ticket} toast={toast} holdsRefresh={holdsRefresh}
             onOpenRecord={(database, mfn) => { setView("search"); setHome(false); openRecord(mfn, database); }}
-            onRunSearch={(s) => runSavedSearch(s)}
+            onRunSearch={(s) => runSavedSearch(s)} onErased={() => { setHoldsRefresh((n) => n + 1); loadCabinet(); }}
             onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
         ) : home && !rec ? (
           /* Discovery façade (G1-G3, G17) — лендинг до первого поиска. */
@@ -612,6 +613,9 @@ export function App() {
       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
       {basketOpen && <BasketPanel items={basket} onClose={() => setBasketOpen(false)} onRemove={removeFromBasket} onClear={() => setBasket([])} toast={toast} />}
       {docView && <DocViewer pages={docView.pages} startIndex={docView.idx} title={docView.title} onClose={() => setDocView(null)} />}
+      {/* Согласие на обработку ПДн (#199) — баннер первого сеанса. Только для вошедшего
+          читателя (не гость, не контекст сотрудника). Сам прячется при given/404. */}
+      {context === "reader" && account.loggedIn && <ConsentBanner toast={toast} />}
       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
     </div>
   );
@@ -758,7 +762,7 @@ function toneDot(tone: LoanView["tone"]): React.CSSProperties {
   return { width: 6, height: 6, borderRadius: 999, background: c, flex: "none" };
 }
 
-function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSearch, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; holdsRefresh?: number; onOpenRecord?: (db: string, mfn: number) => void; onRunSearch?: (s: SavedSearch) => void; onBack: () => void; onLogout: () => void }) {
+function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSearch, onErased, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; holdsRefresh?: number; onOpenRecord?: (db: string, mfn: number) => void; onRunSearch?: (s: SavedSearch) => void; onErased?: () => void; onBack: () => void; onLogout: () => void }) {
   const [cabTab, setCabTab] = React.useState<"formular" | "orders" | "history" | "saved">("formular");
   const today = React.useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const loans = React.useMemo(() => (cab?.loans || []).map((l) => buildLoan(l, today)), [cab, today]);
@@ -908,6 +912,19 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSe
 
           {/* Мои полки — реальные списки GET /api/shelves (#222). При 404/501 секция прячется. */}
           <ShelvesPanel cardSx={cardSx} h2Sx={h2Sx} toast={toast} onOpenRecord={onOpenRecord} />
+
+          {/* Конфиденциальность (#199, 152-ФЗ): согласие на обработку ПДн + право на
+              забвение. Тумблер прячется при отсутствии эндпойнта; карточка удаления
+              деградирует тостом. Каталог библиотеки правом на забвение не затрагивается. */}
+          <section aria-labelledby="cab-privacy">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+              <h2 id="cab-privacy" style={h2Sx}>Конфиденциальность</h2>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <ConsentToggle cardSx={cardSx} toast={toast} />
+              <EraseDataCard cardSx={cardSx} toast={toast} onErased={onErased} />
+            </div>
+          </section>
           </>
           )}
 

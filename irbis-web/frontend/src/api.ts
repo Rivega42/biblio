@@ -226,6 +226,23 @@ export interface BillingInfo {
   plans?: PlanCatalogItem[];
 }
 
+// --- Соответствие 152-ФЗ: согласие · право на забвение · журнал ПДн ----------
+// (MVP фаза 3, аудит V9/V5; #199, epic #223). Бэкенд приземляется отдельно —
+// клиент деградирует на 404/501 (информер/тихий тост), портал не падает.
+// Согласие читателя на обработку ПДн: given — дано ли; ts — отметка времени
+// последнего изменения; version — версия политики/уведомления, на которую
+// дано согласие (для повторного запроса при обновлении уведомления).
+export interface ConsentState { given: boolean; ts?: string; version?: string; }
+// Результат права на забвение (POST /api/reader/erase): счётчики удалённого по
+// категориям читательских данных. Каталожные записи библиотеки НЕ затрагиваются.
+export interface ErasureResult {
+  reviews?: number; holds?: number; shelves?: number; history?: number; savedSearches?: number;
+}
+// Запись журнала доступа к ПДн (GET /api/admin/pdn-access): ts — когда; actor —
+// кто обращался (логин сотрудника/система); subject — субъект ПДн (билет
+// читателя); action — что сделано (просмотр формуляра, выгрузка, правка, …).
+export interface PdnAccessEntry { ts?: string; actor?: string; subject?: string; action?: string; }
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -436,6 +453,18 @@ export const api = {
   adminSetModule: (tenant: string, module: string, enabled: boolean) =>
     jpost<{ tenant: string; module: string; enabled: boolean; applied: boolean; modules: string[] }>(
       "/api/admin/billing/module", { tenant, module, enabled }),
+
+  // --- Соответствие 152-ФЗ (#199; MVP фаза 3) ------------------------------
+  // Текущее согласие читателя на обработку ПДн. 404/501 → согласие не запрашиваем.
+  readerConsent: () => jget<ConsentState>("/api/reader/consent"),
+  // Дать / отозвать согласие на обработку ПДн. → {ok}. 404/501/401 → degrade.
+  setReaderConsent: (given: boolean) => jpost<{ ok: boolean }>("/api/reader/consent", { given }),
+  // Право на забвение: удалить читательские данные (отзывы/брони/полки/история/
+  // запросы). confirm:true — обязательное подтверждение. Каталог библиотеки не
+  // трогается. → {erased:{…счётчики}}. 404/501/401 → degrade.
+  eraseReaderData: () => jpost<{ erased: ErasureResult }>("/api/reader/erase", { confirm: true }),
+  // Журнал доступа к ПДн (последние limit записей) — для админ-деска. 404/501 → информер.
+  pdnAccess: (limit = 50) => jget<{ items: PdnAccessEntry[] }>("/api/admin/pdn-access?" + qs({ limit })),
 };
 
 export const LANG: Record<string, string> = {

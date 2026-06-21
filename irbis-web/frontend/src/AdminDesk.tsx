@@ -9,7 +9,7 @@
 // вкладке, остальные продолжают работать; приложение не падает.
 import React from "react";
 import { api } from "./api";
-import type { AdminUser, AdminRole, AuditEntry, AdminDatabase } from "./api";
+import type { AdminUser, AdminRole, AuditEntry, AdminDatabase, PdnAccessEntry } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -58,11 +58,12 @@ if (typeof document !== "undefined" && !document.getElementById("adm-css")) {
   const s = document.createElement("style"); s.id = "adm-css"; s.textContent = CSS; document.head.appendChild(s);
 }
 
-type Tab = "users" | "roles" | "audit" | "databases";
+type Tab = "users" | "roles" | "audit" | "pdn" | "databases";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "users", label: "Пользователи", icon: "users" },
   { id: "roles", label: "Роли", icon: "shield" },
   { id: "audit", label: "Аудит", icon: "list" },
+  { id: "pdn", label: "Доступ к ПДн", icon: "eye" },
   { id: "databases", label: "Базы", icon: "archive" },
 ];
 
@@ -82,7 +83,7 @@ export function AdminDesk({ toast }: { toast: ToastFn }) {
     <div className="stf__pagehead">
       <div className="stf__h1">
         <h2>Администрирование</h2>
-        <span className="stf__pill">Учётки · роли · аудит · базы</span>
+        <span className="stf__pill">Учётки · роли · аудит · ПДн · базы</span>
       </div>
     </div>
   );
@@ -100,6 +101,7 @@ export function AdminDesk({ toast }: { toast: ToastFn }) {
       {tab === "users" ? <UsersTab toast={toast} />
         : tab === "roles" ? <RolesTab />
         : tab === "audit" ? <AuditTab />
+        : tab === "pdn" ? <PdnAccessTab />
         : <DatabasesTab />}
     </div>
   );
@@ -325,6 +327,64 @@ function AuditTab() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== Доступ к ПДн (152-ФЗ, #199) ==========================================
+// Журнал обращений к персональным данным субъектов: когда / кто (актор) /
+// субъект (билет читателя) / действие. Лимит + обновление, как у журнала аудита.
+// 404/501 → информер (эндпойнт /api/admin/pdn-access ещё не развёрнут).
+function PdnAccessTab() {
+  const [rows, setRows] = React.useState<PdnAccessEntry[] | null>(null);
+  const [down, setDown] = React.useState(false);
+  const [limit, setLimit] = React.useState(50);
+  const [loading, setLoading] = React.useState(false);
+
+  async function load(lim: number) {
+    setLoading(true);
+    const r = await api.pdnAccess(lim);
+    setLoading(false);
+    if (r.status === 404 || r.status === 501) { setDown(true); return; }
+    if (r.json?.ok && r.json.data) setRows(r.json.data.items || []); else setRows([]);
+  }
+  React.useEffect(() => { void load(limit); }, [limit]);
+
+  if (down) return <SectionDown icon="eye" title="Журнал доступа к ПДн подключается отдельно" />;
+
+  return (
+    <div className="adm__card">
+      <div className="adm__bar">
+        <span className="adm__cap">Доступ к персональным данным · 152-ФЗ {rows ? "· " + rows.length : ""}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: "var(--text-subtle)" }}>Показывать</span>
+          <select className="adm__in" style={{ width: "auto", padding: "5px 9px" }} value={limit} onChange={(e) => setLimit(parseInt(e.target.value, 10))}>
+            {[25, 50, 100, 200].map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <Button size="sm" variant="ghost" iconLeft="refresh-cw" loading={loading} onClick={() => load(limit)}>Обновить</Button>
+        </div>
+      </div>
+      {rows === null ? (
+        <div style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка журнала ПДн…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: 4 }}><EmptyState icon="eye" title="Обращений к ПДн нет" description="Здесь фиксируется каждое обращение сотрудника или системы к персональным данным читателя — с меткой времени, актором, субъектом (билетом) и характером действия. Журнал — основа отчётности по 152-ФЗ." /></div>
+      ) : (
+        <div className="adm__scroll">
+          <table className="adm__tbl">
+            <thead><tr><th>Время</th><th>Актор</th><th>Субъект (билет)</th><th>Действие</th></tr></thead>
+            <tbody>
+              {rows.map((e, i) => (
+                <tr key={i}>
+                  <td className="adm__mono" style={{ whiteSpace: "nowrap" }}>{e.ts || "—"}</td>
+                  <td className="adm__mono">{e.actor || "—"}</td>
+                  <td className="adm__mono">{e.subject || "—"}</td>
+                  <td>{e.action || "—"}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
