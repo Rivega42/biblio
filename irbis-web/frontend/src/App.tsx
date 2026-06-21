@@ -1,7 +1,8 @@
 import React from "react";
 import { api, LANG } from "./api";
-import type { RecordData, ResultItem, FieldVal, DbItem, CabinetData } from "./api";
+import type { RecordData, ResultItem, FieldVal, DbItem, CabinetData, Facet } from "./api";
 import { Button } from "../components/forms/Button.jsx";
+import { FilterChip } from "../components/forms/FilterChip.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
 import { SearchBar } from "../components/catalog/SearchBar.jsx";
 import { ResultCard } from "../components/catalog/ResultCard.jsx";
@@ -30,6 +31,17 @@ const sf = (f: FieldVal | undefined, c: string) =>
   !f ? "" : (f.subfields[c] || f.subfields[c.toUpperCase()] || f.subfields[c.toLowerCase()] || "");
 
 interface Toast { id: number; variant: string; title: string; message?: string; }
+interface ActiveFacet { field: string; prefix: string; groupLabel: string; value: string; valueLabel: string; }
+
+// Compose a base query expr with the active facet refinements using the IRBIS
+// AND operator '*': (<base>) * "V=05" * "J=RUS". Mirrors the backend refinement.
+function composeExpr(base: string, active: ActiveFacet[]): string {
+  let expr = base;
+  for (const a of active) {
+    expr = "(" + expr + ') * "' + a.prefix + "=" + a.value.replace(/"/g, "") + '"';
+  }
+  return expr;
+}
 
 function recView(d: RecordData) {
   const F = (tag: string) => d.fields.filter((x) => x.tag === tag);
@@ -74,6 +86,9 @@ export function App() {
   const [items, setItems] = React.useState<ResultItem[]>([]);
   const [total, setTotal] = React.useState(0);
   const [page, setPage] = React.useState(1);
+  const [facets, setFacets] = React.useState<Facet[]>([]);
+  const [baseExpr, setBaseExpr] = React.useState<string | null>(null);
+  const [activeFacets, setActiveFacets] = React.useState<ActiveFacet[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [rec, setRec] = React.useState<RecordData | null>(null);
   const [showRaw, setShowRaw] = React.useState(false);
@@ -105,9 +120,17 @@ export function App() {
     if (!query.trim()) return;
     setLoading(true); setRec(null); setSug([]); setPage(pg);
     const r = await api.search(database, px, query, pg, pageSize);
-    if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); }
-    else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
+    if (r.json?.ok && r.json.data) {
+      setItems(r.json.data.items); setTotal(r.json.data.total);
+      // a fresh simple search becomes the new base query: reset facets
+      if (pg === 1) { setBaseExpr(r.json.data.expr); setActiveFacets([]); loadFacets(database, r.json.data.expr); }
+    } else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
     setLoading(false);
+  }
+  async function loadFacets(database: string, expr: string) {
+    setFacets([]);
+    const r = await api.facetsExpr(database, expr);
+    if (r.json?.ok && r.json.data) setFacets(r.json.data.facets);
   }
   function onQuery(v: string) {
     setQ(v); clearTimeout(tRef.current);
@@ -117,12 +140,29 @@ export function App() {
       if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(prefix + "=") === 0).map((t) => ({ term: t.term.slice(prefix.length + 1), count: t.count })));
     }, 200);
   }
-  async function runExpr(database: string, expr: string, pg: number) {
+  async function runExpr(database: string, expr: string, pg: number, asBase = false) {
     setLoading(true); setRec(null); setPage(pg);
     const r = await api.searchExpr(database, expr, pg, pageSize);
-    if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); }
-    else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
+    if (r.json?.ok && r.json.data) {
+      setItems(r.json.data.items); setTotal(r.json.data.total);
+      // a fresh expr search (advanced) becomes the new base query: reset facets
+      if (asBase && pg === 1) { setBaseExpr(expr); setActiveFacets([]); loadFacets(database, expr); }
+    } else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
     setLoading(false);
+  }
+  // Re-run the search with the current base intersected by the given active facets.
+  function applyFacets(next: ActiveFacet[]) {
+    if (baseExpr == null) return;
+    setActiveFacets(next);
+    runExpr(db, composeExpr(baseExpr, next), 1);
+  }
+  function toggleFacet(f: Facet, v: { value: string; label: string }) {
+    const exists = activeFacets.find((a) => a.field === f.field && a.value === v.value);
+    if (exists) applyFacets(activeFacets.filter((a) => !(a.field === f.field && a.value === v.value)));
+    else applyFacets([...activeFacets, { field: f.field, prefix: f.prefix, groupLabel: f.label, value: v.value, valueLabel: v.label }]);
+  }
+  function removeFacet(a: ActiveFacet) {
+    applyFacets(activeFacets.filter((x) => !(x.field === a.field && x.value === a.value)));
   }
   function buildAdvExpr() {
     const parts = advRows.map((r) => {
@@ -138,7 +178,13 @@ export function App() {
   function runAdvanced() {
     const expr = buildAdvExpr();
     if (!expr) { toast({ variant: "warning", title: "Заполните условия", message: "Введите хотя бы одно значение." }); return; }
-    runExpr(db, expr, 1);
+    runExpr(db, expr, 1, true);
+  }
+  // Pagination that preserves the active base query + facet refinements.
+  function gotoPage(p: number) {
+    if (baseExpr != null) runExpr(db, composeExpr(baseExpr, activeFacets), p);
+    else if (mode === "advanced") { const ex = buildAdvExpr(); if (ex) runExpr(db, ex, p); }
+    else runSearch(db, prefix, q, p);
   }
 
   async function openRecord(mfn: number) { setLoading(true); const r = await api.record(db, mfn); setLoading(false); if (r.json?.ok && r.json.data) { setRec(r.json.data); window.scrollTo(0, 0); } }
@@ -253,15 +299,31 @@ export function App() {
                 </div>
               </div>
             )}
-            {loading ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
-              total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Измените запрос или область поиска." /> :
-                <>
-                  <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", margin: "4px 0 10px" }}>Найдено: {total} · страница {page} из {pageCount}</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {items.map((it) => <ResultCard key={it.mfn} item={it} dbTag="Книги" typeIcon="book" showCheck={false} onOpen={() => openRecord(it.mfn)} />)}
+            {loading && !items.length ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
+              total === 0 && !activeFacets.length ? <EmptyState icon="search" title="Ничего не найдено" description="Измените запрос или область поиска." /> :
+                <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 200px", minWidth: 180, maxWidth: 260, order: 1 }} className="irb-facet-rail">
+                    <FacetRail facets={facets} active={activeFacets} onToggle={toggleFacet} />
                   </div>
-                  <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={(p: number) => { const ex = mode === "advanced" ? buildAdvExpr() : null; ex ? runExpr(db, ex, p) : runSearch(db, prefix, q, p); }} /></div>
-                </>}
+                  <div style={{ flex: "100 1 380px", minWidth: 280, order: 2 }}>
+                    {activeFacets.length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "0 0 12px" }}>
+                        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Фильтры:</span>
+                        {activeFacets.map((a) => (
+                          <FilterChip key={a.field + a.value} label={a.valueLabel} group={a.groupLabel} onRemove={() => removeFacet(a)} />
+                        ))}
+                        <button onClick={() => applyFacets([])} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "var(--text-xs)" }}>Сбросить все</button>
+                      </div>
+                    )}
+                    <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", margin: "4px 0 10px" }}>Найдено: {total} · страница {page} из {pageCount}</div>
+                    {total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Снимите часть фильтров и повторите поиск." /> : <>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {items.map((it) => <ResultCard key={it.mfn} item={it} dbTag="Книги" typeIcon="book" showCheck={false} onOpen={() => openRecord(it.mfn)} />)}
+                      </div>
+                      <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} /></div>
+                    </>}
+                  </div>
+                </div>}
           </>
         )}
 
@@ -317,6 +379,34 @@ export function App() {
       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
     </div>
+  );
+}
+
+function FacetRail({ facets, active, onToggle }: {
+  facets: Facet[];
+  active: ActiveFacet[];
+  onToggle: (f: Facet, v: { value: string; label: string }) => void;
+}) {
+  const groups = facets.filter((f) => f.values.length > 0);
+  if (!groups.length) return null;
+  return (
+    <aside aria-label="Уточнение поиска" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ fontWeight: 600, fontSize: "var(--text-sm)", color: "var(--text-body)" }}>Уточнить</div>
+      {groups.map((f) => (
+        <div key={f.field}>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 8 }}>{f.label}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {f.values.map((v) => {
+              const on = active.some((a) => a.field === f.field && a.value === v.value);
+              return (
+                <FilterChip key={v.value} label={v.label} count={v.count} pressed={on}
+                  onToggle={() => onToggle(f, { value: v.value, label: v.label })} />
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </aside>
   );
 }
 

@@ -19,6 +19,9 @@ export interface StorageNode {
   children?: StorageNode[];
 }
 export interface Term { count: number; term: string; }
+export interface FacetValue { value: string; label: string; count: number; }
+export interface Facet { field: string; prefix: string; label: string; values: FacetValue[]; }
+export interface FacetsResult { db: string; expr: string; facets: Facet[]; }
 export interface Grant { function: string; db: string; level: string; }
 export interface DbItem { code: string; name: string; public: boolean; }
 export interface Loan { value: string; subfields: Record<string, string>; }
@@ -56,6 +59,10 @@ export const api = {
     jget<SearchResult>("/api/search?" + qs({ db, prefix, q, page, pageSize })),
   searchExpr: (db: string, expr: string, page: number, pageSize: number) =>
     jget<SearchResult>("/api/search?" + qs({ db, expr, page, pageSize })),
+  facets: (db: string, prefix: string, q: string) =>
+    jget<FacetsResult>("/api/facets?" + qs({ db, prefix, q })),
+  facetsExpr: (db: string, expr: string) =>
+    jget<FacetsResult>("/api/facets?" + qs({ db, expr })),
   terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),
