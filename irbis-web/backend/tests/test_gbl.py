@@ -137,11 +137,36 @@ def parser_checks():
           _raises(gbl.ParseError, gbl.parse, "0\nADD\n910\n\n'%1'\n\n"))
     check('non-int param count raises', _raises(gbl.ParseError, gbl.parse, "x\n"))
 
-    # NEWMFN…END parses (carried, body validated) but is flagged unsupported.
+    # NEWMFN…END parses with the db-name format header + validated body (executes).
     job_nm = "0\nNEWMFN\n'*'\nADD\n920\n\n'SZ'\n\nEND\n"
     nm = gbl.parse(job_nm)['body'][0]
-    check('parse NEWMFN block', nm['kind'] == 'NEWMFN' and nm.get('supported') is False)
+    check('parse NEWMFN block', nm['kind'] == 'NEWMFN' and nm.get('supported') is not False)
+    check('parse NEWMFN dbFmt', nm['dbFmt'] == "'*'")
     check('parse NEWMFN body validated', len(nm['body']) == 1)
+
+    # CORREC…END: db / key→1001 / terms (+opt limit) header, then body to END.
+    job_cr = "0\nCORREC\n'CMPL'\n'KEY'\n'BORZ=42'\n3\nADD\n910\n\n'x'\n\nEND\n"
+    cr = gbl.parse(job_cr)['body'][0]
+    check('parse CORREC block', cr['kind'] == 'CORREC'
+          and cr['dbFmt'] == "'CMPL'" and cr['keyFmt'] == "'KEY'"
+          and cr['termsFmt'] == "'BORZ=42'")
+    check('parse CORREC optional limit', cr['limit'] == 3 and len(cr['body']) == 1)
+
+    # CORREC without the optional 5th line: body starts at line 4.
+    job_cr2 = "0\nCORREC\n'CMPL'\n'KEY'\n'T=x'\nADD\n910\n\n'x'\n\nEND\n"
+    cr2 = gbl.parse(job_cr2)['body'][0]
+    check('parse CORREC no-limit', cr2['limit'] is None and len(cr2['body']) == 1)
+
+    # NEWREC…END: 2nd line is a condition format; flagged experimental (recon #GBL-01).
+    job_nr = "0\nNEWREC\nif v920='J' then '1' fi\nADD\n920\n\n'J'\n\nEND\n"
+    nr = gbl.parse(job_nr)['body'][0]
+    check('parse NEWREC block', nr['kind'] == 'NEWREC'
+          and "v920" in nr['condFmt'] and nr.get('experimental') is True)
+
+    # UNDOR parses as a 2-line op with a step-count format.
+    job_ud = "0\nUNDOR\n'1'\n"
+    ud = gbl.parse(job_ud)['body'][0]
+    check('parse UNDOR block', ud['kind'] == 'UNDOR' and ud['steps'] == "'1'")
 
 
 def _raises(exc, fn, *a):
@@ -354,12 +379,209 @@ def preview_checks():
           and report[0]['after']['920'][0][''] == 'PVK')
 
 
+# --------------------------------------------------------------------------- #
+# 5. Cross-DB execution — NEWMFN / NEWREC / CORREC / ALL / UNDOR (the P0
+# integration unblocker, INTEGRATION_MAP #11.2). All run on in-memory stores; the
+# nested ADD/REP формат is evaluated on the SOURCE record (txt:5988-5991).
+# --------------------------------------------------------------------------- #
+def crossdb_checks():
+    print('-- cross-db (NEWMFN/NEWREC/CORREC/ALL/UNDOR)')
+    ctx0 = {'format_eval': lit_eval}
+
+    # NEWMFN: create a record in ANOTHER db; nested ADD formats read the source.
+    job = ("0\nNEWMFN\n'CMPL'\n"
+           "ADD\n920\n\n'SZ'\n\n"
+           "ADD\n200^a\n1\nv200^a\n\n"        # reformat: source 200^a -> new 200^a
+           "END\n")
+    prog = gbl.parse(job)
+    src = {'200': [{'a': 'Источник'}], '920': [{'': 'PAZK'}]}
+    ctx = dict(ctx0)
+    out = gbl.apply(prog, src, ctx)
+    st = ctx['_state']
+    created = st['new_records'].get('CMPL', [])
+    check('NEWMFN creates a record in target db', len(created) == 1)
+    check('NEWMFN nested ADD literal', gbl.field_values(created[0], '920') == ['SZ'])
+    check('NEWMFN format reads SOURCE record',
+          gbl.field_values(created[0], '200', 'a') == ['Источник'])
+    check('NEWMFN does not touch the source record',
+          gbl.field_values(out, '920') == ['PAZK'] and '200' in out)
+    # default in-memory emit records the created record's mfn in the run state.
+    check('NEWMFN emit recorded (default in-memory store)',
+          any(e['op'] == 'NEWMFN' and e['db'] == 'CMPL'
+              for e in st.get('emitted', [])))
+
+    # NEWMFN db '*' resolves to the source db (ctx['db']).
+    prog_star = gbl.parse("0\nNEWMFN\n'*'\nADD\n920\n\n'SZ'\n\nEND\n")
+    ctx_star = {'format_eval': lit_eval, 'db': 'IBIS'}
+    gbl.apply(prog_star, {'200': [{'a': 'x'}]}, ctx_star)
+    check("NEWMFN '*' resolves to source db",
+          'IBIS' in ctx_star['_state']['new_records'])
+
+    # ALL: copy every source field into the record under construction.
+    prog_all = gbl.parse("0\nNEWMFN\n'CMPL'\nALL\nADD\n920\n\n'SZ'\n\nEND\n")
+    ctx_all = {'format_eval': lit_eval}
+    gbl.apply(prog_all, {'200': [{'a': 'T'}], '910': [{'': 'e1'}]}, ctx_all)
+    made = ctx_all['_state']['new_records']['CMPL'][0]
+    check('ALL copies source fields into new record',
+          gbl.field_values(made, '200', 'a') == ['T']
+          and gbl.field_values(made, '910') == ['e1']
+          and gbl.field_values(made, '920') == ['SZ'])
+
+    # NEWREC (experimental): condition '1' creates; non-'1' skips.
+    def cond_eval(fmt, record, ctx):
+        if fmt.startswith('if v920'):
+            return '1' if gbl.field_values(record, '920') == ['J'] else '0'
+        return gbl.stub_format_eval(fmt, record, ctx)
+    prog_nr = gbl.parse("0\nNEWREC\nif v920 then '1' fi\nADD\n900\n\n'made'\n\nEND\n")
+    ctx_on = {'format_eval': cond_eval, 'db': 'IBIS'}
+    gbl.apply(prog_nr, {'920': [{'': 'J'}]}, ctx_on)
+    check('NEWREC condition true creates',
+          len(ctx_on['_state']['new_records'].get('IBIS', [])) == 1)
+    ctx_off = {'format_eval': cond_eval, 'db': 'IBIS'}
+    gbl.apply(prog_nr, {'920': [{'': 'K'}]}, ctx_off)
+    check('NEWREC condition false skips',
+          ctx_off['_state']['new_records'].get('IBIS', []) == [])
+
+    # CORREC: edit a FOREIGN record resolved by term; 1001 key planted then stripped.
+    # The foreign CMPL record gains a 910 link copied from the source IBIS draft.
+    foreign = {'CMPL': {'borz42': {'200': [{'a': 'Заказ'}]}}}
+    def resolver(db, term):
+        return foreign.get(db, {}).get(term)
+    job_cr = ("0\nCORREC\n'CMPL'\n'srckey'\n'borz42'\n"
+              "ADD\n910\n\nv910\n\n"          # copy source 910 into the foreign rec
+              "END\n")
+    prog_cr = gbl.parse(job_cr)
+    ctx_cr = {'format_eval': lit_eval, 'resolver': resolver}
+    src_cr = {'910': [{'': 'INV-7'}], '200': [{'a': 'Draft'}]}
+    gbl.apply(prog_cr, src_cr, ctx_cr)
+    correc = ctx_cr['_state']['correc'].get('CMPL', [])
+    check('CORREC edits one foreign record', len(correc) == 1)
+    edited = correc[0]['record']
+    check('CORREC writes source data into foreign record',
+          gbl.field_values(edited, '910') == ['INV-7'])
+    check('CORREC strips the 1001 model field after the body',
+          '1001' not in edited)
+    check('CORREC resolves by term', correc[0]['term'] == 'borz42')
+
+    # CORREC miss: an unresolved term is recorded, not crashed.
+    ctx_miss = {'format_eval': lit_eval, 'resolver': lambda d, t: None}
+    gbl.apply(prog_cr, src_cr, ctx_miss)
+    check('CORREC unresolved term recorded as miss',
+          len(ctx_miss['_state'].get('correc_misses', [])) == 1
+          and ctx_miss['_state']['correc'].get('CMPL', []) == [])
+
+    # UNDOR: roll the current record back to a previous copy from the journal.
+    history = [
+        {'907': [{'': 'v0'}]},               # original copy
+        {'907': [{'': 'v1'}]},               # previous copy (1 back)
+    ]
+    prog_ud = gbl.parse("0\nADD\n907\n\n'v2'\n\nUNDOR\n'1'\n")
+    ctx_ud = {'format_eval': lit_eval, 'history': history}
+    r_ud = gbl.apply(prog_ud, {'907': [{'': 'cur'}]}, ctx_ud)
+    check('UNDOR N=1 restores previous copy', gbl.field_values(r_ud, '907') == ['v1'])
+    prog_ud0 = gbl.parse("0\nUNDOR\n'*'\n")
+    r_ud0 = gbl.apply(prog_ud0, {'907': [{'': 'cur'}]},
+                      {'format_eval': lit_eval, 'history': history})
+    check('UNDOR * restores original copy', gbl.field_values(r_ud0, '907') == ['v0'])
+    prog_udn = gbl.parse("0\nUNDOR\n#\n")     # empty steps -> no-op
+    r_udn = gbl.apply(prog_udn, {'907': [{'': 'cur'}]},
+                      {'format_eval': lit_eval, 'history': history})
+    check('UNDOR empty steps is a no-op', gbl.field_values(r_udn, '907') == ['cur'])
+
+    # explicit resolver/emit args (apply signature) wire the cross-DB contract.
+    emitted = []
+    def emit(db, record):
+        emitted.append((db, record)); return 99
+    gbl.apply(prog, src, {'format_eval': lit_eval}, emit=emit)
+    check('emit hook receives created record', len(emitted) == 1
+          and emitted[0][0] == 'CMPL'
+          and gbl.field_values(emitted[0][1], '920') == ['SZ'])
+
+
+# --------------------------------------------------------------------------- #
+# 6. ToCat-shaped end-to-end job: read an IBIS draft БО → NEWMFN into the IBIS
+# catalog with reformatted fields + a 938 subscription link → in-memory stores.
+# Mirrors INTEGRATION_MAP cluster 1 (ToCat 938/910/VD=DEL) without an acquisition
+# host: the executor stays pure, the store is wired via emit/_stores.
+# --------------------------------------------------------------------------- #
+def tocat_shaped_checks():
+    print('-- ToCat-shaped job (CMPL draft -> IBIS catalog)')
+
+    # ToCat: a CMPL acquisition draft is reformatted into an IBIS catalog record.
+    #  * 920 reset to the catalog kind 'PAZK'
+    #  * title carried over (200^a -> 200^a) — reformat-on-source
+    #  * the holdings copy carried over (910 -> 910)
+    #  * a 938 link back to the subscription period is planted
+    #  * VD=DEL marks the source draft for deletion (no-dup guarantee, AC3)
+    job = (
+        "0\n"
+        "NEWMFN\n'IBIS'\n"
+        "ADD\n920\n\n'PAZK'\n\n"             # catalog record kind
+        "ADD\n200^a\n1\nv200^a\n\n"          # title reformatted from source
+        "ADD\n910\n\nv910\n\n"               # holdings carried over
+        "ADD\n938\n\nv938\n\n"               # subscription-period link (cluster 1.3)
+        "END\n"
+        "ADD\n2102\n\n'VD=DEL'\n\n"          # mark source draft for deletion (AC3)
+    )
+    prog = gbl.parse(job)
+
+    # in-memory IBIS catalog store; emit returns the new MFN (store index).
+    stores = {'IBIS': []}
+    def emit(db, record):
+        stores.setdefault(db, []).append(record)
+        return len(stores[db]) - 1
+
+    draft = {
+        '920': [{'': 'OJK'}],                # acquisition kind (subscription)
+        '200': [{'a': 'Вестник науки'}],
+        '910': [{'': 'inv-1001'}],
+        '938': [{'': 'CMPL/2026/Q2'}],
+    }
+    ctx = {'format_eval': lit_eval}
+    src_after = gbl.apply(prog, draft, ctx, emit=emit)
+    st = ctx['_state']
+
+    # one catalog record created in IBIS with the reformatted fields + 938 link.
+    check('ToCat creates exactly one IBIS record', len(stores['IBIS']) == 1)
+    cat = stores['IBIS'][0]
+    check('ToCat 920 reset to catalog kind', gbl.field_values(cat, '920') == ['PAZK'])
+    check('ToCat title carried (200^a)',
+          gbl.field_values(cat, '200', 'a') == ['Вестник науки'])
+    check('ToCat holdings carried (910)',
+          gbl.field_values(cat, '910') == ['inv-1001'])
+    check('ToCat 938 subscription link planted',
+          gbl.field_values(cat, '938') == ['CMPL/2026/Q2'])
+    check('ToCat new_records state mirrors the store',
+          st['new_records']['IBIS'][0] is not None
+          and gbl.field_values(st['new_records']['IBIS'][0], '938') == ['CMPL/2026/Q2'])
+    # VD=DEL marks the SOURCE draft (the operator AFTER END runs on the source).
+    check('ToCat VD=DEL marks the source draft',
+          gbl.field_values(src_after, '2102') == ['VD=DEL'])
+    check('ToCat source draft otherwise intact',
+          gbl.field_values(src_after, '200', 'a') == ['Вестник науки'])
+
+    # Preview of the SAME job must be pure: report the created record but NOT emit.
+    stores2 = {'IBIS': []}
+    def emit2(db, record):
+        stores2.setdefault(db, []).append(record); return 0
+    report = gbl.preview(prog, [draft], {'format_eval': lit_eval, 'emit': emit2})
+    check('preview ToCat reports created record',
+          len(report[0]['created']) == 1
+          and gbl.field_values(report[0]['created'][0]['record'], '920') == ['PAZK'])
+    check('preview ToCat does NOT call host emit (pure)', stores2['IBIS'] == [])
+    check('preview ToCat does not mutate the input draft',
+          draft['920'] == [{'': 'OJK'}] and draft['200'][0]['a'] == 'Вестник науки')
+    check('preview ToCat status changed', report[0]['status'] == 'changed')
+
+
 def main():
     parser_checks()
     apply_checks()
     control_flow_checks()
     format_eval_checks()
     preview_checks()
+    crossdb_checks()
+    tocat_shaped_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 

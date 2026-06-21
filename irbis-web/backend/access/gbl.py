@@ -46,12 +46,44 @@ Occurrence selectors (3rd line, GLOBAL_CORRECTION §1.1): ``*`` ALL · ``N`` n-t
 ``L`` last · ``L-N`` n-th from end · ``F`` by-format (i-th ФОРМАТ 1 line drives the
 i-th repetition).
 
-Not in this slice (carried, not lost): ``NEWMFN/NEWREC/CORREC/END`` (other-record
-ops), ``UNDOR`` (copy history), ``DEFFLD/GETFLD`` (model fields), ``ALL``. These
-operator names still *parse* (so a real job is never silently truncated) and are
-attached to the AST as ``UnsupportedOp`` nodes that ``apply`` skips with a recorded
-note; only the listed operators execute. ``NEWMFN/NEWREC/CORREC`` consume their
-``… END`` body during parsing so the surrounding job stays structurally valid.
+Cross-DB / other-record operators (GLOBAL_CORRECTION §1.3, INTEGRATION_MAP P0 #11.2)
+-----------------------------------------------------------------------------------
+The single P0 unblocker for cross-module edges (ToCat, Move691, MoveZakKp, CreateSZ,
+InsteadLost, autoin) — these operators switch the «current record» to a NEW or a
+FOREIGN record while their nested ``ADD/REP/…`` formats are still evaluated against
+the *source* record of the source DB (``txt:5988-5991``):
+
+  * ``NEWMFN`` — create a NEW record in (optionally another) DB; ФОРМАТ 1 → target
+    db name (``'*'`` = current). The nested op-block builds the record; collected in
+    ``ctx['_state']['new_records']`` keyed by target db, and ``emit(db, record)`` is
+    called when a host store is wired.
+  * ``NEWREC`` — undocumented conditional create (recon TODO #GBL-01). 2nd line is a
+    *condition* format: result ``'1'`` ⇒ create a new record (in the current db),
+    filled by the nested block; any other result ⇒ skip. (Best-effort: the
+    ``autoin.gbl:2255`` `if … then '1'` flag reading; see comment at the parser.)
+  * ``CORREC`` — apply a correction block to ANOTHER record/DB (cross-record edit):
+    ФОРМАТ→db · ФОРМАТ→model-field-1001 key · ФОРМАТ→dictionary terms (``$``=trunc) ·
+    [opt record count]. The target record is resolved via ``ctx['resolver']`` and
+    the nested op-block is applied to it; the result is emitted back.
+  * ``UNDOR`` — roll the current record back to the N-th / original copy from the
+    reversible journal (``ctx['_state']['history']``), NOT by re-running the job.
+  * ``END`` closes a NEWMFN/NEWREC/CORREC group; ``ALL`` copies every field of the
+    source record into the record under construction (used right after NEWMFN/CORREC).
+
+Cross-DB execution contract (the executor stays pure; the host wires real stores)
+---------------------------------------------------------------------------------
+``apply(ast, record, ctx)`` accepts two optional hooks in ``ctx`` so a job running
+over IBIS can read/write CMPL/RDR records without this module touching a database:
+
+  * ``resolver(db, mfn) -> record | None`` — fetch a foreign record (CORREC target,
+    or a NEWMFN that wants to seed from an existing record). Defaults to an
+    in-memory store (``ctx['_stores']``) so the tests run with no host.
+  * ``emit(db, record) -> mfn`` — persist a created/edited foreign record and return
+    its mfn. Defaults to appending to the in-memory store and returning its index.
+
+After the run, ``ctx['_state']['new_records']`` (dict ``db -> [record,…]``) and
+``ctx['_state']['correc']`` (dict ``db -> [{mfn, record},…]``) carry everything the
+host needs to journal/persist; ``preview`` reports created/edited records too.
 
 The format_eval boundary (SPEC §2)
 ----------------------------------
@@ -318,6 +350,14 @@ def _parse_ops(lines, pos, nparams, warnings, stop):
             body.append(Op(kind='REPEAT', body=inner, until=_norm_fmt(until)))
             continue
 
+        # ---- UNDOR: roll current record back N copies (2 lines) ------------ #
+        if up == 'UNDOR':
+            steps = _need(lines, pos + 1, 'UNDOR: missing step-count format')
+            _check_params(steps, nparams)
+            body.append(Op(kind='UNDOR', steps=_norm_fmt(steps)))
+            pos += 2
+            continue
+
         # ---- PUTLOG / PUTFLD (deprecated alias) ---------------------------- #
         if up in ('PUTLOG', 'PUTFLD'):
             fmt = _need(lines, pos + 1, '%s: missing format line' % up)
@@ -332,12 +372,7 @@ def _parse_ops(lines, pos, nparams, warnings, stop):
         # ---- single-line record ops --------------------------------------- #
         if up in _RECORD_OPS:
             kind = _RECORD_OPS[up]
-            op = Op(kind=kind)
-            if kind == 'ALL':
-                op['supported'] = False
-                warnings.append('ALL parsed but not executed in this slice (line %d)'
-                                % (pos + 1))
-            body.append(op)
+            body.append(Op(kind=kind))
             pos += 1
             continue
 
@@ -405,26 +440,52 @@ def _parse_repeat(lines, pos, nparams, warnings):
 def _parse_other_record(up, lines, pos, nparams, warnings):
     """Parse NEWMFN/NEWREC (2 header lines) or CORREC (4-5) plus their … END body.
 
-    The body is parsed (so it stays structurally validated) but the whole node is
-    flagged ``supported=False`` — execution of other-record operators is a later
-    A3 slice. Returns ``(op, pos_after_END)``."""
-    if up in ('NEWMFN', 'NEWREC'):
-        fmt = _need(lines, pos + 1, '%s: missing format line' % up)
+    These now EXECUTE (GLOBAL_CORRECTION §1.3, INTEGRATION_MAP P0 #11.2). The
+    nested body is parsed into a real op-block; ФОРМАТ 1 inside it is evaluated on
+    the *source* record at apply time (``txt:5988-5991``). Returns
+    ``(op, pos_after_END)``.
+
+    * NEWMFN — line 2 = ФОРМАТ → target db name (``'*'`` = current db).
+    * NEWREC — line 2 = ФОРМАТ → *condition* (recon TODO #GBL-01). The only field
+      example (``IBIS/autoin.gbl:2255`` `if v920='J' … then '1'…`) reads it as a
+      create *flag*: result ``'1'`` ⇒ create in the current db. We implement that
+      documented behaviour; if a site instead uses the 2nd line as a db name, the
+      flag test simply never fires (result ≠ '1') so nothing is silently created.
+    * CORREC — db / key→model-field 1001 / dictionary terms (``$``=trunc) / opt
+      record-count. The 5th line is taken as the count only when it is a bare
+      integer (an operator name never is), else the body starts there."""
+    if up == 'NEWMFN':
+        fmt = _need(lines, pos + 1, 'NEWMFN: missing db-name format line')
         _check_params(fmt, nparams)
-        header = {'kind': up, 'fmt': _norm_fmt(fmt), 'supported': False}
+        header = {'kind': 'NEWMFN', 'dbFmt': _norm_fmt(fmt)}
+        body_start = pos + 2
+    elif up == 'NEWREC':
+        fmt = _need(lines, pos + 1, 'NEWREC: missing condition format line')
+        _check_params(fmt, nparams)
+        # recon #GBL-01: 2nd line read as a create-condition (the documented case).
+        header = {'kind': 'NEWREC', 'condFmt': _norm_fmt(fmt), 'experimental': True}
+        warnings.append('NEWREC is experimental (recon #GBL-01: 2nd-line condition '
+                        'semantics inferred from autoin.gbl) (line %d)' % (pos + 1))
         body_start = pos + 2
     else:  # CORREC: db / key→1001 / terms (4 lines; optional 5th = count)
         for off in range(1, 4):
             _need(lines, pos + off, 'CORREC: truncated header')
+        _check_params(lines[pos + 1], nparams)
+        _check_params(lines[pos + 2], nparams)
+        _check_params(lines[pos + 3], nparams)
         header = {
-            'kind': 'CORREC', 'supported': False,
+            'kind': 'CORREC',
             'dbFmt': _norm_fmt(lines[pos + 1]),
             'keyFmt': _norm_fmt(lines[pos + 2]),
             'termsFmt': _norm_fmt(lines[pos + 3]),
+            'limit': None,
         }
         body_start = pos + 4
+        cand = lines[pos + 4].strip() if pos + 4 < len(lines) else ''
+        if cand.isdigit():                  # bare integer => optional record count
+            header['limit'] = int(cand)
+            body_start = pos + 5
     inner, pos = _parse_ops(lines, body_start, nparams, warnings, stop={'END'})
-    warnings.append('%s parsed but not executed in this slice' % up)
     op = Op(**header)
     op['body'] = inner
     return op, pos
@@ -531,6 +592,18 @@ def _eval(fmt, record, ctx):
     return resolve_format_eval(ctx)(fmt, record, ctx)
 
 
+def _fmt_rec(rec, ctx):
+    """The record a field operator's ФОРМАТ is evaluated on.
+
+    Normally the very record being mutated. Inside a NEWMFN/NEWREC/CORREC block the
+    nested ``ADD/REP/…`` mutate the new/foreign record, yet ФОРМАТ 1 is computed on
+    the *source* record of the source DB (``txt:5988-5991``) — the cross-DB executor
+    sets ``ctx['_fmt_record']`` to that source so this returns it."""
+    if ctx and ctx.get('_fmt_record') is not None:
+        return ctx['_fmt_record']
+    return rec
+
+
 def _eval_lines(fmt, record, ctx):
     """Multi-line evaluation (F-mode / whole-field ADD). Uses
     ``ctx['format_eval_lines']`` / ``access.pft.evalLines`` when present, else
@@ -574,20 +647,41 @@ def _resolve_occ(occ, count):
 # record; ``_apply_op`` dispatches by kind. ``state`` carries the protocol log,
 # the deleted/empty flags and a record of skipped (unsupported) operators.
 # --------------------------------------------------------------------------- #
-def apply(ast, record, ctx=None):
+def apply(ast, record, ctx=None, resolver=None, emit=None):
     """Execute ``ast`` over a copy of ``record`` and return the new record.
 
     Operators run sequentially; each sees the record as the previous ones left
     it (SPEC §0 parity). ФОРМАТ lines are evaluated through the format_eval hook
     (delegated to A1 when available). The input record is never mutated.
 
-    ``ctx`` may carry ``format_eval`` / ``params`` / ``max_iterations``. After the
-    run, ``ctx['_state']`` (if ctx is a dict) holds ``{putlog, deleted, emptied,
-    skipped}`` for the caller; the return value is the corrected record."""
+    ``ctx`` may carry ``format_eval`` / ``params`` / ``max_iterations`` plus the
+    cross-DB hooks (also accepted as explicit args, which win):
+
+    * ``resolver(db, mfn) -> record | None`` — read a foreign record (CORREC
+      target). Defaults to the in-memory store under ``ctx['_stores']``.
+    * ``emit(db, record) -> mfn`` — persist a created/edited foreign record and
+      return its mfn. Defaults to appending to the in-memory store.
+
+    After the run, ``ctx['_state']`` (if ctx is a dict) holds ``{putlog, deleted,
+    emptied, skipped, new_records, correc, history, db}``; the return value is the
+    corrected source record. The host wires real stores via ``resolver``/``emit``;
+    nothing here touches a database."""
     orig_ctx = ctx
     work_ctx = dict(ctx) if ctx else {}
+    if resolver is not None:
+        work_ctx['resolver'] = resolver
+    if emit is not None:
+        work_ctx['emit'] = emit
+    # In-memory default cross-DB store so the executor runs standalone in tests.
+    work_ctx.setdefault('_stores', dict(work_ctx.get('_stores') or {}))
     rec = normalize_record(record)
-    state = {'putlog': [], 'deleted': False, 'emptied': False, 'skipped': []}
+    state = {
+        'putlog': [], 'deleted': False, 'emptied': False, 'skipped': [],
+        'new_records': {},      # db -> [record, …] created via NEWMFN/NEWREC
+        'correc': {},           # db -> [{mfn, record}, …] edited via CORREC
+        'history': list(work_ctx.get('history') or []),  # copy journal for UNDOR
+        'db': work_ctx.get('db', '*'),                   # the source db name
+    }
     body = ast['body'] if isinstance(ast, dict) else ast
     _run_body(body, rec, work_ctx, state)
     # Surface the run state on BOTH the working copy and the caller's ctx dict
@@ -615,21 +709,24 @@ def _apply_op(op, rec, ctx, state):
 
 # ---- field operators ------------------------------------------------------- #
 def _op_add(op, rec, ctx, state):
-    """ADD: add a new repetition (whole field) or a subfield (GC §1.3 ADD)."""
+    """ADD: add a new repetition (whole field) or a subfield (GC §1.3 ADD).
+
+    ``fr`` is the format record — the source record inside a cross-DB block."""
     tag, sub = op['tag'], op['subfield']
     field = _field(rec, tag)
+    fr = _fmt_rec(rec, ctx)
     if sub is None:
         # whole-field ADD: each ФОРМАТ 1 line => a new repetition.
-        for line in _eval_lines(op['fmt1'], rec, ctx):
+        for line in _eval_lines(op['fmt1'], fr, ctx):
             if line == '' and op['fmt1'] == '':
                 continue
             field.append({'': line})
         return
     # subfield ADD: 1st ФОРМАТ 1 line -> subfield in the targeted repetition(s).
-    val = _eval(op['fmt1'], rec, ctx)
+    val = _eval(op['fmt1'], fr, ctx)
     occ = op['occ']
     if occ[0] == OCC_BY_FORMAT:
-        lines = _eval_lines(op['fmt1'], rec, ctx)
+        lines = _eval_lines(op['fmt1'], fr, ctx)
         for i, line in enumerate(lines):
             if i < len(field) and line != '':
                 _inst_set(field[i], sub, line)
@@ -646,14 +743,15 @@ def _op_rep(op, rec, ctx, state):
     """REP: replace a field/subfield wholesale; empty ФОРМАТ 1 deletes it."""
     tag, sub = op['tag'], op['subfield']
     field = _field(rec, tag)
+    fr = _fmt_rec(rec, ctx)
     occ = op['occ']
     if occ[0] == OCC_BY_FORMAT:
-        lines = _eval_lines(op['fmt1'], rec, ctx)
+        lines = _eval_lines(op['fmt1'], fr, ctx)
         for i in range(len(field)):
             if i < len(lines):
                 _rep_one(field, i, sub, lines[i])
         return
-    val = _eval(op['fmt1'], rec, ctx)
+    val = _eval(op['fmt1'], fr, ctx)
     for i in _resolve_occ(occ, len(field)):
         _rep_one(field, i, sub, val)
     _compact(field)
@@ -683,13 +781,14 @@ def _op_cha(op, rec, ctx, state):
     subfield. CHAC is case-sensitive; CHA matches case-insensitively."""
     tag, sub = op['tag'], op['subfield']
     field = _field(rec, tag)
+    fr = _fmt_rec(rec, ctx)
     case_sensitive = (op['kind'] == 'CHAC')
     occ = op['occ']
-    a_default = _eval(op['fmt1'], rec, ctx)
-    b_default = _eval(op['fmt2'], rec, ctx)
+    a_default = _eval(op['fmt1'], fr, ctx)
+    b_default = _eval(op['fmt2'], fr, ctx)
     if occ[0] == OCC_BY_FORMAT:
-        a_lines = _eval_lines(op['fmt1'], rec, ctx)
-        b_lines = _eval_lines(op['fmt2'], rec, ctx)
+        a_lines = _eval_lines(op['fmt1'], fr, ctx)
+        b_lines = _eval_lines(op['fmt2'], fr, ctx)
         for i in range(len(field)):
             a = a_lines[i] if i < len(a_lines) else ''
             b = b_lines[i] if i < len(b_lines) else ''
@@ -747,7 +846,7 @@ def _op_del(op, rec, ctx, state):
     field = _field(rec, tag)
     occ = op['occ']
     if occ[0] == OCC_BY_FORMAT:
-        lines = _eval_lines(op['fmt1'], rec, ctx)
+        lines = _eval_lines(op['fmt1'], _fmt_rec(rec, ctx), ctx)
         keep = []
         for i, inst in enumerate(field):
             flag = lines[i].strip() if i < len(lines) else '0'
@@ -783,7 +882,7 @@ def _op_empty(op, rec, ctx, state):
 
 
 def _op_if(op, rec, ctx, state):
-    if _eval(op['cond'], rec, ctx).strip() == '1':
+    if _eval(op['cond'], _fmt_rec(rec, ctx), ctx).strip() == '1':
         _run_body(op['body'], rec, ctx, state)
 
 
@@ -793,20 +892,179 @@ def _op_repeat(op, rec, ctx, state):
     while True:
         _run_body(op['body'], rec, ctx, state)
         iters += 1
-        if _eval(op['until'], rec, ctx).strip() != '1':
+        if _eval(op['until'], _fmt_rec(rec, ctx), ctx).strip() != '1':
             break
         if iters >= limit:
             raise RuntimeError('REPEAT exceeded %d iterations (loop guard)' % limit)
 
 
 def _op_putlog(op, rec, ctx, state):
-    state['putlog'].append(_eval(op['fmt'], rec, ctx))
+    state['putlog'].append(_eval(op['fmt'], _fmt_rec(rec, ctx), ctx))
+
+
+# --------------------------------------------------------------------------- #
+# Cross-DB / other-record operators (GLOBAL_CORRECTION §1.3; INTEGRATION_MAP P0
+# #11.2). The nested ADD/REP/… mutate a NEW or FOREIGN record while their ФОРМАТ
+# is still computed on the *source* record (txt:5988-5991); we model that by
+# running the nested block on the target record with ctx['_fmt_record'] pinned to
+# the source. Defaults to an in-memory store so the executor runs with no host.
+# --------------------------------------------------------------------------- #
+def _store(ctx):
+    """The in-memory default cross-DB store (db -> list of records)."""
+    return ctx.setdefault('_stores', {})
+
+
+def _default_resolver(ctx, db, mfn):
+    recs = _store(ctx).get(db, [])
+    if isinstance(mfn, int) and 0 <= mfn < len(recs):
+        return recs[mfn]
+    return None
+
+
+def _default_emit(ctx, db, record):
+    recs = _store(ctx).setdefault(db, [])
+    recs.append(record)
+    return len(recs) - 1                     # mfn == index in the in-memory store
+
+
+def _resolve_db(fmt, source_rec, ctx, state):
+    """ФОРМАТ → target db name; ``'*'`` / ∅ resolve to the source db."""
+    name = _eval(fmt, source_rec, ctx).strip()
+    if name in ('', '*'):
+        return state.get('db', '*')
+    return name
+
+
+def _run_crossdb_block(body, target_rec, source_rec, ctx, state):
+    """Run a nested NEWMFN/NEWREC/CORREC body: mutate ``target_rec`` while ФОРМАТ
+    evaluates on ``source_rec``. Restores the previous ``_fmt_record`` after (so
+    nesting and the surrounding source-record context are preserved)."""
+    prev = ctx.get('_fmt_record')
+    ctx['_fmt_record'] = source_rec
+    try:
+        _run_body(body, target_rec, ctx, state)
+    finally:
+        if prev is None:
+            ctx.pop('_fmt_record', None)
+        else:
+            ctx['_fmt_record'] = prev
+
+
+def _emit_record(ctx, db, record):
+    # In preview (dry-run) the host's persistence is suppressed (SPEC §4.1 / AC5):
+    # we still register the record in the isolated in-memory store so the preview
+    # report can show what WOULD be created/edited, but never call the host emit.
+    if ctx.get('_preview'):
+        return _default_emit(ctx, db, record)
+    emit = ctx.get('emit')
+    if emit is not None:
+        return emit(db, record)
+    return _default_emit(ctx, db, record)
+
+
+def _op_all(op, rec, ctx, state):
+    """ALL: copy every field of the SOURCE record into the record under
+    construction (GC §1.3 ALL; used right after NEWMFN/CORREC). A no-op at top
+    level (source == target), where it would just copy a record onto itself."""
+    src = _fmt_rec(rec, ctx)
+    if src is rec:                           # not inside a cross-DB block
+        return
+    for tag, insts in src.items():
+        if tag.startswith('*'):
+            continue
+        rec.setdefault(tag, [])
+        rec[tag].extend(copy.deepcopy(i) for i in insts)
+
+
+def _op_newmfn(op, rec, ctx, state):
+    """NEWMFN: create a NEW record in the (optionally other) target db from the
+    nested ADD-block; ФОРМАТ 1 inside it is computed on the source record."""
+    db = _resolve_db(op['dbFmt'], rec, ctx, state)
+    new_rec = {}
+    _run_crossdb_block(op['body'], new_rec, rec, ctx, state)
+    state['new_records'].setdefault(db, []).append(new_rec)
+    mfn = _emit_record(ctx, db, new_rec)
+    state.setdefault('emitted', []).append({'op': 'NEWMFN', 'db': db, 'mfn': mfn})
+
+
+def _op_newrec(op, rec, ctx, state):
+    """NEWREC (experimental, recon #GBL-01): conditional create. The 2nd-line
+    format is read as a *condition* — result ``'1'`` creates a new record in the
+    current db, filled by the nested block; any other result skips silently."""
+    if _eval(op['condFmt'], rec, ctx).strip() != '1':
+        return
+    db = state.get('db', '*')
+    new_rec = {}
+    _run_crossdb_block(op['body'], new_rec, rec, ctx, state)
+    state['new_records'].setdefault(db, []).append(new_rec)
+    mfn = _emit_record(ctx, db, new_rec)
+    state.setdefault('emitted', []).append({'op': 'NEWREC', 'db': db, 'mfn': mfn})
+
+
+def _op_correc(op, rec, ctx, state):
+    """CORREC: apply the nested op-block to ANOTHER record/db (cross-record edit).
+
+    Target resolution (GC §1.3): ФОРМАТ→db · ФОРМАТ→model-field-1001 key (planted
+    on each target as field 1001 so the body can read it) · ФОРМАТ→dictionary
+    terms (``$``=truncation marker). Targets are fetched through ``ctx['resolver']``
+    by (db, term); each is edited (with 1001 stripped at the end, per the recon
+    note «не забывать удалять поле 1001»), emitted back, and recorded."""
+    db = _resolve_db(op['dbFmt'], rec, ctx, state)
+    key = _eval(op['keyFmt'], rec, ctx)
+    terms_raw = _eval_lines(op['termsFmt'], rec, ctx)
+    terms = [t.strip() for t in terms_raw if t.strip()]
+    resolver = ctx.get('resolver') or (lambda d, m: _default_resolver(ctx, d, m))
+    limit = op.get('limit')
+    edited = 0
+    for term in terms:
+        if limit is not None and edited >= limit:
+            break
+        target = resolver(db, term)          # resolver maps a term → its record
+        if target is None:
+            state.setdefault('correc_misses', []).append({'db': db, 'term': term})
+            continue
+        target = normalize_record(target)
+        target['1001'] = [{'': key}]         # model field 1001 = passed key
+        _run_crossdb_block(op['body'], target, rec, ctx, state)
+        target.pop('1001', None)             # strip the model field after the body
+        mfn = _emit_record(ctx, db, target)
+        state['correc'].setdefault(db, []).append({'mfn': mfn, 'term': term,
+                                                   'record': target})
+        edited += 1
+
+
+def _op_undor(op, rec, ctx, state):
+    """UNDOR: roll the current record back to a previous copy from the journal
+    (GC §1.3 UNDOR, ``txt:6006-6031``) — NOT by re-running the job. The step format
+    yields ``N`` (N copies back, N=1 = previous), ``'*'`` (the original/first copy),
+    or ∅ (do nothing). History is ``state['history']`` (oldest → newest)."""
+    steps = _eval(op['steps'], _fmt_rec(rec, ctx), ctx).strip()
+    history = state.get('history') or []
+    if not steps or not history:
+        return
+    if steps == '*':
+        snap = history[0]                    # original copy
+    else:
+        try:
+            n = int(steps)
+        except ValueError:
+            return
+        if n <= 0:
+            return
+        idx = len(history) - n               # N copies back from the newest
+        if idx < 0:
+            return
+        snap = history[idx]
+    rec.clear()
+    rec.update(copy.deepcopy(normalize_record(snap)))
 
 
 _OP_DISPATCH = {
     'ADD': _op_add, 'REP': _op_rep, 'CHA': _op_cha, 'CHAC': _op_cha,
     'DEL': _op_del, 'DELR': _op_delr, 'UNDEL': _op_undel, 'EMPTY': _op_empty,
     'IF': _op_if, 'REPEAT': _op_repeat, 'PUTLOG': _op_putlog,
+    'NEWMFN': _op_newmfn, 'NEWREC': _op_newrec, 'CORREC': _op_correc,
+    'ALL': _op_all, 'UNDOR': _op_undor,
     'COMMENT': lambda *a: None,
 }
 
@@ -823,27 +1081,41 @@ def preview(ast, records, ctx=None):
 
         { 'index': i, 'status': 'changed'|'unchanged'|'deleted'|'emptied'|'error',
           'changes': [ {tag, subfield, op, before, after}, ... ],
-          'putlog': [...], 'before': {...}, 'after': {...}, 'error': str? }
+          'putlog': [...], 'before': {...}, 'after': {...},
+          'created': [ {db, record}, ... ],            # NEWMFN/NEWREC would create
+          'correc':  [ {db, mfn, term, record}, ... ], # CORREC would edit (cross-db)
+          'error': str? }
 
-    Neither the input records nor any external state are mutated — ``apply`` works
-    on a deep copy, so ``preview`` is a pure projection (SPEC AC5)."""
+    Cross-DB side effects are suppressed: NEWMFN/NEWREC/CORREC report what they
+    WOULD create/edit (``created``/``correc``) but the host's ``emit`` is never
+    called and the caller's stores are isolated, so ``preview`` stays a pure
+    projection (SPEC §4.1 / AC5)."""
     out = []
     for i, record in enumerate(records):
         before = normalize_record(record)
         local_ctx = dict(ctx) if ctx else {}
+        local_ctx['_preview'] = True
+        # Isolate cross-DB stores so a dry-run NEWMFN/CORREC can't leak into the
+        # caller's store (deep copy: nested per-db lists must not be shared).
+        local_ctx['_stores'] = copy.deepcopy(local_ctx.get('_stores') or {})
         try:
             after = apply(ast, before, local_ctx)
         except Exception as e:               # isolate one bad record (SPEC AC9)
             out.append({'index': i, 'status': 'error', 'error': str(e),
-                        'changes': [], 'putlog': [], 'before': before, 'after': before})
+                        'changes': [], 'putlog': [], 'before': before, 'after': before,
+                        'created': [], 'correc': []})
             continue
         state = local_ctx.get('_state', {})
         changes = diff_records(before, after)
+        created = [{'db': db, 'record': r}
+                   for db, recs in state.get('new_records', {}).items() for r in recs]
+        correc = [dict(c, db=db)
+                  for db, cs in state.get('correc', {}).items() for c in cs]
         if state.get('emptied'):
             status = 'emptied'
         elif state.get('deleted'):
             status = 'deleted'
-        elif changes:
+        elif changes or created or correc:
             status = 'changed'
         else:
             status = 'unchanged'
@@ -851,6 +1123,7 @@ def preview(ast, records, ctx=None):
             'index': i, 'status': status, 'changes': changes,
             'putlog': state.get('putlog', []),
             'before': copy.deepcopy(before), 'after': copy.deepcopy(after),
+            'created': copy.deepcopy(created), 'correc': copy.deepcopy(correc),
         })
     return out
 
