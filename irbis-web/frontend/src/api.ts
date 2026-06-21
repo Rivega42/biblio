@@ -184,22 +184,46 @@ export interface AuditEntry {
 export interface AdminDatabase { code: string; name: string; public: boolean; count?: number; }
 
 // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) ----------
-// Арендатор (tenant) контура SaaS: слаг (короткий ключ), наименование, тариф,
-// дата создания, опц. список включённых функциональных модулей. Бэкенд
-// (#207/#209) публикуется отдельно — клиент деградирует на 404/501.
+// Арендатор (tenant) контура SaaS. Бэкенд (#207/#209) возвращает
+// {slug,name,kind,plan} из контрольного каталога (provision.list_tenants);
+// kind — тип учреждения (опц., может быть null). Клиент деградирует на 404/501.
 export interface Tenant {
   slug: string; name: string; plan: string;
-  createdAt?: string; modules?: string[];
+  kind?: string | null;
 }
-// Лимиты тарифа: верхние границы по записям, читателям и хранилищу (МБ).
-export interface PlanLimits { maxRecords: number; maxReaders: number; maxStorageMb: number; }
-// Тариф и потребление выбранного арендатора: текущий план, лимиты, фактическое
-// потребление (records/readers/storageMb) и карта включённости модулей.
+// Лимиты тарифа (backend snake_case, billing.plan_limits): верхние границы по
+// записям, читателям и хранилищу (МБ). Значение null/UNLIMITED — без лимита (∞).
+// Ключи покрывают весь набор LIMIT_RESOURCES.
+export interface PlanLimits {
+  max_records: number | null;
+  max_readers: number | null;
+  max_storage_mb: number | null;
+}
+// Потребление — ЧАСТИЧНАЯ карта тех же ресурсов (billing.tenant_usage). Ресурс,
+// который сервер не смог посчитать, просто отсутствует (трактуем как «—»/0).
+export interface PlanUsage {
+  max_records?: number;
+  max_readers?: number;
+  max_storage_mb?: number;
+}
+// Элемент каталога тарифов (billing.plans_catalog): код плана, человекочитаемый
+// заголовок, набор лицензируемых модулей и его лимиты.
+export interface PlanCatalogItem {
+  plan: string; title: string; modules: string[]; limits: PlanLimits;
+}
+// Тариф/биллинг выбранного арендатора (GET /api/admin/billing):
+//   plan    — текущий тариф (один из каталога);
+//   limits  — лимиты тарифа (snake_case, null = без лимита);
+//   usage   — частичная карта потребления (snake_case);
+//   modules — СПИСОК включённых модулей (имена); модуль ON ⇔ он в этом списке;
+//   plans   — каталог всех тарифов (полный набор модулей = объединение их modules).
 export interface BillingInfo {
+  tenant?: string;
   plan: string;
   limits: PlanLimits;
-  usage: { records: number; readers: number; storageMb: number };
-  modules: Record<string, boolean>;
+  usage: PlanUsage;
+  modules: string[];
+  plans?: PlanCatalogItem[];
 }
 
 let token: string | null = null;
@@ -394,17 +418,24 @@ export const api = {
   // Список арендаторов контура. 404/501 → degrade (информер).
   adminTenants: () => jget<{ tenants: Tenant[] }>("/api/admin/tenants"),
   // Создать (провизионировать) арендатора: слаг, наименование, логин админа,
-  // тариф. → {slug}. 404/501/403 → degrade.
+  // тариф. → отчёт о провизионировании {slug,name,plan,modules,admin,postgres}.
+  // 404/501/403 → degrade.
   adminCreateTenant: (t: { slug: string; name: string; adminLogin: string; plan: string }) =>
-    jpost<{ slug: string }>("/api/admin/tenant", t),
-  // Тариф, лимиты, потребление и модули выбранного арендатора.
+    jpost<{ slug: string; name: string; plan: string; modules: string[];
+            admin: { id: number | string; login: string }; postgres: boolean }>(
+      "/api/admin/tenant", t),
+  // Тариф, лимиты, потребление, модули и каталог тарифов выбранного арендатора.
   adminBilling: (tenant: string) => jget<BillingInfo>("/api/admin/billing?" + qs({ tenant })),
-  // Сменить тариф арендатора.
+  // Сменить тариф арендатора → {tenant,plan,modules,limits,applied}. После смены
+  // плана клиент перечитывает биллинг, чтобы обновить usage/plans.
   adminSetPlan: (tenant: string, plan: string) =>
-    jpost<BillingInfo>("/api/admin/billing/plan", { tenant, plan }),
-  // Включить / отключить функциональный модуль арендатора.
+    jpost<{ tenant: string; plan: string; modules: string[]; limits: PlanLimits; applied: boolean }>(
+      "/api/admin/billing/plan", { tenant, plan }),
+  // Включить / отключить функциональный модуль арендатора →
+  // {tenant,module,enabled,applied,modules} (modules — обновлённый список включённых).
   adminSetModule: (tenant: string, module: string, enabled: boolean) =>
-    jpost<BillingInfo>("/api/admin/billing/module", { tenant, module, enabled }),
+    jpost<{ tenant: string; module: string; enabled: boolean; applied: boolean; modules: string[] }>(
+      "/api/admin/billing/module", { tenant, module, enabled }),
 };
 
 export const LANG: Record<string, string> = {

@@ -11,7 +11,7 @@
 // продолжает работать; приложение не падает.
 import React from "react";
 import { api } from "./api";
-import type { Tenant, BillingInfo } from "./api";
+import type { Tenant, BillingInfo, PlanLimits } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -73,24 +73,29 @@ if (typeof document !== "undefined" && !document.getElementById("irb-plat-css"))
   const s = document.createElement("style"); s.id = "irb-plat-css"; s.textContent = CSS; document.head.appendChild(s);
 }
 
-// Тарифные планы контура (MVP). Бэкенд может вернуть и иные коды — список
-// дополняется фактическими значениями арендаторов.
-const PLANS = ["free", "basic", "pro", "enterprise"] as const;
-// Человекочитаемые подписи известных функциональных модулей; неизвестный код
-// показываем как есть.
+// Тарифные планы контура (MVP). Совпадают с backend billing.PLANS
+// (access/billing.py). Реальный список тарифов берём из каталога `plans` на
+// ответе биллинга; эти значения — запасной справочник для формы создания.
+const PLANS = ["free", "standard", "pro"] as const;
+// Человекочитаемые подписи функциональных модулей. Коды — backend
+// entitlements.DEFAULT_MODULES; неизвестный код показываем как есть.
 const MODULE_RU: Record<string, string> = {
+  opac: "Читательский портал / поиск",
   cataloging: "Каталогизация",
   circulation: "Книговыдача",
   acquisition: "Комплектование",
-  provision: "Книгообеспеченность",
-  cells: "Ячеистое хранение",
-  inventory: "Инвентаризация",
-  reader: "Читательский портал",
-  ill: "МБА / ЭДД",
+  bookprovision: "Книгообеспеченность",
+  reader: "Читательский кабинет",
+  admin: "Администрирование",
   analytics: "Аналитика и отчёты",
-  authority: "Авторитетные файлы",
 };
 const moduleLabel = (code: string) => MODULE_RU[code] || code;
+// Человекочитаемые подписи лимит-ресурсов (backend snake_case ключи).
+const LIMIT_META: { key: keyof PlanLimits; name: string; icon: IconName; unit?: string }[] = [
+  { key: "max_records", name: "Записи", icon: "file-text" },
+  { key: "max_readers", name: "Читатели", icon: "users" },
+  { key: "max_storage_mb", name: "Хранилище", icon: "archive", unit: " МБ" },
+];
 
 type Tab = "tenants" | "billing";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
@@ -154,7 +159,7 @@ function TenantsTab({ toast, selected, onSelect, onManage }: {
   const [slug, setSlug] = React.useState("");
   const [name, setName] = React.useState("");
   const [adminLogin, setAdminLogin] = React.useState("");
-  const [plan, setPlan] = React.useState<string>("basic");
+  const [plan, setPlan] = React.useState<string>("standard");
   const [creating, setCreating] = React.useState(false);
 
   async function load() {
@@ -176,7 +181,7 @@ function TenantsTab({ toast, selected, onSelect, onManage }: {
       setTenants((ts) => [created].concat((ts || []).filter((t) => t.slug !== created.slug)));
       onSelect(created.slug);
       toast({ variant: "success", title: "Арендатор создан", message: created.slug + " · тариф " + plan });
-      setSlug(""); setName(""); setAdminLogin(""); setPlan("basic"); setShowCreate(false);
+      setSlug(""); setName(""); setAdminLogin(""); setPlan("standard"); setShowCreate(false);
     } else if (r.status === 404 || r.status === 501) toast({ variant: "info", title: "Создание недоступно", message: "Эндпойнт платформы не развёрнут." });
     else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db / admin.users." });
     else if (r.status === 409) toast({ variant: "error", title: "Слаг занят", message: "Арендатор с таким слагом уже существует." });
@@ -214,14 +219,14 @@ function TenantsTab({ toast, selected, onSelect, onManage }: {
       ) : (
         <div className="irb-plat__scroll">
           <table className="irb-plat__tbl">
-            <thead><tr><th>Слаг</th><th>Наименование</th><th>Тариф</th><th>Создан</th><th style={{ textAlign: "right" }}>Действия</th></tr></thead>
+            <thead><tr><th>Слаг</th><th>Наименование</th><th>Тариф</th><th>Тип</th><th style={{ textAlign: "right" }}>Действия</th></tr></thead>
             <tbody>
               {tenants.map((t) => (
                 <tr key={t.slug} aria-selected={selected === t.slug}>
                   <td className="irb-plat__mono">{t.slug}</td>
                   <td>{t.name || "—"}</td>
                   <td><span className="irb-plat__plan">{t.plan || "—"}</span></td>
-                  <td className="irb-plat__mono" style={{ whiteSpace: "nowrap" }}>{t.createdAt || "—"}</td>
+                  <td className="irb-plat__mono" style={{ whiteSpace: "nowrap" }}>{t.kind || "—"}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                     <Button size="sm" variant="ghost" iconLeft="credit-card" onClick={() => onManage(t.slug)}>Тариф и лимиты</Button>
                   </td>
@@ -273,10 +278,15 @@ function BillingTab({ toast, selected, onSelect }: {
     setBusyPlan(plan);
     const r = await api.adminSetPlan(selected, plan);
     setBusyPlan(null);
-    if (r.status === 200 && r.json?.ok) {
-      if (r.json.data) setBilling(r.json.data); else setBilling({ ...billing, plan });
-      setTenants((ts) => (ts || []).map((t) => t.slug === selected ? { ...t, plan } : t));
-      toast({ variant: "success", title: "Тариф изменён", message: selected + " → " + plan });
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      // Ответ /plan несёт {plan,modules,limits,applied}, но НЕ usage/plans.
+      // Оптимистично обновляем то, что пришло, и перечитываем биллинг целиком,
+      // чтобы освежить потребление и каталог тарифов.
+      const d = r.json.data;
+      setBilling({ ...billing, plan: d.plan, modules: d.modules, limits: d.limits });
+      setTenants((ts) => (ts || []).map((t) => t.slug === selected ? { ...t, plan: d.plan } : t));
+      toast({ variant: "success", title: "Тариф изменён", message: selected + " → " + d.plan });
+      void loadBilling(selected);
     } else if (r.status === 404 || r.status === 501) toast({ variant: "info", title: "Недоступно", message: "Эндпойнт платформы не развёрнут." });
     else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
     else toast({ variant: "error", title: "Не изменено", message: "Повторите попытку." });
@@ -287,9 +297,9 @@ function BillingTab({ toast, selected, onSelect }: {
     setBusyModule(module);
     const r = await api.adminSetModule(selected, module, enabled);
     setBusyModule(null);
-    if (r.status === 200 && r.json?.ok) {
-      if (r.json.data) setBilling(r.json.data);
-      else setBilling({ ...billing, modules: { ...billing.modules, [module]: enabled } });
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      // Ответ /module несёт обновлённый СПИСОК включённых модулей — берём его.
+      setBilling({ ...billing, modules: r.json.data.modules });
       toast({ variant: "success", title: enabled ? "Модуль включён" : "Модуль отключён", message: moduleLabel(module) });
     } else if (r.status === 404 || r.status === 501) toast({ variant: "info", title: "Недоступно", message: "Эндпойнт платформы не развёрнут." });
     else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
@@ -322,8 +332,18 @@ function BillingTab({ toast, selected, onSelect }: {
   } else if (!billing) {
     content = <div style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Нет данных по тарифу.</div>;
   } else {
-    const planChoices = Array.from(new Set([...PLANS, billing.plan])).filter(Boolean);
-    const moduleCodes = Object.keys(billing.modules || {});
+    // Выбор тарифа: имена из каталога `plans` (backend billing.PLANS), плюс
+    // текущий план и запасной список, на случай если каталог не пришёл.
+    const catalogPlans = (billing.plans || []).map((p) => p.plan);
+    const planChoices = Array.from(new Set([...catalogPlans, ...PLANS, billing.plan])).filter(Boolean);
+    // Полный набор модулей = объединение модулей всех тарифов каталога. Если
+    // каталога нет — деградируем к текущему списку включённых модулей.
+    const enabledSet = new Set(billing.modules || []);
+    const allModules = Array.from(new Set([
+      ...(billing.plans || []).flatMap((p) => p.modules),
+      ...(billing.modules || []),
+    ])).sort();
+    const moduleCodes = allModules.length ? allModules : Array.from(enabledSet).sort();
     content = (
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
         {/* Тариф + переключатель */}
@@ -338,17 +358,20 @@ function BillingTab({ toast, selected, onSelect }: {
           </div>
         </div>
 
-        {/* Лимиты vs потребление */}
+        {/* Лимиты vs потребление — лимит из snake_case карты limits, потребление
+            из частичной карты usage (ресурс без значения → «—»). */}
         <div>
           <span className="irb-plat__cap">Лимиты и потребление</span>
           <div className="irb-plat__grid" style={{ marginTop: 9 }}>
-            <Meter icon="file-text" name="Записи" used={billing.usage.records} limit={billing.limits.maxRecords} />
-            <Meter icon="users" name="Читатели" used={billing.usage.readers} limit={billing.limits.maxReaders} />
-            <Meter icon="archive" name="Хранилище" used={billing.usage.storageMb} limit={billing.limits.maxStorageMb} unit=" МБ" />
+            {LIMIT_META.map((m) => (
+              <Meter key={m.key} icon={m.icon} name={m.name} unit={m.unit}
+                limit={billing.limits ? billing.limits[m.key] : null}
+                used={billing.usage ? billing.usage[m.key] : undefined} />
+            ))}
           </div>
         </div>
 
-        {/* Модули */}
+        {/* Модули — переключатель ON ⇔ код в списке billing.modules. */}
         <div>
           <span className="irb-plat__cap">Функциональные модули</span>
           {moduleCodes.length === 0 ? (
@@ -356,7 +379,7 @@ function BillingTab({ toast, selected, onSelect }: {
           ) : (
             <div className="irb-plat__card irb-plat__mods" style={{ marginTop: 9 }}>
               {moduleCodes.map((code) => {
-                const on = !!billing.modules[code];
+                const on = enabledSet.has(code);
                 return (
                   <div className="irb-plat__mod" key={code}>
                     <div style={{ minWidth: 0 }}>
@@ -386,21 +409,32 @@ function BillingTab({ toast, selected, onSelect }: {
 }
 
 // Прогресс-бар «использовано / лимит». Цвет: зелёный < 75% < жёлтый < 90% < красный.
-function Meter({ icon, name, used, limit, unit = "" }: { icon: IconName; name: string; used: number; limit: number; unit?: string }) {
-  const u = Number.isFinite(used) ? used : 0;
-  const lim = Number.isFinite(limit) && limit > 0 ? limit : 0;
-  const ratio = lim ? u / lim : 0;
+//   limit: number — ceiling; null/UNLIMITED — без лимита («∞»);
+//   used:  number — потребление; undefined — сервер не посчитал («—»).
+function Meter({ icon, name, used, limit, unit = "" }: {
+  icon: IconName; name: string; used?: number; limit: number | null; unit?: string;
+}) {
+  const hasUsed = typeof used === "number" && Number.isFinite(used);
+  const u = hasUsed ? (used as number) : 0;
+  // null или ≤0 → лимита нет (∞). Иначе — конечный потолок.
+  const lim = typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : null;
+  const ratio = lim && hasUsed ? u / lim : 0;
   const pct = Math.max(0, Math.min(100, Math.round(ratio * 100)));
   const color = ratio >= 0.9 ? "var(--danger-500)" : ratio >= 0.75 ? "var(--warning)" : "var(--status-available)";
   const fmt = (n: number) => Number.isFinite(n) ? n.toLocaleString("ru-RU") : "—";
+  const usedLabel = hasUsed ? fmt(u) + unit : "—";
+  const limitLabel = lim ? fmt(lim) + unit : "∞";
+  // Подпись: без лимита → «без лимита»; нет данных потребления → «нет данных»;
+  // иначе — процент использования.
+  const note = !lim ? "без лимита" : !hasUsed ? "потребление неизвестно" : pct + "% использовано";
   return (
     <div className="irb-plat__meter">
       <div className="irb-plat__meter-top">
         <span className="irb-plat__meter-name"><Icon name={icon} size={15} />{name}</span>
-        <span className="irb-plat__meter-val">{fmt(u) + unit} / {lim ? fmt(lim) + unit : "∞"}</span>
+        <span className="irb-plat__meter-val">{usedLabel} / {limitLabel}</span>
       </div>
-      <div className="irb-plat__track"><div className="irb-plat__fill" style={{ width: pct + "%", background: color }} /></div>
-      <span className="irb-plat__meter-pct">{lim ? pct + "% использовано" : "лимит не задан"}</span>
+      <div className="irb-plat__track"><div className="irb-plat__fill" style={{ width: (lim && hasUsed ? pct : 0) + "%", background: color }} /></div>
+      <span className="irb-plat__meter-pct">{note}</span>
     </div>
   );
 }
