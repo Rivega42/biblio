@@ -27,8 +27,8 @@ flowchart LR
   P["Primitive tokens<br/>палитра, шкала шрифта,<br/>пробелы, радиусы, тени, блюр, motion"] --> S["Semantic tokens<br/>surface/text/border/accent/<br/>status/overlay/glass-*"]
   S --> C["Component tokens<br/>button/input/card/<br/>nav/table/chip…"]
   TENANT["Бренд тенанта<br/>seed-цвет · лого · шрифт · overrides"] --> S
-  S -->|"data-style = app | glass"| ST["Стиль"]
-  S -->|"data-mode = light | dark"| MD["Режим"]
+  S -->|"data-style: app / glass"| ST["Стиль"]
+  S -->|"data-mode: light / dark"| MD["Режим"]
   C --> UI["Компоненты UI"]
 ```
 

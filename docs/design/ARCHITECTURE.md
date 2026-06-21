@@ -79,7 +79,7 @@ flowchart TD
   IRB -.->|"миграция · сверка"| WK["Воркер миграции/синхронизации"]
   WK --> CORE
   class IRB legacy
-  classDef legacy stroke-dasharray:4 3,fill:#f4f4f4
+  classDef legacy fill:#f4f4f4,stroke:#999,color:#333
 ```
 
 | Сервис | Где | Роль | Модуль/ядро |
