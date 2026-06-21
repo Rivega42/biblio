@@ -37,12 +37,12 @@ const CSS = `
 .irb-hero__bar{flex:1;min-width:0;}
 .irb-home__examples{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px;}
 .irb-home__exlabel{width:100%;text-align:center;font-size:var(--text-xs);opacity:.85;margin-bottom:2px;}
-.irb-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);
+.irb-hero-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);
   color:var(--accent-fg,#fff);border:1px solid rgba(255,255,255,.34);border-radius:var(--radius-pill,999px);
   padding:6px 14px;font-size:var(--text-sm);cursor:pointer;font-family:var(--font-ui,inherit);
   transition:background-color var(--dur,.18s) var(--ease-standard,ease);}
-.irb-chip:hover{background:rgba(255,255,255,.28);}
-.irb-chip:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+.irb-hero-chip:hover{background:rgba(255,255,255,.28);}
+.irb-hero-chip:focus-visible{outline:2px solid #fff;outline-offset:2px;}
 .irb-home__pick{max-width:520px;margin:0 auto;width:100%;display:flex;flex-direction:column;gap:8px;}
 .irb-home__picklabel{font-size:var(--text-sm);font-weight:var(--weight-semibold,600);color:var(--text-strong);text-align:center;}
 @media (max-width:560px){
@@ -130,7 +130,7 @@ export function HomeScreen({
           <div className="irb-home__examples" role="group" aria-label="Примеры запросов">
             <span className="irb-home__exlabel">Популярные запросы</span>
             {examples.map((ex) => (
-              <button key={ex} type="button" className="irb-chip"
+              <button key={ex} type="button" className="irb-hero-chip"
                 onClick={() => { setQ(ex); onSearch(prefix, ex); }}>
                 <Icon name="search" size={13} /> {ex}
               </button>
