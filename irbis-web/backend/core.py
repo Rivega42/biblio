@@ -100,6 +100,24 @@ WORKLIST_IBIS = [
 ]
 
 
+# Generic fallback worklist for a base that has no curated worklist (anything but
+# IBIS/PAZK). The minimal set every bibliographic record carries — заглавие /
+# автор / выходные данные — so a new editor still renders a usable form. A real
+# deployment derives the per-base worklist from the server .ws/.wss (FIELD_CATALOG).
+WORKLIST_GENERIC = [
+    {'code': '200', 'label': 'Заглавие', 'type': 'text', 'required': True, 'subfields': [
+        {'code': 'a', 'label': 'Основное заглавие', 'type': 'text'},
+        {'code': 'f', 'label': 'Сведения об ответственности', 'type': 'text'}]},
+    {'code': '700', 'label': 'Первый автор', 'type': 'text', 'subfields': [
+        {'code': 'a', 'label': 'Фамилия', 'type': 'text'},
+        {'code': 'g', 'label': 'Имя', 'type': 'text'}]},
+    {'code': '210', 'label': 'Выходные данные', 'type': 'text', 'subfields': [
+        {'code': 'a', 'label': 'Место издания', 'type': 'text'},
+        {'code': 'c', 'label': 'Издательство', 'type': 'text'},
+        {'code': 'd', 'label': 'Год издания', 'type': 'text'}]},
+]
+
+
 # IRBIS return codes that mean "this client_id is no longer a valid session" —
 # observed after a server Стоп/Старт, when the demo "max 3 clients" cap drops us,
 # or when the registered session otherwise lapses (see WIRE_PROTOCOL §5/§11 and
@@ -273,14 +291,30 @@ class Api:
             self.notifications = _notifications.NotificationQueue(notify_db)
         except Exception:
             self.notifications = None
+        # Shared CatalogStore (own sqlite, env CATALOG_DB; ':memory:' in tests) —
+        # the ЭК / exemplar seam reused across engines: circulation flips 910^A on
+        # issue/return through it (edges 2.1/2.2), acquisition WRITES into it
+        # (receipt → bib + 910 + КСУ), book-provision READS exemplar counts. Built
+        # BEFORE circulation so the circ engine can be constructed WITH the catalog
+        # handle (so the staff desk's issue/return drive the catalog 910^A). It is a
+        # separate store from the live ИРБИС server (same posture as circ/holds,
+        # #222). Best-effort: a build failure must not break the API.
+        try:
+            cat_db = os.environ.get('CATALOG_DB', ':memory:')
+            self.catalog = CatalogStore(cat_db, access_store=self.access)
+        except Exception:
+            self.catalog = None
         # Circulation engine wired to that queue (notifications=) so its _emit
-        # dispatches reader-addressable notices. Own sqlite store (env CIRC_DB),
-        # standalone from the live ИРБИС server (#222: never write the live server).
+        # dispatches reader-addressable notices, AND to the catalog handle (catalog=)
+        # so checkout/return flip the linked exemplar's 910^A (0↔1, edges 2.1/2.2)
+        # in the shared ЭК. Own sqlite store (env CIRC_DB), standalone from the live
+        # ИРБИС server (#222: never write the live server).
         try:
             circ_db = os.environ.get('CIRC_DB', ':memory:')
             self.circulation = _circulation.CirculationEngine(
                 store=_circulation.CirculationStore(circ_db),
-                notifications=self.notifications)
+                notifications=self.notifications,
+                catalog=self.catalog, catalog_db=self.cfg.db_default)
         except Exception:
             self.circulation = None
         # Hold + shelf services over OUR access store, reader-scoped by ticket. The
@@ -300,18 +334,12 @@ class Api:
             brief_read=self._hold_brief, reader_name=self._social_reader_name)
 
         # ---- АРМ Комплектатор + Книгообеспеченность (acquisition + book-provision) ----
-        # A shared CatalogStore (own sqlite, env CATALOG_DB; ':memory:' in tests) is
-        # the ToCat / exemplar-read seam for both engines: acquisition WRITES into it
-        # (receipt → bib record + 910 exemplars + field-66 КСУ link), book-provision
-        # READS exemplar counts from it (910^A availability). It is a separate store
-        # from the live ИРБИС server — these АРМ functions never touch the live
-        # server (same posture as circulation/holds, #222). Best-effort: a build
-        # failure must not break the API (the engines then run standalone / degraded).
-        try:
-            cat_db = os.environ.get('CATALOG_DB', ':memory:')
-            self.catalog = CatalogStore(cat_db, access_store=self.access)
-        except Exception:
-            self.catalog = None
+        # Both engines share the SAME CatalogStore built above (the ToCat / exemplar
+        # seam): acquisition WRITES into it (receipt → bib record + 910 exemplars +
+        # field-66 КСУ link), book-provision READS exemplar counts from it (910^A
+        # availability). It is a separate store from the live ИРБИС server — these АРМ
+        # functions never touch the live server (same posture as circulation/holds,
+        # #222). Best-effort: a build failure must not break the API.
         # Acquisition engine (order → receipt → КСУ → ToCat). Own sqlite store (env
         # ACQ_DB), the catalog handle wired so receipt reflects ToCat into the ЭК.
         try:
@@ -805,9 +833,24 @@ class Api:
         return 200, ok({'db': db, 'examples': out})
 
     def worklist(self, session, db):
-        if not session:
-            raise Denied(401, 'unauthorized', 'no session')
-        return 200, ok({'db': db, 'fields': WORKLIST_IBIS})
+        """GET /api/worklist/{db} — the cataloging editor worklist (#183).
+
+        The field menu that drives the DynamicField editor on the cataloger
+        workstation: ``{fields:[{code,label,type,required,repeatable,options?,
+        subfields?}]}``. Serves the curated book worklist (:data:`WORKLIST_IBIS`)
+        for IBIS / PAZK and a small generic fallback (:data:`WORKLIST_GENERIC`)
+        for any other base, so a new editor always has a usable form.
+
+        Staff-only surface, guarded by the cataloging ``record.write``/write grant
+        (you load the editor for a base you may write); a guest/reader carries no
+        such grant and is refused 403. The entitlement gate (FUNCTION_MODULE →
+        'cataloging') applies too, so a tenant without the cataloging module is
+        refused even with a grant."""
+        self._require_staff(session)
+        self._guard(session, 'record.write', db, 'write')
+        code = (db or '').strip().upper()
+        fields = WORKLIST_IBIS if code in ('IBIS', 'PAZK') else WORKLIST_GENERIC
+        return 200, ok({'db': db, 'fields': fields})
 
     def save_record(self, session, db, mfn, body):
         """Create (mfn=0) or overwrite a record. Guarded by record.write + audited.
@@ -1343,6 +1386,212 @@ class Api:
         except _bookprovision.BookProvisionError as e:
             return 404, err('not_found', str(e))
 
+    # ---- Циркуляция / выдача (circulation desk) — staff-only (#185) -------- #
+    # The circulation workstation over the existing CirculationEngine. State lives
+    # in the engine's OWN sqlite store (loan/hold/fine, field-40 formulary model);
+    # issue/return ALSO flip the linked catalog exemplar's 910^A (edges 2.1/2.2)
+    # because the engine is constructed WITH the catalog handle. Never writes the
+    # live ИРБИС server (same posture as holds/acquisition, #222). Staff-only: a
+    # reader/guest carries the public OPAC grant set (no circ.*) and is refused.
+    _CIRC_NOW = staticmethod(time.time)
+
+    def _circ_today(self):
+        """The circulation 'today' epoch (injectable clock; defaults to now)."""
+        return float(self._CIRC_NOW())
+
+    def _circ_reader(self, ticket):
+        """Ensure the engine has a reader row for ``ticket`` and return its id.
+
+        The engine's store is standalone from RDR (#222), so a reader is
+        lazily registered on first desk contact. ``add_reader`` is idempotent
+        (INSERT OR REPLACE) — re-issuing to the same ticket never duplicates."""
+        store = self.circulation.store
+        if store.get_reader(ticket) is None:
+            store.add_reader(ticket)
+        return ticket
+
+    def _circ_find_loan(self, ticket, item):
+        """The reader's on-hand loan (40^F='******') of ``item``, or None.
+
+        issue/return/renew address a loan by (ticket, item) — the desk operator
+        scans a reader card + a barcode, not an internal loan id. Picks the most
+        recent on-hand row for that item so a re-loan after return resolves."""
+        item = str(item)
+        match = [ln for ln in self.circulation.store.loans_on_hand(ticket)
+                 if str(ln['item']) == item]
+        return match[-1] if match else None
+
+    def _loan_card(self, ln, today=None):
+        """Shape an engine loan row as a formulary card (field-40 model).
+
+        Maps the loan to the РДР field-40 subfields the desk shows: ^A шифр/^B инв
+        (here the single ``item`` stands for both until a separate shifr is wired),
+        ^D выдан (checked_out), ^E план.возврат (due). Adds a resolved title via the
+        OPAC brief-read seam (best-effort) so the card is human-readable, plus the
+        ``overdue`` / ``renewable`` flags the circulation desk shows per loan."""
+        item = ln['item']
+        title = ''
+        try:
+            brief = self._hold_brief(self.cfg.db_default, int(item))
+            title = (brief or {}).get('title') or ''
+        except (TypeError, ValueError):
+            title = ''
+        if title == ('MFN %s' % item):
+            title = ''
+        if today is None:
+            today = self._circ_today()
+        return {
+            'loanId': ln['id'], 'db': self.cfg.db_default, 'item': item,
+            'title': title, 'issued': ln['checked_out_at'], 'due': ln['due'],
+            'renewals': ln['renewals'], 'lostStatus': ln['lost_status'],
+            'returned': bool(ln['returned']),
+            'overdue': bool(ln['due'] < today),
+            'renewable': ln['lost_status'] == 'none',
+        }
+
+    def circ_reader(self, session, ticket):
+        """GET /api/circ/reader?ticket= — the reader formulary (field 40).
+
+        Returns ``{reader:{ticket,name,...}, loans:[...]}`` — the on-hand loans
+        for the desk operator. Guarded by ``circ.issue``/read (a desk read)."""
+        self._require_staff(session)
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'read')
+        if not ticket:
+            return 400, err('bad_request', 'ticket required')
+        reader_id = self._circ_reader(ticket)
+        today = self._circ_today()
+        loans = [self._loan_card(ln, today=today)
+                 for ln in self.circulation.store.loans_on_hand(reader_id)]
+        debt = self.circulation.reader_debt(reader_id, today)
+        # Block/service messages for the desk (должник / просрочка). The engine's
+        # debt model is the source of truth; surfaced both as machine flags and as
+        # human ``blocks``/``messages`` the circulation desk renders.
+        blocks = []
+        if debt['debt_level'] == 'hard':
+            blocks.append('должник: блокировка самообслуживания')
+        if any(ln['overdue'] for ln in loans):
+            blocks.append('есть просроченные выдачи')
+        return 200, ok({
+            'reader': {'ticket': ticket, 'name': self._social_reader_name(ticket),
+                       # canonical engine view
+                       'debtLevel': debt['debt_level'],
+                       'onHand': debt['on_hand'],
+                       'outstanding': debt['outstanding'],
+                       # circulation-desk view (frontend CircReader)
+                       'debtor': debt['debt_level'] == 'hard',
+                       'finesTotal': debt['outstanding'],
+                       'blocks': blocks},
+            'loans': loans,
+            'messages': blocks,
+        })
+
+    def circ_issue(self, session, body):
+        """POST /api/circ/issue {ticket, db, item} — lend a copy to the reader.
+
+        Maps to ``CirculationEngine.checkout`` (limits + debtor gate live there);
+        on ALLOW flips the catalog 910^A 0→1. ``circ.issue``/write. A denied/
+        override-required decision is surfaced 409 with its machine reasons so the
+        desk can prompt for a staff override (a future endpoint)."""
+        self._require_staff(session)
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'write')
+        ticket = (body.get('ticket') or '').strip()
+        item = (str(body.get('item') or '')).strip()
+        if not ticket or not item:
+            return 400, err('bad_request', 'ticket and item required')
+        reader_id = self._circ_reader(ticket)
+        d = self.circulation.checkout(reader_id, item, self._circ_today())
+        if not d.ok:
+            status = 409 if d.decision == _circulation.REQUIRE_OVERRIDE else 403
+            return status, err('circ_denied', ','.join(d.reasons) or d.decision)
+        loan = d.computed['loan']
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'circ.issue', self.cfg.db_default, loan['id'], 'ok',
+            {'ticket': ticket, 'item': item})
+        out = {'loanId': loan['id'], 'ticket': ticket, 'item': item,
+               'due': d.computed['due']}
+        if 'catalog_mfn' in d.computed:
+            out['catalogMfn'] = d.computed['catalog_mfn']
+            out['exemplarStatus'] = d.computed['exemplar_status']
+        return 200, ok(out)
+
+    def circ_return(self, session, body):
+        """POST /api/circ/return {ticket, db, item} — take a copy back.
+
+        Resolves the (ticket,item) on-hand loan and maps to
+        ``CirculationEngine.return_item`` (fixes any fine, triggers the next hold,
+        flips catalog 910^A 1→0). ``circ.return``/write."""
+        self._require_staff(session)
+        self._guard(session, 'circ.return', self.cfg.db_default, 'write')
+        ticket = (body.get('ticket') or '').strip()
+        item = (str(body.get('item') or '')).strip()
+        if not ticket or not item:
+            return 400, err('bad_request', 'ticket and item required')
+        reader_id = self._circ_reader(ticket)
+        loan = self._circ_find_loan(reader_id, item)
+        if loan is None:
+            return 404, err('not_found', 'no on-hand loan of %s' % item)
+        d = self.circulation.return_item(loan['id'], self._circ_today())
+        if not d.ok:
+            return 409, err('circ_denied', ','.join(d.reasons) or d.decision)
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'circ.return', self.cfg.db_default, loan['id'], 'ok',
+            {'ticket': ticket, 'item': item})
+        out = {'ok': True, 'loanId': loan['id'], 'ticket': ticket, 'item': item}
+        if 'fine_charged' in d.computed:
+            out['fineCharged'] = d.computed['fine_charged']
+        if 'hold_ready' in d.computed:
+            out['holdReady'] = d.computed['hold_ready']
+        if 'catalog_mfn' in d.computed:
+            out['catalogMfn'] = d.computed['catalog_mfn']
+            out['exemplarStatus'] = d.computed['exemplar_status']
+        return 200, ok(out)
+
+    def circ_renew(self, session, body):
+        """POST /api/circ/renew {ticket, db, item} — prolong a loan.
+
+        Resolves the (ticket,item) on-hand loan and maps to
+        ``CirculationEngine.renew`` (holds-block-renewal + renew cap + debtor gate
+        live there). ``circ.issue``/write. A block (hold/cap/debt) is surfaced
+        409 with reasons so the desk can prompt for an override."""
+        self._require_staff(session)
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'write')
+        ticket = (body.get('ticket') or '').strip()
+        item = (str(body.get('item') or '')).strip()
+        if not ticket or not item:
+            return 400, err('bad_request', 'ticket and item required')
+        reader_id = self._circ_reader(ticket)
+        loan = self._circ_find_loan(reader_id, item)
+        if loan is None:
+            return 404, err('not_found', 'no on-hand loan of %s' % item)
+        d = self.circulation.renew(loan['id'], self._circ_today())
+        if not d.ok:
+            status = 409 if d.decision == _circulation.REQUIRE_OVERRIDE else 403
+            return status, err('circ_denied', ','.join(d.reasons) or d.decision)
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'circ.issue', self.cfg.db_default, loan['id'], 'ok',
+            {'op': 'renew', 'ticket': ticket, 'item': item})
+        return 200, ok({'loanId': loan['id'], 'ticket': ticket, 'item': item,
+                        'due': d.computed['due']})
+
+    def circ_fines(self, session, ticket):
+        """GET /api/circ/fines?ticket= — the reader's outstanding fines.
+
+        ``{total, items:[...]}`` over the engine's fine store. ``circ.issue``/read."""
+        self._require_staff(session)
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'read')
+        if not ticket:
+            return 400, err('bad_request', 'ticket required')
+        reader_id = self._circ_reader(ticket)
+        store = self.circulation.store
+        items = [{'id': f['id'], 'fineId': f['id'], 'loanId': f['loan'],
+                  'amount': f['amount'], 'kind': f['kind'], 'status': f['status'],
+                  'reason': f['kind'], 'paid': f['status'] == 'paid'}
+                 for f in store.outstanding_fines(reader_id)]
+        return 200, ok({'ticket': ticket,
+                        'total': store.total_outstanding(reader_id),
+                        'currency': self.circulation.policy['fine']['currency'],
+                        'items': items})
+
     def vocab_list(self, session):
         """List the session tenant's dictionaries (name/title/kind/seed_version).
 
@@ -1539,6 +1788,17 @@ class Api:
                 norm = query.get('normalize', ['0'])[0] in ('1', 'true', 'yes')
                 return self.bp_specialty_provision(
                     session, int(query.get('id', ['0'])[0]), norm)
+            # ---- Циркуляция / выдача (circulation desk) — staff-only (#185) ----
+            if method == 'GET' and path == '/api/circ/reader':
+                return self.circ_reader(session, (query.get('ticket', [''])[0] or '').strip())
+            if method == 'POST' and path == '/api/circ/issue':
+                return self.circ_issue(session, body or {})
+            if method == 'POST' and path == '/api/circ/return':
+                return self.circ_return(session, body or {})
+            if method == 'POST' and path == '/api/circ/renew':
+                return self.circ_renew(session, body or {})
+            if method == 'GET' and path == '/api/circ/fines':
+                return self.circ_fines(session, (query.get('ticket', [''])[0] or '').strip())
             if method == 'GET' and path == '/api/me/cabinet':
                 return self.cabinet(session)
             if method == 'GET' and path == '/api/me/modules':
