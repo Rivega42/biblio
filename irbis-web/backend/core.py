@@ -495,12 +495,20 @@ class Api:
         except IrbisError:
             top = 0
         # max_mfn returns the next free MFN; the last real record is top-1.
-        mfns = [m for m in range(top - 1, 0, -1)][:limit]
+        # Over-scan downward and keep only cards with a REAL title: records
+        # whose 200^a is empty (or that failed to read) come back from
+        # _brief_item as the bare "MFN N" stub — those read as broken on the
+        # homepage, so we skip them and pull the next record instead. A scan
+        # cap stops a long run of empty/deleted records from looping forever.
         items = []
-        for mfn in mfns:
+        scan_cap = max(limit * 6, limit + 40)
+        for mfn in range(top - 1, 0, -1):
+            if len(items) >= limit or (top - 1 - mfn) >= scan_cap:
+                break
             it = self._brief_item(db, mfn)
-            # _brief_item already degrades a failed read to a stub; keep cards
-            # that resolved to a real title, but never let one bad MFN abort.
+            title = (it.get('title') or '').strip()
+            if not title or title == ('MFN %d' % mfn):
+                continue  # no real title → not a showcase-worthy new arrival
             items.append(it)
         return 200, ok({'db': db, 'kind': kind, 'limit': limit, 'items': items})
 
