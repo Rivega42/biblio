@@ -49,6 +49,14 @@
   --status-postamat:     #2F6DB5;  --status-postamat-bg:  #E3ECF8;  /* В постамате */
   --status-return:       #6B5CA5;  --status-return-bg:    #ECE8F6;  /* Книгоприём */
 
+  /* ---- Decorative cover-placeholder tints (rotating palette, mode-agnostic) ---- */
+  --cover-tint-1: #2F5D62;
+  --cover-tint-2: #C96442;
+  --cover-tint-3: #6B5CA5;
+  --cover-tint-4: #3E4C7E;
+  --cover-tint-5: #1F8A5B;
+  --cover-tint-6: #8A4F9E;
+
   /* ---- Radius scale ---- */
   --radius-sm:   4px;
   --radius-md:   6px;

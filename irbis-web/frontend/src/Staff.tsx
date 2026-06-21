@@ -3,15 +3,18 @@ import { api } from "./api";
 import type { Grant } from "./api";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
+import type { IconName } from "../components/icon/Icon.jsx";
 import { EmptyState } from "../components/feedback/EmptyState.jsx";
+import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { DynamicField } from "../components/cataloging/DynamicField.jsx";
 
 export interface StaffSession { name?: string; login: string; grants: Grant[]; }
-type ToastFn = (t: { variant: string; title: string; message?: string }) => void;
+type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) => void;
 
 // Функциональные модули продукта «Рабочее пространство сотрудника».
 // Собираются ПО ГРАНТАМ учётки (а не «по АРМам»): видны только разрешённые.
-const DOMAINS = [
+type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: "cataloging" | "cells" | "stub" };
+const DOMAINS: DomainTile[] = [
   { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей RUSMARC", route: "cataloging" as const },
   { id: "acq", label: "Комплектование", icon: "archive", grant: "acq.receipt", desc: "Заказ, поступление, КСУ, списание", route: "stub" as const },
   { id: "circ", label: "Книговыдача", icon: "package", grant: "circ.issue", desc: "Выдача, возврат, очередь, бронеполка, ячейки", route: "stub" as const },

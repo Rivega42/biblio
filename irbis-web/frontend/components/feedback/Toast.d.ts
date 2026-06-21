@@ -1,7 +1,10 @@
 import * as React from "react";
 
+/** Допустимые варианты тоста (цвет/иконка по семантике). */
+export type ToastVariant = "info" | "success" | "warning" | "error";
+
 export interface ToastProps {
-  variant?: "info" | "success" | "warning" | "error";
+  variant?: ToastVariant;
   title?: React.ReactNode;
   children?: React.ReactNode;
   onClose?: () => void;
@@ -10,7 +13,7 @@ export interface ToastProps {
 
 export interface ToastItem {
   id: string | number;
-  variant?: "info" | "success" | "warning" | "error";
+  variant?: ToastVariant;
   title?: React.ReactNode;
   message?: React.ReactNode;
 }

@@ -4,6 +4,7 @@ import type { RecordData, ResultItem, FieldVal, DbItem, CabinetData, Facet } fro
 import { Button } from "../components/forms/Button.jsx";
 import { FilterChip } from "../components/forms/FilterChip.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
+import type { IconName } from "../components/icon/Icon.jsx";
 import { SearchBar } from "../components/catalog/SearchBar.jsx";
 import { ResultCard } from "../components/catalog/ResultCard.jsx";
 import { StatusBadge } from "../components/catalog/StatusBadge.jsx";
@@ -11,9 +12,15 @@ import { PftBlock } from "../components/catalog/PftBlock.jsx";
 import { Pagination } from "../components/catalog/Pagination.jsx";
 import { EmptyState } from "../components/feedback/EmptyState.jsx";
 import { ToastViewport } from "../components/feedback/Toast.jsx";
+import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { StaffArea, StaffLoginOverlay } from "./Staff";
 import type { StaffSession } from "./Staff";
 import { exportRecord, exportBasket, basketMailto } from "./export";
+import { HomeScreen } from "./reader/HomeScreen";
+import { GalleryGrid } from "./reader/GalleryGrid";
+import { ResultsToolbar, sortItems } from "./reader/ResultsToolbar";
+import type { ViewMode, SortKey } from "./reader/ResultsToolbar";
+import { OrdersTab } from "./reader/OrdersTab";
 
 const PREFIXES = [
   { code: "K", label: "Ключевые слова" }, { code: "A", label: "Автор" },
@@ -37,7 +44,7 @@ const statusDot = (s: string): React.CSSProperties => ({ width: 6, height: 6, bo
 const sf = (f: FieldVal | undefined, c: string) =>
   !f ? "" : (f.subfields[c] || f.subfields[c.toUpperCase()] || f.subfields[c.toLowerCase()] || "");
 
-interface Toast { id: number; variant: string; title: string; message?: string; }
+interface Toast { id: number; variant: ToastVariant; title: string; message?: string; }
 interface ActiveFacet { field: string; prefix: string; groupLabel: string; value: string; valueLabel: string; }
 
 // Compose a base query expr with the active facet refinements using the IRBIS
@@ -120,7 +127,12 @@ export function App() {
   const [staff, setStaff] = React.useState<StaffSession | null>(null);
   const [staffRoute, setStaffRoute] = React.useState<any>("desktop");
   const [staffLoginOpen, setStaffLoginOpen] = React.useState(false);
-  const pageSize = 10;
+  // Discovery façade (G1): главная-лендинг показывается до первого поиска.
+  const [home, setHome] = React.useState(true);
+  // Представление выдачи (G4) и сортировка (G6) и размер страницы (G19).
+  const [viewMode, setViewMode] = React.useState<ViewMode>("list");
+  const [sort, setSort] = React.useState<SortKey>("relevance");
+  const [pageSize, setPageSize] = React.useState(10);
   const tRef = React.useRef<any>(null);
   const toast = (t: Omit<Toast, "id">) => { const id = Math.random(); setToasts((x) => [...x, { ...t, id }]); setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 4000); };
 
@@ -132,23 +144,22 @@ export function App() {
       const d = await api.databases(); if (d.json?.ok && d.json.data) setDatabases(d.json.data.items);
       setReady(true);
       // Постоянная ссылка: если в URL есть ?db=&mfn=, автоматически открыть запись.
-      let opened = false;
       try {
         const p = new URLSearchParams(window.location.search);
         const linkDb = p.get("db"); const linkMfn = p.get("mfn");
         if (linkMfn && /^\d+$/.test(linkMfn)) {
           const useDb = linkDb || startDb; setDb(useDb);
-          opened = true;
+          setHome(false); // permalink ведёт сразу к записи, минуя лендинг
           await openRecord(parseInt(linkMfn, 10), useDb);
         }
       } catch { /* ignore */ }
-      if (!opened) runSearch(startDb, "K", "Android", 1);
+      // Иначе остаёмся на главной-лендинге (фасад discovery, G1) — без авто-поиска.
     })();
   }, []);
 
   async function runSearch(database: string, px: string, query: string, pg: number) {
     if (!query.trim()) return;
-    setLoading(true); setRec(null); setSug([]); setPage(pg);
+    setHome(false); setLoading(true); setRec(null); setSug([]); setPage(pg);
     const r = await api.search(database, px, query, pg, pageSize);
     if (r.json?.ok && r.json.data) {
       setItems(r.json.data.items); setTotal(r.json.data.total);
@@ -162,6 +173,17 @@ export function App() {
     const r = await api.facetsExpr(database, expr);
     if (r.json?.ok && r.json.data) setFacets(r.json.data.facets);
   }
+  // С главной-лендинга: задаём поле/запрос, уходим в результаты и ищем (G1).
+  function goSearch(px: string, query: string) {
+    setHome(false); setMode("simple"); setPrefix(px); setQ(query); setRec(null);
+    runSearch(db, px, query, 1);
+  }
+  // Логотип / «Главная» — вернуться на лендинг (G1).
+  function goHome() {
+    setHome(true); setRec(null); setView("search");
+    setItems([]); setTotal(0); setBaseExpr(null); setActiveFacets([]); setFacets([]);
+    try { const u = new URL(window.location.href); u.searchParams.delete("db"); u.searchParams.delete("mfn"); window.history.replaceState(null, "", u.pathname); } catch { /* ignore */ }
+  }
   function onQuery(v: string) {
     setQ(v); clearTimeout(tRef.current);
     if (v.trim().length < 2) { setSug([]); return; }
@@ -171,7 +193,7 @@ export function App() {
     }, 200);
   }
   async function runExpr(database: string, expr: string, pg: number, asBase = false) {
-    setLoading(true); setRec(null); setPage(pg);
+    setHome(false); setLoading(true); setRec(null); setPage(pg);
     const r = await api.searchExpr(database, expr, pg, pageSize);
     if (r.json?.ok && r.json.data) {
       setItems(r.json.data.items); setTotal(r.json.data.total);
@@ -226,6 +248,13 @@ export function App() {
     if (baseExpr != null) runExpr(db, composeExpr(baseExpr, activeFacets), p);
     else if (mode === "advanced") { const ex = buildAdvExpr(); if (ex) runExpr(db, ex, p); }
     else runSearch(db, prefix, q, p);
+  }
+  // Размер страницы (G19): меняем и перезапускаем текущий запрос с 1-й страницы.
+  function changePageSize(size: number) {
+    setPageSize(size);
+    if (baseExpr != null) { setLoading(true); setRec(null); setPage(1); api.searchExpr(db, composeExpr(baseExpr, activeFacets), 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); }
+    else if (mode === "advanced") { const ex = buildAdvExpr(); if (ex) { setLoading(true); setPage(1); api.searchExpr(db, ex, 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); } }
+    else { setLoading(true); setPage(1); api.search(db, prefix, q, 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); }
   }
 
   async function openRecord(mfn: number, database: string = db) {
@@ -288,19 +317,30 @@ export function App() {
   const rootMode = !a11y && darkMode ? "dark" : undefined;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const DB = db;
+  // Человекочитаемое имя текущей базы для пилюли в шапке (G18).
+  const dbName = (databases.find((d) => d.code === db)?.name) || db;
   const hbtn = (active: boolean): React.CSSProperties => ({ background: active ? "rgba(255,255,255,.25)" : "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" });
   const selStyle: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", maxWidth: 240 };
-  const modeBtn = (active: boolean): React.CSSProperties => ({ background: active ? "var(--accent)" : "transparent", color: active ? "#fff" : "var(--text-body)", border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: "var(--text-sm)" });
+  const modeBtn = (active: boolean): React.CSSProperties => ({ background: active ? "var(--accent)" : "transparent", color: active ? "var(--text-on-accent, #fff)" : "var(--text-body)", border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: "var(--text-sm)" });
   const iconBtn: React.CSSProperties = { padding: "7px 11px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", cursor: "pointer" };
 
   if (!ready) return <div style={{ padding: 40, color: "var(--text-subtle)" }}>Загрузка каталога…</div>;
 
   return (
     <div data-theme={rootTheme} data-mode={rootMode} style={{ minHeight: "100vh", background: "var(--bg-page)", color: "var(--text-body)", display: "flex", flexDirection: "column" }}>
-      <header style={{ background: "var(--accent)", color: "#fff", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,.18)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="book" size={19} /></span>
-        <b style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-lg)", letterSpacing: "-.01em" }}>Читательский портал</b>
-        <span style={{ opacity: .85, fontSize: "var(--text-xs)" }}>ИРБИС {server?.version} · база {DB}</span>
+      <header style={{ background: "var(--accent)", color: "var(--text-on-accent, #fff)", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+        <button onClick={goHome} title="На главную" aria-label="На главную"
+          style={{ display: "inline-flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
+          <span style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,.18)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="book" size={19} /></span>
+          <b style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-lg)", letterSpacing: "-.01em" }}>Читательский портал</b>
+        </button>
+        {/* Пилюля текущей базы (G18) — контекст «где я ищу». */}
+        {context === "reader" && !home && (
+          <span title={"Текущая база поиска: " + dbName} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.34)", borderRadius: 999, padding: "3px 11px", fontSize: "var(--text-xs)", fontWeight: 600 }}>
+            <Icon name="layers" size={13} /> {dbName}
+          </span>
+        )}
+        <span style={{ opacity: .85, fontSize: "var(--text-xs)" }}>ИРБИС {server?.version}{home ? " · база " + DB : ""}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
           <div style={{ display: "flex", gap: 4, marginRight: 6, padding: 2, background: "rgba(255,255,255,.12)", borderRadius: 10 }}>
             <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>Читатель</button>
@@ -318,7 +358,15 @@ export function App() {
         {context === "staff" ? (
           <StaffArea staff={staff!} route={staffRoute} setRoute={setStaffRoute} toast={toast} />
         ) : view === "cabinet" ? (
-          <CabinetScreen cab={cab} ticket={account.ticket} onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
+          <CabinetScreen cab={cab} ticket={account.ticket} toast={toast} onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
+        ) : home && !rec ? (
+          /* Discovery façade (G1-G3, G17) — лендинг до первого поиска. */
+          <HomeScreen
+            databases={databases} db={db}
+            onPickDb={(code) => setDb(code)}
+            onSearch={(px, query) => goSearch(px, query)}
+            onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }}
+          />
         ) : (
         <>
         {!rec && (
@@ -405,12 +453,18 @@ export function App() {
                         <button onClick={() => applyFacets([])} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "var(--text-xs)" }}>Сбросить все</button>
                       </div>
                     )}
-                    <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", margin: "4px 0 10px" }}>Найдено: {total} · страница {page} из {pageCount}</div>
+                    <ResultsToolbar total={total} page={page} pageCount={pageCount}
+                      view={viewMode} onView={setViewMode} sort={sort} onSort={setSort} />
                     {total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Снимите часть фильтров и повторите поиск." /> : <>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {items.map((it) => <ResultCard key={it.mfn} item={it} dbTag="Книги" typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn)} />)}
-                      </div>
-                      <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} /></div>
+                      {viewMode === "gallery" ? (
+                        <GalleryGrid items={sortItems(items, sort)} db={db}
+                          inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {sortItems(items, sort).map((it) => <ResultCard key={it.mfn} item={it} dbTag={dbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn)} />)}
+                        </div>
+                      )}
+                      <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} pageSize={pageSize} onPageSize={changePageSize} /></div>
                     </>}
                   </div>
                 </div>}
@@ -491,7 +545,12 @@ function parseIrbisDate(s: string): Date | null {
 function fmtDate(dt: Date | null): string {
   return dt ? dt.getDate() + " " + RU_MONTH[dt.getMonth()] : "";
 }
-const COVER_TINTS = ["#2F5D62", "#C96442", "#6B5CA5", "#3E4C7E", "#1F8A5B", "#8A4F9E"];
+// Декоративная палитра подложек обложек-плейсхолдеров — токены Biblio
+// (--cover-tint-*); hex оставлен как фолбэк на случай отсутствия токен-слоя.
+const COVER_TINTS = [
+  "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
+  "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
+];
 
 // Адаптив кабинета: на узких экранах профиль уезжает наверх, сетки в одну колонку.
 const CAB_CSS = `
@@ -581,7 +640,8 @@ function toneDot(tone: LoanView["tone"]): React.CSSProperties {
   return { width: 6, height: 6, borderRadius: 999, background: c, flex: "none" };
 }
 
-function CabinetScreen({ cab, ticket, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; onBack: () => void; onLogout: () => void }) {
+function CabinetScreen({ cab, ticket, toast, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; onBack: () => void; onLogout: () => void }) {
+  const [cabTab, setCabTab] = React.useState<"formular" | "orders">("formular");
   const today = React.useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const loans = React.useMemo(() => (cab?.loans || []).map((l) => buildLoan(l, today)), [cab, today]);
   const onHand = loans.filter((l) => l.onHand);
@@ -599,7 +659,7 @@ function CabinetScreen({ cab, ticket, onBack, onLogout }: { cab: CabinetData | n
     { title: "Совершенный код", author: "С. Макконнелл", note: "ожидание", pos: 2, of: 5, info: true },
     { title: "Искусство программирования", author: "Д. Кнут", note: "скоро ваша", pos: 1, of: 3, info: false },
   ];
-  const shelves = [
+  const shelves: { name: string; count: number; icon: IconName }[] = [
     { name: "Хочу прочитать", count: 12, icon: "book" },
     { name: "Избранное", count: 8, icon: "star" },
     { name: "По работе", count: 23, icon: "briefcase" },
@@ -653,6 +713,28 @@ function CabinetScreen({ cab, ticket, onBack, onLogout }: { cab: CabinetData | n
         {/* ===== Основная колонка ===== */}
         <main style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
 
+          {/* Вкладки кабинета: Формуляр / Заказы (G12) */}
+          <div role="tablist" aria-label="Разделы кабинета" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)" }}>
+            {([["formular", "Формуляр"], ["orders", "Заказы"]] as const).map(([key, label]) => {
+              const on = cabTab === key;
+              return (
+                <button key={key} role="tab" aria-selected={on} onClick={() => setCabTab(key)}
+                  style={{ background: "none", border: "none", borderBottom: on ? "2px solid var(--accent)" : "2px solid transparent", color: on ? "var(--accent)" : "var(--text-subtle)", fontWeight: on ? 600 : 500, padding: "9px 14px", cursor: "pointer", fontSize: "var(--text-sm)", fontFamily: "var(--font-ui,inherit)" }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {cabTab === "orders" ? (
+            <section aria-labelledby="cab-orders">
+              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+                <h1 id="cab-orders" style={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}>Мои заказы</h1>
+              </div>
+              <OrdersTab toast={toast} cardSx={cardSx} />
+            </section>
+          ) : (
+          <>
           {/* На руках сейчас — LIVE формуляр */}
           <section aria-labelledby="cab-onhand">
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
@@ -739,6 +821,8 @@ function CabinetScreen({ cab, ticket, onBack, onLogout }: { cab: CabinetData | n
               ))}
             </div>
           </section>
+          </>
+          )}
 
           <div style={{ marginTop: 4 }}><Button variant="ghost" iconLeft="log-out" onClick={onLogout}>Выйти из кабинета</Button></div>
         </main>
@@ -910,7 +994,7 @@ const exportBtn: React.CSSProperties = {
 // --- Корзина (отбор) — модальная панель -----------------------------------
 function BasketPanel({ items, onClose, onRemove, onClear, toast }: {
   items: ResultItem[]; onClose: () => void; onRemove: (mfn: number) => void; onClear: () => void;
-  toast: (t: { variant: string; title: string; message?: string }) => void;
+  toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
 }) {
   const empty = items.length === 0;
   const exp = (fmt: "ris" | "bib" | "txt") => { if (empty) return; exportBasket(items, fmt); };
