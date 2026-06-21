@@ -19,23 +19,23 @@ import { Showcase } from "./Showcase";
 const SEED_EXAMPLES = ["Программирование", "История России", "Психология", "Математика", "Менеджмент", "Право"];
 
 const CSS = `
-.irb-home{display:flex;flex-direction:column;gap:34px;}
+.irb-home{display:flex;flex-direction:column;gap:20px;}
 .irb-hero{position:relative;overflow:hidden;border-radius:var(--radius-2xl,22px);
   background:linear-gradient(155deg,var(--accent),var(--accent-hover));
-  color:var(--accent-fg,#fff);padding:46px 32px 40px;text-align:center;box-shadow:var(--shadow-md);}
+  color:var(--accent-fg,#fff);padding:24px 28px 22px;text-align:center;box-shadow:var(--shadow-md);}
 .irb-hero::after{content:"";position:absolute;inset:0;pointer-events:none;
   background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.18),transparent 60%);}
 .irb-hero__inner{position:relative;max-width:640px;margin:0 auto;}
 .irb-hero__eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:var(--text-xs);font-weight:var(--weight-semibold,600);
   text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.16);padding:5px 12px;border-radius:var(--radius-pill,999px);}
 .irb-hero__title{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-bold,700);
-  font-size:clamp(1.7rem,4vw,2.6rem);line-height:1.12;letter-spacing:-.02em;margin:16px 0 8px;}
-.irb-hero__lead{font-size:var(--text-md,1rem);opacity:.92;margin:0 0 22px;line-height:1.5;}
+  font-size:clamp(1.3rem,2.6vw,1.9rem);line-height:1.1;letter-spacing:-.02em;margin:8px 0 5px;}
+.irb-hero__lead{font-size:var(--text-sm,.95rem);opacity:.92;margin:0 0 14px;line-height:1.4;}
 .irb-hero__search{background:var(--surface-card);border-radius:var(--radius-xl,16px);padding:10px;
   box-shadow:var(--shadow-lg);display:flex;gap:8px;align-items:stretch;text-align:left;}
 .irb-hero__field{flex:none;min-width:140px;}
 .irb-hero__bar{flex:1;min-width:0;}
-.irb-home__examples{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:18px;}
+.irb-home__examples{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px;}
 .irb-home__exlabel{width:100%;text-align:center;font-size:var(--text-xs);opacity:.85;margin-bottom:2px;}
 .irb-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);
   color:var(--accent-fg,#fff);border:1px solid rgba(255,255,255,.34);border-radius:var(--radius-pill,999px);
