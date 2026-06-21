@@ -286,6 +286,63 @@ class Api:
         return 200, ok({'db': db, 'start': start,
                         'terms': [{'count': c, 'term': t} for c, t in rows]})
 
+    def showcase(self, session, db, kind, limit):
+        """Discovery façade — "new arrivals / featured" brief cards for the portal.
+
+        Guarded by the same ``search``/read grant as /api/search (guests may see
+        the showcase — it is public OPAC content). ``kind`` ∈ new|popular; both
+        resolve to the most recent records for now (popular falls back to new
+        until a circulation-ranking signal exists). "Recent" = the highest MFNs
+        (MFN is assigned monotonically on input), read top-down from maxmfn so no
+        date index is required. Returns brief items (reusing ``_brief_item``) and
+        degrades to an empty list — never raises — when the DB is empty or the
+        server is briefly unreachable, so the homepage still renders."""
+        self._guard(session, 'search', db, 'read')
+        kind = (kind or 'new').lower()
+        if kind not in ('new', 'popular'):
+            kind = 'new'
+        try:
+            top = self.irbis.max_mfn(db)
+        except IrbisError:
+            top = 0
+        # max_mfn returns the next free MFN; the last real record is top-1.
+        mfns = [m for m in range(top - 1, 0, -1)][:limit]
+        items = []
+        for mfn in mfns:
+            it = self._brief_item(db, mfn)
+            # _brief_item already degrades a failed read to a stub; keep cards
+            # that resolved to a real title, but never let one bad MFN abort.
+            items.append(it)
+        return 200, ok({'db': db, 'kind': kind, 'limit': limit, 'items': items})
+
+    def rubricator(self, session, db, prefix, start, limit):
+        """Browse a classification / navigator dictionary (terms + posting counts)
+        so the portal can render GRNTI / UDC / keyword navigators.
+
+        Reuses the same ``read_terms`` dictionary mechanism as /api/terms, but is
+        scoped to a navigator ``prefix`` (e.g. 'G=' GRNTI, 'U=' UDC, 'K='
+        keywords): it scans from ``prefix``+``start`` and keeps only terms that
+        still carry that prefix, stripping the prefix so the UI gets clean values
+        with counts and a ready-to-run search ``expr`` per entry. Guarded by
+        ``terms``/read (public — guests browse navigators). Empty list, never a
+        raise, when the prefix has no terms or the server is briefly absent."""
+        self._guard(session, 'terms', db, 'read')
+        prefix = (prefix or '').strip()
+        seek = prefix + (start or '')
+        try:
+            rows = self.irbis.read_terms(db, seek, limit)
+        except IrbisError:
+            rows = []
+        entries = []
+        for cnt, term in rows:
+            if prefix and not term.startswith(prefix):
+                continue                      # walked past this navigator's block
+            value = term[len(prefix):] if prefix else term
+            entries.append({'term': term, 'value': value, 'count': cnt,
+                            'expr': '"%s"' % term})
+        return 200, ok({'db': db, 'prefix': prefix, 'start': start,
+                        'limit': limit, 'terms': entries})
+
     # Facet specs: (field, prefix, label, value->label map). Prefixes confirmed to exist
     # on IBIS via /api/terms (V= вид документа; J= язык ISO codes; A= автор). Values are
     # derived live from the dictionary; labels are looked up per facet, codes shown as-is.
@@ -372,7 +429,40 @@ class Api:
     # service/authority DBs not meant for public reader search
     _SERVICE_DBS = {'RDR', 'RQST', 'CMPL', 'PODB', 'POST', 'VISIT', 'LOG', 'COUNT'}
 
-    def databases(self, session):
+    # Seeded example search chips per DB for the portal — static config for now
+    # (a future iteration can derive these from the most-used dictionary terms).
+    # Each chip is a ready-to-run query: {label, prefix, q} so the frontend can
+    # build the same expression /api/search would. Falls back to _EX_DEFAULT.
+    _EX_DEFAULT = [
+        {'label': 'Программирование', 'prefix': 'K', 'q': 'программирование'},
+        {'label': 'История', 'prefix': 'K', 'q': 'история'},
+        {'label': 'Пушкин', 'prefix': 'A', 'q': 'Пушкин'},
+    ]
+    _EXAMPLE_QUERIES = {
+        'IBIS': [
+            {'label': 'Информатика', 'prefix': 'K', 'q': 'информатика'},
+            {'label': 'Математика', 'prefix': 'K', 'q': 'математика'},
+            {'label': 'Толстой Л.Н.', 'prefix': 'A', 'q': 'Толстой'},
+            {'label': 'Новинки 2024', 'prefix': 'K', 'q': '2024'},
+        ],
+    }
+
+    def _db_count(self, code):
+        """Cheap record count for a DB selector: maxmfn-1 (the last assigned MFN).
+
+        ``O`` (max_mfn) is a single round-trip and reads no records, so this is
+        safe to call per database. Returns an int >= 0, or None when the count
+        can't be obtained (server/permission hiccup) so the field can be omitted
+        gracefully rather than failing the whole list."""
+        try:
+            top = self.irbis.max_mfn(code)
+        except IrbisError:
+            return None
+        if top is None or top < 0:
+            return None
+        return max(0, top - 1)
+
+    def databases(self, session, with_counts=True):
         if not session:
             raise Denied(401, 'unauthorized', 'no session')
         txt = self.irbis.read_file(self.cfg.db_menu)
@@ -384,8 +474,34 @@ class Api:
             if not code:
                 continue
             public = code not in self._SERVICE_DBS and not code.upper().startswith('ATHR')
-            items.append({'code': code, 'name': name, 'public': public})
+            item = {'code': code, 'name': name, 'public': public}
+            if with_counts:
+                cnt = self._db_count(code)
+                if cnt is not None:
+                    item['count'] = cnt        # additive field; back-compat preserved
+            items.append(item)
         return 200, ok({'items': items, 'default': self.cfg.db_default})
+
+    def example_queries(self, session, db):
+        """Seeded example search chips for a DB (discovery façade).
+
+        Static per-DB config for now (``_EXAMPLE_QUERIES`` / ``_EX_DEFAULT``).
+        Guarded by ``search``/read like /api/search (public — guests see the
+        chips on the homepage). Each chip carries {label, prefix, q} plus a
+        precomputed ``expr`` so the frontend can run it verbatim through
+        /api/search. Never touches IRBIS, so it cannot fail on a server hiccup."""
+        self._guard(session, 'search', db, 'read')
+        chips = self._EXAMPLE_QUERIES.get(db) or self._EXAMPLE_QUERIES.get(
+            (db or '').upper()) or self._EX_DEFAULT
+        out = []
+        for c in chips:
+            prefix = (c.get('prefix') or 'K').upper()
+            q = (c.get('q') or '').replace('"', '')
+            if prefix in ('A', 'T') and not q.endswith('$'):
+                q += '$'
+            out.append({'label': c.get('label') or q, 'prefix': prefix,
+                        'q': c.get('q'), 'expr': '"%s=%s"' % (prefix, q)})
+        return 200, ok({'db': db, 'examples': out})
 
     def worklist(self, session, db):
         if not session:
@@ -557,6 +673,20 @@ class Api:
                 if not expr:
                     return 400, err('bad_request', 'q or expr required')
                 return self.facets(session, db, expr)
+            if method == 'GET' and path == '/api/showcase':
+                db = query.get('db', [self.cfg.db_default])[0]
+                kind = query.get('kind', ['new'])[0]
+                limit = min(50, max(1, int(query.get('limit', ['12'])[0])))
+                return self.showcase(session, db, kind, limit)
+            if method == 'GET' and path == '/api/rubricator':
+                db = query.get('db', [self.cfg.db_default])[0]
+                prefix = query.get('prefix', [''])[0]
+                start = query.get('start', [''])[0]
+                limit = min(100, max(1, int(query.get('limit', ['30'])[0])))
+                return self.rubricator(session, db, prefix, start, limit)
+            if method == 'GET' and path == '/api/example-queries':
+                db = query.get('db', [self.cfg.db_default])[0]
+                return self.example_queries(session, db)
             if method == 'POST' and path == '/api/validate':
                 return self.validate_record(session, body or {})
             if method == 'POST' and path == '/api/order':
@@ -572,7 +702,8 @@ class Api:
             if method == 'GET' and len(parts) == 3 and parts[0] == 'api' and parts[1] == 'classification':
                 return self.classification(session, parts[2])
             if method == 'GET' and path == '/api/databases':
-                return self.databases(session)
+                with_counts = query.get('counts', ['1'])[0] not in ('0', 'false', 'no')
+                return self.databases(session, with_counts=with_counts)
             if method == 'GET' and len(parts) == 3 and parts[0] == 'api' and parts[1] == 'worklist':
                 return self.worklist(session, parts[2])
             if method == 'POST' and len(parts) == 4 and parts[0] == 'api' and parts[1] == 'record':
