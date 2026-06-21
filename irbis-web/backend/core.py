@@ -191,6 +191,70 @@ class Api:
         return 200, ok({'db': db, 'start': start,
                         'terms': [{'count': c, 'term': t} for c, t in rows]})
 
+    # Facet specs: (field, prefix, label, value->label map). Prefixes confirmed to exist
+    # on IBIS via /api/terms (V= вид документа; J= язык ISO codes; A= автор). Values are
+    # derived live from the dictionary; labels are looked up per facet, codes shown as-is.
+    _FACETS = (
+        ('docType', 'V', 'Вид документа', {
+            '01': 'Книга (часть)', '02': 'Сборник', '03': 'Многотомник',
+            '04': 'Однотомник', '05': 'Книга', '06': 'Стандарт', '08': 'Препринт',
+            '09': 'Спецвид', '11': 'Журнал (часть)', '12': 'Журнал',
+            'KN': 'Книга', 'DOK': 'Документ', 'FT': 'Полный текст',
+            'EXT': 'Внешний ресурс', 'ZL': 'Электронный ресурс',
+            'AS': 'Авторское свид.', 'DEL': 'Удалено'}),
+        ('lang', 'J', 'Язык', {
+            'RUS': 'Русский', 'ENG': 'Английский', 'UKR': 'Украинский',
+            'KAZ': 'Казахский', 'GER': 'Немецкий', 'FRE': 'Французский',
+            'SPA': 'Испанский', 'ITA': 'Итальянский', 'LAT': 'Латинский'}),
+        ('author', 'A', 'Автор', None),
+    )
+
+    def _facet_count(self, db, base_expr, prefix, value):
+        """Cheap COUNT for (base) intersected (AND, IRBIS '*') with one facet term.
+        maxn=0 -> server returns total without reading records. Returns int or None."""
+        v = value.replace('"', '')
+        expr = '(%s) * "%s=%s"' % (base_expr, prefix, v)
+        try:
+            count, _ = self.irbis.search(db, expr, maxn=0)
+        except IrbisError:
+            return None
+        return count
+
+    def facets(self, session, db, base_expr, limit=8):
+        """Compute facet value counts for a base query via sub-search COUNTs.
+        For each facet prefix, derive candidate values from the dictionary
+        (read_terms with start='<prefix>='), then count each value intersected
+        with the base query. Skips values that don't co-occur (count 0) and any
+        facet whose prefix yields no usable terms. Never raises on a sub-failure."""
+        self._guard(session, 'search', db, 'read')
+        out = []
+        for fieldname, prefix, label, labelmap in self._FACETS:
+            try:
+                rows = self.irbis.read_terms(db, prefix + '=', max(limit * 3, 24))
+            except IrbisError:
+                continue
+            values = []
+            for _c, term in rows:
+                if not term.startswith(prefix + '='):
+                    continue
+                val = term[len(prefix) + 1:].strip()
+                if val and val not in values:
+                    values.append(val)
+            scored = []
+            for val in values:
+                if len(scored) >= limit * 2:
+                    break
+                cnt = self._facet_count(db, base_expr, prefix, val)
+                if cnt:
+                    vlabel = (labelmap or {}).get(val.upper()) or (labelmap or {}).get(val) or val
+                    scored.append({'value': val, 'label': vlabel, 'count': cnt})
+            scored.sort(key=lambda x: x['count'], reverse=True)
+            scored = scored[:limit]
+            if scored:
+                out.append({'field': fieldname, 'prefix': prefix,
+                            'label': label, 'values': scored})
+        return 200, ok({'db': db, 'expr': base_expr, 'facets': out})
+
     def cover(self, session, db, mfn):
         """Embedded cover from field 953 (^B is URL-encoded image bytes)."""
         self._guard(session, 'record.read', db, 'read')
@@ -310,6 +374,12 @@ class Api:
                 start = query.get('start', [''])[0]
                 cnt = min(50, max(1, int(query.get('count', ['15'])[0])))
                 return self.terms(session, db, start, cnt)
+            if method == 'GET' and path == '/api/facets':
+                db = query.get('db', [self.cfg.db_default])[0]
+                expr = build_expr(query)
+                if not expr:
+                    return 400, err('bad_request', 'q or expr required')
+                return self.facets(session, db, expr)
             if method == 'POST' and path == '/api/order':
                 return self.order(session, body or {})
             if method == 'GET' and path == '/api/me/cabinet':
