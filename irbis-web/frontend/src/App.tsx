@@ -13,6 +13,7 @@ import { EmptyState } from "../components/feedback/EmptyState.jsx";
 import { ToastViewport } from "../components/feedback/Toast.jsx";
 import { StaffArea, StaffLoginOverlay } from "./Staff";
 import type { StaffSession } from "./Staff";
+import { exportRecord, exportBasket, basketMailto } from "./export";
 
 const PREFIXES = [
   { code: "K", label: "Ключевые слова" }, { code: "A", label: "Автор" },
@@ -65,7 +66,12 @@ function recView(d: RecordData) {
     ? d.holdings.map((h) => ({ loc: h.location || "", inv: h.inv_no, st: h.status }))
     : F("910").map((h) => ({ loc: sf(h, "D") || "Основной фонд", inv: sf(h, "B"),
         st: (sf(h, "A") === "0" || sf(h, "A") === "") ? "available" : "issued" }));
-  const files = ["951", "955"].flatMap(F).map((f) => sf(f, "A") || sf(f, "T")).filter(Boolean);
+  const files = ["951", "955"].flatMap(F).map((f) => {
+    const name = sf(f, "T") || sf(f, "A") || sf(f, "H") || f.value || "";
+    const link = sf(f, "I") || sf(f, "U") || sf(f, "A") || "";
+    const isUrl = /^(https?:\/\/|ftp:\/\/|www\.)/i.test(link.trim());
+    return { name: name.trim(), url: isUrl ? (link.trim().startsWith("www.") ? "http://" + link.trim() : link.trim()) : "" };
+  }).filter((x) => x.name || x.url);
   const rawRows = d.fields.map((x) => `<tr><td style="color:var(--text-subtle);font-family:var(--font-mono);padding-right:12px;vertical-align:top">${x.tag}</td><td style="font-family:var(--font-mono);font-size:12px">${esc(x.value)}</td></tr>`).join("");
   return { brief: d.brief || "", meta, subjects, holds, files, rawRows };
 }
@@ -79,9 +85,10 @@ export function App() {
   const [db, setDb] = React.useState("IBIS");
   const [prefix, setPrefix] = React.useState("K");
   const [q, setQ] = React.useState("Android");
-  const [mode, setMode] = React.useState<"simple" | "advanced">("simple");
+  const [mode, setMode] = React.useState<"simple" | "advanced" | "expert">("simple");
   const [advRows, setAdvRows] = React.useState([{ field: "A", value: "" }, { field: "T", value: "" }]);
   const [advCombine, setAdvCombine] = React.useState<"and" | "or">("and");
+  const [expertExpr, setExpertExpr] = React.useState('"K=Android" + "K=PHP"');
   const [sug, setSug] = React.useState<any[]>([]);
   const [items, setItems] = React.useState<ResultItem[]>([]);
   const [total, setTotal] = React.useState(0);
@@ -91,7 +98,11 @@ export function App() {
   const [activeFacets, setActiveFacets] = React.useState<ActiveFacet[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [rec, setRec] = React.useState<RecordData | null>(null);
-  const [showRaw, setShowRaw] = React.useState(false);
+  const [recTab, setRecTab] = React.useState(0);
+  const [shareOpen, setShareOpen] = React.useState(false);
+  // Корзина (отбор) — только в памяти, без localStorage (защищённый контур).
+  const [basket, setBasket] = React.useState<ResultItem[]>([]);
+  const [basketOpen, setBasketOpen] = React.useState(false);
   const [toasts, setToasts] = React.useState<Toast[]>([]);
   const [account, setAccount] = React.useState<{ loggedIn: boolean; ticket?: string }>({ loggedIn: false });
   const [loginOpen, setLoginOpen] = React.useState(false);
@@ -112,7 +123,18 @@ export function App() {
       const startDb = h.json?.data?.db || "IBIS"; setDb(startDb);
       const d = await api.databases(); if (d.json?.ok && d.json.data) setDatabases(d.json.data.items);
       setReady(true);
-      runSearch(startDb, "K", "Android", 1);
+      // Постоянная ссылка: если в URL есть ?db=&mfn=, автоматически открыть запись.
+      let opened = false;
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const linkDb = p.get("db"); const linkMfn = p.get("mfn");
+        if (linkMfn && /^\d+$/.test(linkMfn)) {
+          const useDb = linkDb || startDb; setDb(useDb);
+          opened = true;
+          await openRecord(parseInt(linkMfn, 10), useDb);
+        }
+      } catch { /* ignore */ }
+      if (!opened) runSearch(startDb, "K", "Android", 1);
     })();
   }, []);
 
@@ -180,6 +202,17 @@ export function App() {
     if (!expr) { toast({ variant: "warning", title: "Заполните условия", message: "Введите хотя бы одно значение." }); return; }
     runExpr(db, expr, 1, true);
   }
+  function runExpert() {
+    const expr = expertExpr.trim();
+    if (!expr) { toast({ variant: "warning", title: "Введите выражение", message: "Запрос поиска не должен быть пустым." }); return; }
+    runExpr(db, expr, 1, true);
+  }
+  // --- Корзина (отбор) -----------------------------------------------------
+  function inBasket(mfn: number) { return basket.some((b) => b.mfn === mfn); }
+  function toggleBasket(it: ResultItem) {
+    setBasket((b) => b.some((x) => x.mfn === it.mfn) ? b.filter((x) => x.mfn !== it.mfn) : [...b, it]);
+  }
+  function removeFromBasket(mfn: number) { setBasket((b) => b.filter((x) => x.mfn !== mfn)); }
   // Pagination that preserves the active base query + facet refinements.
   function gotoPage(p: number) {
     if (baseExpr != null) runExpr(db, composeExpr(baseExpr, activeFacets), p);
@@ -187,7 +220,30 @@ export function App() {
     else runSearch(db, prefix, q, p);
   }
 
-  async function openRecord(mfn: number) { setLoading(true); const r = await api.record(db, mfn); setLoading(false); if (r.json?.ok && r.json.data) { setRec(r.json.data); window.scrollTo(0, 0); } }
+  async function openRecord(mfn: number, database: string = db) {
+    setLoading(true); const r = await api.record(database, mfn); setLoading(false);
+    if (r.json?.ok && r.json.data) {
+      setRec(r.json.data); setRecTab(0); setShareOpen(false);
+      // Постоянная ссылка: ?db=<db>&mfn=<mfn> в адресной строке без перезагрузки.
+      try { const u = new URL(window.location.href); u.searchParams.set("db", database); u.searchParams.set("mfn", String(mfn)); window.history.replaceState(null, "", u.toString()); } catch { /* ignore */ }
+      window.scrollTo(0, 0);
+    }
+  }
+  function closeRecord() {
+    setRec(null); setShareOpen(false);
+    try { const u = new URL(window.location.href); u.searchParams.delete("db"); u.searchParams.delete("mfn"); window.history.replaceState(null, "", u.pathname + (u.search ? u.search : "")); } catch { /* ignore */ }
+  }
+  function permalink(): string {
+    try { const u = new URL(window.location.href); u.search = ""; u.searchParams.set("db", rec ? rec.db : db); if (rec) u.searchParams.set("mfn", String(rec.mfn)); return u.toString(); } catch { return ""; }
+  }
+  async function copyPermalink() {
+    const link = permalink();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(link);
+      else { const ta = document.createElement("textarea"); ta.value = link; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
+      toast({ variant: "success", title: "Ссылка скопирована", message: "Постоянная ссылка на запись в буфере обмена." });
+    } catch { toast({ variant: "info", title: "Скопируйте ссылку", message: link }); }
+  }
   async function order(mfn: number) {
     const r = await api.order(db, mfn);
     if (r.status === 200) toast({ variant: "success", title: "Заказ принят", message: "Экземпляр поставлен в очередь выдачи." });
@@ -259,10 +315,15 @@ export function App() {
                   {databases.filter((d) => d.public).map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
                 </select>
               )}
-              <div style={{ display: "flex", gap: 4, padding: 2, background: "var(--surface-sunken,#eee)", borderRadius: 10 }}>
-                <button onClick={() => setMode("simple")} style={modeBtn(mode === "simple")}>Простой</button>
-                <button onClick={() => setMode("advanced")} style={modeBtn(mode === "advanced")}>Расширенный</button>
+              <div role="tablist" aria-label="Режим поиска" style={{ display: "flex", gap: 4, padding: 2, background: "var(--surface-sunken,#eee)", borderRadius: 10 }}>
+                <button role="tab" aria-selected={mode === "simple"} onClick={() => setMode("simple")} style={modeBtn(mode === "simple")}>Простой</button>
+                <button role="tab" aria-selected={mode === "advanced"} onClick={() => setMode("advanced")} style={modeBtn(mode === "advanced")}>Расширенный</button>
+                <button role="tab" aria-selected={mode === "expert"} onClick={() => setMode("expert")} style={modeBtn(mode === "expert")}>Экспертный</button>
               </div>
+              <button onClick={() => setBasketOpen(true)} title="Корзина отбора"
+                style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, background: basket.length ? "var(--accent)" : "transparent", color: basket.length ? "#fff" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+                <Icon name="bookmark" size={16} /> Корзина{basket.length ? " · " + basket.length : ""}
+              </button>
             </div>
             {mode === "simple" ? (
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -273,6 +334,21 @@ export function App() {
                   <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(db, prefix, v, 1)} suggestions={sug}
                     onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(db, prefix, term, 1); }}
                     placeholder="Поиск по каталогу" buttonLabel="Найти" />
+                </div>
+              </div>
+            ) : mode === "expert" ? (
+              <div style={{ marginBottom: 14, background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 12, padding: 14 }}>
+                <label htmlFor="expert-expr" style={{ display: "block", fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6 }}>Поисковое выражение ИРБИС</label>
+                <textarea id="expert-expr" value={expertExpr} onChange={(e) => setExpertExpr(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runExpert(); }}
+                  rows={3} spellCheck={false} placeholder={'Например: "K=Android" + "K=PHP"'}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)", background: "var(--surface-card,#fff)", color: "var(--text-body)", resize: "vertical" }} />
+                <div style={{ marginTop: 8, fontSize: "var(--text-xs)", color: "var(--text-subtle)", lineHeight: 1.6 }}>
+                  Операторы: <b>*</b> И · <b>+</b> ИЛИ · <b>^</b> НЕ · <b>$</b> усечение · префиксы <code style={{ fontFamily: "var(--font-mono)" }}>K=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>A=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>T=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>V=</code>. Термин в кавычках, напр. <code style={{ fontFamily: "var(--font-mono)" }}>"K=Android"</code>.
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
+                  <Button variant="ghost" onClick={() => setExpertExpr("")}>Очистить</Button>
+                  <Button iconLeft="search" onClick={runExpert}>Найти</Button>
                 </div>
               </div>
             ) : (
@@ -318,7 +394,7 @@ export function App() {
                     <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", margin: "4px 0 10px" }}>Найдено: {total} · страница {page} из {pageCount}</div>
                     {total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Снимите часть фильтров и повторите поиск." /> : <>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {items.map((it) => <ResultCard key={it.mfn} item={it} dbTag="Книги" typeIcon="book" showCheck={false} onOpen={() => openRecord(it.mfn)} />)}
+                        {items.map((it) => <ResultCard key={it.mfn} item={it} dbTag="Книги" typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn)} />)}
                       </div>
                       <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} /></div>
                     </>}
@@ -327,45 +403,17 @@ export function App() {
           </>
         )}
 
-        {rec && (() => {
-          const v = recView(rec);
-          const lbl: React.CSSProperties = { fontWeight: 600, fontSize: "var(--text-sm)", margin: "18px 0 8px" };
-          return (
-            <div>
-              <Button iconLeft="arrow-left" onClick={() => { setRec(null); setShowRaw(false); }}>К результатам</Button>
-              <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-                {rec.hasCover && <img alt="обложка" src={api.coverUrl(DB, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
-                <div style={{ flex: 1, minWidth: 300 }}>
-                  <h2 style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-2xl, 1.5rem)", lineHeight: 1.3, margin: "2px 0 4px" }}>{v.brief}</h2>
-                  {v.meta.length > 0 && (
-                    <dl style={{ display: "grid", gridTemplateColumns: "minmax(120px,160px) 1fr", gap: "6px 14px", margin: "14px 0 0", fontSize: "var(--text-sm)" }}>
-                      {v.meta.map((m, i) => <React.Fragment key={i}><dt style={{ color: "var(--text-subtle)" }}>{m.label}</dt><dd style={{ margin: 0 }}>{m.value}</dd></React.Fragment>)}
-                    </dl>
-                  )}
-                  {v.subjects.length > 0 && <><div style={lbl}>Темы и рубрики</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {v.subjects.map((s, i) => <span key={i} onClick={() => { setMode("simple"); setPrefix("K"); setQ(s.split(" — ")[0]); runSearch(db, "K", s.split(" — ")[0], 1); }} style={{ cursor: "pointer", background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", padding: "3px 11px", borderRadius: 999, fontSize: "var(--text-xs)" }}>{s}</span>)}
-                  </div></>}
-                  {v.files.length > 0 && <><div style={lbl}>Электронная версия</div>{v.files.map((f, i) => <div key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "var(--text-sm)", color: "var(--text-subtle)" }}><Icon name="file-text" size={15} />{f}<span style={{ fontSize: "var(--text-xs)" }}>· документ pdf-формата</span></div>)}</>}
-                  <div style={lbl}>Экземпляры</div>
-                  {v.holds.length ?
-                    <div style={{ display: "flex", flexDirection: "column" }}>
-                      {v.holds.map((h, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 0", borderTop: i ? "1px solid var(--border-subtle)" : "none", fontSize: "var(--text-sm)" }}>
-                        <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-subtle)", flex: "none" }}>{h.inv}</span>
-                        <span style={{ flex: 1, minWidth: 0 }}>{h.loc || "на руках у читателя"}</span>
-                        <span style={statusChip(h.st)}>{(STATUS[h.st] || STATUS.unknown).label}</span>
-                      </div>)}
-                    </div> :
-                    <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>}
-                  <div style={{ marginTop: 20, display: "flex", gap: 10, alignItems: "center" }}>
-                    <Button iconLeft="bookmark" onClick={() => order(rec.mfn)}>Заказать</Button>
-                    <button onClick={() => setShowRaw((x) => !x)} style={{ background: "none", border: "none", color: "var(--text-subtle)", cursor: "pointer", fontSize: "var(--text-xs)" }}>{showRaw ? "Скрыть" : "Показать"} все поля (MARC)</button>
-                  </div>
-                  {showRaw && <div style={{ marginTop: 12, borderTop: "1px solid var(--border-subtle)", paddingTop: 8 }} dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        {rec && (
+          <RecordCard
+            rec={rec} db={DB} tab={recTab} setTab={setRecTab}
+            shareOpen={shareOpen} setShareOpen={setShareOpen}
+            permalink={permalink()} onCopyPermalink={copyPermalink}
+            onBack={closeRecord} onOrder={() => order(rec.mfn)}
+            onSubject={(t: string) => { setMode("simple"); setPrefix("K"); setQ(t); closeRecord(); runSearch(db, "K", t, 1); }}
+            inBasket={inBasket(rec.mfn)}
+            onToggleBasket={() => toggleBasket({ mfn: rec.mfn, title: rec.brief || "", author: recView(rec).meta.find((m) => m.label === "Авторы")?.value, year: recView(rec).meta.find((m) => m.label === "Выходные данные")?.value })}
+          />
+        )}
         </>
         )}
       </main>
@@ -377,6 +425,7 @@ export function App() {
 
       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
+      {basketOpen && <BasketPanel items={basket} onClose={() => setBasketOpen(false)} onRemove={removeFromBasket} onClear={() => setBasket([])} toast={toast} />}
       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
     </div>
   );
@@ -445,6 +494,185 @@ function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (t
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Button variant="ghost" onClick={onClose}>Отмена</Button>
           <Button onClick={() => onSubmit(t)}>Войти</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Карточка записи с вкладками ------------------------------------------
+const REC_TABS = ["Описание", "Экземпляры", "Электронные версии", "Метки MARC"];
+
+function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onSubject, inBasket, onToggleBasket }: {
+  rec: RecordData; db: string; tab: number; setTab: (n: number) => void;
+  shareOpen: boolean; setShareOpen: (b: boolean) => void;
+  permalink: string; onCopyPermalink: () => void;
+  onBack: () => void; onOrder: () => void; onSubject: (t: string) => void;
+  inBasket: boolean; onToggleBasket: () => void;
+}) {
+  const v = recView(rec);
+  const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
+  const lbl: React.CSSProperties = { fontWeight: 600, fontSize: "var(--text-sm)", margin: "0 0 8px" };
+  const onTabKey = (e: React.KeyboardEvent, i: number) => {
+    let next = i;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (i + 1) % REC_TABS.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (i - 1 + REC_TABS.length) % REC_TABS.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = REC_TABS.length - 1;
+    else return;
+    e.preventDefault(); setTab(next); tabRefs.current[next]?.focus();
+  };
+  const tabBtn = (active: boolean): React.CSSProperties => ({
+    background: "none", border: "none", borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
+    color: active ? "var(--accent)" : "var(--text-subtle)", fontWeight: active ? 600 : 500,
+    padding: "8px 12px", cursor: "pointer", fontSize: "var(--text-sm)", fontFamily: "var(--font-ui, inherit)", whiteSpace: "nowrap",
+  });
+  return (
+    <div>
+      <Button iconLeft="arrow-left" onClick={onBack}>К результатам</Button>
+      <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+        {rec.hasCover && <img alt="обложка" src={api.coverUrl(db, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
+        <div style={{ flex: 1, minWidth: 300 }}>
+          <h2 style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-2xl, 1.5rem)", lineHeight: 1.3, margin: "2px 0 12px" }}>{v.brief}</h2>
+
+          {/* Действия: заказ, корзина, поделиться, экспорт */}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14, position: "relative" }}>
+            <Button iconLeft="bookmark" onClick={onOrder}>Заказать</Button>
+            <button onClick={onToggleBasket} title={inBasket ? "Убрать из корзины" : "Добавить в корзину"}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, background: inBasket ? "var(--accent-weak,#eef2f7)" : "transparent", color: inBasket ? "var(--accent)" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+              <Icon name={inBasket ? "check" : "plus"} size={15} /> {inBasket ? "В корзине" : "В корзину"}
+            </button>
+            <button onClick={() => setShareOpen(!shareOpen)} aria-expanded={shareOpen} title="Поделиться"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+              <Icon name="share" size={15} /> Поделиться
+            </button>
+            <span style={{ width: 1, height: 22, background: "var(--border-subtle)" }} aria-hidden="true" />
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Экспорт:</span>
+            <button onClick={() => exportRecord(rec, "ris")} style={exportBtn} title="Экспорт в формате RIS"><Icon name="download" size={14} /> RIS</button>
+            <button onClick={() => exportRecord(rec, "bib")} style={exportBtn} title="Экспорт в формате BibTeX"><Icon name="download" size={14} /> BibTeX</button>
+            <button onClick={() => exportRecord(rec, "gost")} style={exportBtn} title="Экспорт по ГОСТ Р 7.0.100"><Icon name="download" size={14} /> ГОСТ</button>
+            {shareOpen && (
+              <div role="dialog" aria-label="Постоянная ссылка" style={{ position: "absolute", top: "100%", left: 0, marginTop: 8, zIndex: 20, background: "var(--surface-card,#fff)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 10, padding: 12, boxShadow: "var(--shadow-lg, 0 12px 30px rgba(0,0,0,.18))", width: "min(460px, 92vw)" }}>
+                <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}><Icon name="link" size={15} /> Постоянная ссылка</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input readOnly value={permalink} aria-label="Постоянная ссылка на запись" onFocus={(e) => e.currentTarget.select()}
+                    style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", background: "var(--surface-sunken,#f5f5f5)", color: "var(--text-body)" }} />
+                  <Button size="sm" iconLeft="copy" onClick={onCopyPermalink}>Копировать</Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Вкладки */}
+          <div role="tablist" aria-label="Разделы записи" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", overflowX: "auto" }}>
+            {REC_TABS.map((t, i) => (
+              <button key={t} role="tab" id={"rectab-" + i} aria-selected={tab === i} aria-controls={"recpanel-" + i}
+                tabIndex={tab === i ? 0 : -1} ref={(el) => { tabRefs.current[i] = el; }}
+                onClick={() => setTab(i)} onKeyDown={(e) => onTabKey(e, i)} style={tabBtn(tab === i)}>
+                {t}{i === 1 && v.holds.length ? " (" + v.holds.length + ")" : ""}{i === 2 && v.files.length ? " (" + v.files.length + ")" : ""}
+              </button>
+            ))}
+          </div>
+
+          <div role="tabpanel" id={"recpanel-" + tab} aria-labelledby={"rectab-" + tab} tabIndex={0} style={{ paddingTop: 16, outline: "none" }}>
+            {tab === 0 && (
+              <div>
+                {v.meta.length > 0 ? (
+                  <dl style={{ display: "grid", gridTemplateColumns: "minmax(120px,160px) 1fr", gap: "6px 14px", margin: "0 0 4px", fontSize: "var(--text-sm)" }}>
+                    {v.meta.map((m, i) => <React.Fragment key={i}><dt style={{ color: "var(--text-subtle)" }}>{m.label}</dt><dd style={{ margin: 0 }}>{m.value}</dd></React.Fragment>)}
+                  </dl>
+                ) : <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Описание отсутствует.</div>}
+                {v.subjects.length > 0 && <div style={{ marginTop: 18 }}><div style={lbl}>Темы и рубрики</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {v.subjects.map((s, i) => <span key={i} role="button" tabIndex={0}
+                    onClick={() => onSubject(s.split(" — ")[0])}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSubject(s.split(" — ")[0]); } }}
+                    style={{ cursor: "pointer", background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", padding: "3px 11px", borderRadius: 999, fontSize: "var(--text-xs)" }}>{s}</span>)}
+                </div></div>}
+              </div>
+            )}
+            {tab === 1 && (
+              v.holds.length ?
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {v.holds.map((h, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderTop: i ? "1px solid var(--border-subtle)" : "none", fontSize: "var(--text-sm)" }}>
+                    <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-subtle)", flex: "none", minWidth: 90 }}>{h.inv || "—"}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>{h.loc || "на руках у читателя"}</span>
+                    <span style={statusChip(h.st)}>{(STATUS[h.st] || STATUS.unknown).label}</span>
+                  </div>)}
+                </div> :
+                <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>
+            )}
+            {tab === 2 && (
+              v.files.length ?
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {v.files.map((f, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)" }}>
+                    <Icon name="file-text" size={16} style={{ color: "var(--text-subtle)", flexShrink: 0 }} />
+                    {f.url
+                      ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 5 }}>{f.name || f.url} <Icon name="external-link" size={13} /></a>
+                      : <span>{f.name}</span>}
+                  </div>)}
+                </div> :
+                <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Электронные версии к записи не прикреплены.</div>
+            )}
+            {tab === 3 && (
+              <div dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const exportBtn: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 5, background: "var(--surface-card,#fff)",
+  color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8,
+  padding: "6px 10px", cursor: "pointer", fontSize: "var(--text-xs)",
+};
+
+// --- Корзина (отбор) — модальная панель -----------------------------------
+function BasketPanel({ items, onClose, onRemove, onClear, toast }: {
+  items: ResultItem[]; onClose: () => void; onRemove: (mfn: number) => void; onClear: () => void;
+  toast: (t: { variant: string; title: string; message?: string }) => void;
+}) {
+  const empty = items.length === 0;
+  const exp = (fmt: "ris" | "bib" | "txt") => { if (empty) return; exportBasket(items, fmt); };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", justifyContent: "flex-end", zIndex: 60 }}>
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Корзина отбора"
+        style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", width: "min(440px, 96vw)", height: "100%", boxShadow: "var(--shadow-lg, -10px 0 40px rgba(0,0,0,.25))", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
+          <Icon name="bookmark" size={18} />
+          <b style={{ fontSize: "var(--text-lg)" }}>Корзина отбора</b>
+          <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>· {items.length}</span>
+          <button onClick={onClose} aria-label="Закрыть корзину" style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)" }}><Icon name="x" size={20} /></button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 18px" }}>
+          {empty ? (
+            <EmptyState icon="bookmark" title="Корзина пуста" description="Отметьте издания в результатах поиска флажком, чтобы добавить их сюда." />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {items.map((it) => (
+                <div key={it.mfn} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid var(--border-subtle)" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text-strong)" }}>{it.title || "[Без заглавия]"}</div>
+                    {(it.author || it.year) && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2 }}>{[it.author, it.year].filter(Boolean).join(" · ")}</div>}
+                  </div>
+                  <button onClick={() => onRemove(it.mfn)} aria-label={"Убрать из корзины: " + (it.title || "")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)", flexShrink: 0 }}><Icon name="trash" size={16} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Экспорт отобранного списка</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => exp("ris")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> RIS</button>
+            <button onClick={() => exp("bib")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> BibTeX</button>
+            <button onClick={() => exp("txt")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> Текст</button>
+            <a href={empty ? undefined : basketMailto(items)} onClick={(e) => { if (empty) e.preventDefault(); }}
+              style={{ ...exportBtn, textDecoration: "none", opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer", marginLeft: "auto" }}><Icon name="share" size={14} /> Отправить на почту</a>
+          </div>
+          {!empty && <Button variant="ghost" onClick={() => { onClear(); toast({ variant: "info", title: "Корзина очищена" }); }}>Очистить корзину</Button>}
         </div>
       </div>
     </div>
