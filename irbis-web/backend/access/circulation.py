@@ -59,10 +59,18 @@ Rule decisions enforced (per spec section)
 Events
 ------
 Operations return *event intents* (``{'event','recipient','payload'}``) for A6
-(``hold_ready`` / ``overdue`` / ``fine_charged`` / ``renewal_confirmed`` …). If
-an :class:`access.notifications.NotificationQueue` is handed to the engine they
-are also enqueued (idempotent by dedup_key); otherwise they are only returned —
-the rule layer never depends on A6 being present.
+(``hold_ready`` / ``fine_charged`` / ``renewal_confirmed`` / ``fine_paid`` /
+``hold_cancelled`` / ``lost_confirmed`` / ``staff_alert`` …). If an
+:class:`access.notifications.NotificationQueue` is handed to the engine (the
+optional ``notifications=`` handle, mirroring the ``catalog=`` seam) each intent
+is also **rendered + enqueued** through A6: the event is mapped to its template,
+a reader-friendly render context is built (item→title, epoch→date, price→amount,
+currency default), and the notice is queued on the template's default channels
+(idempotent by dedup_key — no double-send). A reader-facing event notifies the
+reader; ``staff_alert`` is re-addressed to the staff recipient. Dispatch is
+best-effort and fully isolated: an unknown event or any A6 error is skipped, the
+circulation operation still succeeds. With no handle the engine is standalone —
+intents are only returned, never dispatched (back-compat).
 """
 import sqlite3
 import threading
@@ -465,10 +473,21 @@ class CirculationEngine:
     """
 
     def __init__(self, store=None, policy=None, notifier=None, tenant='public',
-                 catalog=None, catalog_db='IBIS'):
+                 catalog=None, catalog_db='IBIS', notifications=None,
+                 staff_recipient='staff'):
         self.store = store or CirculationStore(':memory:')
         self.policy = policy or default_policy(tenant)
-        self.notifier = notifier
+        # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
+        # ``notifications`` is the documented handle (an
+        # :class:`access.notifications.NotificationQueue`); ``notifier`` is a
+        # back-compat alias for the same role. Whichever is supplied wins
+        # (``notifications`` takes precedence if both are given). With no handle
+        # the engine stays fully standalone — events are only *returned* as
+        # intents, never dispatched (back-compat, mirrors the ``catalog=`` seam).
+        self.notifier = notifications if notifications is not None else notifier
+        # Staff-facing events (``staff_alert``) are addressed to a librarian, not
+        # the reader; this is the recipient handle they enqueue to.
+        self.staff_recipient = staff_recipient
         self.tenant = tenant
         # Optional Catalog↔Circulation seam (INTEGRATION_MAP edges 2.1/2.2). When a
         # ``catalog`` (access.catalog.CatalogStore) handle is wired, checkout flips
@@ -480,14 +499,91 @@ class CirculationEngine:
         self.catalog_db = catalog_db
 
     # ---- event emission --------------------------------------------------- #
+    # Events that are addressed to library staff (not the reader): they describe
+    # an action a librarian must take (write-off candidate), so they enqueue to
+    # ``staff_recipient`` and the catalog routes them to the staff channel.
+    _STAFF_EVENTS = frozenset({'staff_alert'})
+
+    def _notice_context(self, event, recipient, payload):
+        """Map a circulation event payload to its A6 *template* render context.
+
+        The notification templates (access.notifications.EventCatalog) interpolate
+        reader-friendly slots — ``title`` / ``reader_name`` / ``due_date`` /
+        ``amount`` / ``currency`` / ``hold_until`` … — but the circulation engine
+        speaks in domain terms (``item`` shifr, ``due`` epoch, ``price`` …). This
+        bridges the two so a template never renders with a literal ``{title}`` for
+        want of the key. Unknown slots degrade gracefully (the renderer leaves a
+        missing placeholder verbatim), but the common ones are always supplied.
+
+        The reader/staff identity drives ``reader_name``; ``ref`` is carried
+        through verbatim so A6's dedup key stays the circulation domain id (one
+        enqueue per logical event, no double-send).
+        """
+        ctx = dict(payload or {})
+        # reader/staff display name — the store holds no human name, so the
+        # reader id is the best available label (a real directory would map it).
+        ctx.setdefault('reader_name', payload.get('reader_name') or recipient)
+        # item shifr stands in for the human title until a catalog title is wired.
+        item = payload.get('item')
+        if item is not None:
+            ctx.setdefault('title', payload.get('title', item))
+        # epoch fields → human dates the templates print.
+        for src, dst in (('due', 'due_date'), ('hold_until', 'hold_until')):
+            val = payload.get(src)
+            if val is not None and dst not in ctx:
+                ctx[dst] = self._fmt_date(val)
+        # lost replacement carries ``price`` as the charge basis → ``amount``.
+        if 'amount' not in ctx and payload.get('price') is not None:
+            ctx['amount'] = payload['price']
+        # currency default so {currency} never renders verbatim on money notices.
+        if 'amount' in ctx:
+            ctx.setdefault('currency', self.policy['fine']['currency'])
+        return ctx
+
+    @staticmethod
+    def _fmt_date(value):
+        """Format an epoch (or pass through a string) as YYYY-MM-DD for a notice."""
+        try:
+            return time.strftime('%Y-%m-%d', time.localtime(float(value)))
+        except (TypeError, ValueError):
+            return value
+
     def _emit(self, event, recipient, payload):
-        """Build an event intent; enqueue via A6 when a notifier is wired."""
+        """Build an event intent; render + enqueue it through A6 when wired.
+
+        Returns the event *intent* (``{'event','recipient','payload'}``) regardless
+        of dispatch — the rule layer never depends on A6 being present. When a
+        notifications handle IS wired the notice is also routed to A6:
+
+          * the event is mapped to its template (A6 ``EventCatalog``) and a
+            reader-friendly render context is built (:meth:`_notice_context`);
+          * a reader-facing event notifies the reader; ``staff_alert`` is
+            re-addressed to ``staff_recipient`` (the catalog routes it to the
+            staff channel);
+          * ``enqueue`` resolves the template's default channels and queues a
+            single notice (idempotent by dedup_key — no double-send).
+
+        Robustness: an event with no matching template, or any dispatch failure,
+        is logged-and-skipped — it never propagates out of the circulation
+        operation (the loan/return/hold still succeeds).
+        """
         intent = {'event': event, 'recipient': recipient, 'payload': dict(payload)}
-        if self.notifier is not None:
-            try:
-                self.notifier.enqueue(event, recipient, payload, tenant=self.tenant)
-            except Exception:
-                pass  # A6 is best-effort here; the intent is still returned
+        notifier = self.notifier
+        if notifier is None:
+            return intent  # standalone — only the intent, no dispatch (back-compat)
+        try:
+            # No template for this event → skip gracefully rather than letting the
+            # intent fall through silently or raising out of the circulation op.
+            catalog = getattr(notifier, 'catalog', None)
+            if catalog is not None and not catalog.has(event):
+                return intent
+            to = self.staff_recipient if event in self._STAFF_EVENTS else recipient
+            ctx = self._notice_context(event, recipient, payload)
+            notifier.enqueue(event, to, ctx, tenant=self.tenant)
+        except Exception:
+            # A6 is best-effort: a bad template / queue error must NOT break the
+            # circulation operation. The intent is still returned for the caller.
+            pass
         return intent
 
     # ---- catalog 910^A write-back (edges 2.1/2.2) ------------------------- #
@@ -753,13 +849,18 @@ class CirculationEngine:
                 return idx + 1
         return 0
 
-    def cancel_hold(self, hold_id, today):
-        """Reader cancels a hold; frees the item to the next in queue (§6.5)."""
+    def cancel_hold(self, hold_id, today, reason='отменена читателем'):
+        """Reader cancels a hold; frees the item to the next in queue (§6.5).
+
+        Emits ``hold_cancelled`` (A6) to the reader whose hold was dropped.
+        """
         hold = self.store.get_hold(hold_id)
         if hold is None:
             return Decision(DENY, ['unknown_hold'])
         self.store.set_hold_status(hold_id, 'cancelled')
-        return Decision(ALLOW, [], {'cancelled': hold_id})
+        ev = self._emit('hold_cancelled', hold['reader'],
+                        {'ref': hold_id, 'item': hold['item'], 'reason': reason})
+        return Decision(ALLOW, [], {'cancelled': hold_id}, [ev])
 
     # ---- accrue_fines (§3.2 formula) -------------------------------------- #
     def accrue_fines(self, today, reader_id=None):

@@ -235,8 +235,8 @@ def main():
     seeding_checks()
     flk_checks()
     for _m in ('test_pft', 'test_authority', 'test_notifications', 'test_gbl',
-               'test_catalog', 'test_circulation', 'test_discovery',
-               'test_integration', 'test_resilience'):
+               'test_catalog', 'test_circulation', 'test_circ_notify',
+               'test_discovery', 'test_integration', 'test_resilience'):
         module_checks(_m)
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
