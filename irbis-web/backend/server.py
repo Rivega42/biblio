@@ -55,7 +55,7 @@ class Handler(BaseHTTPRequestHandler):
             if static_files.has_dist():
                 return self._emit(200, Raw(static_files.dist_index(), 'text/html; charset=utf-8'))
             return self._emit(200, Raw(READER_HTML.encode('utf-8'), 'text/html; charset=utf-8'))
-        if method == 'GET' and u.path.startswith('/assets/'):
+        if method == 'GET' and (u.path.startswith('/assets/') or u.path.startswith('/design/')):
             st, data, ct = static_files.serve_dist(u.path)
             return self._emit(st, Raw(data, ct))
         if method == 'GET' and u.path.rstrip('/') == '/legacy':
