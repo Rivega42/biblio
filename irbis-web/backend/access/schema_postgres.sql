@@ -51,3 +51,54 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS audit_log_ts_idx ON audit_log(ts DESC);
 
 -- Effective rights of an account = union(grant_entry, role_grant via account_role).
+
+-- ---------------------------------------------------------------------------
+-- Per-tenant vocabularies + classification trees (seeding engine, gap A5 #188).
+-- Live in the tenant schema t_<slug> alongside Access, so isolation is the same
+-- schema-per-tenant mechanism (no tenant_id column needed). Populated at
+-- provisioning by seed_vocabularies() from control.seed_catalog. Idempotent DDL.
+-- ---------------------------------------------------------------------------
+
+-- One row per dictionary (MNU). kind: 'system' (vendor-standard, seeded with
+-- values) | 'institution' (library-specific, seeded EMPTY). seed_version stamps
+-- which system seed epoch populated it (NULL for empty institution vocabs).
+CREATE TABLE IF NOT EXISTS vocabulary (
+  id            BIGSERIAL PRIMARY KEY,
+  name          TEXT UNIQUE NOT NULL,        -- 'vd.mnu','ste.mnu','kv.mnu'…
+  title         TEXT NOT NULL,               -- human-readable
+  kind          TEXT NOT NULL CHECK (kind IN ('system','institution')),
+  field_hint    TEXT,                        -- bound field/subfield: '900^c','910^A'
+  seed_version  INTEGER,                     -- system seed epoch, NULL for empty institution
+  is_overridden BOOLEAN NOT NULL DEFAULT false,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- code -> label pairs of one dictionary, ordered. origin tracks seed vs custom
+-- so a future reseed never clobbers a library's edits; is_active is soft-delete.
+CREATE TABLE IF NOT EXISTS vocabulary_value (
+  id            BIGSERIAL PRIMARY KEY,
+  vocab         TEXT NOT NULL REFERENCES vocabulary(name) ON DELETE CASCADE,
+  code          TEXT NOT NULL,               -- case-sensitive ИРБИС code
+  label         TEXT NOT NULL,
+  sort          INTEGER NOT NULL DEFAULT 0,
+  origin        TEXT NOT NULL DEFAULT 'seed' CHECK (origin IN ('seed','imported','custom')),
+  active        BOOLEAN NOT NULL DEFAULT true,
+  PRIMARY KEY (vocab, code)
+);
+CREATE INDEX IF NOT EXISTS vocabulary_value_vocab_idx ON vocabulary_value(vocab, sort);
+
+-- Classification tree nodes (TRE). parent is a self-reference by (name, code);
+-- path is a dotted materialized path of codes for subtree queries.
+CREATE TABLE IF NOT EXISTS classification_node (
+  id            BIGSERIAL PRIMARY KEY,
+  name          TEXT NOT NULL,               -- tree name: 'spec.tre','cikod.tre'
+  code          TEXT NOT NULL,
+  label         TEXT NOT NULL,
+  parent        TEXT,                        -- parent node code within the same tree
+  depth         INTEGER NOT NULL DEFAULT 0,
+  path          TEXT,                        -- materialized 'a.b.c' path of codes
+  sort          INTEGER NOT NULL DEFAULT 0,
+  origin        TEXT NOT NULL DEFAULT 'seed',
+  PRIMARY KEY (name, code)
+);
+CREATE INDEX IF NOT EXISTS classification_node_tree_idx ON classification_node(name, parent);

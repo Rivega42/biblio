@@ -51,6 +51,42 @@ CREATE TABLE IF NOT EXISTS audit_log (
   function TEXT NOT NULL, db TEXT, mfn INTEGER,
   result TEXT NOT NULL, detail TEXT
 );
+-- Per-tenant vocabularies + classification trees (seeding engine, gap A5 #188).
+-- Mirrors schema_postgres.sql. On sqlite dev there is one (single-tenant 'public')
+-- store, so these tables hold that tenant's seeded dictionaries.
+CREATE TABLE IF NOT EXISTS vocabulary (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('system','institution')),
+  field_hint TEXT,
+  seed_version INTEGER,
+  is_overridden INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE TABLE IF NOT EXISTS vocabulary_value (
+  vocab TEXT NOT NULL REFERENCES vocabulary(name) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  label TEXT NOT NULL,
+  sort INTEGER NOT NULL DEFAULT 0,
+  origin TEXT NOT NULL DEFAULT 'seed' CHECK (origin IN ('seed','imported','custom')),
+  active INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (vocab, code)
+);
+CREATE INDEX IF NOT EXISTS vocabulary_value_vocab_idx ON vocabulary_value(vocab, sort);
+CREATE TABLE IF NOT EXISTS classification_node (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  label TEXT NOT NULL,
+  parent TEXT,
+  depth INTEGER NOT NULL DEFAULT 0,
+  path TEXT,
+  sort INTEGER NOT NULL DEFAULT 0,
+  origin TEXT NOT NULL DEFAULT 'seed',
+  UNIQUE (name, code)
+);
+CREATE INDEX IF NOT EXISTS classification_node_tree_idx ON classification_node(name, parent);
 """
 
 
@@ -156,3 +192,56 @@ class AccessStore:
     def recent_audit(self, limit=50):
         return [dict(r) for r in self._conn().execute(
             'SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', (limit,)).fetchall()]
+
+    # ---- vocabularies (seeding engine, gap A5 #188) ----
+    def upsert_vocabulary(self, name, title, kind, field_hint, seed_version):
+        """Insert/update a dictionary's metadata row (idempotent on name)."""
+        c = self._conn()
+        c.execute(
+            'INSERT INTO vocabulary(name,title,kind,field_hint,seed_version) '
+            'VALUES(?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET '
+            'title=excluded.title, kind=excluded.kind, field_hint=excluded.field_hint',
+            (name, title, kind, field_hint, seed_version))
+        c.commit()
+
+    def upsert_vocabulary_value(self, vocab, code, label, sort, origin='seed'):
+        """Insert/update one (code,label) of a dictionary (idempotent on vocab,code).
+
+        Never downgrades origin: a value the library marked 'custom'/'imported' keeps
+        that origin on a re-seed so reseed merge logic (SPEC §3.3) can protect it.
+        """
+        c = self._conn()
+        c.execute(
+            'INSERT INTO vocabulary_value(vocab,code,label,sort,origin) VALUES(?,?,?,?,?) '
+            'ON CONFLICT(vocab,code) DO UPDATE SET label=excluded.label, sort=excluded.sort',
+            (vocab, code, label, sort, origin))
+        c.commit()
+
+    def get_vocabulary(self, name):
+        r = self._conn().execute('SELECT * FROM vocabulary WHERE name=?', (name,)).fetchone()
+        return dict(r) if r else None
+
+    def list_vocabularies(self):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM vocabulary ORDER BY name').fetchall()]
+
+    def vocabulary_values(self, name, active_only=False):
+        sql = ('SELECT code,label,sort,origin,active FROM vocabulary_value '
+               'WHERE vocab=?' + (' AND active=1' if active_only else '') +
+               ' ORDER BY sort, code')
+        return [dict(r) for r in self._conn().execute(sql, (name,)).fetchall()]
+
+    def upsert_classification_node(self, name, code, label, parent, depth, path, sort=0):
+        c = self._conn()
+        c.execute(
+            'INSERT INTO classification_node(name,code,label,parent,depth,path,sort) '
+            'VALUES(?,?,?,?,?,?,?) ON CONFLICT(name,code) DO UPDATE SET '
+            'label=excluded.label, parent=excluded.parent, depth=excluded.depth, '
+            'path=excluded.path, sort=excluded.sort',
+            (name, code, label, parent, depth, path, sort))
+        c.commit()
+
+    def classification_nodes(self, name):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT code,label,parent,depth,path,sort FROM classification_node '
+            'WHERE name=? ORDER BY sort, code', (name,)).fetchall()]

@@ -35,3 +35,21 @@ CREATE TABLE IF NOT EXISTS control.tenant_module (
   enabled    BOOLEAN NOT NULL DEFAULT true,
   PRIMARY KEY(tenant_id, module)
 );
+
+-- Seeding engine master catalog (gap A5, issue #188). The single source of truth
+-- for "what values to seed into every tenant": the vendor-standard (system) ИРБИС
+-- control dictionaries. One row per (vocab, code). seed_vocabularies() copies these
+-- into a tenant's schema at provisioning. Institution dictionaries are NOT here —
+-- they are created EMPTY in the tenant schema (filled by the library). Versioned by
+-- `seed_version` so a future reseed can three-way-merge (SPEC §3.3). Idempotent DDL.
+CREATE TABLE IF NOT EXISTS control.seed_catalog (
+  vocab         TEXT NOT NULL,             -- 'vd.mnu','ste.mnu'…
+  code          TEXT NOT NULL,             -- case-sensitive ИРБИС code
+  label         TEXT NOT NULL,
+  kind          TEXT NOT NULL,             -- always 'system' here (institution = empty seed)
+  seed_version  INTEGER NOT NULL,
+  title         TEXT NOT NULL,             -- vocab title (denormalized, same for all rows of a vocab)
+  field_hint    TEXT,
+  sort          INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (vocab, code)
+);

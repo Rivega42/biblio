@@ -89,6 +89,14 @@ class Api:
                                     self.cfg.irbis_pass, self.cfg.timeout)
         self.access = make_access_store(self.cfg)   # sqlite (default) or Postgres via ACCESS_BACKEND
         seed(self.access)                      # idempotent dev seed
+        # Seeding engine (A5, #188): seed the single-tenant 'public' store's vocabs
+        # in dev so /api/vocab has data without a control plane. Idempotent; best-effort
+        # (a store without the vocab tables — older schema — must not break startup).
+        try:
+            from access import seed_vocab
+            seed_vocab.seed_vocabularies(self.access, from_catalog=False)
+        except Exception:
+            pass
         # JWT signing secret from env (non-secret dev default ok). The token is a
         # plain signed bearer string — the frontend (api.ts) needs no change.
         self.jwt_secret = os.environ.get('JWT_SECRET', 'dev-insecure-jwt-secret')
@@ -430,6 +438,55 @@ class Api:
                         'name': (name_f or {}).get('value', ''),
                         'loans': loans, 'loanCount': len(loans)})
 
+    def vocab_list(self, session):
+        """List the session tenant's dictionaries (name/title/kind/seed_version).
+
+        Tenant-scoped via the JWT tenant claim (``_store_for``); guarded by the same
+        ``file``/read grant as ``resource`` (any АРМ staff may read dictionaries —
+        they back ФЛК and dropdowns). Returns [] if the store predates the vocab
+        tables (older schema), never raises."""
+        self._guard(session, 'file', '*', 'read')
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        try:
+            vocabs = store.list_vocabularies()
+        except Exception:
+            vocabs = []
+        items = [{'name': v['name'], 'title': v['title'], 'kind': v['kind'],
+                  'seedVersion': v.get('seed_version')} for v in vocabs]
+        return 200, ok({'items': items})
+
+    def vocab(self, session, name):
+        """Values of one dictionary (code/label/sort/active) for dropdowns + ФЛК.
+
+        Tenant-scoped; guarded by ``file``/read. 404 if the dictionary doesn't exist
+        for this tenant. An institution dictionary seeded empty returns values=[]."""
+        self._guard(session, 'file', name, 'read')
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        meta = store.get_vocabulary(name)
+        if not meta:
+            return 404, err('not_found', 'unknown vocabulary: %s' % name)
+        values = store.vocabulary_values(name)
+        return 200, ok({'name': name, 'title': meta['title'], 'kind': meta['kind'],
+                        'seedVersion': meta.get('seed_version'),
+                        'values': [{'code': v['code'], 'label': v['label'],
+                                    'sort': v['sort'], 'active': bool(v['active']),
+                                    'origin': v['origin']} for v in values]})
+
+    def classification(self, session, name):
+        """Nodes of one classification tree (code/label/parent/depth/path).
+
+        Tenant-scoped; guarded by ``file``/read. Empty list (200) for a tree with no
+        nodes yet (institution tree seeded empty)."""
+        self._guard(session, 'file', name, 'read')
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        try:
+            nodes = store.classification_nodes(name)
+        except Exception:
+            nodes = []
+        return 200, ok({'name': name, 'nodes': [
+            {'code': n['code'], 'label': n['label'], 'parent': n['parent'],
+             'depth': n['depth'], 'path': n['path']} for n in nodes]})
+
     def modules(self, session):
         """Licensing read: the functional modules enabled for the session's tenant
         (issue #101 entitlements). Any authenticated session may read its own
@@ -483,6 +540,12 @@ class Api:
                 return self.cabinet(session)
             if method == 'GET' and path == '/api/me/modules':
                 return self.modules(session)
+            if method == 'GET' and path == '/api/vocab':
+                return self.vocab_list(session)
+            if method == 'GET' and len(parts) == 3 and parts[0] == 'api' and parts[1] == 'vocab':
+                return self.vocab(session, parts[2])
+            if method == 'GET' and len(parts) == 3 and parts[0] == 'api' and parts[1] == 'classification':
+                return self.classification(session, parts[2])
             if method == 'GET' and path == '/api/databases':
                 return self.databases(session)
             if method == 'GET' and len(parts) == 3 and parts[0] == 'api' and parts[1] == 'worklist':

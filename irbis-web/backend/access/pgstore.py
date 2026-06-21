@@ -182,6 +182,49 @@ class PgAccessStore:
         return [dict(r) for r in self._conn().execute(
             'SELECT * FROM audit_log ORDER BY id DESC LIMIT %s', (limit,)).fetchall()]
 
+    # ---- vocabularies (seeding engine, gap A5 #188) — same surface as AccessStore ----
+    # All writes go through the tenant-pinned search_path, so they land in t_<slug>.
+    def upsert_vocabulary(self, name, title, kind, field_hint, seed_version):
+        self._conn().execute(
+            'INSERT INTO vocabulary(name,title,kind,field_hint,seed_version) '
+            'VALUES(%s,%s,%s,%s,%s) ON CONFLICT(name) DO UPDATE SET '
+            'title=EXCLUDED.title, kind=EXCLUDED.kind, field_hint=EXCLUDED.field_hint',
+            (name, title, kind, field_hint, seed_version))
+
+    def upsert_vocabulary_value(self, vocab, code, label, sort, origin='seed'):
+        # ON CONFLICT keeps the stored origin (don't downgrade custom->seed on reseed).
+        self._conn().execute(
+            'INSERT INTO vocabulary_value(vocab,code,label,sort,origin) VALUES(%s,%s,%s,%s,%s) '
+            'ON CONFLICT(vocab,code) DO UPDATE SET label=EXCLUDED.label, sort=EXCLUDED.sort',
+            (vocab, code, label, sort, origin))
+
+    def get_vocabulary(self, name):
+        r = self._conn().execute('SELECT * FROM vocabulary WHERE name=%s', (name,)).fetchone()
+        return dict(r) if r else None
+
+    def list_vocabularies(self):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM vocabulary ORDER BY name').fetchall()]
+
+    def vocabulary_values(self, name, active_only=False):
+        sql = ('SELECT code,label,sort,origin,active FROM vocabulary_value '
+               'WHERE vocab=%s' + (' AND active=true' if active_only else '') +
+               ' ORDER BY sort, code')
+        return [dict(r) for r in self._conn().execute(sql, (name,)).fetchall()]
+
+    def upsert_classification_node(self, name, code, label, parent, depth, path, sort=0):
+        self._conn().execute(
+            'INSERT INTO classification_node(name,code,label,parent,depth,path,sort) '
+            'VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(name,code) DO UPDATE SET '
+            'label=EXCLUDED.label, parent=EXCLUDED.parent, depth=EXCLUDED.depth, '
+            'path=EXCLUDED.path, sort=EXCLUDED.sort',
+            (name, code, label, parent, depth, path, sort))
+
+    def classification_nodes(self, name):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT code,label,parent,depth,path,sort FROM classification_node '
+            'WHERE name=%s ORDER BY sort, code', (name,)).fetchall()]
+
 
 def make_store(cfg=None):
     """Factory: return the Access store for the configured backend.
@@ -280,7 +323,8 @@ def provision_tenant(slug, name, kind, dsn=None, do_seed=True):
             (slug, name, kind))
     finally:
         conn.close()
-    # Constructing the store creates t_<slug> and the Access tables within it.
+    # Constructing the store creates t_<slug> and the Access tables within it
+    # (including the vocabulary/classification tables from schema_postgres.sql).
     store = make_tenant_store(slug, dsn)
     if do_seed:
         from .seed import seed
@@ -289,6 +333,11 @@ def provision_tenant(slug, name, kind, dsn=None, do_seed=True):
         # Idempotent; leaves any operator-disabled module untouched on re-provision.
         from . import entitlements
         entitlements.seed_modules(slug, dsn)
+        # Seeding engine (A5, #188): system vocabs populated, institution vocabs
+        # created empty — runs AFTER schema migrate, idempotent (re-provision safe).
+        from . import seed_vocab
+        seed_vocab.ensure_seed_catalog(dsn)     # master catalog (control plane)
+        seed_vocab.seed_vocabularies(store, dsn)  # copy into t_<slug>
     return store
 
 

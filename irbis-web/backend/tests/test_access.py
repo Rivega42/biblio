@@ -156,6 +156,28 @@ def identity_checks():
     FAIL[0] += test_identity.FAIL[0]
 
 
+def seeding_checks():
+    """Run the vocabulary-seeding suite (issue #188, A5) and fold its tally in.
+
+    The parser + sqlite-seed checks always run (no DB); the PG path (provision ->
+    seeded vocabs, isolation, idempotency) runs when postgres is reachable and skips
+    cleanly otherwise. Lives in its own module (test_seeding.py) but is invoked here
+    so the existing CI step that runs test_access.py also exercises seeding with no
+    workflow change.
+    """
+    try:
+        import test_seeding
+    except Exception as e:
+        print('-- seeding suite NOT RUN (import failed: %s)' % e)
+        FAIL[0] += 1                # importable suite is mandatory; surface the failure
+        return
+    test_seeding.parser_checks()
+    test_seeding.sqlite_seed_checks()
+    test_seeding.run_pg()
+    PASS[0] += test_seeding.PASS[0]
+    FAIL[0] += test_seeding.FAIL[0]
+
+
 def main():
     pure_checks()
     store_checks('sqlite', sqlite_store())
@@ -164,6 +186,7 @@ def main():
         store_checks('postgres', pg)
     tenancy_checks()
     identity_checks()
+    seeding_checks()
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
