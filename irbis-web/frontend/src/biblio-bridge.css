@@ -1,0 +1,104 @@
+/* ============================================================================
+   Biblio Style A — bridge layer for the Читательский портал (reader app)
+   ----------------------------------------------------------------------------
+   The components consume the app's SEMANTIC ALIASES (--bg-page, --surface-card,
+   --text-body, --accent, --border-subtle, --status-X-bg, --font-ui …). This file
+   re-points those aliases onto the Biblio Style A tokens.
+
+   SINGLE SOURCE OF TRUTH: every colour / accent / font / shadow VALUE lives in
+   the served file public/design/biblio-tokens.css. We pull it in two ways and
+   never copy its contents:
+     1. index.html links it in <head> (present before JS, no flash).
+     2. The @import below pulls the SAME served file in as the LAST thing in the
+        JS-injected bundle, so Biblio's :root wins over the app's older
+        tokens/colors.css :root for the names that exist in BOTH layers
+        (--accent, --accent-hover, --text-subtle, --border-strong,
+        --status-available[-bg], --status-issued[-bg], --font-sans, --font-serif,
+        --shadow-sm/md/lg). Same URL, one cached fetch, zero duplicated content.
+
+   After the import, the alias block below maps the app-only alias NAMES onto the
+   Biblio token names. No hard-coded palette here.
+
+   Theming axes preserved:
+     • STYLE A is the default skin → :root plus the app's default skins
+       [data-theme="theatrical"] / [data-theme="working"] (header «Рабочая» /
+       «Театр» buttons) so both render Style A.
+     • MODE: dark via [data-mode="dark"] on the app root → Biblio warm-dark
+       (biblio-tokens.css redefines the tokens; aliases follow at use-time).
+     • A11y high-contrast [data-theme="a11y"] is NOT touched here (keeps its own
+       high-contrast overrides from themes.css).
+     • TENANT accents via [data-tenant=…] flow through unchanged.
+   ============================================================================ */
+
+@import "/design/biblio-tokens.css";
+
+:root,
+[data-theme="working"],
+[data-theme="theatrical"] {
+  /* Surfaces — app alias  =  Biblio token */
+  --bg-page:        var(--bg);
+  --surface-card:   var(--surface-1);
+  --surface-sunken: var(--surface-2);
+  --surface-hover:  var(--surface-3);
+  --surface-active: var(--surface-3);
+
+  /* Text (–-text-subtle / –-border-strong share names → straight from Biblio) */
+  --text-strong:    var(--text-primary);
+  --text-body:      var(--text-primary);
+  --text-muted:     var(--text-secondary);
+  --text-on-accent: var(--accent-contrast);
+  --text-link:      var(--accent);
+
+  /* Borders */
+  --border-subtle:  var(--border);
+  --border-default: var(--border-strong);
+
+  /* Accent — app aliases mapped onto Biblio accent / tint tokens */
+  --accent-press:       var(--accent-hover);
+  --accent-fg:          var(--accent-contrast);
+  --accent-weak:        var(--accent-tint);
+  --accent-weak-hover:  var(--accent-tint-border);
+  --accent-weak-border: var(--accent-tint-border);
+  --accent-ring:        color-mix(in srgb, var(--ring) 38%, transparent);
+  --focus-ring-color:   var(--accent-ring);
+
+  /* Status — app-only alias names mapped onto Biblio domain status tokens.
+     (--status-available[-bg] / --status-issued[-bg] share names → from Biblio.) */
+  --status-available-strong: var(--status-available);
+  --status-available-border: color-mix(in srgb, var(--status-available) 34%, transparent);
+  --status-issued-strong:    var(--status-issued);
+  --status-issued-border:    color-mix(in srgb, var(--status-issued) 34%, transparent);
+
+  --status-hold:    var(--status-postamat);
+  --status-hold-bg: var(--status-postamat-bg);
+
+  --status-unknown:        var(--text-subtle);
+  --status-unknown-strong: var(--text-subtle);
+  --status-unknown-bg:     var(--surface-2);
+  --status-unknown-border: var(--border);
+
+  /* Feedback semantics */
+  --danger-500:  var(--error);
+  --danger-600:  var(--error);
+  --success-500: var(--success);
+  --warning-500: var(--warning);
+  --info-500:    var(--info);
+
+  /* Typography — Onest for UI/body, Source Serif 4 for display + record titles.
+     --font-sans / --font-serif come from Biblio (won via the @import above). */
+  --font-body:         var(--font-sans);
+  --font-ui:           var(--font-sans);
+  --font-display:      var(--font-serif);
+  --font-record-title: var(--font-serif);
+
+  /* Radii — softer Style A corners (app keeps --radius-sm / -pill / -round) */
+  --radius-md: 9px;
+  --radius-lg: 13px;
+}
+
+/* Dark mode: Biblio redefines the underlying tokens under data-mode="dark";
+   aliases above resolve to them at use-time, so the app inherits warm-dark.
+   Only color-scheme needs setting on the app root. */
+[data-mode="dark"] {
+  color-scheme: dark;
+}

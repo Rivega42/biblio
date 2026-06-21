@@ -20,14 +20,20 @@ const PREFIXES = [
   { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
 ];
 const esc = (s: string) => (s || "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m]!));
-const STATUS: Record<string, { label: string; bg: string }> = {
-  available: { label: "В ячейке", bg: "var(--status-available-strong,#2f855a)" },
-  issued: { label: "На руках", bg: "var(--status-issued-strong,#b7791f)" },
-  hold: { label: "В постамате", bg: "#2c5e8a" },
-  returned: { label: "Книгоприём", bg: "#7a6a55" },
-  unknown: { label: "Нет данных", bg: "#888" },
+// Доменные статус-бейджи Style A: цвет текста + мягкая подложка + точка-индикатор.
+// Значения берутся из Biblio-токенов (--status-*), мост даёт постамат/Книгоприём.
+const STATUS: Record<string, { label: string; fg: string; bg: string }> = {
+  available: { label: "В наличии", fg: "var(--status-available,#2E7D52)", bg: "var(--status-available-bg,#E4F0E8)" },
+  issued: { label: "На руках", fg: "var(--status-issued,#9A6A12)", bg: "var(--status-issued-bg,#F7ECD6)" },
+  hold: { label: "В постамате", fg: "var(--status-hold,#2F6DB5)", bg: "var(--status-hold-bg,#E3ECF8)" },
+  returned: { label: "Книгоприём", fg: "var(--status-return,#6B5CA5)", bg: "var(--status-return-bg,#ECE8F6)" },
+  unknown: { label: "Нет данных", fg: "var(--text-subtle,#8A857A)", bg: "var(--surface-2,#F0EEE6)" },
 };
-const statusChip = (s: string): React.CSSProperties => ({ background: (STATUS[s] || STATUS.unknown).bg, color: "#fff", borderRadius: 999, padding: "2px 10px", fontSize: "var(--text-xs)", whiteSpace: "nowrap" });
+const statusChip = (s: string): React.CSSProperties => {
+  const c = STATUS[s] || STATUS.unknown;
+  return { display: "inline-flex", alignItems: "center", gap: 6, background: c.bg, color: c.fg, borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
+};
+const statusDot = (s: string): React.CSSProperties => ({ width: 6, height: 6, borderRadius: 999, background: (STATUS[s] || STATUS.unknown).fg, flex: "none" });
 const sf = (f: FieldVal | undefined, c: string) =>
   !f ? "" : (f.subfields[c] || f.subfields[c.toUpperCase()] || f.subfields[c.toLowerCase()] || "");
 
@@ -79,7 +85,8 @@ function recView(d: RecordData) {
 export function App() {
   const [ready, setReady] = React.useState(false);
   const [server, setServer] = React.useState<any>(null);
-  const [theme, setTheme] = React.useState("theatrical");
+  // Biblio Style A is the default skin. MODE light/dark via data-mode, a11y via data-theme.
+  const [darkMode, setDarkMode] = React.useState(false);
   const [a11y, setA11y] = React.useState(false);
   const [databases, setDatabases] = React.useState<DbItem[]>([]);
   const [db, setDb] = React.useState("IBIS");
@@ -270,7 +277,10 @@ export function App() {
     } else toast({ variant: "warning", title: "Неверный логин или пароль", message: "Проверьте учётные данные." });
   }
 
-  const rootTheme = a11y ? "a11y" : (theme === "working" ? undefined : theme);
+  // Skin: a11y high-contrast wins; otherwise Biblio Style A ("working" alias the
+  // bridge maps to Style A). data-mode carries light/dark for the Biblio palette.
+  const rootTheme = a11y ? "a11y" : "working";
+  const rootMode = !a11y && darkMode ? "dark" : undefined;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const DB = db;
   const hbtn = (active: boolean): React.CSSProperties => ({ background: active ? "rgba(255,255,255,.25)" : "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" });
@@ -281,18 +291,17 @@ export function App() {
   if (!ready) return <div style={{ padding: 40, color: "var(--text-subtle)" }}>Загрузка каталога…</div>;
 
   return (
-    <div data-theme={rootTheme} style={{ minHeight: "100vh", background: "var(--bg-page)", color: "var(--text-body)", display: "flex", flexDirection: "column" }}>
+    <div data-theme={rootTheme} data-mode={rootMode} style={{ minHeight: "100vh", background: "var(--bg-page)", color: "var(--text-body)", display: "flex", flexDirection: "column" }}>
       <header style={{ background: "var(--accent)", color: "#fff", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
-        <Icon name="book" size={22} />
-        <b>ИРБИС-Веб · электронный каталог</b>
+        <span style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,.18)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="book" size={19} /></span>
+        <b style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-lg)", letterSpacing: "-.01em" }}>Читательский портал</b>
         <span style={{ opacity: .85, fontSize: "var(--text-xs)" }}>ИРБИС {server?.version} · база {DB}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
           <div style={{ display: "flex", gap: 4, marginRight: 6, padding: 2, background: "rgba(255,255,255,.12)", borderRadius: 10 }}>
             <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>Читатель</button>
             <button onClick={() => switchContext("staff")} style={hbtn(context === "staff")}>Сотрудник</button>
           </div>
-          <button onClick={() => { setA11y(false); setTheme("working"); }} style={hbtn(theme === "working" && !a11y)}>Рабочая</button>
-          <button onClick={() => { setA11y(false); setTheme("theatrical"); }} style={hbtn(theme === "theatrical" && !a11y)}>Театр</button>
+          <button onClick={() => setDarkMode((v) => !v)} title="Светлая / тёмная тема" style={hbtn(darkMode && !a11y)}>{darkMode ? "Светлая" : "Тёмная"}</button>
           <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
           {context === "reader" && account.loggedIn && <button onClick={loadCabinet} style={hbtn(view === "cabinet")}>Кабинет</button>}
           {context === "reader" && <button onClick={() => account.loggedIn ? (setAccount({ loggedIn: false }), setView("search"), setCab(null)) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
@@ -420,7 +429,7 @@ export function App() {
 
       <footer style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 20px", fontSize: "var(--text-xs)", color: "var(--text-subtle)", display: "flex", gap: 10, alignItems: "center" }}>
         <Icon name="globe" size={14} />
-        <span>Производственный клиент поверх ИРБИС64 (база {DB}). Работает в защищённом контуре.</span>
+        <span>Читательский портал поверх ИРБИС64 (база {DB}). Работает в защищённом контуре.</span>
       </footer>
 
       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
@@ -596,7 +605,7 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
                   {v.holds.map((h, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderTop: i ? "1px solid var(--border-subtle)" : "none", fontSize: "var(--text-sm)" }}>
                     <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-subtle)", flex: "none", minWidth: 90 }}>{h.inv || "—"}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>{h.loc || "на руках у читателя"}</span>
-                    <span style={statusChip(h.st)}>{(STATUS[h.st] || STATUS.unknown).label}</span>
+                    <span style={statusChip(h.st)}><span style={statusDot(h.st)} aria-hidden="true" />{(STATUS[h.st] || STATUS.unknown).label}</span>
                   </div>)}
                 </div> :
                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>
