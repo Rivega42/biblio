@@ -228,6 +228,11 @@ def register_unifor(code, fn):
 
 _MONTHS_NOM = ['', 'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
                'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
+# Genitive (родительный падеж) — '36MM' vs '37MM' (PFT_LANGUAGE §9.1 code 3).
+_MONTHS_GEN = ['', 'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+               'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+_MONTHS_ENG = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+               'July', 'August', 'September', 'October', 'November', 'December']
 
 
 def _now(ctx):
@@ -237,13 +242,35 @@ def _now(ctx):
     return _dt.datetime.now()
 
 
-def _uf_date(arg, value, ctx, record):
-    """UNIFOR ``3`` — date/time (SPEC §9.1 / PFT_LANGUAGE §9.1).
+def _parse_yyyymmdd(s):
+    """Parse a ``ГГГГММДД`` (YYYYMMDD) string into a ``date``; ``None`` on
+    failure. Tolerates surrounding whitespace and separators (extracts the
+    first 8 digits)."""
+    digits = ''.join(c for c in str(s or '') if c.isdigit())
+    if len(digits) < 8:
+        return None
+    try:
+        return _dt.date(int(digits[0:4]), int(digits[4:6]), int(digits[6:8]))
+    except ValueError:
+        return None
 
-    ``3`` ГГГГММДД · ``30`` year · ``31`` month(zero-pad) · ``32`` day(zero-pad)
-    · ``33`` YY · ``34`` month no-lead-zero · ``35`` day no-lead-zero · ``39``
-    HHMMSS · ``36MM`` month name (nominative). A bare ``3`` with a value arg is
-    treated as 'format this YYYYMMDD' passthrough."""
+
+def _uf_date(arg, value, ctx, record):
+    """UNIFOR ``3`` — date/time (PFT_LANGUAGE §9.1 / decompiled case ``0x33``).
+
+    Today's date is ``ctx['now']`` (else ``datetime.now()``). Sub-codes
+    (the ``3`` is already stripped by the dispatcher):
+
+      * (empty) ГГГГММДД · ``0`` year · ``1`` month(zero-pad) · ``2`` day(pad)
+        · ``3`` ГГ (YY) · ``4`` month no-lead-zero · ``5`` day no-lead-zero
+        · ``9`` HHMMSS — current-clock fields.
+      * ``6MM`` month name nominative · ``7MM`` genitive · ``8MM`` English
+        (``MM`` = the 2-digit month, e.g. ``&unifor('36',&unifor('31'))``).
+      * ``A`` day-of-year of the supplied/inline ``ГГГГММДД`` (decompiled 3A).
+      * ``B<date>,<±days>`` shift a date by N days → ГГГГММДД (decompiled 3B).
+      * ``C<date1>,<date2>`` whole-day difference ``date1 - date2`` (3C; ``0``
+        if either side unparsable, matching the C default).
+    """
     now = _now(ctx)
     sub = arg  # arg already had the leading '3' stripped by the dispatcher
     if sub == '' or sub is None:
@@ -262,11 +289,44 @@ def _uf_date(arg, value, ctx, record):
         return str(now.day)
     if sub == '9':
         return now.strftime('%H%M%S')
-    if sub.startswith('6') and len(sub) >= 3:    # 36MM -> month name
+    # month-name codes 6MM/7MM/8MM — the MM is taken from the trailing two
+    # digits (or, if absent, from the inline value, else today's month).
+    if sub[0] in ('6', '7', '8'):
+        table = {'6': _MONTHS_NOM, '7': _MONTHS_GEN, '8': _MONTHS_ENG}[sub[0]]
+        mm = sub[1:3] if len(sub) >= 3 and sub[1:3].isdigit() else ''
+        if not mm:
+            mm = (value or '')[:2]
         try:
-            return _MONTHS_NOM[int(sub[1:3])]
+            month = int(mm) if mm else now.month
+            return table[month]
         except (ValueError, IndexError):
             return ''
+    # The date payload for A/B/C may be inline in the spec (e.g.
+    # &unifor('3C20260621,20260601')) or in the evaluated value
+    # (&unifor('3C'v210^d)); prefer the in-spec tail, fall back to the value.
+    payload = (sub[1:] + value) if len(sub) > 1 else (value or '')
+    payload = payload.strip()
+    today = now.date() if hasattr(now, 'date') else now
+    # 3A — day of the year of the supplied YYYYMMDD (else today).
+    if sub[0] == 'A':
+        d = _parse_yyyymmdd(payload) or today
+        return str(d.timetuple().tm_yday)
+    # 3B<date>,<±days> — shift a date by N days → ГГГГММДД.
+    if sub[0] == 'B':
+        base_s, _, off_s = payload.partition(',')
+        base = _parse_yyyymmdd(base_s) or today
+        try:
+            days = int(off_s) if off_s.strip() else 0
+        except ValueError:
+            days = 0
+        return (base + _dt.timedelta(days=days)).strftime('%Y%m%d')
+    # 3C<date1>,<date2> — whole-day difference date1-date2 (0 if unparsable).
+    if sub[0] == 'C':
+        a_s, _, b_s = payload.partition(',')
+        da, db = _parse_yyyymmdd(a_s), _parse_yyyymmdd(b_s)
+        if da is None or db is None:
+            return '0'
+        return str((da - db).days)
     return now.strftime('%Y%m%d')
 
 
@@ -310,13 +370,166 @@ def _uf_strip_angle(arg, value, ctx, record):
 
 
 def _uf_first_words(arg, value, ctx, record):
-    """UNIFOR ``E`` — first N words: ``EN<string>`` (SPEC §9.1)."""
+    """UNIFOR ``E`` — first N words: ``EN<string>`` (PFT_LANGUAGE §9.1).
+
+    Whitespace runs collapse to single spaces (CDS/ISIS word semantics)."""
     m = re.match(r'(\d+)(.*)$', arg, re.S)
     if not m:
         return value or ''
     n = int(m.group(1))
     src = value if value else m.group(2)
     return ' '.join((src or '').split()[:n])
+
+
+def _uf_cut_after_words(arg, value, ctx, record):
+    """UNIFOR ``F`` — keep the line up to and including the Nth word, dropping
+    the remainder: ``FN<string>`` (PFT_LANGUAGE §9.1).
+
+    Distinct from ``E``: ``F`` preserves the *original* inter-word spacing of
+    the kept prefix (it truncates the string after the Nth word boundary),
+    whereas ``E`` re-joins on single spaces."""
+    m = re.match(r'(\d+)(.*)$', arg, re.S)
+    if not m:
+        return value or ''
+    n = int(m.group(1))
+    src = value if value else m.group(2)
+    src = src or ''
+    if n <= 0:
+        return ''
+    # walk the string, counting word starts; cut at the end of the Nth word.
+    words_seen = 0
+    in_word = False
+    cut = len(src)
+    for i, ch in enumerate(src):
+        if ch.isspace():
+            if in_word and words_seen == n:
+                cut = i
+                break
+            in_word = False
+        else:
+            if not in_word:
+                words_seen += 1
+            in_word = True
+    return src[:cut]
+
+
+def _uf_substr_marker(arg, value, ctx, record):
+    """UNIFOR ``G`` — substring relative to a marker char: ``GNA<string>``
+    (PFT_LANGUAGE §9.1 / decompiled case ``0x33``-sibling).
+
+    ``N`` = 0 → take the part *up to* (excluding) the marker; ``N`` = 1 → the
+    part *from* (including) the marker. ``A`` is the marker character, with two
+    wildcards: ``#`` = the first digit, ``$`` = the first (latin/cyrillic)
+    letter. Marker not found → the whole string (mode 0) / empty (mode 1)."""
+    m = re.match(r'([01])(.)(.*)$', arg, re.S)
+    if not m:
+        return value or arg or ''
+    mode, marker, tail = m.group(1), m.group(2), m.group(3)
+    src = value if value else tail
+    src = src or ''
+    if marker == '#':
+        pos = next((i for i, c in enumerate(src) if c.isdigit()), -1)
+    elif marker == '$':
+        pos = next((i for i, c in enumerate(src) if c.isalpha()), -1)
+    else:
+        pos = src.find(marker)
+    if pos < 0:
+        return src if mode == '0' else ''
+    return src[:pos] if mode == '0' else src[pos:]
+
+
+# Cyrillic→Latin transliteration tables (UNIFOR ``T``). Table 0 is a practical
+# GOST-7.79-ish System B mapping; table 1 a simplified ASCII variant. Both are
+# applied longest-key-first so digraphs (``щ``→``shh``) win over single letters.
+_TRANSLIT_0 = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
+    'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm',
+    'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+    'ф': 'f', 'х': 'x', 'ц': 'cz', 'ч': 'ch', 'ш': 'sh', 'щ': 'shh',
+    'ъ': '"', 'ы': 'y', 'ь': "'", 'э': 'e', 'ю': 'yu', 'я': 'ya',
+}
+_TRANSLIT_1 = dict(_TRANSLIT_0, **{
+    'й': 'i', 'х': 'kh', 'ц': 'ts', 'ъ': '', 'ь': '', 'э': 'eh',
+})
+
+
+def _translit(src, table):
+    out = []
+    for ch in src:
+        low = ch.lower()
+        rep = table.get(low)
+        if rep is None:
+            out.append(ch)
+        elif ch == low:
+            out.append(rep)
+        else:                                # preserve title/upper-casing
+            out.append(rep.upper() if len(rep) == 1 else rep.capitalize())
+    return ''.join(out)
+
+
+def _uf_translit(arg, value, ctx, record):
+    """UNIFOR ``T`` — transliterate Cyrillic to Latin: ``TN<string>`` where
+    ``N`` selects the table (``0`` default, ``1`` simplified) (PFT_LANGUAGE
+    §9.1). Non-Cyrillic characters pass through unchanged."""
+    m = re.match(r'(\d?)(.*)$', arg, re.S)
+    tableno = m.group(1)
+    src = value if value else (m.group(2) or '')
+    table = _TRANSLIT_1 if tableno == '1' else _TRANSLIT_0
+    return _translit(src, table)
+
+
+# Insertion-point markers ``%…%`` that the term-ending code ``L`` removes.
+_ENDMARK_RE = re.compile(r'%([^%]*)%')
+
+
+def _uf_term_ending(arg, value, ctx, record):
+    """UNIFOR ``L`` — term ending: ``L<term>`` (PFT_LANGUAGE §9.1 / decompiled
+    case ``0x4c``). The dictionary/morphology lookup needs the inverted file,
+    which this slice does not carry, so we degrade to the documented *marker
+    pass*: the real code strips the ``%…%`` insertion-point markers from the
+    computed ending and concatenates the segments. With no index we apply that
+    same marker-stripping to the supplied term so a template using ``L`` still
+    renders clean text rather than echoing the ``%`` markers."""
+    src = value if value else (arg or '')
+    return _ENDMARK_RE.sub(r'\1', src or '')
+
+
+def _uf_full_record(arg, value, ctx, record):
+    """UNIFOR ``0`` — the whole document (format ALL): every field flattened to
+    ``<tag>#<value>`` lines (PFT_LANGUAGE §9.1 / decompiled case ``0x30``).
+
+    A plain readable dump of the record; repeating instances are each emitted
+    on their own line. Useful for debug/diagnostic templates."""
+    if not record:
+        return ''
+    lines = []
+    for tag in record:
+        for inst in _instances(record, tag):
+            lines.append('%s#%s' % (tag, _inst_value(inst, None)))
+    return '\n'.join(lines)
+
+
+def _uf_record_status(arg, value, ctx, record):
+    """UNIFOR ``+6`` — record status: ``1`` if the record is NOT logically
+    deleted, ``0`` if it is (PFT_LANGUAGE §9.1 / decompiled case ``0x2b``→
+    ``0x36`` via ``IrbisIsDeleted``). The flag is read from ``ctx['deleted']``
+    (the A1↔store contract); absent ⇒ treated as live (``1``)."""
+    deleted = bool((ctx or {}).get('deleted'))
+    return '0' if deleted else '1'
+
+
+def _uf_urlcode(arg, value, ctx, record):
+    """UNIFOR ``+3E`` / ``+3D`` — URL-encode / -decode a string (PFT_LANGUAGE
+    §9.1). The leading ``E``/``D`` selects the direction; payload is the inline
+    value (or the spec tail)."""
+    direction = arg[:1].upper()
+    src = value if value else arg[1:]
+    src = src or ''
+    import urllib.parse as _url
+    if direction == 'D':
+        return _url.unquote(src)
+    # default to encode (E); quote keeps unreserved chars, encodes the rest.
+    return _url.quote(src, safe='')
 
 
 def _uf_postedit_seps(arg, value, ctx, record):
@@ -359,8 +572,15 @@ register_unifor('9', _uf_strip_quotes)
 register_unifor('Q', _uf_lower)
 register_unifor('X', _uf_strip_angle)
 register_unifor('E', _uf_first_words)
+register_unifor('F', _uf_cut_after_words)
+register_unifor('G', _uf_substr_marker)
+register_unifor('T', _uf_translit)
+register_unifor('L', _uf_term_ending)
+register_unifor('0', _uf_full_record)
 register_unifor('!', _uf_postedit_seps)
 register_unifor('+F', _uf_postedit_rtf)
+register_unifor('+6', _uf_record_status)
+register_unifor('+3', _uf_urlcode)
 register_unifor('6', _uf_module)
 
 

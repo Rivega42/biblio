@@ -15,6 +15,11 @@ What is exercised
   4. Concatenation: ',' and '+', conditional/unconditional literals.
   5. UNIFOR implemented: 'C' (ISBN/ISSN checksum — the code ФЛК reuses), '3' (date
      today, via ctx['now']), 'Av…#n' (Nth occurrence), 'Q'/'9' string ops.
+  5b. UNIFOR deepened batch: date '36'/'37'/'38' (month name nom/gen/eng),
+     '3A' day-of-year, '3B' date±days, '3C' date difference; 'E'/'F' first/keep-N
+     words, 'G' substring up-to/from a marker (#/$ wildcards), 'T' translit
+     cyrillic→latin, 'L' term-ending marker strip, '0' full-record dump, '+6'
+     record status, '+3E'/'+3D' URL encode/decode.
   6. Graceful skip of an unsupported construct (ref()/l() index lookups, unknown
      UNIFOR) — degrades to '' without crashing the surrounding render.
   7. Dummy output d/n, val()/f()/rsum(), p()/a() predicates, eval_lines groups.
@@ -201,6 +206,109 @@ def unifor_checks():
 
 
 # --------------------------------------------------------------------------- #
+# 5b. UNIFOR — newly-deepened batch (date 36/37/38/3A/3B/3C, E/F/G, T, L, 0,
+#     +6, +3E/+3D). Grounded in PFT_LANGUAGE.md §9.1 + IRBIS64_UNIFOR_decompiled.c.
+# --------------------------------------------------------------------------- #
+def unifor_date_checks():
+    print('-- unifor date extensions (36/37/38/3A/3B/3C)')
+    rec = _book()
+    fixed = datetime.datetime(2026, 6, 21, 9, 30, 0)   # June 21st 2026, day 172
+    # 36MM/37MM/38MM — month name nominative / genitive / English.
+    check("&unifor('3606') -> июнь (nominative)",
+          pft_eval("&unifor('3606')", rec, {'now': fixed}) == 'июнь')
+    check("&unifor('3706') -> июня (genitive)",
+          pft_eval("&unifor('3706')", rec, {'now': fixed}) == 'июня')
+    check("&unifor('3806') -> June (English)",
+          pft_eval("&unifor('3806')", rec, {'now': fixed}) == 'June')
+    # month name fed from another date code: &unifor('36',&unifor('31')).
+    check("&unifor('36'&unifor('31')) composes month name from today",
+          pft_eval("&unifor('36'&unifor('31'))", rec, {'now': fixed}) == 'июнь')
+    # 3A — day-of-year of an inline YYYYMMDD; Jan 1 = 1, the fixed date = 172.
+    check("&unifor('3A20260101') -> 1 (Jan 1 day-of-year)",
+          pft_eval("&unifor('3A20260101')", rec) == '1')
+    check("&unifor('3A20260621') -> 172",
+          pft_eval("&unifor('3A20260621')", rec) == '172')
+    # 3B — shift a date by ±N days, formatted back to YYYYMMDD.
+    check("&unifor('3B20260101,10') -> 20260111",
+          pft_eval("&unifor('3B20260101,10')", rec) == '20260111')
+    check("&unifor('3B20260301,-1') -> 20260228",
+          pft_eval("&unifor('3B20260301,-1')", rec) == '20260228')
+    # 3C — whole-day difference date1-date2; non-date arg -> '0'.
+    check("&unifor('3C20260621,20260601') -> 20",
+          pft_eval("&unifor('3C20260621,20260601')", rec) == '20')
+    check("&unifor('3C') bad args -> 0",
+          pft_eval("&unifor('3Cxxx,yyy')", rec) == '0')
+
+
+def unifor_string_checks():
+    print('-- unifor string ops (E/F/G/T/L/9/X)')
+    rec = {'200': [{'a': 'Hello World Foo Bar'}],
+           '300': 'Москва', '301': 'a  b   c d'}
+    # E — first N words (whitespace-collapsed).
+    check("&unifor('E2'v200^a) -> 'Hello World'",
+          pft_eval("&unifor('E2'v200^a)", rec) == 'Hello World')
+    # F — keep up to Nth word, preserving original spacing (distinct from E).
+    check("&unifor('F2'v301) preserves spacing 'a  b'",
+          pft_eval("&unifor('F2'v301)", rec) == 'a  b')
+    check("&unifor('E2'v301) collapses spacing 'a b'",
+          pft_eval("&unifor('E2'v301)", rec) == 'a b')
+    check("&unifor('F10' more words than present -> whole string)",
+          pft_eval("&unifor('F10'v301)", rec) == 'a  b   c d')
+    check("&unifor('F0') -> empty",
+          pft_eval("&unifor('F0'v301)", rec) == '')
+    # G — substring up to / from a marker char (# = digit, $ = letter).
+    check("&unifor('G0 'v200^a) up-to-space -> 'Hello'",
+          pft_eval("&unifor('G0 'v200^a)", rec) == 'Hello')
+    check("&unifor('G1W'v200^a) from 'W' -> 'World Foo Bar'",
+          pft_eval("&unifor('G1W'v200^a)", rec) == 'World Foo Bar')
+    digrec = {'200': [{'a': 'abc123def'}]}
+    check("&unifor('G0#') up-to-first-digit -> 'abc'",
+          pft_eval("&unifor('G0#'v200^a)", digrec) == 'abc')
+    check("&unifor('G1#') from-first-digit -> '123def'",
+          pft_eval("&unifor('G1#'v200^a)", digrec) == '123def')
+    check("&unifor('G0Z') marker absent (mode 0) -> whole string",
+          pft_eval("&unifor('G0Z'v200^a)", rec) == 'Hello World Foo Bar')
+    check("&unifor('G1Z') marker absent (mode 1) -> empty",
+          pft_eval("&unifor('G1Z'v200^a)", rec) == '')
+    # T — transliterate cyrillic -> latin (table 0 / table 1).
+    check("&unifor('T0'v300) -> Moskva",
+          pft_eval("&unifor('T0'v300)", rec) == 'Moskva')
+    tr = {'300': 'Щука'}
+    check("&unifor('T0') digraph щ -> 'shh', title-cased",
+          pft_eval("&unifor('T0'v300)", tr) == 'Shhuka')
+    check("&unifor('T1') simplified table х -> 'kh'",
+          pft_eval("&unifor('T1'v300)", {'300': 'Хор'}) == 'Khor')
+    # L — term ending: strips %…% insertion-point markers (index-free fallback).
+    check("&uf('L') strips %…% markers",
+          pft_eval("&uf('Labc%def%ghi')", rec) == 'abcdefghi')
+
+
+def unifor_misc_checks():
+    print('-- unifor misc (0 / +6 / +3E / +3D)')
+    rec = {'200': [{'a': 'T'}], '101': 'rus', '300': 'Москва'}
+    # 0 — full-record dump: every field as 'tag#value' lines.
+    dump = pft_eval("&unifor('0')", rec)
+    check("&unifor('0') dumps all tags",
+          '200#T' in dump and '101#rus' in dump and '300#Москва' in dump)
+    check("&unifor('0') on empty record -> ''",
+          pft_eval("&unifor('0')", {}) == '')
+    # +6 — record status: 1 live, 0 logically deleted (from ctx['deleted']).
+    check("&unifor('+6') live record -> 1",
+          pft_eval("&unifor('+6')", rec, {}) == '1')
+    check("&unifor('+6') deleted record -> 0",
+          pft_eval("&unifor('+6')", rec, {'deleted': True}) == '0')
+    # +3E / +3D — URL encode / decode (round-trip).
+    enc = pft_eval("&unifor('+3E'v300)", rec)
+    check("&unifor('+3E') URL-encodes 'Москва'",
+          enc == '%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0')
+    check("&unifor('+3D') decodes a literal back to 'Москва'",
+          pft_eval("&unifor('+3D%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0')", rec)
+          == 'Москва')
+    check("+3E then +3D round-trips a cyrillic string",
+          pft_eval("&unifor('+3D'&unifor('+3E'v300))", rec) == 'Москва')
+
+
+# --------------------------------------------------------------------------- #
 # 6. Graceful degradation of unsupported constructs.
 # --------------------------------------------------------------------------- #
 def degrade_checks():
@@ -290,6 +398,9 @@ def main():
     if_checks()
     concat_checks()
     unifor_checks()
+    unifor_date_checks()
+    unifor_string_checks()
+    unifor_misc_checks()
     degrade_checks()
     func_checks()
     golden_checks()
