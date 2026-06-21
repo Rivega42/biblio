@@ -58,11 +58,14 @@ export function sortItems<T extends { title?: string; year?: string }>(items: T[
 }
 
 export function ResultsToolbar({
-  total, page, pageCount, view, onView, sort, onSort,
+  total, page, pageCount, view, onView, sort, onSort, showToggle = true,
 }: {
   total: number; page: number; pageCount: number;
   view: ViewMode; onView: (v: ViewMode) => void;
   sort: SortKey; onSort: (s: SortKey) => void;
+  // Показывать ли тумблер «Список/Галерея». Для баз с календарным/архивным
+  // профилем (#222) тумблер скрыт — вид задаётся профилем базы.
+  showToggle?: boolean;
 }) {
   return (
     <div className="irb-rtoolbar">
@@ -77,16 +80,18 @@ export function ResultsToolbar({
         </select>
       </div>
 
-      <div className="irb-seg" role="group" aria-label="Вид выдачи">
-        <button type="button" className={"irb-seg__b" + (view === "list" ? " irb-seg__b--on" : "")}
-          aria-pressed={view === "list"} onClick={() => onView("list")} title="Список">
-          <Icon name="list" size={16} /> Список
-        </button>
-        <button type="button" className={"irb-seg__b" + (view === "gallery" ? " irb-seg__b--on" : "")}
-          aria-pressed={view === "gallery"} onClick={() => onView("gallery")} title="Галерея">
-          <Icon name="grid" size={16} /> Галерея
-        </button>
-      </div>
+      {showToggle && (
+        <div className="irb-seg" role="group" aria-label="Вид выдачи">
+          <button type="button" className={"irb-seg__b" + (view === "list" ? " irb-seg__b--on" : "")}
+            aria-pressed={view === "list"} onClick={() => onView("list")} title="Список">
+            <Icon name="list" size={16} /> Список
+          </button>
+          <button type="button" className={"irb-seg__b" + (view === "gallery" ? " irb-seg__b--on" : "")}
+            aria-pressed={view === "gallery"} onClick={() => onView("gallery")} title="Галерея">
+            <Icon name="grid" size={16} /> Галерея
+          </button>
+        </div>
+      )}
     </div>
   );
 }

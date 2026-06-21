@@ -40,6 +40,11 @@ const CSS = `
 .irb-gcard__title:hover{color:var(--accent-hover);text-decoration:underline;text-underline-offset:3px;}
 .irb-gcard__by{font-size:var(--text-xs);color:var(--text-subtle);margin-top:3px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.irb-gcard__acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;}
+.irb-gcard__act{display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--text-body);
+  border:1px solid var(--border-strong,#cdd3da);border-radius:var(--radius-sm,7px);padding:4px 8px;cursor:pointer;
+  font-family:var(--font-ui,inherit);font-size:var(--text-2xs,11px);}
+.irb-gcard__act:hover{border-color:var(--accent);color:var(--accent);}
 `;
 
 if (typeof document !== "undefined" && !document.getElementById("irb-gal-css")) {
@@ -47,13 +52,16 @@ if (typeof document !== "undefined" && !document.getElementById("irb-gal-css")) 
 }
 
 export function GalleryGrid({
-  items, db, inBasket, onToggleBasket, onOpen,
+  items, db, inBasket, onToggleBasket, onOpen, onHold, renderShelf,
 }: {
   items: ResultItem[];
   db: string;
   inBasket: (mfn: number) => boolean;
   onToggleBasket: (it: ResultItem) => void;
   onOpen: (mfn: number) => void;
+  // Действия #222 (необязательны): бронь и меню «В список» на карточке-обложке.
+  onHold?: (it: ResultItem) => void;
+  renderShelf?: (it: ResultItem) => React.ReactNode;
 }) {
   return (
     <div className="irb-gal" role="list">
@@ -86,6 +94,16 @@ export function GalleryGrid({
             <span className="irb-gcard__meta">
               <button type="button" className="irb-gcard__title" onClick={() => onOpen(it.mfn)}>{it.title || "Без заглавия"}</button>
               {(it.author || it.year) && <span className="irb-gcard__by">{[it.author, it.year].filter(Boolean).join(" · ")}</span>}
+              {(onHold || renderShelf) && (
+                <span className="irb-gcard__acts">
+                  {onHold && (
+                    <button type="button" className="irb-gcard__act" onClick={(e) => { e.stopPropagation(); onHold(it); }} title="Забронировать">
+                      <Icon name="clock" size={13} /> Бронь
+                    </button>
+                  )}
+                  {renderShelf && renderShelf(it)}
+                </span>
+              )}
             </span>
           </article>
         );

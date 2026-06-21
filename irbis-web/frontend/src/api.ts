@@ -35,6 +35,22 @@ export interface OrderItem {
   id?: string | number; mfn: number; db?: string; title?: string; author?: string;
   status?: string; statusLabel?: string; created?: string; place?: string; cancelable?: boolean;
 }
+// Бронирование (#222) — заявка на удержание экземпляра с позицией в очереди.
+//   status: 'ready' — готов к получению; 'queued' — в очереди (position — ваш номер).
+export interface Hold {
+  holdId: string; db: string; mfn: number; title?: string;
+  status: "ready" | "queued"; position?: number; until?: string;
+}
+export interface HoldResult { holdId: string; status: "ready" | "queued"; position?: number; }
+// Уведомления читателя (#222) — почтовый ящик портала. event — машинный тип
+// события (hold_ready/due_soon/…); subject/body — человекочитаемый текст.
+export interface Notification {
+  id: string | number; ts?: string; event?: string; subject?: string; body?: string; read?: boolean;
+}
+// Полки / списки чтения (#222). system=true — встроенные («Хочу прочитать»,
+// «Избранное»), их нельзя удалять; пользовательские списки — system=false.
+export interface ShelfItem { db: string; mfn: number; title?: string; }
+export interface Shelf { id: string; name: string; system?: boolean; items: ShelfItem[]; }
 
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
@@ -98,6 +114,25 @@ export const api = {
     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
     return r;
   },
+  // --- Бронирование (#222) -------------------------------------------------
+  // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
+  hold: (db: string, mfn: number) => jpost<HoldResult>("/api/hold", { db, mfn }),
+  // Список активных броней читателя с позицией в очереди.
+  holds: () => jget<{ items: Hold[] }>("/api/holds"),
+  // Снять бронь по её идентификатору.
+  cancelHold: (holdId: string) => jpost("/api/hold/cancel", { holdId }),
+  // --- Уведомления читателя (#222) -----------------------------------------
+  // Лента уведомлений; unread=1 — только непрочитанные. Возвращает счётчик unread.
+  notifications: (unreadOnly = false) =>
+    jget<{ items: Notification[]; unread: number }>("/api/notifications?" + qs({ unread: unreadOnly ? 1 : 0 })),
+  // Отметить прочитанным: одно (по id) либо все (all:true).
+  markNotificationRead: (idOrAll: { id: string | number } | { all: true }) =>
+    jpost<{ unread: number }>("/api/notifications/read", idOrAll),
+  // --- Полки / списки чтения (#222) ----------------------------------------
+  shelves: () => jget<{ lists: Shelf[] }>("/api/shelves"),
+  createShelf: (name: string) => jpost<{ id: string; name: string; system?: boolean }>("/api/shelves", { name }),
+  addToShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item", { listId, db, mfn }),
+  removeFromShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item/remove", { listId, db, mfn }),
   worklist: (db: string) => jget<{ db: string; fields: any[] }>("/api/worklist/" + db),
   saveRecord: (db: string, mfn: number, fields: { tag: string; value: string }[]) =>
     jpost<{ db: string; mfn: number; created: boolean; returnCode: number }>("/api/record/" + db + "/" + mfn, { fields }),

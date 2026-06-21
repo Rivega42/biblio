@@ -4,7 +4,6 @@ import type { RecordData, ResultItem, FieldVal, DbItem, CabinetData, Facet } fro
 import { Button } from "../components/forms/Button.jsx";
 import { FilterChip } from "../components/forms/FilterChip.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
-import type { IconName } from "../components/icon/Icon.jsx";
 import { SearchBar } from "../components/catalog/SearchBar.jsx";
 import { ResultCard } from "../components/catalog/ResultCard.jsx";
 import { StatusBadge } from "../components/catalog/StatusBadge.jsx";
@@ -18,9 +17,16 @@ import type { StaffSession } from "./Staff";
 import { exportRecord, exportBasket, basketMailto } from "./export";
 import { HomeScreen } from "./reader/HomeScreen";
 import { GalleryGrid } from "./reader/GalleryGrid";
+import { CalendarGrid } from "./reader/CalendarGrid";
+import { ArchiveList } from "./reader/ArchiveList";
 import { ResultsToolbar, sortItems } from "./reader/ResultsToolbar";
 import type { ViewMode, SortKey } from "./reader/ResultsToolbar";
 import { OrdersTab } from "./reader/OrdersTab";
+import { NotificationInbox } from "./reader/NotificationInbox";
+import { HoldsTab } from "./reader/HoldsTab";
+import { ShelvesPanel, ShelfMenu } from "./reader/Shelves";
+import { layoutProfile, defaultLayout, layoutAllows } from "./reader/dbLayout";
+import type { LayoutKind } from "./reader/dbLayout";
 
 const PREFIXES = [
   { code: "K", label: "Ключевые слова" }, { code: "A", label: "Автор" },
@@ -133,6 +139,11 @@ export function App() {
   const [viewMode, setViewMode] = React.useState<ViewMode>("list");
   const [sort, setSort] = React.useState<SortKey>("relevance");
   const [pageSize, setPageSize] = React.useState(10);
+  // Мульти-лейаут по типу базы (#222): активный вид выдачи (list/gallery/calendar/archive).
+  // По умолчанию берётся из профиля базы; пользователь может переключать там, где доступно.
+  const [layout, setLayout] = React.useState<LayoutKind>("list");
+  // Тик для перезагрузки списка броней в кабинете после новой брони (#222).
+  const [holdsRefresh, setHoldsRefresh] = React.useState(0);
   const tRef = React.useRef<any>(null);
   const toast = (t: Omit<Toast, "id">) => { const id = Math.random(); setToasts((x) => [...x, { ...t, id }]); setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 4000); };
 
@@ -156,6 +167,16 @@ export function App() {
       // Иначе остаёмся на главной-лендинге (фасад discovery, G1) — без авто-поиска.
     })();
   }, []);
+
+  // Мульти-лейаут (#222): при смене активной базы сбрасываем вид выдачи на дефолт
+  // её профиля (book→list, image→gallery, perio→calendar, arch→archive). Внутри
+  // одной базы пользовательский тумблер list/gallery сохраняется (db не меняется).
+  React.useEffect(() => {
+    const def = defaultLayout(db);
+    setLayout(def);
+    // Синхронизируем тумблер list/gallery, чтобы он отражал актуальный вид.
+    if (def === "list" || def === "gallery") setViewMode(def);
+  }, [db]);
 
   async function runSearch(database: string, px: string, query: string, pg: number) {
     if (!query.trim()) return;
@@ -287,6 +308,23 @@ export function App() {
     else if (r.status === 401 || r.status === 403) { toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." }); setLoginOpen(true); }
     else toast({ variant: "error", title: "Не удалось заказать", message: "Повторите попытку." });
   }
+  // Бронирование (#222): POST /api/hold → показываем итог (готов / позиция в очереди).
+  // 404/501 — модуль брони ещё не подключён → мягкий тост, страница не падает.
+  async function hold(mfn: number, database: string = db) {
+    const r = await api.hold(database, mfn);
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      const d = r.json.data;
+      if (d.status === "ready") toast({ variant: "success", title: "Забронировано", message: "Издание готово к получению." });
+      else toast({ variant: "success", title: "Вы в очереди", message: d.position ? "Ваша позиция: " + d.position + "-я." : "Бронь поставлена в очередь." });
+      setHoldsRefresh((n) => n + 1);
+    } else if (r.status === 401 || r.status === 403) {
+      toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." }); setLoginOpen(true);
+    } else if (r.status === 404 || r.status === 501) {
+      toast({ variant: "info", title: "Бронирование недоступно", message: "Модуль бронирования ещё подключается." });
+    } else {
+      toast({ variant: "error", title: "Не удалось забронировать", message: "Повторите попытку позже." });
+    }
+  }
   async function loadCabinet() {
     const r = await api.cabinet();
     if (r.json?.ok && r.json.data) {
@@ -348,6 +386,8 @@ export function App() {
           </div>
           <button onClick={() => setDarkMode((v) => !v)} title="Светлая / тёмная тема" style={hbtn(darkMode && !a11y)}>{darkMode ? "Светлая" : "Тёмная"}</button>
           <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
+          {/* Почтовый ящик уведомлений (#222) — только для вошедшего читателя. */}
+          {context === "reader" && account.loggedIn && <NotificationInbox />}
           {context === "reader" && account.loggedIn && <button onClick={loadCabinet} style={hbtn(view === "cabinet")}>Кабинет</button>}
           {context === "reader" && <button onClick={() => account.loggedIn ? (setAccount({ loggedIn: false }), setView("search"), setCab(null)) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
           {context === "staff" && staff && <button onClick={() => { setStaff(null); setContext("reader"); }} style={hbtn(false)}>Выйти ({staff.login})</button>}
@@ -358,7 +398,9 @@ export function App() {
         {context === "staff" ? (
           <StaffArea staff={staff!} route={staffRoute} setRoute={setStaffRoute} toast={toast} />
         ) : view === "cabinet" ? (
-          <CabinetScreen cab={cab} ticket={account.ticket} toast={toast} onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
+          <CabinetScreen cab={cab} ticket={account.ticket} toast={toast} holdsRefresh={holdsRefresh}
+            onOpenRecord={(database, mfn) => { setView("search"); setHome(false); openRecord(mfn, database); }}
+            onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
         ) : home && !rec ? (
           /* Discovery façade (G1-G3, G17) — лендинг до первого поиска. */
           <HomeScreen
@@ -453,19 +495,50 @@ export function App() {
                         <button onClick={() => applyFacets([])} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "var(--text-xs)" }}>Сбросить все</button>
                       </div>
                     )}
-                    <ResultsToolbar total={total} page={page} pageCount={pageCount}
-                      view={viewMode} onView={setViewMode} sort={sort} onSort={setSort} />
-                    {total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Снимите часть фильтров и повторите поиск." /> : <>
-                      {viewMode === "gallery" ? (
-                        <GalleryGrid items={sortItems(items, sort)} db={db}
-                          inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
-                      ) : (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                          {sortItems(items, sort).map((it) => <ResultCard key={it.mfn} item={it} dbTag={dbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn)} />)}
-                        </div>
-                      )}
-                      <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} pageSize={pageSize} onPageSize={changePageSize} /></div>
-                    </>}
+                    {/* Мульти-лейаут (#222): профиль базы задаёт вид. Для list/gallery-баз
+                        вид следует тумблеру (viewMode); для calendar/archive — профилю. */}
+                    {(() => {
+                      const prof = layoutProfile(db);
+                      const togglable = layoutAllows(db, "list") && layoutAllows(db, "gallery");
+                      const effLayout: LayoutKind = togglable ? viewMode : prof.views[0];
+                      const sorted = sortItems(items, sort);
+                      return (
+                        <>
+                          <ResultsToolbar total={total} page={page} pageCount={pageCount}
+                            view={viewMode} onView={setViewMode} sort={sort} onSort={setSort} showToggle={togglable} />
+                          {total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Снимите часть фильтров и повторите поиск." /> : <>
+                            {effLayout === "gallery" ? (
+                              <GalleryGrid items={sorted} db={db}
+                                inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)}
+                                onHold={(it) => hold(it.mfn, db)}
+                                renderShelf={account.loggedIn ? (it) => <ShelfMenu db={db} mfn={it.mfn} title={it.title} toast={toast} compact /> : undefined} />
+                            ) : effLayout === "calendar" ? (
+                              <CalendarGrid items={sorted}
+                                inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
+                            ) : effLayout === "archive" ? (
+                              <ArchiveList items={sorted} startIndex={(page - 1) * pageSize}
+                                inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
+                            ) : (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                {sorted.map((it) => (
+                                  <div key={it.mfn} style={{ position: "relative" }}>
+                                    <ResultCard item={it} dbTag={dbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn)} />
+                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0 2px 0", paddingLeft: 4 }}>
+                                      <button type="button" onClick={() => hold(it.mfn, db)} title="Забронировать"
+                                        style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" }}>
+                                        <Icon name="clock" size={14} /> Забронировать
+                                      </button>
+                                      {account.loggedIn && <ShelfMenu db={db} mfn={it.mfn} title={it.title} toast={toast} />}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} pageSize={pageSize} onPageSize={changePageSize} /></div>
+                          </>}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>}
           </>
@@ -476,8 +549,9 @@ export function App() {
             rec={rec} db={DB} tab={recTab} setTab={setRecTab}
             shareOpen={shareOpen} setShareOpen={setShareOpen}
             permalink={permalink()} onCopyPermalink={copyPermalink}
-            onBack={closeRecord} onOrder={() => order(rec.mfn)}
+            onBack={closeRecord} onOrder={() => order(rec.mfn)} onHold={() => hold(rec.mfn, rec.db)}
             onSubject={(t: string) => { setMode("simple"); setPrefix("K"); setQ(t); closeRecord(); runSearch(db, "K", t, 1); }}
+            loggedIn={account.loggedIn} toast={toast}
             inBasket={inBasket(rec.mfn)}
             onToggleBasket={() => toggleBasket({ mfn: rec.mfn, title: rec.brief || "", author: recView(rec).meta.find((m) => m.label === "Авторы")?.value, year: recView(rec).meta.find((m) => m.label === "Выходные данные")?.value })}
           />
@@ -640,7 +714,7 @@ function toneDot(tone: LoanView["tone"]): React.CSSProperties {
   return { width: 6, height: 6, borderRadius: 999, background: c, flex: "none" };
 }
 
-function CabinetScreen({ cab, ticket, toast, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; onBack: () => void; onLogout: () => void }) {
+function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; holdsRefresh?: number; onOpenRecord?: (db: string, mfn: number) => void; onBack: () => void; onLogout: () => void }) {
   const [cabTab, setCabTab] = React.useState<"formular" | "orders">("formular");
   const today = React.useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const loans = React.useMemo(() => (cab?.loans || []).map((l) => buildLoan(l, today)), [cab, today]);
@@ -652,18 +726,22 @@ function CabinetScreen({ cab, ticket, toast, onBack, onLogout }: { cab: CabinetD
   const h2Sx: React.CSSProperties = { fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-xl,1.25rem)", letterSpacing: "-.02em", margin: 0 };
   const demoHint: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 999, background: "var(--surface-sunken)", color: "var(--text-subtle)", fontSize: "var(--text-2xs,11px)", fontWeight: 600, letterSpacing: ".02em" };
 
-  // Демо-данные (помечены «демо»): backend очереди/полок/челленджа ещё нет.
+  // Челлендж остаётся демонстрационным (вне объёма #222) — помечен «демо».
   const challengeGoal = 50, challengeDone = Math.min(returnedCount + 35, 49);
   const pct = Math.round((challengeDone / challengeGoal) * 100);
-  const queue = [
-    { title: "Совершенный код", author: "С. Макконнелл", note: "ожидание", pos: 2, of: 5, info: true },
-    { title: "Искусство программирования", author: "Д. Кнут", note: "скоро ваша", pos: 1, of: 3, info: false },
-  ];
-  const shelves: { name: string; count: number; icon: IconName }[] = [
-    { name: "Хочу прочитать", count: 12, icon: "book" },
-    { name: "Избранное", count: 8, icon: "star" },
-    { name: "По работе", count: 23, icon: "briefcase" },
-  ];
+  // Реальное число активных броней (#222) для статистики профиля; 0 пока не загружено
+  // или модуль брони недоступен.
+  const [holdsCount, setHoldsCount] = React.useState(0);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await api.holds();
+      if (!alive) return;
+      if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) setHoldsCount(r.json.data.items.length);
+      else setHoldsCount(0);
+    })();
+    return () => { alive = false; };
+  }, [holdsRefresh]);
 
   return (
     <div>
@@ -683,7 +761,7 @@ function CabinetScreen({ cab, ticket, toast, onBack, onLogout }: { cab: CabinetD
               <span style={statusDot("available")} aria-hidden="true" />Активен
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border-subtle)" }}>
-              {[{ n: onHand.length, l: "на руках" }, { n: queue.length, l: "в очереди", demo: true }, { n: challengeDone, l: "прочитано", demo: true }].map((s, i) => (
+              {[{ n: onHand.length, l: "на руках" }, { n: holdsCount, l: "в брони" }, { n: challengeDone, l: "прочитано", demo: true }].map((s, i) => (
                 <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   <span style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: 21, fontVariantNumeric: "tabular-nums" }}>{s.n}</span>
                   <span style={{ fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)" }}>{s.l}</span>
@@ -771,56 +849,11 @@ function CabinetScreen({ cab, ticket, toast, onBack, onLogout }: { cab: CabinetD
             )}
           </section>
 
-          {/* Очередь брони — backend брони пока нет → placeholder */}
-          <section aria-labelledby="cab-queue">
-            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
-              <h2 id="cab-queue" style={h2Sx}>Очередь брони</h2>
-              <span style={demoHint} title="Раздел в разработке">демо</span>
-            </div>
-            <div className="irb-cab-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              {queue.map((q, i) => {
-                const frac = (q.of - q.pos + 1) / q.of;
-                return (
-                  <div key={i} style={{ ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: 16 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-sm,15px)", lineHeight: 1.25 }}>{q.title}</div>
-                        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2 }}>{q.author}</div>
-                      </div>
-                      <span style={statusChip(q.info ? "hold" : "available")}>{q.note}</span>
-                    </div>
-                    <div style={{ marginTop: 13 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted,var(--text-secondary))" }}>Ваша позиция</span>
-                        <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{q.pos} из {q.of}</span>
-                      </div>
-                      <div style={{ height: 6, borderRadius: 999, background: "var(--surface-hover,var(--surface-3))", overflow: "hidden" }} role="progressbar" aria-valuenow={q.pos} aria-valuemin={1} aria-valuemax={q.of} aria-label={"Позиция в очереди: " + q.pos + " из " + q.of}>
-                        <div style={{ height: "100%", width: Math.round(frac * 100) + "%", borderRadius: 999, background: q.info ? "var(--accent)" : (STATUS.available.fg) }} />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <p style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", margin: "10px 2px 0" }}>Очередь брони появится после подключения модуля бронирования. Сейчас показан демонстрационный вид.</p>
-          </section>
+          {/* Очередь брони — реальные данные GET /api/holds (#222). При 404/501 секция прячется. */}
+          <HoldsTab cardSx={cardSx} h2Sx={h2Sx} demoHint={demoHint} toast={toast} refreshKey={holdsRefresh} />
 
-          {/* Мои полки — демо */}
-          <section aria-labelledby="cab-shelves">
-            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
-              <h2 id="cab-shelves" style={h2Sx}>Мои полки</h2>
-              <span style={demoHint} title="Раздел в разработке">демо</span>
-            </div>
-            <div className="irb-cab-3col" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-              {shelves.map((s, i) => (
-                <button key={i} type="button" disabled title="Списки чтения — в разработке"
-                  style={{ textAlign: "left", ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: 18, cursor: "not-allowed", display: "flex", flexDirection: "column", gap: 12, opacity: .92 }}>
-                  <span aria-hidden="true" style={{ width: 38, height: 38, borderRadius: 11, background: "var(--accent-weak,var(--accent-tint))", border: "1px solid var(--accent-weak-border,var(--accent-tint-border))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent)" }}><Icon name={s.icon} size={18} /></span>
-                  <div><div style={{ fontWeight: 600, fontSize: "var(--text-sm)" }}>{s.name}</div><div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2 }}>{s.count} {plural(s.count, "издание", "издания", "изданий")}</div></div>
-                </button>
-              ))}
-            </div>
-          </section>
+          {/* Мои полки — реальные списки GET /api/shelves (#222). При 404/501 секция прячется. */}
+          <ShelvesPanel cardSx={cardSx} h2Sx={h2Sx} toast={toast} onOpenRecord={onOpenRecord} />
           </>
           )}
 
@@ -865,11 +898,12 @@ function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (t
 // --- Карточка записи с вкладками ------------------------------------------
 const REC_TABS = ["Описание", "Экземпляры", "Электронные версии", "Метки MARC"];
 
-function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onSubject, inBasket, onToggleBasket }: {
+function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, loggedIn, toast, inBasket, onToggleBasket }: {
   rec: RecordData; db: string; tab: number; setTab: (n: number) => void;
   shareOpen: boolean; setShareOpen: (b: boolean) => void;
   permalink: string; onCopyPermalink: () => void;
-  onBack: () => void; onOrder: () => void; onSubject: (t: string) => void;
+  onBack: () => void; onOrder: () => void; onHold: () => void; onSubject: (t: string) => void;
+  loggedIn: boolean; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
   inBasket: boolean; onToggleBasket: () => void;
 }) {
   const v = recView(rec);
@@ -897,9 +931,13 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
         <div style={{ flex: 1, minWidth: 300 }}>
           <h2 style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-2xl, 1.5rem)", lineHeight: 1.3, margin: "2px 0 12px" }}>{v.brief}</h2>
 
-          {/* Действия: заказ, корзина, поделиться, экспорт */}
+          {/* Действия: заказ, бронь, список, корзина, поделиться, экспорт */}
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14, position: "relative" }}>
             <Button iconLeft="bookmark" onClick={onOrder}>Заказать</Button>
+            {/* Бронирование (#222) — ставит экземпляр в очередь удержания. */}
+            <Button variant="secondary" iconLeft="clock" onClick={onHold}>Забронировать</Button>
+            {/* «В список ▾» (#222) — доступно вошедшему читателю. */}
+            {loggedIn && <ShelfMenu db={rec.db} mfn={rec.mfn} title={rec.brief || ""} toast={toast} />}
             <button onClick={onToggleBasket} title={inBasket ? "Убрать из корзины" : "Добавить в корзину"}
               style={{ display: "inline-flex", alignItems: "center", gap: 6, background: inBasket ? "var(--accent-weak,#eef2f7)" : "transparent", color: inBasket ? "var(--accent)" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
               <Icon name={inBasket ? "check" : "plus"} size={15} /> {inBasket ? "В корзине" : "В корзину"}
