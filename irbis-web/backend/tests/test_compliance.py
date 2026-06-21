@@ -381,7 +381,8 @@ def pg_parity_checks():
         print('-- compliance pg parity SKIPPED (%s: %s)'
               % (type(e).__name__, str(e).splitlines()[0]))
         return
-    print('-- compliance: postgres parity (pgcrypto=%s)' % getattr(st, '_pgcrypto', None))
+    print('-- compliance: postgres parity (V1 pgcrypto=%s / V5 / V9)'
+          % getattr(st, '_pgcrypto', None))
 
     # V1 — reader_name encrypted at rest, decrypted on read (pgcrypto or token).
     row = st.review_upsert('pg-1', 'IBIS', 1, 5, 'ok', READER_NAME, 1000.0)
