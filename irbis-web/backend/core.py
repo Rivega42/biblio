@@ -14,6 +14,7 @@ from irbis import SessionManager
 from irbis.client import IrbisError
 from irbis.parser import field, fields
 from access.store import AccessStore
+from access.pgstore import make_store as make_access_store
 from access.authz import authorize, READER_GRANTS, GUEST_GRANTS
 from access.seed import seed
 
@@ -69,7 +70,7 @@ class Api:
         self.irbis = SessionManager(self.cfg.irbis_host, self.cfg.irbis_port,
                                     self.cfg.workstation, self.cfg.irbis_user,
                                     self.cfg.irbis_pass, self.cfg.timeout)
-        self.access = AccessStore(self.cfg.access_db)
+        self.access = make_access_store(self.cfg)   # sqlite (default) or Postgres via ACCESS_BACKEND
         seed(self.access)                      # idempotent dev seed
         self._sessions = {}
         self._lock = threading.Lock()
