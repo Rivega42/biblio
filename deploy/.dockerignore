@@ -1,0 +1,41 @@
+# Build context = repo root (compose `context: ..`). Keep the context lean and
+# keep secrets / local state / build output OUT of every image layer.
+
+# ── Secrets / local config (never into an image) ─────────────────────────────
+**/.env
+**/.env.*
+!**/.env.example
+deploy/proxy/certs/
+*.pem
+*.key
+*.crt
+*.secret
+secrets.*
+*.ini
+
+# ── Runtime / dev databases (rebuilt at runtime; never baked in) ─────────────
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# ── Python build artifacts / venvs ───────────────────────────────────────────
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+
+# ── Frontend deps + prebuilt output (the image runs `npm ci` + `vite build`) ─
+**/node_modules/
+irbis-web/frontend/dist/
+
+# ── VCS / docs / working area (not needed to build the app images) ───────────
+.git/
+.github/
+_work/
+docs/
+tools/
+**/*.md
+!deploy/README.md
+
+# ── Test output / probes ─────────────────────────────────────────────────────
+**/*_results.txt

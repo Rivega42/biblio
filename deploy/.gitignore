@@ -1,0 +1,11 @@
+# Deployment-local secrets + generated artifacts — NEVER commit.
+# (Root .gitignore already covers .env / *.key / *.pem / *.db; this adds certs.)
+.env
+.env.*
+!.env.example
+# Ignore cert material but keep the certs/ mount dir (via its .gitkeep) tracked.
+proxy/certs/*
+!proxy/certs/.gitkeep
+*.crt
+*.key
+*.pem

@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+# ─────────────────────────────────────────────────────────────────────────────
+# Biblio frontend build (MVP Phase 2 · #207, epic #223)
+#
+# CHOSEN TOPOLOGY = backend-serves-dist (see deploy/README.md). In that topology
+# the SPA is built INSIDE Dockerfile.backend (stage `frontend-build`) and served
+# by the Python process, so this image is NOT required by docker-compose.yml.
+#
+# This file is provided for the ALTERNATIVE topology "proxy/CDN serves the
+# static dist directly". It is a multi-stage build:
+#   • stage `build`   — node runs `vite build` → /app/dist
+#   • final stage     — the dist artifact only, on a tiny nginx that can serve it
+#
+# To switch to proxy-serves-dist: build this image, mount/serve its `dist`, and
+# point the nginx `location /` at the static root instead of proxying to the
+# backend. Kept out of the default `up` to keep ONE simple working stack.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Stage 1: build (vite build → dist/) ──────────────────────────────────────
+FROM node:20-bookworm-slim AS build
+WORKDIR /app
+
+COPY irbis-web/frontend/package.json irbis-web/frontend/package-lock.json* ./
+RUN npm ci || npm install
+
+COPY irbis-web/frontend/ ./
+RUN npm run build   # → /app/dist
+
+
+# ── Stage 2: static artifact server (alternative topology) ───────────────────
+FROM nginx:1.27-alpine AS static
+# Built SPA only — no node, no source. SPA-fallback handled by the proxy config.
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
+# nginx:alpine has a sensible default CMD; the SPA-fallback rewrite lives in the
+# reverse-proxy config (deploy/proxy/) when this topology is used.
