@@ -18,6 +18,7 @@ from access.authz import authorize, READER_GRANTS, GUEST_GRANTS
 from access.seed import seed
 from access import jwt as _jwt
 from access import entitlements
+from access import flk
 
 # Default tenant slug when running single-tenant / sqlite dev (no control plane).
 DEFAULT_TENANT = os.environ.get('DEFAULT_TENANT', 'public')
@@ -415,6 +416,28 @@ class Api:
             session['actor'], 'record.write', db, assigned, 'ok', {'created': mfn == 0})
         return 200, ok({'db': db, 'mfn': assigned, 'created': mfn == 0, 'returnCode': r.return_code})
 
+    def validate_record(self, session, body):
+        """Run the declarative ФЛК engine over a record draft (gap A2, #188).
+
+        Tenant-scoped via the JWT tenant claim (``_store_for`` -> the tenant's
+        seeded vocabularies back dictionary checks); guarded by the same
+        ``record.write``/cataloging grant + entitlement as ``save_record`` (you
+        validate what you may write). Returns the violation list + worst-severity
+        without touching IRBIS — a pure record->violations function (SPEC §5.1)."""
+        db = (body.get('db') or self.cfg.db_default)
+        self._guard(session, 'record.write', db, 'write')
+        record = body.get('record') or {}
+        phase = body.get('phase') or 'save'
+        field_arg = body.get('field')
+        current_mfn = body.get('currentMfn')
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        result = flk.validate(record, phase=phase, field=field_arg,
+                              store=store, current_mfn=current_mfn)
+        return 200, ok({'db': db, 'phase': phase,
+                        'overallSeverity': result['overallSeverity'],
+                        'canSave': result['canSave'],
+                        'violations': result['violations']})
+
     def order(self, session, body):
         db = body.get('db', self.cfg.db_default)
         mfn = body.get('mfn')
@@ -534,6 +557,8 @@ class Api:
                 if not expr:
                     return 400, err('bad_request', 'q or expr required')
                 return self.facets(session, db, expr)
+            if method == 'POST' and path == '/api/validate':
+                return self.validate_record(session, body or {})
             if method == 'POST' and path == '/api/order':
                 return self.order(session, body or {})
             if method == 'GET' and path == '/api/me/cabinet':

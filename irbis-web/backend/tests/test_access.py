@@ -178,6 +178,29 @@ def seeding_checks():
     FAIL[0] += test_seeding.FAIL[0]
 
 
+def flk_checks():
+    """Run the declarative ФЛК validation-engine suite (issue #188, A2) and fold
+    its tally in.
+
+    All checks are pure (check digits, the engine against an in-memory seeded
+    store, the constructed-Api endpoint) — they always run, no DB needed. Lives in
+    its own module (test_flk.py) but is invoked here so the existing CI step that
+    runs test_access.py also exercises the ФЛК engine with no workflow change.
+    """
+    try:
+        import test_flk
+    except Exception as e:
+        print('-- flk suite NOT RUN (import failed: %s)' % e)
+        FAIL[0] += 1                # importable suite is mandatory; surface the failure
+        return
+    test_flk.checksum_checks()
+    test_flk.engine_checks()
+    test_flk.override_checks()
+    test_flk.api_checks()
+    PASS[0] += test_flk.PASS[0]
+    FAIL[0] += test_flk.FAIL[0]
+
+
 def main():
     pure_checks()
     store_checks('sqlite', sqlite_store())
@@ -187,6 +210,7 @@ def main():
     tenancy_checks()
     identity_checks()
     seeding_checks()
+    flk_checks()
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
