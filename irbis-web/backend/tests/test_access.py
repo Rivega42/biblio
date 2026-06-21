@@ -211,7 +211,15 @@ def module_checks(modname):
         print('-- %s NOT RUN (import failed: %s)' % (modname, e)); FAIL[0] += 1; return
     for fn in sorted(dir(mod)):
         if fn.endswith('_checks') and callable(getattr(mod, fn)):
-            getattr(mod, fn)()
+            # Isolate each check group: a raising group is a FAIL but must not
+            # abort the runner, else one broken module hides every module after it
+            # (and silently drops their coverage). The non-zero exit gate stands.
+            try:
+                getattr(mod, fn)()
+            except SystemExit:
+                raise
+            except Exception as e:
+                print('  FAIL %s.%s raised: %s' % (modname, fn, e)); FAIL[0] += 1
     PASS[0] += mod.PASS[0]
     FAIL[0] += mod.FAIL[0]
 
@@ -227,7 +235,8 @@ def main():
     seeding_checks()
     flk_checks()
     for _m in ('test_pft', 'test_authority', 'test_notifications', 'test_gbl',
-               'test_catalog', 'test_circulation', 'test_discovery'):
+               'test_catalog', 'test_circulation', 'test_discovery',
+               'test_integration'):
         module_checks(_m)
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))

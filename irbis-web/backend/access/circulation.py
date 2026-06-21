@@ -464,11 +464,20 @@ class CirculationEngine:
     deterministically.
     """
 
-    def __init__(self, store=None, policy=None, notifier=None, tenant='public'):
+    def __init__(self, store=None, policy=None, notifier=None, tenant='public',
+                 catalog=None, catalog_db='IBIS'):
         self.store = store or CirculationStore(':memory:')
         self.policy = policy or default_policy(tenant)
         self.notifier = notifier
         self.tenant = tenant
+        # Optional Catalog↔Circulation seam (INTEGRATION_MAP edges 2.1/2.2). When a
+        # ``catalog`` (access.catalog.CatalogStore) handle is wired, checkout flips
+        # the matching exemplar's ``910^A`` 0→1 (issued) and return flips it 1→0
+        # (free); availability reads come from the catalog. ``catalog_db`` is the
+        # base whose exemplars this engine reflects into (default IBIS / ЭК). With
+        # no handle the engine stays fully standalone (back-compat).
+        self.catalog = catalog
+        self.catalog_db = catalog_db
 
     # ---- event emission --------------------------------------------------- #
     def _emit(self, event, recipient, payload):
@@ -480,6 +489,38 @@ class CirculationEngine:
             except Exception:
                 pass  # A6 is best-effort here; the intent is still returned
         return intent
+
+    # ---- catalog 910^A write-back (edges 2.1/2.2) ------------------------- #
+    def _flip_catalog_status(self, item, status):
+        """Reflect a loan-state change into the catalog exemplar's ``910^A``.
+
+        Resolves ``item`` (903/inventory) to the matching ``910`` copy and flips
+        its ``910^A`` to ``status`` (``'1'`` issued on checkout, ``'0'`` free on
+        return). A no-op (returns None) when no catalog is wired or the copy isn't
+        found in the catalog — the engine never depends on the catalog being
+        present (back-compat) and degrades gracefully if the copy is unknown.
+        Returns the catalog mfn flipped, or None."""
+        if self.catalog is None:
+            return None
+        try:
+            return self.catalog.set_exemplar_status(self.catalog_db, item, status)
+        except Exception:
+            return None  # catalog write is best-effort; the loan still stands
+
+    def catalog_available(self, item):
+        """Is ``item`` free per the catalog's ``910^A``? (edge 2.2).
+
+        Returns True/False from the catalog when wired and the copy is known;
+        returns None when no catalog is wired or the copy is unknown (caller treats
+        None as "no catalog opinion" and falls back to its own loan/queue state)."""
+        if self.catalog is None:
+            return None
+        try:
+            if self.catalog.find_exemplar(self.catalog_db, item) is None:
+                return None
+            return self.catalog.is_available(self.catalog_db, item)
+        except Exception:
+            return None
 
     # ---- checkout (§2 debtor gate + §5 limits) ---------------------------- #
     def checkout(self, reader_id, item, today, item_kind=None, item_price=None,
@@ -531,7 +572,12 @@ class CirculationEngine:
         due = today + limits['max_return_days'] * SECONDS_PER_DAY
         loan = self.store.add_loan(reader_id, item, due, today,
                                    item_kind=item_kind, item_price=item_price)
+        # Edge 2.1: reflect the issue into the catalog exemplar (910^A 0→1).
+        cat_mfn = self._flip_catalog_status(item, '1')  # EXEMPLAR_ISSUED
         computed = {'loan': loan, 'due': due, 'override': bool(reasons)}
+        if cat_mfn is not None:
+            computed['catalog_mfn'] = cat_mfn
+            computed['exemplar_status'] = '1'
         return Decision(ALLOW, [], computed)
 
     # ---- renew (§1 holds-block-renewal + cap) ----------------------------- #
@@ -633,6 +679,14 @@ class CirculationEngine:
         # ws3 op: clear 40^F (the return gesture closes the loan).
         self.store.mark_returned(loan_id, today)
 
+        # Edge 2.2: reflect the return into the catalog exemplar (910^A 1→0 free).
+        # The physical copy is back on the desk; circulation's hold queue (below)
+        # is the logical reservation layer, kept separate from the catalog flag.
+        cat_mfn = self._flip_catalog_status(loan['item'], '0')  # EXEMPLAR_FREE
+        if cat_mfn is not None:
+            computed['catalog_mfn'] = cat_mfn
+            computed['exemplar_status'] = '0'
+
         # §6.5 holds-aware: freed item goes to the queue head, not the free shelf.
         if self.policy['hold']['return_to_reservable']:
             queue = self.store.active_holds(loan['item'])
@@ -674,7 +728,13 @@ class CirculationEngine:
         queue = self.store.active_holds(item)
         position = self.queue_position(item, reader_id)
         events = []
-        if item_on_loan == 0 and len(queue) == 1:
+        # Edge 2.2: when a catalog is wired, also honour its 910^A availability —
+        # a copy circulation thinks is free but the catalog marks issued (status
+        # set out-of-band) must NOT be handed out as ready. None ⇒ no catalog
+        # opinion, fall back to circulation's own loan/queue state.
+        cat_avail = self.catalog_available(item)
+        catalog_free = (cat_avail is not False)
+        if item_on_loan == 0 and len(queue) == 1 and catalog_free:
             self.store.set_hold_status(hold['id'], 'ready', ready_at=today)
             shelf_until = today + self.policy['hold']['hold_shelf_days'] * SECONDS_PER_DAY
             events.append(self._emit('hold_ready', reader_id,

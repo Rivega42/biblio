@@ -54,6 +54,20 @@ import time
 
 from access import flk
 from access import pft
+from access import authority as _authority  # substitute() — the ^3 fill-map (edge 6.1)
+
+
+# --------------------------------------------------------------------------- #
+# Exemplar (910) status codes — the ``910^A`` availability flag (ste.mnu).
+# The Catalog↔Circulation seam (INTEGRATION_MAP edges 2.1/2.2): circulation flips
+# this flag on the catalog item when a copy is issued / returned. We model only
+# the two states the seam needs (free / issued); other ste.mnu codes (U=в обработке,
+# C=на бронеполке, 6=списан …) are carried as opaque strings and treated as "not
+# free" by the availability read.
+# --------------------------------------------------------------------------- #
+EXEMPLAR_FREE = '0'      # свободен — available to lend
+EXEMPLAR_ISSUED = '1'    # выдан — on loan
+# Any other 910^A code (U/C/6/…) is "occupied" for availability purposes.
 
 
 # --------------------------------------------------------------------------- #
@@ -205,12 +219,19 @@ class CatalogStore:
         those rules no-op (the engine returns no violation it can't substantiate).
     brief_pft / full_pft : str | None
         Override the default brief / full display formats (PFT bodies).
+    authority : object | None
+        Optional :class:`access.authority.AuthorityStore` handle. When wired,
+        ``save`` resolves pending authority references (a field instance carrying
+        an ``_authority_ref`` subfield) through ``authority.substitute`` — filling
+        ``^a/^b/^g`` + the ``^3`` link before ФЛК / index (INTEGRATION_MAP edge
+        6.1). When None, save is unchanged: the client must supply ``^3`` itself.
     """
 
     def __init__(self, db_path=':memory:', access_store=None,
-                 brief_pft=None, full_pft=None):
+                 brief_pft=None, full_pft=None, authority=None):
         self.db_path = db_path
         self.access_store = access_store
+        self.authority = authority
         self.brief_pft = brief_pft or DEFAULT_BRIEF_PFT
         self.full_pft = full_pft or DEFAULT_FULL_PFT
         self._local = threading.local()
@@ -307,10 +328,14 @@ class CatalogStore:
         return r
 
     def save(self, db, record, *, mfn=None, skip_warnings=False,
-             tenant_overrides=None):
+             tenant_overrides=None, authority=None):
         """Validate then upsert a record.
 
         Pipeline:
+          0. (edge 6.1) if an ``authority`` handle is available (per-call arg or
+             the store default), resolve any pending authority reference into the
+             record IN PLACE — filling ``^a/^b/^g`` + the ``^3`` link — BEFORE
+             validation/index, so the saved record + index already carry ``^3``.
           1. run ФЛК (A2) — if ANY severity-1 (непреодолимая) violation, REJECT:
              return ``{id:None, mfn:None, saved:False, violations:[...]}`` and
              touch no row.
@@ -325,6 +350,12 @@ class CatalogStore:
         """
         conn = self._conn()
         target_mfn = mfn
+
+        # Edge 6.1: pull authority subfields + ^3 before validation/index.
+        auth = authority if authority is not None else self.authority
+        if auth is not None:
+            self.resolve_authority_refs(record, authority=auth)
+
         existing = self._row(db, mfn, include_deleted=True) if mfn is not None else None
 
         res = self.validate(record, current_mfn=target_mfn,
@@ -362,6 +393,172 @@ class CatalogStore:
             'canSave': True,
             'skippedWarnings': bool(skip_warnings and violations),
         }
+
+    # ------------------------------------------------------------------- #
+    # Authority↔Catalog seam (INTEGRATION_MAP edge 6.1).
+    #
+    # A field instance asks for authority substitution by carrying an
+    # ``_authority_ref`` subfield = the authority record id (e.g.
+    # ``{'700': [{'_authority_ref': 42}]}``). ``apply_authority`` resolves that
+    # id through the authority store and fills ``^a/^b/^g/…`` + the ``^3`` link
+    # via ``authority.substitute`` (the same fill-map the UI uses), then drops the
+    # ref marker. ``resolve_authority_refs`` sweeps every fill-mappable field on a
+    # record (called from ``save`` when an authority handle is wired).
+    # ------------------------------------------------------------------- #
+    def apply_authority(self, record, field, authority_id, *, instance=0,
+                        authority=None):
+        """Fill one field instance's subfields from an authority record + ``^3``.
+
+        Resolves ``authority_id`` in the base bound to ``field`` (via the authority
+        module's FILL_MAP), runs ``authority.substitute(field, rec)`` to build the
+        ``{^a/^b/^g, '3': id}`` patch, and merges it into ``record[field][instance]``
+        in place (mutating + returning the record). The ``^3`` link is always set
+        for linkable fields (DB_AUTHORITY §5.2). Returns the merged patch too via
+        the instance; raises the authority module's errors on a missing record /
+        unknown field tag so the caller sees a broken ^3 reference loudly.
+        """
+        auth = authority if authority is not None else self.authority
+        if auth is None:
+            raise CatalogError(
+                'apply_authority called without an authority handle wired')
+        tag = str(field)
+        spec = _authority.FILL_MAP.get(tag)
+        if spec is None:
+            raise _authority.UnknownCatalogField(
+                'no fill-map for catalog field %r' % tag)
+        rec = auth.get(spec['db'], authority_id)
+        if rec is None:
+            raise _authority.AuthorityNotFound(
+                'authority %r not found in %s for field %s'
+                % (authority_id, spec['db'], tag))
+        patch = _authority.substitute(tag, rec)
+
+        insts = record.get(field)
+        if insts is None:
+            insts = [{}]
+            record[field] = insts
+        elif not isinstance(insts, list):
+            insts = [insts]
+            record[field] = insts
+        if instance >= len(insts):
+            insts.extend({} for _ in range(instance - len(insts) + 1))
+        cur = insts[instance]
+        if not isinstance(cur, dict):
+            cur = {'': cur} if cur else {}
+            insts[instance] = cur
+        cur.pop('_authority_ref', None)
+        cur.update(patch)
+        return record
+
+    def resolve_authority_refs(self, record, *, authority=None):
+        """Sweep ``record`` for pending ``_authority_ref`` markers and apply each.
+
+        For every fill-mappable field (700/701/710/606/607/…) whose instance
+        carries ``_authority_ref``, resolve+fill it in place. Instances without the
+        marker are left untouched (so an operator-supplied ``^3`` survives). Returns
+        the list of ``(field, instance, authority_id)`` triples applied."""
+        applied = []
+        for field in list(record.keys()):
+            if str(field) not in _authority.FILL_MAP:
+                continue
+            insts = record[field]
+            if not isinstance(insts, list):
+                insts = [insts]
+            for i, inst in enumerate(insts):
+                if isinstance(inst, dict) and inst.get('_authority_ref') is not None:
+                    aid = inst['_authority_ref']
+                    self.apply_authority(record, field, aid, instance=i,
+                                         authority=authority)
+                    applied.append((str(field), i, aid))
+        return applied
+
+    # ------------------------------------------------------------------- #
+    # Exemplar status (910^A) — the Catalog↔Circulation seam (edges 2.1/2.2).
+    #
+    # A bibliographic record holds its copies as repeating ``910`` fields; each
+    # carries a shelfmark/inventory key (``910^b``) and an availability flag
+    # (``910^A``: 0 free / 1 issued / …). Circulation flips ``910^A`` here when a
+    # copy is checked out / returned, and reads it to know what is free. The item
+    # is resolved by inventory number (``910^b``), the same key circulation stores
+    # as its ``loan.item`` (903/910^b per the spec).
+    # ------------------------------------------------------------------- #
+    @staticmethod
+    def _exemplar_key(inst):
+        """Inventory/shelfmark key of a 910 instance (``910^b``), or '' if none."""
+        if isinstance(inst, dict):
+            return str(inst.get('b') or inst.get('B') or '')
+        return ''
+
+    def find_exemplar(self, db, item):
+        """Locate the ``910`` instance keyed by inventory number ``item``.
+
+        Scans active records' ``910`` fields for one whose ``910^b`` == ``item``.
+        Returns ``(mfn, index, instance_dict)`` or ``None`` — the address
+        circulation uses to flip ``910^A`` for that specific copy."""
+        target = str(item)
+        for r in self._conn().execute(
+                "SELECT mfn, data_json FROM record WHERE db=? AND status='active' "
+                'ORDER BY mfn', (db,)).fetchall():
+            record = json.loads(r['data_json'])
+            insts = record.get('910')
+            if insts is None:
+                continue
+            if not isinstance(insts, list):
+                insts = [insts]
+            for i, inst in enumerate(insts):
+                if self._exemplar_key(inst) == target:
+                    return (r['mfn'], i, inst)
+        return None
+
+    def exemplar_status(self, db, item):
+        """Read ``910^A`` for the copy keyed by inventory ``item`` (None if absent)."""
+        found = self.find_exemplar(db, item)
+        if found is None:
+            return None
+        inst = found[2]
+        if isinstance(inst, dict):
+            return str(inst.get('a') or inst.get('A') or '')
+        return ''
+
+    def is_available(self, db, item):
+        """True iff the copy keyed by ``item`` exists and its ``910^A`` is FREE.
+
+        The availability read circulation uses for free-exemplar matching / hold
+        placement (edge 2.2). Any non-free / unknown status ⇒ not available."""
+        st = self.exemplar_status(db, item)
+        return st == EXEMPLAR_FREE
+
+    def set_exemplar_status(self, db, item, status):
+        """Flip ``910^A`` of the copy keyed by inventory ``item`` to ``status``.
+
+        The write-back that closes edges 2.1/2.2: circulation calls this on
+        checkout (``status=EXEMPLAR_ISSUED``) and return (``status=EXEMPLAR_FREE``).
+        Re-indexes the touched record so search stays consistent. Returns the
+        ``mfn`` whose copy was flipped, or None if no such copy exists (circulation
+        then degrades gracefully — it still records its own loan)."""
+        found = self.find_exemplar(db, item)
+        if found is None:
+            return None
+        mfn, idx, _inst = found
+        conn = self._conn()
+        r = self._row(db, mfn, include_deleted=False)
+        if r is None:
+            return None
+        record = json.loads(r['data_json'])
+        insts = record.get('910')
+        if not isinstance(insts, list):
+            insts = [insts]
+            record['910'] = insts
+        inst = insts[idx]
+        if not isinstance(inst, dict):
+            inst = {'b': str(item)}
+            insts[idx] = inst
+        inst['a'] = str(status)
+        conn.execute('UPDATE record SET data_json=?, updated=? WHERE id=?',
+                     (json.dumps(record, ensure_ascii=False), time.time(), r['id']))
+        self._reindex(conn, r['id'], record)
+        conn.commit()
+        return mfn
 
     def get(self, db, mfn, include_deleted=False):
         """Return the stored record dict (the I1 draft), or None if absent."""
