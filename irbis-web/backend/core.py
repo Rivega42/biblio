@@ -37,6 +37,7 @@ from access.shelves import ShelfService
 from access.social import SocialService
 from access import acquisition as _acquisition
 from access import bookprovision as _bookprovision
+from access import demo_requests as _demo_requests
 from access.catalog import CatalogStore
 
 # Default tenant slug when running single-tenant / sqlite dev (no control plane).
@@ -533,6 +534,18 @@ class Api:
                 bp_db, catalog=self.catalog)
         except Exception:
             self.bookprovision = None
+
+        # ---- Заявки на демодоступ (публичная страница продукта, #226) ----
+        # Свой стор заявок (env DEMO_DB; по умолчанию файл рядом с access.db,
+        # ':memory:' в тестах) — отдельный от Access-стора и от живого ИРБИС. Форма
+        # на /product POST'ит сюда (с обязательным согласием 152-ФЗ); листинг —
+        # только super-admin. Best-effort: сбой сборки стора не валит API (форма
+        # тогда вернёт 503, остальной API работает).
+        try:
+            demo_db = os.environ.get('DEMO_DB', os.path.join(here, 'demo_requests.db'))
+            self.demo_requests = _demo_requests.DemoRequestStore(demo_db)
+        except Exception:
+            self.demo_requests = None
 
         # ---- benchmark cache (ИРБИС↔Biblio panel, super-admin) ----
         # Последний результат замера, кэш В ПАМЯТИ процесса (GET /api/admin/benchmark
@@ -2391,6 +2404,57 @@ class Api:
                         'enabled': enabled, 'applied': applied,
                         'modules': entitlements.enabled_modules(tenant)})
 
+    # ---- Публичная страница продукта: заявка на демодоступ (#226) ----
+    # POST /api/demo-request — ПУБЛИЧНЫЙ (без логина): форма на /product собирает
+    # ФИО/e-mail/телефон/учреждение/должность + ОБЯЗАТЕЛЬНОЕ согласие 152-ФЗ. Без
+    # согласия → 400 и заявка НЕ сохраняется. GET /api/admin/demo-requests — листинг
+    # заявок (ПДн), только super-admin (admin.db@admin).
+    def demo_request(self, body):
+        """POST /api/demo-request {fullName,email,phone,institution,position,consent}.
+
+        Публичный (без сессии). Согласие на обработку ПДн (152-ФЗ) ОБЯЗАТЕЛЬНО:
+        ``consent`` ложно → 400 (заявка не сохраняется). ФИО + e-mail валидируются.
+        Хранится ровно набор полей формы + согласие + время (минимизация). Аудит
+        пишется БЕЗ ПДн заявителя (только факт + id) — ПДн не попадают в журнал."""
+        if self.demo_requests is None:
+            return 503, err('unavailable', 'demo request store unavailable')
+        body = body or {}
+        consent = bool(body.get('consent'))
+        try:
+            rec = self.demo_requests.add(
+                full_name=body.get('fullName') or body.get('full_name') or '',
+                email=body.get('email') or '',
+                phone=body.get('phone') or '',
+                institution=body.get('institution') or '',
+                position=body.get('position') or '',
+                consent=consent)
+        except _demo_requests.ConsentRequired as e:
+            return 400, err('consent_required', str(e))
+        except _demo_requests.ValidationError as e:
+            return 400, err('bad_request', str(e))
+        # Аудит факта заявки — БЕЗ ПДн (минимизация): только id и отметка согласия.
+        try:
+            self._store_for(DEFAULT_TENANT).audit(
+                'public', 'demo.request', None, rec['id'], 'ok',
+                {'op': 'demo-request', 'consent': True})
+        except Exception:
+            pass
+        return 200, ok({'id': rec['id'], 'accepted': True})
+
+    def admin_demo_requests(self, session, limit):
+        """GET /api/admin/demo-requests?limit= — заявки на демодоступ (super-admin).
+
+        Содержат ПДн заявителей, поэтому только super-admin (admin.db@admin), как
+        соседние кросс-тенантные admin-поверхности. Новейшие первыми."""
+        self._require_super_admin(session)
+        if self.demo_requests is None:
+            return 200, ok({'items': []})
+        items = self.demo_requests.list(limit)
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok',
+            {'op': 'demo-requests', 'count': len(items)})
+        return 200, ok({'items': items})
+
     # ---- Миграция из ИРБИС: интроспекция источника + запуск (epic #223, #225) ----
     # Кросс-тенантные операции онбординга: super-admin подключается к ВНЕШНЕМУ
     # серверу-источнику ИРБИС (или к локальным файлам БД) и (1) снимает план —
@@ -2800,6 +2864,9 @@ class Api:
                 return 200, self.health()
             if method == 'GET' and path == '/api/metrics':
                 return self.metrics(session)
+            # ---- Публичная заявка на демодоступ (#226) — БЕЗ логина ----
+            if method == 'POST' and path == '/api/demo-request':
+                return self.demo_request(body or {})
             parts = path.strip('/').split('/')
             if method == 'GET' and path == '/api/search':
                 db = query.get('db', [self.cfg.db_default])[0]
@@ -2963,6 +3030,10 @@ class Api:
                 return self.admin_set_plan(session, body or {})
             if method == 'POST' and path == '/api/admin/billing/module':
                 return self.admin_set_module(session, body or {})
+            # ---- Заявки на демодоступ (публичная страница продукта, super-admin, #226) ----
+            if method == 'GET' and path == '/api/admin/demo-requests':
+                limit = min(1000, max(1, int(query.get('limit', ['100'])[0])))
+                return self.admin_demo_requests(session, limit)
             # ---- Миграция из ИРБИС: интроспекция + запуск (super-admin, #225) ----
             if method == 'POST' and path == '/api/admin/migrate/inspect':
                 return self.admin_migrate_inspect(session, body or {})
