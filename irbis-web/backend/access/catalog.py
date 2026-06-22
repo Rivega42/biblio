@@ -38,6 +38,30 @@ prefixes confirmed against ``docs/recon/deep/reference/format/FIELD_DICTIONARY``
   * ``AR=``  № авторитетной записи <- 700/701/710/606/607 ^3 (поиск каталога ПО
              авторитету — обратное ребро INTEGRATION_MAP 6.4 / 11.1)
 
+Связи иерархии записей (INTEGRATION_MAP кластер 9, поиск-по-связи ``Scnt``).
+В ИРБИС связь между записями каталога хранится НЕ как ссылка-по-MFN, а как
+повтор ключа издания-хозяина в поле-связи зависимой записи (статьи, номера
+журнала, тома). Хозяин (журнал/сборник/сводная запись многотомника) несёт свой
+собственный ключ-идентичность (заглавие 200^a, ISSN 11^a, шифр 903); зависимая
+запись несёт ТОТ ЖЕ ключ в поле-связи (463/461/481/963). Чтобы развести поиск по
+связи (ребра 9.1/9.2/9.3), оба полюса инвертируются под двумя «зеркальными»
+служебными префиксами, по которым ``linked_records`` сматчивает хозяина с детьми:
+
+  * ``HOST=`` ключ-идентичность ИЗДАНИЯ-ХОЗЯИНА (по нему дочерние записи его
+             находят) <- 200^a (заглавие), 11^a (ISSN), 903 (шифр документа)
+  * ``LINK=`` ключ-ОТСЫЛКА зависимой записи на хозяина (по нему хозяин находит
+             свои аналитики/номера/тома):
+               9.1 статья↔журнал/сборник: 463^c (загл. хозяина), 463^j (ISSN)
+               9.2 номер↔журнал:          461^c (загл. общей части), 461^j (ISSN)
+               9.3 том↔сводная (многотом): 481^c (загл. приплетённого/тома)
+             (963 — свод. сведения аналитики: 963^c загл., 963^j ISSN — то же
+             семейство ``LINK=``, back-up к 463 для записей со сводным описанием).
+
+Обход связи: :meth:`CatalogStore.linked_records` (db, mfn, kind). ``kind='children'``
+от записи-хозяина возвращает все зависимые записи (их ``LINK=`` совпал с её
+``HOST=``); ``kind='host'`` от зависимой записи возвращает её хозяина (её ``LINK=``
+совпал с чьим-то ``HOST=``). Симметрия 9.1/9.2/9.3 даёт обе стороны ребра.
+
 Record shape (the engines' I1 draft — same as ``access/flk.py`` / ``access/pft.py``)::
 
     {
@@ -183,12 +207,34 @@ INDEX_SPEC = [
     ('AR', '601', '3'),
     ('AR', '606', '3'),
     ('AR', '607', '3'),
+    # --- связи иерархии записей (INTEGRATION_MAP кластер 9, поиск-по-связи) ---
+    # HOST= — ключ-идентичность издания-хозяина (журнал/сборник/сводная запись);
+    # по нему дочерние записи (статьи/номера/тома) его находят.
+    ('HOST', '200', 'a'),    # собственное заглавие хозяина
+    ('HOST', '11', 'a'),     # ISSN хозяина (сериальное издание)
+    ('HOST', '903', None),   # шифр документа хозяина (целое поле)
+    # LINK= — ключ-отсылка зависимой записи на её хозяина; по нему хозяин
+    # находит свои аналитики/номера/тома (зеркало HOST=).
+    ('LINK', '463', 'c'),    # 9.1 статья → журнал/сборник: заглавие хозяина
+    ('LINK', '463', 'j'),    # 9.1 статья → журнал/сборник: ISSN хозяина
+    ('LINK', '461', 'c'),    # 9.2 номер → журнал: заглавие общей части
+    ('LINK', '461', 'j'),    # 9.2 номер → журнал: ISSN общей части
+    ('LINK', '481', 'c'),    # 9.3 том → сводная (приплетённое/многотомник)
+    ('LINK', '963', 'c'),    # свод. сведения аналитики (back-up к 463): заглавие
+    ('LINK', '963', 'j'),    # свод. сведения аналитики: ISSN
 ]
 
 # The prefixes a caller may search by (used to validate / document expressions).
 # Order: the four original prefixes first, then the expanded set (§3.2 high-freq).
 SEARCH_PREFIXES = ('T', 'A', 'K', 'IN',
                    'TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR', 'AR')
+
+# Служебные префиксы связи иерархии записей (INTEGRATION_MAP кластер 9). Они НЕ
+# входят в SEARCH_PREFIXES (обычный словарный поиск `PREFIX=term` их не разбирает —
+# это back-compat для §3.2-сьюты), а используются ВНУТРИ обхода связи
+# (``linked_records``): HOST= — ключ-идентичность хозяина, LINK= — ключ-отсылка
+# зависимой записи. Зеркальная пара сматчивается по нормализованному значению.
+LINK_PREFIXES = ('HOST', 'LINK')
 
 # Default brief / full display formats (PFT). Overridable per save db or per call.
 # Brief: "Author. Title / responsibility . — Lang" with graceful omission of
@@ -787,6 +833,72 @@ class CatalogStore:
                 'brief': self._render(self.brief_pft, record, r['mfn']),
             })
         return {'total': total, 'items': items, 'prefix': prefix, 'term': term}
+
+    # ------------------------------------------------------------------- #
+    # Поиск-по-связи иерархии записей (INTEGRATION_MAP кластер 9, рёбра
+    # 9.1/9.2/9.3). Связь хранится как повтор ключа издания-хозяина в поле-связи
+    # зависимой записи (463/461/481/963), а не как ссылка-по-MFN. Обе стороны
+    # инвертированы зеркальной парой HOST=/LINK= (см. INDEX_SPEC); обход
+    # сматчивает их по нормализованному значению ключа.
+    # ------------------------------------------------------------------- #
+    def _link_keys(self, conn, record_id, prefix):
+        """Нормализованные значения служебного префикса связи (HOST|LINK) у записи."""
+        rows = conn.execute(
+            'SELECT DISTINCT term_norm FROM record_index '
+            'WHERE record_id=? AND prefix=?', (record_id, prefix)).fetchall()
+        return [r['term_norm'] for r in rows if r['term_norm']]
+
+    def linked_records(self, db, mfn, kind='children', *, limit=100, offset=0):
+        """Обойти связь иерархии записей от записи ``mfn`` в активной БД ``db``.
+
+        Связь иерархии (статья↔журнал/сборник 9.1, номер↔журнал 9.2,
+        том↔сводная 9.3) хранится как ОБЩИЙ КЛЮЧ: издание-хозяин несёт свой
+        ключ-идентичность под ``HOST=`` (200^a заглавие / 11^a ISSN / 903 шифр),
+        зависимая запись несёт ТОТ ЖЕ ключ как отсылку под ``LINK=`` (463/461/481/963).
+
+        ``kind``:
+          * ``'children'`` (по умолчанию) — от записи-ХОЗЯИНА: вернуть все
+            зависимые записи, чей ``LINK=`` совпал с её ``HOST=`` (аналитики
+            журнала, номера журнала, тома многотомника). Реализует прямое ребро
+            «хозяин → дети» (``Scnt``-подобный обход).
+          * ``'host'`` / ``'parent'`` — от ЗАВИСИМОЙ записи: вернуть её
+            издание(-я)-хозяина, чей ``HOST=`` совпал с её ``LINK=``. Обратное
+            ребро «ребёнок → хозяин».
+
+        Совпадение — по нормализованному (casefold+trim) значению ключа, та же
+        нормализация, что у словарного поиска. Запись не считается своим
+        собственным родственником (self-MFN исключается). Возвращает
+        ``{total, items:[{mfn, brief}], kind, keys}`` — ``keys`` = ключи связи,
+        по которым шёл матч (для отладки/прозрачности). Если запись отсутствует
+        или у неё нет ключей нужной стороны — ``total=0, items=[]``.
+        """
+        conn = self._conn()
+        src = self._row(db, mfn, include_deleted=False)
+        if src is None:
+            return {'total': 0, 'items': [], 'kind': kind, 'keys': []}
+        if kind in ('host', 'parent'):
+            my_prefix, other_prefix = 'LINK', 'HOST'   # ребёнок → хозяин
+        else:                                          # 'children' (default)
+            my_prefix, other_prefix = 'HOST', 'LINK'   # хозяин → дети
+        keys = self._link_keys(conn, src['id'], my_prefix)
+        if not keys:
+            return {'total': 0, 'items': [], 'kind': kind, 'keys': []}
+        placeholders = ','.join('?' for _ in keys)
+        base = (
+            'FROM record_index ri JOIN record r ON r.id = ri.record_id '
+            "WHERE r.db=? AND r.status='active' AND r.id<>? "
+            'AND ri.prefix=? AND ri.term_norm IN (%s)' % placeholders)
+        params = [db, src['id'], other_prefix] + keys
+        total = conn.execute(
+            'SELECT COUNT(DISTINCT r.id) AS n ' + base, params).fetchone()['n']
+        rows = conn.execute(
+            'SELECT DISTINCT r.id, r.mfn, r.data_json ' + base +
+            ' ORDER BY r.mfn LIMIT ? OFFSET ?', params + [limit, offset]).fetchall()
+        items = [{'mfn': r['mfn'],
+                  'brief': self._render(self.brief_pft, json.loads(r['data_json']),
+                                        r['mfn'])}
+                 for r in rows]
+        return {'total': total, 'items': items, 'kind': kind, 'keys': keys}
 
     # ------------------------------------------------------------------- #
     # Display (PFT A1 render).
