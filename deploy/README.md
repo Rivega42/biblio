@@ -1,186 +1,182 @@
-# Biblio — containerized deployment (MVP Phase 2)
+# Biblio — контейнерное развёртывание (MVP, Фаза 2)
 
-One-command deployment of the Biblio web stack: a TLS reverse proxy, the Python
-backend (API + built SPA), and PostgreSQL. Closes #207 (epic #223).
+Развёртывание веб-стека Biblio одной командой: TLS reverse-proxy, Python-бэкенд
+(API + собранный SPA) и PostgreSQL. Закрывает #207 (эпик #223).
 
-> Aligns with the production-packaging shape in
+> Соответствует форме промышленной упаковки из
 > [`SPEC_iac_fleet.md` §1.2 / §6.3](../docs/design/specs/platform/SPEC_iac_fleet.md)
-> (single-node Docker stack: app + PostgreSQL behind an internal reverse proxy /
-> TLS termination, env-only secrets, no secrets in images). This `deploy/` is the
-> single-node compose bundle; the full IaC/fleet topology in that spec is a later
-> phase.
+> (одноузловой Docker-стек: приложение + PostgreSQL за внутренним reverse-proxy /
+> терминацией TLS, секреты только в env, секретов в образах нет). Этот `deploy/` —
+> одноузловой compose-набор; полная IaC/флот-топология из той спеки — более поздняя
+> фаза.
 
-## Topology
+## Топология
 
 ```
                          ┌──────────────────────────────────────────────┐
-   https://localhost ──▶ │ proxy (nginx)  — TLS termination (443→…)      │
+   https://localhost ──▶ │ proxy (nginx)  — терминация TLS (443→…)       │
                          └───────────────┬──────────────────────────────┘
-                                         │ http (compose network)
+                                         │ http (compose-сеть)
                          ┌───────────────▼──────────────────────────────┐
                          │ backend (Python · server.py)                 │
-                         │   • serves the JSON API (/api/*)             │
-                         │   • serves the built SPA (frontend/dist)     │
+                         │   • отдаёт JSON API (/api/*)                  │
+                         │   • отдаёт собранный SPA (frontend/dist)     │
                          └───────────────┬──────────────────────────────┘
                                          │ postgresql://db:5432
                          ┌───────────────▼──────────────────────────────┐
-                         │ db (postgres:16) — Access store + tenancy     │
+                         │ db (postgres:16) — Access-стор + мультиаренда │
                          └──────────────────────────────────────────────┘
 ```
 
-- **How the SPA (`dist/`) is served — backend-serves-dist.** `Dockerfile.backend`
-  is multi-stage: a `node` stage runs `vite build`, and the built `dist/` is
-  copied into the runtime image at `frontend/dist`. The backend's
-  `static_files.py` detects it (`has_dist()`) and the single Python process
-  serves both the API and the SPA. One container, one routing source of truth.
-  (`Dockerfile.frontend` exists for the *alternative* "proxy serves static dist"
-  topology and is **not** part of the default `up` — see the comments in it.)
-- **TLS.** The `proxy` (nginx) terminates TLS on **:443** and reverse-proxies
-  everything to the backend. Dev uses a **self-signed** cert (browsers will
-  warn — expected). HTTP **:80** redirects to HTTPS.
-- **Access store on PostgreSQL.** The backend runs with
-  `ACCESS_BACKEND=postgres` against the `db` service (ADR-004). Engines still on
-  sqlite (notify/catalog/circ/acq/bp) write to a persisted named volume.
+- **Как отдаётся SPA (`dist/`) — backend-serves-dist.** `Dockerfile.backend`
+  многостадийный: стадия `node` запускает `vite build`, и собранный `dist/`
+  копируется в рантайм-образ в `frontend/dist`. Бэкенд (`static_files.py`)
+  обнаруживает его (`has_dist()`), и один Python-процесс отдаёт и API, и SPA.
+  Один контейнер — один источник истины по маршрутизации. (`Dockerfile.frontend`
+  существует для *альтернативной* топологии «proxy отдаёт статику dist» и **не**
+  входит в дефолтный `up` — см. комментарии в нём.)
+- **TLS.** `proxy` (nginx) терминирует TLS на **:443** и reverse-проксирует всё на
+  бэкенд. В dev используется **самоподписанный** сертификат (браузеры предупреждают
+  — это ожидаемо). HTTP **:80** редиректит на HTTPS.
+- **Access-стор на PostgreSQL.** Бэкенд работает с `ACCESS_BACKEND=postgres` против
+  сервиса `db` (ADR-004). Движки (notify/catalog/circ/acq/bp) на sqlite пишут в
+  персистентный именованный том.
 
-## One-command up
+## Подъём одной командой
 
 ```sh
 cd deploy
-cp .env.example .env          # 1. fill in secrets (see CHANGE IN PROD markers)
-sh proxy/gen-cert.sh          # 2. generate a dev self-signed TLS cert
-docker compose up --build     # 3. bring up db + backend + proxy
+cp .env.example .env          # 1. заполнить секреты (см. метки CHANGE IN PROD)
+sh proxy/gen-cert.sh          # 2. сгенерировать dev самоподписанный TLS-сертификат
+docker compose up --build     # 3. поднять db + backend + proxy
 ```
 
-Then open **https://localhost** (accept the self-signed-cert warning in dev).
+Затем открыть **https://localhost** (в dev принять предупреждение о самоподписанном сертификате).
 
-Stop / reset:
+Остановка / сброс:
 
 ```sh
-docker compose down           # stop, keep volumes (data persists)
-docker compose down -v        # stop + delete volumes (wipe PG + sqlite data)
+docker compose down           # остановить, тома сохранить (данные остаются)
+docker compose down -v        # остановить + удалить тома (стереть данные PG + sqlite)
 ```
 
-## Environment
+## Окружение
 
-All config is env-driven; nothing sensitive is baked into an image.
-Copy `.env.example` → `.env` (gitignored) and set at least:
+Вся конфигурация через env; ничего чувствительного не зашито в образ.
+Скопировать `.env.example` → `.env` (в gitignore) и задать как минимум:
 
-| Var | Purpose | Dev default | Prod |
+| Переменная | Назначение | Dev-дефолт | Прод |
 |---|---|---|---|
-| `POSTGRES_PASSWORD` | PostgreSQL superuser password | `devpassword` | **CHANGE** — long random |
-| `APP_SECRET` | Signs sessions/JWT | `dev-insecure-…` | **CHANGE** — `openssl rand -hex 32` |
-| `POSTGRES_USER` / `POSTGRES_DB` | PG role / database | `postgres` / `irbis_access` | as needed |
-| `HTTP_PORT` / `HTTPS_PORT` | Host ports for the proxy | `80` / `443` | as needed |
-| `IRBIS_HOST` / `IRBIS_PORT` | Live ИРБИС64 TCP server (optional) | `host.docker.internal:6666` | your server |
-| `IRBIS_USER` / `IRBIS_PASS` | ИРБИС service account | `MASTER` / *(empty)* | **CHANGE** |
-| `IRBIS_DB_DEFAULT` / `IRBIS_PUBLIC_DBS` | default + reader-visible DBs | `IBIS` / `IBIS` | as needed |
+| `POSTGRES_PASSWORD` | пароль суперпользователя PostgreSQL | `devpassword` | **СМЕНИТЬ** — длинный случайный |
+| `APP_SECRET` | подпись сессий/JWT | `dev-insecure-…` | **СМЕНИТЬ** — `openssl rand -hex 32` |
+| `POSTGRES_USER` / `POSTGRES_DB` | роль / база PG | `postgres` / `irbis_access` | по необходимости |
+| `HTTP_PORT` / `HTTPS_PORT` | порты хоста для proxy | `80` / `443` | по необходимости |
+| `IRBIS_HOST` / `IRBIS_PORT` | живой TCP-сервер ИРБИС64 (опц.) | `host.docker.internal:6666` | ваш сервер |
+| `IRBIS_USER` / `IRBIS_PASS` | сервис-аккаунт ИРБИС | `MASTER` / *(пусто)* | **СМЕНИТЬ** |
+| `IRBIS_DB_DEFAULT` / `IRBIS_PUBLIC_DBS` | дефолтная + видимые читателю БД | `IBIS` / `IBIS` | по необходимости |
 
-> The full env model the backend understands lives in `irbis-web/backend/config.py`
-> and `access/pgstore.py` (`ACCESS_BACKEND`, `ACCESS_PG_DSN`, the `*_DB` sqlite
-> paths). The compose file wires these for you.
+> Полную модель env, которую понимает бэкенд, см. в `irbis-web/backend/config.py`
+> и `access/pgstore.py` (`ACCESS_BACKEND`, `ACCESS_PG_DSN`, sqlite-пути `*_DB`).
+> Compose-файл прокидывает их за вас.
 
-## Provisioning the first tenant
+## Провижининг первого арендатора
 
-The Access store is multi-tenant (control schema + per-tenant schema `t_<slug>`).
-After the stack is up, provision a tenant via the provisioning CLI (added by a
-sibling task):
-
-```sh
-# inside the running backend container:
-docker compose exec backend python -m access.provision <slug>
-```
-
-> **Next step / dependency:** `python -m access.provision <slug>` is provided by
-> the tenant-provisioning task (sibling agent). It runs `ensure_control_schema()`
-> + the per-tenant schema/migrations/seed against `ACCESS_PG_DSN`. Until that CLI
-> lands, the PG control + tenant schemas can be created with the tenancy helpers
-> in `access/pgstore.py`. This deployment infra is ready for it — the backend
-> already points at PostgreSQL.
-
-## TLS notes
-
-- **Dev:** `sh proxy/gen-cert.sh` writes `proxy/certs/{server.crt,server.key}`
-  (gitignored). Self-signed → browser warning is expected.
-  Regenerate with a custom name: `CERT_CN=biblio.local sh proxy/gen-cert.sh`.
-- **Prod:** replace those two files with a certificate from your CA (internal CA
-  / certbot / Let's Encrypt — the nginx HTTP server already exposes the ACME
-  `http-01` webroot). Then enable HSTS (uncomment the `Strict-Transport-Security`
-  header in `proxy/nginx.conf`).
-
-## Backups & restore
-
-`pg_dump`-based backup/restore of the `db` service, writing into a `backups`
-named volume (survives container recreate, stays out of git/host):
+Access-стор мультиарендный (control-схема + схема-на-арендатора `t_<slug>`).
+После подъёма стека — провижининг через CLI:
 
 ```sh
-sh deploy/backup/pg_backup.sh                 # one timestamped dump → backups volume
-KEEP=14 sh deploy/backup/pg_backup.sh         # + prune all but the newest 14
-sh deploy/backup/pg_restore.sh                # list available dumps
-sh deploy/backup/pg_restore.sh <dump-file>    # restore (prompts; FORCE=1 to skip)
+# внутри запущенного backend-контейнера:
+docker compose exec backend python -m access.provision <slug> \
+  --name "Имя библиотеки" --admin admin --password '<надёжный-пароль>' --plan standard
 ```
 
-Test a restore without touching live data (rehearse into a throwaway DB):
+> CLI `python -m access.provision <slug>` выполняет `ensure_control_schema()` +
+> схему/миграции/сидинг арендатора против `ACCESS_PG_DSN`. Инфраструктура к этому
+> готова — бэкенд уже указывает на PostgreSQL.
+
+## Заметки по TLS
+
+- **Dev:** `sh proxy/gen-cert.sh` пишет `proxy/certs/{server.crt,server.key}`
+  (в gitignore). Самоподписанный → предупреждение браузера ожидаемо.
+  Сгенерировать с другим именем: `CERT_CN=biblio.local sh proxy/gen-cert.sh`.
+- **Прод:** заменить эти два файла сертификатом от вашего CA (внутренний CA /
+  certbot / Let's Encrypt — HTTP-сервер nginx уже отдаёт ACME `http-01` webroot).
+  Затем включить HSTS (раскомментировать заголовок `Strict-Transport-Security`
+  в `proxy/nginx.conf`).
+
+## Бэкапы и восстановление
+
+Бэкап/restore сервиса `db` на базе `pg_dump`, с записью в именованный том `backups`
+(переживает пересоздание контейнера, не попадает в git/на хост):
 
 ```sh
-FORCE=1 RESTORE_DB=irbis_restore_test sh deploy/backup/pg_restore.sh <dump-file>
-docker compose exec db psql -U postgres -d irbis_restore_test -c "\dn"   # verify
-docker compose exec db dropdb -U postgres irbis_restore_test             # clean up
+sh deploy/backup/pg_backup.sh                 # один дамп с таймстампом → том backups
+KEEP=14 sh deploy/backup/pg_backup.sh         # + оставить только 14 новейших
+sh deploy/backup/pg_restore.sh                # список доступных дампов
+sh deploy/backup/pg_restore.sh <файл-дампа>   # восстановить (с подтверждением; FORCE=1 пропустить)
 ```
 
-Scheduling (cron / Task Scheduler), 3-2-1 off-box copies, and the monthly
-restore-test cadence are documented in `pg_backup.sh` and in
-[`docs/design/PILOT_READINESS.md`](../docs/design/PILOT_READINESS.md) → "Backups".
-> Single-node pilot = nightly logical dump (RPO up to ~24h, no PITR yet); see
+Проверить restore без касания живых данных (репетиция в throwaway-БД):
+
+```sh
+FORCE=1 RESTORE_DB=irbis_restore_test sh deploy/backup/pg_restore.sh <файл-дампа>
+docker compose exec db psql -U postgres -d irbis_restore_test -c "\dn"   # проверка
+docker compose exec db dropdb -U postgres irbis_restore_test             # убрать
+```
+
+Планирование (cron / Task Scheduler), 3-2-1 копии вне хоста и ежемесячная
+периодичность restore-теста описаны в `pg_backup.sh` и в
+[`docs/design/PILOT_READINESS.md`](../docs/design/PILOT_READINESS.md) → «Бэкапы».
+> Одноузловой пилот = ночной логический дамп (RPO до ~24ч, PITR пока нет); см.
 > [`SPEC_sre.md` §3.2](../docs/design/specs/platform/SPEC_sre.md).
 
-## Healthchecks
+## Healthcheck'и
 
-All three services report health (`docker compose ps` → `healthy`), and
-orchestration waits on dependencies (`proxy` waits for `backend` healthy;
-`backend` waits for `db` healthy):
+Все три сервиса сообщают здоровье (`docker compose ps` → `healthy`), оркестрация
+ждёт зависимости (`proxy` ждёт `backend` healthy; `backend` ждёт `db` healthy):
 
 - `db` — `pg_isready` (postgres:16).
-- `backend` — GET `/api/health` via the image's own `python` (the slim image has
-  no curl/wget); unauthenticated, returns 200 even when ИРБИС is down.
-- `proxy` — `curl -fsk https://localhost/` (nginx:alpine ships curl; `-k` for the
-  self-signed dev cert).
+- `backend` — GET `/api/health` через собственный `python` образа (в slim-образе нет
+  curl/wget); без авторизации, возвращает 200 даже при недоступном ИРБИС.
+- `proxy` — `curl -fsk https://localhost/` (nginx:alpine несёт curl; `-k` для
+  самоподписанного dev-сертификата).
 
-## Going to a real pilot
+## Переход к реальному пилоту
 
-See [`docs/design/PILOT_READINESS.md`](../docs/design/PILOT_READINESS.md) — a
-concrete go-live checklist (real secrets, real TLS cert, first-tenant
-provisioning, backup schedule + tested restore, monitoring/log access, data
-migration, rollback plan) that is honest about what is pilot-ready vs not (no HA,
-no PITR, no certified СКЗИ, optional live-ИРБИС bridge).
+См. [`docs/design/PILOT_READINESS.md`](../docs/design/PILOT_READINESS.md) — конкретный
+go-live чек-лист (реальные секреты, реальный TLS-сертификат, провижининг первого
+арендатора, расписание бэкапов + проверенный restore, доступ к мониторингу/логам,
+миграция данных, план отката), честный в том, что готово к пилоту, а что нет (нет HA,
+нет PITR, нет сертифицированных СКЗИ, мост к живому ИРБИС опционален).
 
-## Prod hardening checklist
+## Чек-лист прод-хардненинга
 
-- [ ] **Secrets:** set strong `POSTGRES_PASSWORD` + `APP_SECRET`; source `.env`
-      from a secret manager (Vault/SOPS), not a file on disk. Never commit `.env`.
-- [ ] **TLS:** real cert (not self-signed); enable HSTS; TLS 1.2/1.3 only (set).
-- [ ] **No exposed internal ports:** keep `db` and `backend` host ports
-      commented out (default); only the proxy publishes ports.
-- [ ] **DB:** restrict `POSTGRES` network exposure; enable backups/PITR
-      (see `SPEC_iac_fleet.md` §1.2 / SPEC_sre); pin the `postgres:16` digest.
-- [ ] **Images:** pin base images by digest; scan (Trivy) + sign (cosign) in CI
-      per [`SPEC_I6 §B`](../docs/design/specs/SPEC_I6_security_compliance.md).
-- [ ] **Tenant isolation:** verify per-tenant schema isolation after provisioning.
-- [ ] **Reverse proxy:** tighten CSP and `client_max_body_size`; add rate limits.
-- [ ] **152-ФЗ / РДР:** confirm reader PII stays out of logs/telemetry.
-- [ ] **Updates:** `docker compose pull && docker compose up -d --build` on a
-      maintenance window; keep volumes.
+- [ ] **Секреты:** задать сильные `POSTGRES_PASSWORD` + `APP_SECRET`; брать `.env`
+      из менеджера секретов (Vault/SOPS), не из файла на диске. Не коммитить `.env`.
+- [ ] **TLS:** реальный сертификат (не самоподписанный); включить HSTS; только TLS 1.2/1.3 (задано).
+- [ ] **Нет открытых внутренних портов:** держать порты хоста `db` и `backend`
+      закомментированными (по умолчанию); порты публикует только proxy.
+- [ ] **БД:** ограничить сетевую доступность `POSTGRES`; включить бэкапы/PITR
+      (см. `SPEC_iac_fleet.md` §1.2 / SPEC_sre); запинить дайджест `postgres:16`.
+- [ ] **Образы:** пинить базовые образы по дайджесту; сканировать (Trivy) + подписывать
+      (cosign) в CI по [`SPEC_I6 §B`](../docs/design/specs/SPEC_I6_security_compliance.md).
+- [ ] **Изоляция арендаторов:** проверить изоляцию схем-на-арендатора после провижининга.
+- [ ] **Reverse-proxy:** ужесточить CSP и `client_max_body_size`; добавить rate-limit.
+- [ ] **152-ФЗ / РДР:** убедиться, что ПДн читателей не попадают в логи/телеметрию.
+- [ ] **Обновления:** `docker compose pull && docker compose up -d --build` в окно
+      обслуживания; тома сохранять.
 
-## Files
+## Файлы
 
-| File | Purpose |
+| Файл | Назначение |
 |---|---|
-| `docker-compose.yml` | The stack: `db` + `backend` + `proxy`, volumes, healthchecks (all 3 services) |
-| `Dockerfile.backend` | Multi-stage: build SPA → Python runtime serving API + dist |
-| `Dockerfile.frontend` | SPA artifact build (alternative proxy-serves-dist topology; not in default `up`) |
-| `proxy/nginx.conf` | TLS termination + reverse proxy to backend |
-| `proxy/gen-cert.sh` | Generate a dev self-signed cert (cross-platform: Linux/macOS + Windows git-bash) |
-| `backup/pg_backup.sh` | `pg_dump` the `db` service to a timestamped file in the `backups` volume |
-| `backup/pg_restore.sh` | Restore a dump (live DB or a throwaway DB for restore-tests) |
-| `.env.example` | Every env var with safe dev defaults + CHANGE IN PROD markers |
-| `.dockerignore` | Keep secrets / state / build output out of image layers |
+| `docker-compose.yml` | Стек: `db` + `backend` + `proxy`, тома, healthcheck'и (все 3 сервиса) |
+| `Dockerfile.backend` | Многостадийный: сборка SPA → Python-рантайм, отдающий API + dist |
+| `Dockerfile.frontend` | Сборка артефакта SPA (альтернативная топология proxy-serves-dist; не в дефолтном `up`) |
+| `proxy/nginx.conf` | Терминация TLS + reverse-proxy на бэкенд |
+| `proxy/gen-cert.sh` | Генерация dev самоподписанного сертификата (кросс-платформенно: Linux/macOS + Windows git-bash) |
+| `backup/pg_backup.sh` | `pg_dump` сервиса `db` в файл с таймстампом в томе `backups` |
+| `backup/pg_restore.sh` | Восстановление дампа (живая БД или throwaway-БД для restore-тестов) |
+| `.env.example` | Все env-переменные с безопасными dev-дефолтами + метки CHANGE IN PROD |
+| `.dockerignore` | Держать секреты / состояние / артефакты сборки вне слоёв образа |
 ```
