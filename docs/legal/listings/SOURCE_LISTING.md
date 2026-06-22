@@ -10,11 +10,11 @@
 |---|---|
 | Продукт | Biblio — система автоматизации библиотек (АБИС) |
 | Дата сборки листинга | 2026-06-22 |
-| Версия кода (git) | `f43055a` |
+| Версия кода (git) | `4b29ba2` |
 | Файлов в листинге | 128 |
-| Всего строк исходного кода | 37046 |
-| Условных страниц (~55 строк) | 674 |
-| **SHA-256 всего листинга** | `8e75caa306960208d69c8719cf3474b0175118bf4a677e63968e7171dd4bc095` |
+| Всего строк исходного кода | 37124 |
+| Условных страниц (~55 строк) | 675 |
+| **SHA-256 всего листинга** | `5b4d7a04617b2eb26261971c36c22312dff9183a17a012f5483fcee528ce54c6` |
 
 Перечень файлов и их контрольные суммы — в `MANIFEST.sha256.md`.
 
@@ -35185,7 +35185,7 @@
   332 | }
 ```
 
-### Файл: `irbis-web/frontend/src/MigrationWizard.tsx`  · строк: 529
+### Файл: `irbis-web/frontend/src/MigrationWizard.tsx`  · строк: 605
 
 ```tsx
     1 | // Онбординг-мастер миграции (#225; epic #223) — перенос данных из существующей
@@ -35193,580 +35193,661 @@
     3 | //   1. Источник   — режим «Сеть» (хост/порт/логин/пароль/рабочая станция) ИЛИ
     4 | //                   «Локальный путь» (каталог данных ИРБИС, напр. C:\IRBIS64\Datai).
     5 | //                   Креды живут только в форме: не сохраняются и не логируются.
-    6 | //   2. Изучение   — «Изучить источник» → /inspect → таблица обнаруженных БД
-    7 | //                   (код / название / число записей) + раскрываемый по каждой
-    8 | //                   список полей с пометкой «допполе» для кастомных и частотами.
-    9 | //   3. Выбор      — чекбоксы каких БД мигрировать, целевой арендатор, тумблер
-   10 | //                   «Пробный прогон (dry-run)».
-   11 | //   4. Запуск     — «Мигрировать» → /run → отчёт {прочитано, загружено,
-   12 | //                   читателей, пропущено, ошибок}; для dry-run явно «ничего не
-   13 | //                   записано».
-   14 | // Бэкенд миграции публикуется отдельно (#225), поэтому мастер деградирует мягко:
-   15 | // нет эндпойнта (404/501) — информер на текущем шаге, приложение не падает.
-   16 | import React from "react";
-   17 | import { api } from "./api";
-   18 | import type { MigrateMode, MigrateSource, MigrateDatabase, MigrateField, MigrateReport } from "./api";
-   19 | import type { ToastVariant } from "../components/feedback/Toast.jsx";
-   20 | import { Button } from "../components/forms/Button.jsx";
-   21 | import { Icon } from "../components/icon/Icon.jsx";
-   22 | import type { IconName } from "../components/icon/Icon.jsx";
-   23 | import { EmptyState } from "../components/feedback/EmptyState.jsx";
-   24 | 
-   25 | type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) => void;
-   26 | 
-   27 | // Пространство имён .irb-mig* — не пересекается с .stf__ / .adm__ / .irb-plat* /
-   28 | // .cdesk__ / .acq__ / .bp__ / прочими .irb-*.
-   29 | const CSS = `
-   30 | .irb-mig{font-family:var(--font-ui);}
-   31 | .irb-mig__steps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:18px;}
-   32 | .irb-mig__step{display:inline-flex;align-items:center;gap:8px;border:none;background:transparent;cursor:default;font-family:var(--font-ui);padding:6px 4px;color:var(--text-subtle);}
+    6 | //   2. Изучение   — «Изучить источник» → /inspect БЕЗ dbs → МГНОВЕННО таблица
+    7 | //                   обнаруженных БД (код / название / тип / записей / читателей).
+    8 | //                   Инвентарь полей не грузится сразу: при раскрытии строки БД
+    9 | //                   делается ленивый /inspect С dbs=[код] именно по этой базе →
+   10 | //                   список полей с пометкой «допполе» для кастомных и частотами.
+   11 | //                   Результат кэшируется в строке (повторно не запрашивается).
+   12 | //   3. Выбор      — чекбоксы каких БД мигрировать, целевой арендатор, тумблер
+   13 | //                   «Пробный прогон (dry-run)».
+   14 | //   4. Запуск     — «Мигрировать» → /run → отчёт {прочитано, загружено,
+   15 | //                   читателей, пропущено, ошибок}; для dry-run явно «ничего не
+   16 | //                   записано».
+   17 | // Бэкенд миграции публикуется отдельно (#225), поэтому мастер деградирует мягко:
+   18 | // нет эндпойнта (404/501) — информер на текущем шаге, приложение не падает.
+   19 | import React from "react";
+   20 | import { api } from "./api";
+   21 | import type { MigrateMode, MigrateSource, MigrateDatabase, MigrateField, MigrateReport } from "./api";
+   22 | import type { ToastVariant } from "../components/feedback/Toast.jsx";
+   23 | import { Button } from "../components/forms/Button.jsx";
+   24 | import { Icon } from "../components/icon/Icon.jsx";
+   25 | import type { IconName } from "../components/icon/Icon.jsx";
+   26 | import { EmptyState } from "../components/feedback/EmptyState.jsx";
+   27 | 
+   28 | type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) => void;
+   29 | 
+   30 | // Пространство имён .irb-mig* — не пересекается с .stf__ / .adm__ / .irb-plat* /
+   31 | // .cdesk__ / .acq__ / .bp__ / прочими .irb-*.
+   32 | const CSS = `
 ```
 
 <!-- ─── страница 579 ─── -->
 
 ```tsx
-   33 | .irb-mig__step--clickable{cursor:pointer;}
-   34 | .irb-mig__step-no{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:var(--radius-full);background:var(--surface-hover);color:var(--text-muted);font-size:12px;font-weight:700;flex:none;border:1px solid var(--border-subtle);}
-   35 | .irb-mig__step--on .irb-mig__step-no{background:var(--accent);color:var(--accent-fg);border-color:transparent;}
-   36 | .irb-mig__step--done .irb-mig__step-no{background:var(--accent-weak);color:var(--accent-press);border-color:transparent;}
-   37 | .irb-mig__step-lab{font-size:12.5px;font-weight:600;color:var(--text-muted);}
-   38 | .irb-mig__step--on .irb-mig__step-lab{color:var(--text-strong);}
-   39 | .irb-mig__step-sep{color:var(--text-subtle);flex:none;}
-   40 | .irb-mig__card{background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);overflow:hidden;}
-   41 | .irb-mig__cap{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle);}
-   42 | .irb-mig__bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border-subtle);flex-wrap:wrap;}
-   43 | .irb-mig__pad{padding:16px;}
-   44 | .irb-mig__modes{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
-   45 | .irb-mig__mode{flex:1 1 220px;display:flex;gap:11px;align-items:flex-start;text-align:left;cursor:pointer;background:var(--surface-card);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:13px 14px;font:inherit;color:inherit;transition:border-color .12s,background-color .12s;}
-   46 | .irb-mig__mode:hover{background:var(--surface-hover);}
-   47 | .irb-mig__mode--on{border-color:var(--accent);background:var(--accent-weak);}
-   48 | .irb-mig__mode-ic{flex:none;display:inline-flex;color:var(--accent);}
-   49 | .irb-mig__mode-name{font-size:13.5px;font-weight:600;color:var(--text-strong);margin-bottom:2px;}
-   50 | .irb-mig__mode-desc{font-size:11.5px;color:var(--text-subtle);line-height:1.45;}
-   51 | .irb-mig__form{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;}
-   52 | .irb-mig__fld{display:flex;flex-direction:column;gap:5px;}
-   53 | .irb-mig__fld-lab{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-subtle);}
-   54 | .irb-mig__in{width:100%;box-sizing:border-box;padding:8px 11px;border-radius:var(--radius-md);border:1px solid var(--border-default);background:var(--surface-card);color:var(--text-body);font-family:var(--font-ui);font-size:13px;}
-   55 | .irb-mig__in:focus{outline:none;border-color:var(--accent);}
-   56 | .irb-mig__note{font-size:11.5px;color:var(--text-subtle);line-height:1.5;margin-top:12px;display:flex;gap:7px;align-items:flex-start;}
-   57 | .irb-mig__actions{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap;padding:14px 16px;border-top:1px solid var(--border-subtle);}
-   58 | .irb-mig__tbl{width:100%;border-collapse:collapse;font-size:13px;}
-   59 | .irb-mig__tbl th{text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);padding:10px 14px;border-bottom:1px solid var(--border-subtle);background:var(--surface-sunken);white-space:nowrap;}
-   60 | .irb-mig__tbl td{padding:9px 14px;border-bottom:1px solid var(--border-subtle);vertical-align:middle;}
-   61 | .irb-mig__tbl tr:last-child td{border-bottom:none;}
-   62 | .irb-mig__mono{font-family:var(--font-mono);font-size:12px;}
-   63 | .irb-mig__db{cursor:pointer;}
-   64 | .irb-mig__db:hover td{background:var(--surface-hover);}
-   65 | .irb-mig__caret{display:inline-flex;color:var(--text-subtle);transition:transform .12s;flex:none;}
-   66 | .irb-mig__caret--open{transform:rotate(90deg);}
-   67 | .irb-mig__kind{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:var(--radius-full);background:var(--surface-hover);color:var(--text-muted);}
-   68 | .irb-mig__fields{background:var(--surface-sunken);}
-   69 | .irb-mig__ftbl{width:100%;border-collapse:collapse;font-size:12px;}
-   70 | .irb-mig__ftbl th{text-align:left;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-subtle);padding:6px 12px;}
-   71 | .irb-mig__ftbl td{padding:5px 12px;border-top:1px solid var(--border-subtle);vertical-align:top;}
-   72 | .irb-mig__ftag{font-family:var(--font-mono);font-size:11.5px;font-weight:600;color:var(--text-muted);}
-   73 | .irb-mig__sub{font-family:var(--font-mono);font-size:11px;color:var(--text-subtle);}
-   74 | .irb-mig__custom{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:1px 7px;border-radius:var(--radius-full);background:var(--status-issued-bg,#FBEFD8);color:var(--status-issued,#B5710E);text-transform:uppercase;letter-spacing:.04em;}
-   75 | .irb-mig__chk{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border-subtle);cursor:pointer;}
-   76 | .irb-mig__chk:last-child{border-bottom:none;}
-   77 | .irb-mig__chk:hover{background:var(--surface-hover);}
-   78 | .irb-mig__chk input{width:16px;height:16px;accent-color:var(--accent);flex:none;cursor:pointer;}
-   79 | .irb-mig__chk-main{min-width:0;flex:1;}
-   80 | .irb-mig__chk-name{font-size:13px;font-weight:600;color:var(--text-strong);}
-   81 | .irb-mig__chk-sub{font-size:11.5px;color:var(--text-subtle);}
-   82 | .irb-mig__sw{position:relative;width:40px;height:22px;border-radius:var(--radius-full);border:none;cursor:pointer;background:var(--border-strong);transition:background-color .15s;flex:none;padding:0;}
-   83 | .irb-mig__sw[aria-checked="true"]{background:var(--accent);}
-   84 | .irb-mig__sw i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:var(--radius-full);background:#fff;transition:left .15s;box-shadow:var(--shadow-sm);}
-   85 | .irb-mig__sw[aria-checked="true"] i{left:21px;}
-   86 | .irb-mig__dry{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-sunken);margin-top:14px;}
-   87 | .irb-mig__report{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;}
+   33 | .irb-mig{font-family:var(--font-ui);}
+   34 | .irb-mig__steps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:18px;}
+   35 | .irb-mig__step{display:inline-flex;align-items:center;gap:8px;border:none;background:transparent;cursor:default;font-family:var(--font-ui);padding:6px 4px;color:var(--text-subtle);}
+   36 | .irb-mig__step--clickable{cursor:pointer;}
+   37 | .irb-mig__step-no{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:var(--radius-full);background:var(--surface-hover);color:var(--text-muted);font-size:12px;font-weight:700;flex:none;border:1px solid var(--border-subtle);}
+   38 | .irb-mig__step--on .irb-mig__step-no{background:var(--accent);color:var(--accent-fg);border-color:transparent;}
+   39 | .irb-mig__step--done .irb-mig__step-no{background:var(--accent-weak);color:var(--accent-press);border-color:transparent;}
+   40 | .irb-mig__step-lab{font-size:12.5px;font-weight:600;color:var(--text-muted);}
+   41 | .irb-mig__step--on .irb-mig__step-lab{color:var(--text-strong);}
+   42 | .irb-mig__step-sep{color:var(--text-subtle);flex:none;}
+   43 | .irb-mig__card{background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);overflow:hidden;}
+   44 | .irb-mig__cap{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle);}
+   45 | .irb-mig__bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border-subtle);flex-wrap:wrap;}
+   46 | .irb-mig__pad{padding:16px;}
+   47 | .irb-mig__modes{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+   48 | .irb-mig__mode{flex:1 1 220px;display:flex;gap:11px;align-items:flex-start;text-align:left;cursor:pointer;background:var(--surface-card);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:13px 14px;font:inherit;color:inherit;transition:border-color .12s,background-color .12s;}
+   49 | .irb-mig__mode:hover{background:var(--surface-hover);}
+   50 | .irb-mig__mode--on{border-color:var(--accent);background:var(--accent-weak);}
+   51 | .irb-mig__mode-ic{flex:none;display:inline-flex;color:var(--accent);}
+   52 | .irb-mig__mode-name{font-size:13.5px;font-weight:600;color:var(--text-strong);margin-bottom:2px;}
+   53 | .irb-mig__mode-desc{font-size:11.5px;color:var(--text-subtle);line-height:1.45;}
+   54 | .irb-mig__form{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;}
+   55 | .irb-mig__fld{display:flex;flex-direction:column;gap:5px;}
+   56 | .irb-mig__fld-lab{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-subtle);}
+   57 | .irb-mig__in{width:100%;box-sizing:border-box;padding:8px 11px;border-radius:var(--radius-md);border:1px solid var(--border-default);background:var(--surface-card);color:var(--text-body);font-family:var(--font-ui);font-size:13px;}
+   58 | .irb-mig__in:focus{outline:none;border-color:var(--accent);}
+   59 | .irb-mig__note{font-size:11.5px;color:var(--text-subtle);line-height:1.5;margin-top:12px;display:flex;gap:7px;align-items:flex-start;}
+   60 | .irb-mig__actions{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap;padding:14px 16px;border-top:1px solid var(--border-subtle);}
+   61 | .irb-mig__tbl{width:100%;border-collapse:collapse;font-size:13px;}
+   62 | .irb-mig__tbl th{text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);padding:10px 14px;border-bottom:1px solid var(--border-subtle);background:var(--surface-sunken);white-space:nowrap;}
+   63 | .irb-mig__tbl td{padding:9px 14px;border-bottom:1px solid var(--border-subtle);vertical-align:middle;}
+   64 | .irb-mig__tbl tr:last-child td{border-bottom:none;}
+   65 | .irb-mig__mono{font-family:var(--font-mono);font-size:12px;}
+   66 | .irb-mig__db{cursor:pointer;}
+   67 | .irb-mig__db:hover td{background:var(--surface-hover);}
+   68 | .irb-mig__caret{display:inline-flex;color:var(--text-subtle);transition:transform .12s;flex:none;}
+   69 | .irb-mig__caret--open{transform:rotate(90deg);}
+   70 | .irb-mig__kind{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:var(--radius-full);background:var(--surface-hover);color:var(--text-muted);}
+   71 | .irb-mig__fields{background:var(--surface-sunken);}
+   72 | .irb-mig__ftbl{width:100%;border-collapse:collapse;font-size:12px;}
+   73 | .irb-mig__ftbl th{text-align:left;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-subtle);padding:6px 12px;}
+   74 | .irb-mig__ftbl td{padding:5px 12px;border-top:1px solid var(--border-subtle);vertical-align:top;}
+   75 | .irb-mig__ftag{font-family:var(--font-mono);font-size:11.5px;font-weight:600;color:var(--text-muted);}
+   76 | .irb-mig__sub{font-family:var(--font-mono);font-size:11px;color:var(--text-subtle);}
+   77 | .irb-mig__custom{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:1px 7px;border-radius:var(--radius-full);background:var(--status-issued-bg,#FBEFD8);color:var(--status-issued,#B5710E);text-transform:uppercase;letter-spacing:.04em;}
+   78 | .irb-mig__floading{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-subtle);}
+   79 | .irb-mig__spin{display:inline-block;width:13px;height:13px;border:2px solid var(--border-strong);border-top-color:var(--accent);border-radius:var(--radius-full);animation:irb-mig-spin .6s linear infinite;flex:none;}
+   80 | @keyframes irb-mig-spin{to{transform:rotate(360deg);}}
+   81 | .irb-mig__ferr{display:flex;gap:7px;align-items:flex-start;font-size:12px;color:var(--danger-500,#B42318);line-height:1.45;}
+   82 | .irb-mig__flink{background:none;border:none;padding:0;margin-left:6px;font:inherit;font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;}
+   83 | .irb-mig__showf{background:none;border:none;padding:0;font:inherit;font-size:11.5px;color:var(--accent);cursor:pointer;}
+   84 | .irb-mig__showf:hover{text-decoration:underline;}
+   85 | .irb-mig__chk{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border-subtle);cursor:pointer;}
+   86 | .irb-mig__chk:last-child{border-bottom:none;}
+   87 | .irb-mig__chk:hover{background:var(--surface-hover);}
 ```
 
 <!-- ─── страница 580 ─── -->
 
 ```tsx
-   88 | .irb-mig__metric{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-card);}
-   89 | .irb-mig__metric-val{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em;color:var(--text-strong);}
-   90 | .irb-mig__metric-val--bad{color:var(--danger-500);}
-   91 | .irb-mig__metric-lab{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-muted);}
-   92 | .irb-mig__banner{display:flex;gap:9px;align-items:flex-start;padding:12px 14px;border-radius:var(--radius-md);font-size:12.5px;line-height:1.5;margin-bottom:14px;}
-   93 | .irb-mig__banner--dry{background:var(--info-bg,var(--accent-weak));color:var(--accent-press);}
-   94 | .irb-mig__banner--done{background:var(--status-available-bg,#E3F0E4);color:var(--status-available,#3C7D3F);}
-   95 | @media (max-width:760px){.irb-mig__form{grid-template-columns:1fr;}}
-   96 | `;
-   97 | if (typeof document !== "undefined" && !document.getElementById("irb-mig-css")) {
-   98 |   const s = document.createElement("style"); s.id = "irb-mig-css"; s.textContent = CSS; document.head.appendChild(s);
-   99 | }
-  100 | 
-  101 | // Человекочитаемые подписи типов баз (kind). Неизвестный код показываем как есть.
-  102 | const KIND_RU: Record<string, string> = {
-  103 |   bibliographic: "Библиографическая",
-  104 |   biblio: "Библиографическая",
-  105 |   reader: "Читатели (RDR)",
-  106 |   readers: "Читатели (RDR)",
-  107 |   authority: "Авторитетная",
-  108 |   thesaurus: "Тезаурус / рубрикатор",
-  109 | };
-  110 | const kindLabel = (k?: string) => (k ? KIND_RU[k] || k : "—");
-  111 | const fmtNum = (n?: number) => (typeof n === "number" && Number.isFinite(n) ? n.toLocaleString("ru-RU") : "—");
-  112 | 
-  113 | type Step = 1 | 2 | 3 | 4;
-  114 | const STEPS: { no: Step; label: string }[] = [
-  115 |   { no: 1, label: "Источник" },
-  116 |   { no: 2, label: "Изучение" },
-  117 |   { no: 3, label: "Выбор" },
-  118 |   { no: 4, label: "Запуск" },
-  119 | ];
-  120 | 
-  121 | // Информер «эндпойнт миграции не развёрнут» (мягкая деградация на 404/501).
-  122 | function MigDown({ title }: { title: string }) {
-  123 |   return (
-  124 |     <div className="irb-mig__card" style={{ padding: 4 }}>
-  125 |       <EmptyState icon="download" title={title}
-  126 |         description="Мастер свёрстан в Стиле A и работает поверх движка миграции ИРБИС64 → Biblio (#225). На текущем сервере эндпойнт /api/admin/migrate/* ещё не развёрнут — перенос данных станет доступен после его публикации." />
-  127 |     </div>
-  128 |   );
-  129 | }
+   88 | .irb-mig__chk input{width:16px;height:16px;accent-color:var(--accent);flex:none;cursor:pointer;}
+   89 | .irb-mig__chk-main{min-width:0;flex:1;}
+   90 | .irb-mig__chk-name{font-size:13px;font-weight:600;color:var(--text-strong);}
+   91 | .irb-mig__chk-sub{font-size:11.5px;color:var(--text-subtle);}
+   92 | .irb-mig__sw{position:relative;width:40px;height:22px;border-radius:var(--radius-full);border:none;cursor:pointer;background:var(--border-strong);transition:background-color .15s;flex:none;padding:0;}
+   93 | .irb-mig__sw[aria-checked="true"]{background:var(--accent);}
+   94 | .irb-mig__sw i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:var(--radius-full);background:#fff;transition:left .15s;box-shadow:var(--shadow-sm);}
+   95 | .irb-mig__sw[aria-checked="true"] i{left:21px;}
+   96 | .irb-mig__dry{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-sunken);margin-top:14px;}
+   97 | .irb-mig__report{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;}
+   98 | .irb-mig__metric{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-card);}
+   99 | .irb-mig__metric-val{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em;color:var(--text-strong);}
+  100 | .irb-mig__metric-val--bad{color:var(--danger-500);}
+  101 | .irb-mig__metric-lab{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-muted);}
+  102 | .irb-mig__banner{display:flex;gap:9px;align-items:flex-start;padding:12px 14px;border-radius:var(--radius-md);font-size:12.5px;line-height:1.5;margin-bottom:14px;}
+  103 | .irb-mig__banner--dry{background:var(--info-bg,var(--accent-weak));color:var(--accent-press);}
+  104 | .irb-mig__banner--done{background:var(--status-available-bg,#E3F0E4);color:var(--status-available,#3C7D3F);}
+  105 | @media (max-width:760px){.irb-mig__form{grid-template-columns:1fr;}}
+  106 | `;
+  107 | if (typeof document !== "undefined" && !document.getElementById("irb-mig-css")) {
+  108 |   const s = document.createElement("style"); s.id = "irb-mig-css"; s.textContent = CSS; document.head.appendChild(s);
+  109 | }
+  110 | 
+  111 | // Человекочитаемые подписи типов баз (kind). Неизвестный код показываем как есть.
+  112 | const KIND_RU: Record<string, string> = {
+  113 |   bibliographic: "Библиографическая",
+  114 |   biblio: "Библиографическая",
+  115 |   reader: "Читатели (RDR)",
+  116 |   readers: "Читатели (RDR)",
+  117 |   authority: "Авторитетная",
+  118 |   thesaurus: "Тезаурус / рубрикатор",
+  119 | };
+  120 | const kindLabel = (k?: string) => (k ? KIND_RU[k] || k : "—");
+  121 | const fmtNum = (n?: number) => (typeof n === "number" && Number.isFinite(n) ? n.toLocaleString("ru-RU") : "—");
+  122 | 
+  123 | type Step = 1 | 2 | 3 | 4;
+  124 | const STEPS: { no: Step; label: string }[] = [
+  125 |   { no: 1, label: "Источник" },
+  126 |   { no: 2, label: "Изучение" },
+  127 |   { no: 3, label: "Выбор" },
+  128 |   { no: 4, label: "Запуск" },
+  129 | ];
   130 | 
-  131 | export function MigrationWizard({ toast }: { toast: ToastFn }) {
-  132 |   const [step, setStep] = React.useState<Step>(1);
-  133 |   // Источник.
-  134 |   const [mode, setMode] = React.useState<MigrateMode>("network");
-  135 |   const [host, setHost] = React.useState("");
-  136 |   const [port, setPort] = React.useState("6666");
-  137 |   const [user, setUser] = React.useState("");
-  138 |   const [pass, setPass] = React.useState("");
-  139 |   const [workstation, setWorkstation] = React.useState("");
-  140 |   const [path, setPath] = React.useState("");
-  141 |   // Изучение.
-  142 |   const [databases, setDatabases] = React.useState<MigrateDatabase[] | null>(null);
+  131 | // Информер «эндпойнт миграции не развёрнут» (мягкая деградация на 404/501).
+  132 | function MigDown({ title }: { title: string }) {
+  133 |   return (
+  134 |     <div className="irb-mig__card" style={{ padding: 4 }}>
+  135 |       <EmptyState icon="download" title={title}
+  136 |         description="Мастер свёрстан в Стиле A и работает поверх движка миграции ИРБИС64 → Biblio (#225). На текущем сервере эндпойнт /api/admin/migrate/* ещё не развёрнут — перенос данных станет доступен после его публикации." />
+  137 |     </div>
+  138 |   );
+  139 | }
+  140 | 
+  141 | export function MigrationWizard({ toast }: { toast: ToastFn }) {
+  142 |   const [step, setStep] = React.useState<Step>(1);
 ```
 
 <!-- ─── страница 581 ─── -->
 
 ```tsx
-  143 |   const [inspecting, setInspecting] = React.useState(false);
-  144 |   const [down, setDown] = React.useState(false);
-  145 |   // Выбор.
-  146 |   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
-  147 |   const [tenant, setTenant] = React.useState("");
-  148 |   const [dryRun, setDryRun] = React.useState(true);
-  149 |   // Запуск.
-  150 |   const [running, setRunning] = React.useState(false);
-  151 |   const [report, setReport] = React.useState<MigrateReport | null>(null);
-  152 |   const [ranDry, setRanDry] = React.useState(false);
-  153 | 
-  154 |   // Собрать источник из формы (креды — транзитом, не сохраняем).
-  155 |   function buildSource(): MigrateSource {
-  156 |     return mode === "network"
-  157 |       ? { host: host.trim(), port: Number(port) || 0, user: user.trim(), pass, workstation: workstation.trim() || undefined }
-  158 |       : { path: path.trim() };
-  159 |   }
-  160 |   function sourceReady(): boolean {
-  161 |     return mode === "network" ? !!host.trim() : !!path.trim();
-  162 |   }
+  143 |   // Источник.
+  144 |   const [mode, setMode] = React.useState<MigrateMode>("network");
+  145 |   const [host, setHost] = React.useState("");
+  146 |   const [port, setPort] = React.useState("6666");
+  147 |   const [user, setUser] = React.useState("");
+  148 |   const [pass, setPass] = React.useState("");
+  149 |   const [workstation, setWorkstation] = React.useState("");
+  150 |   const [path, setPath] = React.useState("");
+  151 |   // Изучение.
+  152 |   const [databases, setDatabases] = React.useState<MigrateDatabase[] | null>(null);
+  153 |   const [inspecting, setInspecting] = React.useState(false);
+  154 |   const [down, setDown] = React.useState(false);
+  155 |   // Выбор.
+  156 |   const [selected, setSelected] = React.useState<Record<string, boolean>>({});
+  157 |   const [tenant, setTenant] = React.useState("");
+  158 |   const [dryRun, setDryRun] = React.useState(true);
+  159 |   // Запуск.
+  160 |   const [running, setRunning] = React.useState(false);
+  161 |   const [report, setReport] = React.useState<MigrateReport | null>(null);
+  162 |   const [ranDry, setRanDry] = React.useState(false);
   163 | 
-  164 |   const selectedCodes = (databases || []).filter((d) => selected[d.code]).map((d) => d.code);
-  165 | 
-  166 |   // --- Шаг 2: изучить источник --------------------------------------------
-  167 |   async function inspect() {
-  168 |     if (!sourceReady()) {
-  169 |       toast({ variant: "info", title: "Укажите источник", message: mode === "network" ? "Заполните хост сервера ИРБИС64." : "Укажите путь к каталогу данных ИРБИС." });
-  170 |       return;
-  171 |     }
-  172 |     setInspecting(true); setDown(false);
-  173 |     const r = await api.migrateInspect(mode, buildSource());
-  174 |     setInspecting(false);
-  175 |     if (r.status === 404 || r.status === 501) { setDown(true); setStep(2); return; }
-  176 |     if (r.status === 403) { toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." }); return; }
-  177 |     if (r.json?.ok && r.json.data) {
-  178 |       const dbs = r.json.data.databases || [];
-  179 |       setDatabases(dbs);
-  180 |       // По умолчанию отмечаем к миграции все обнаруженные базы.
-  181 |       const sel: Record<string, boolean> = {};
-  182 |       dbs.forEach((d) => { sel[d.code] = true; });
-  183 |       setSelected(sel);
-  184 |       setStep(2);
-  185 |       toast({ variant: "success", title: "Источник изучен", message: "Обнаружено баз: " + dbs.length });
-  186 |     } else {
-  187 |       setDatabases([]); setStep(2);
-  188 |       toast({ variant: "error", title: "Не удалось изучить источник", message: "Проверьте реквизиты подключения и повторите." });
-  189 |     }
-  190 |   }
-  191 | 
-  192 |   // --- Шаг 4: запустить миграцию ------------------------------------------
-  193 |   async function run() {
-  194 |     if (!selectedCodes.length) { toast({ variant: "info", title: "Выберите базы", message: "Отметьте хотя бы одну базу для миграции." }); return; }
-  195 |     if (!tenant.trim()) { toast({ variant: "info", title: "Укажите арендатора", message: "Целевой арендатор обязателен." }); return; }
-  196 |     setRunning(true); setReport(null);
-  197 |     const isDry = dryRun;
+  164 |   // Собрать источник из формы (креды — транзитом, не сохраняем).
+  165 |   function buildSource(): MigrateSource {
+  166 |     return mode === "network"
+  167 |       ? { host: host.trim(), port: Number(port) || 0, user: user.trim(), pass, workstation: workstation.trim() || undefined }
+  168 |       : { path: path.trim() };
+  169 |   }
+  170 |   function sourceReady(): boolean {
+  171 |     return mode === "network" ? !!host.trim() : !!path.trim();
+  172 |   }
+  173 | 
+  174 |   const selectedCodes = (databases || []).filter((d) => selected[d.code]).map((d) => d.code);
+  175 | 
+  176 |   // --- Шаг 2: изучить источник --------------------------------------------
+  177 |   async function inspect() {
+  178 |     if (!sourceReady()) {
+  179 |       toast({ variant: "info", title: "Укажите источник", message: mode === "network" ? "Заполните хост сервера ИРБИС64." : "Укажите путь к каталогу данных ИРБИС." });
+  180 |       return;
+  181 |     }
+  182 |     setInspecting(true); setDown(false);
+  183 |     const r = await api.migrateInspect(mode, buildSource());
+  184 |     setInspecting(false);
+  185 |     if (r.status === 404 || r.status === 501) { setDown(true); setStep(2); return; }
+  186 |     if (r.status === 403) { toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." }); return; }
+  187 |     if (r.json?.ok && r.json.data) {
+  188 |       const dbs = r.json.data.databases || [];
+  189 |       setDatabases(dbs);
+  190 |       // По умолчанию отмечаем к миграции все обнаруженные базы.
+  191 |       const sel: Record<string, boolean> = {};
+  192 |       dbs.forEach((d) => { sel[d.code] = true; });
+  193 |       setSelected(sel);
+  194 |       setStep(2);
+  195 |       toast({ variant: "success", title: "Источник изучен", message: "Обнаружено баз: " + dbs.length });
+  196 |     } else {
+  197 |       setDatabases([]); setStep(2);
 ```
 
 <!-- ─── страница 582 ─── -->
 
 ```tsx
-  198 |     const r = await api.migrateRun({ mode, source: buildSource(), tenant: tenant.trim(), dbs: selectedCodes, dryRun: isDry });
-  199 |     setRunning(false);
-  200 |     if (r.status === 404 || r.status === 501) { setDown(true); setStep(4); return; }
-  201 |     if (r.status === 403) { toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." }); return; }
-  202 |     if (r.json?.ok && r.json.data && r.json.data.report) {
-  203 |       setReport(r.json.data.report); setRanDry(isDry); setStep(4);
-  204 |       toast({ variant: "success", title: isDry ? "Пробный прогон завершён" : "Миграция завершена",
-  205 |         message: isDry ? "Ничего не записано — это анализ." : "Записей загружено: " + fmtNum(r.json.data.report.records_loaded) });
-  206 |     } else {
-  207 |       toast({ variant: "error", title: "Миграция не выполнена", message: "Сервер не вернул отчёт. Повторите попытку." });
-  208 |     }
-  209 |   }
-  210 | 
-  211 |   const head = (
-  212 |     <div className="stf__pagehead">
-  213 |       <div className="stf__h1">
-  214 |         <h2>Миграция</h2>
-  215 |         <span className="stf__pill">ИРБИС64 → Biblio · мастер</span>
-  216 |       </div>
-  217 |     </div>
-  218 |   );
-  219 | 
-  220 |   // Индикатор шагов (1 → 2 → 3 → 4). Вернуться к пройденному шагу можно кликом.
-  221 |   const canGo = (n: Step): boolean =>
-  222 |     n === 1 || (n === 2 && (databases !== null || down)) ||
-  223 |     (n === 3 && databases !== null && databases.length > 0) ||
-  224 |     (n === 4 && report !== null);
-  225 |   const stepper = (
-  226 |     <div className="irb-mig__steps" role="list" aria-label="Шаги мастера миграции">
-  227 |       {STEPS.map((s, i) => {
-  228 |         const state = s.no === step ? "on" : s.no < step ? "done" : "";
-  229 |         const clickable = s.no !== step && canGo(s.no);
-  230 |         return (
-  231 |           <React.Fragment key={s.no}>
-  232 |             {i > 0 && <span className="irb-mig__step-sep"><Icon name="chevron-right" size={14} /></span>}
-  233 |             <button type="button" role="listitem"
-  234 |               className={"irb-mig__step" + (state ? " irb-mig__step--" + state : "") + (clickable ? " irb-mig__step--clickable" : "")}
-  235 |               aria-current={s.no === step ? "step" : undefined}
-  236 |               disabled={!clickable && s.no !== step}
-  237 |               onClick={() => clickable && setStep(s.no)}>
-  238 |               <span className="irb-mig__step-no">{s.no < step ? <Icon name="check" size={13} /> : s.no}</span>
-  239 |               <span className="irb-mig__step-lab">{s.label}</span>
-  240 |             </button>
-  241 |           </React.Fragment>
-  242 |         );
-  243 |       })}
-  244 |     </div>
-  245 |   );
-  246 | 
-  247 |   return (
-  248 |     <div className="irb-mig">
-  249 |       {head}
-  250 |       {stepper}
-  251 |       {step === 1 && <SourceStep
-  252 |         mode={mode} setMode={setMode}
+  198 |       toast({ variant: "error", title: "Не удалось изучить источник", message: "Проверьте реквизиты подключения и повторите." });
+  199 |     }
+  200 |   }
+  201 | 
+  202 |   // --- Шаг 4: запустить миграцию ------------------------------------------
+  203 |   async function run() {
+  204 |     if (!selectedCodes.length) { toast({ variant: "info", title: "Выберите базы", message: "Отметьте хотя бы одну базу для миграции." }); return; }
+  205 |     if (!tenant.trim()) { toast({ variant: "info", title: "Укажите арендатора", message: "Целевой арендатор обязателен." }); return; }
+  206 |     setRunning(true); setReport(null);
+  207 |     const isDry = dryRun;
+  208 |     const r = await api.migrateRun({ mode, source: buildSource(), tenant: tenant.trim(), dbs: selectedCodes, dryRun: isDry });
+  209 |     setRunning(false);
+  210 |     if (r.status === 404 || r.status === 501) { setDown(true); setStep(4); return; }
+  211 |     if (r.status === 403) { toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." }); return; }
+  212 |     if (r.json?.ok && r.json.data && r.json.data.report) {
+  213 |       setReport(r.json.data.report); setRanDry(isDry); setStep(4);
+  214 |       toast({ variant: "success", title: isDry ? "Пробный прогон завершён" : "Миграция завершена",
+  215 |         message: isDry ? "Ничего не записано — это анализ." : "Записей загружено: " + fmtNum(r.json.data.report.records_loaded) });
+  216 |     } else {
+  217 |       toast({ variant: "error", title: "Миграция не выполнена", message: "Сервер не вернул отчёт. Повторите попытку." });
+  218 |     }
+  219 |   }
+  220 | 
+  221 |   const head = (
+  222 |     <div className="stf__pagehead">
+  223 |       <div className="stf__h1">
+  224 |         <h2>Миграция</h2>
+  225 |         <span className="stf__pill">ИРБИС64 → Biblio · мастер</span>
+  226 |       </div>
+  227 |     </div>
+  228 |   );
+  229 | 
+  230 |   // Индикатор шагов (1 → 2 → 3 → 4). Вернуться к пройденному шагу можно кликом.
+  231 |   const canGo = (n: Step): boolean =>
+  232 |     n === 1 || (n === 2 && (databases !== null || down)) ||
+  233 |     (n === 3 && databases !== null && databases.length > 0) ||
+  234 |     (n === 4 && report !== null);
+  235 |   const stepper = (
+  236 |     <div className="irb-mig__steps" role="list" aria-label="Шаги мастера миграции">
+  237 |       {STEPS.map((s, i) => {
+  238 |         const state = s.no === step ? "on" : s.no < step ? "done" : "";
+  239 |         const clickable = s.no !== step && canGo(s.no);
+  240 |         return (
+  241 |           <React.Fragment key={s.no}>
+  242 |             {i > 0 && <span className="irb-mig__step-sep"><Icon name="chevron-right" size={14} /></span>}
+  243 |             <button type="button" role="listitem"
+  244 |               className={"irb-mig__step" + (state ? " irb-mig__step--" + state : "") + (clickable ? " irb-mig__step--clickable" : "")}
+  245 |               aria-current={s.no === step ? "step" : undefined}
+  246 |               disabled={!clickable && s.no !== step}
+  247 |               onClick={() => clickable && setStep(s.no)}>
+  248 |               <span className="irb-mig__step-no">{s.no < step ? <Icon name="check" size={13} /> : s.no}</span>
+  249 |               <span className="irb-mig__step-lab">{s.label}</span>
+  250 |             </button>
+  251 |           </React.Fragment>
+  252 |         );
 ```
 
 <!-- ─── страница 583 ─── -->
 
 ```tsx
-  253 |         host={host} setHost={setHost} port={port} setPort={setPort}
-  254 |         user={user} setUser={setUser} pass={pass} setPass={setPass}
-  255 |         workstation={workstation} setWorkstation={setWorkstation}
-  256 |         path={path} setPath={setPath}
-  257 |         ready={sourceReady()} inspecting={inspecting} onInspect={inspect} />}
-  258 |       {step === 2 && (down
-  259 |         ? <MigDown title="Изучение источника подключается отдельно" />
-  260 |         : <InspectStep databases={databases} inspecting={inspecting}
-  261 |             onReinspect={inspect} onNext={() => setStep(3)} />)}
-  262 |       {step === 3 && <SelectStep
-  263 |         databases={databases || []} selected={selected} setSelected={setSelected}
-  264 |         tenant={tenant} setTenant={setTenant} dryRun={dryRun} setDryRun={setDryRun}
-  265 |         selectedCount={selectedCodes.length} running={running} onRun={run} onBack={() => setStep(2)} />}
-  266 |       {step === 4 && (down
-  267 |         ? <MigDown title="Запуск миграции подключается отдельно" />
-  268 |         : <RunStep report={report} dry={ranDry} running={running}
-  269 |             onRestart={() => { setReport(null); setStep(1); }} onBackToSelect={() => setStep(3)} />)}
-  270 |     </div>
-  271 |   );
-  272 | }
-  273 | 
-  274 | // ===== Шаг 1: Источник =====================================================
-  275 | function SourceStep(props: {
-  276 |   mode: MigrateMode; setMode: (m: MigrateMode) => void;
-  277 |   host: string; setHost: (v: string) => void; port: string; setPort: (v: string) => void;
-  278 |   user: string; setUser: (v: string) => void; pass: string; setPass: (v: string) => void;
-  279 |   workstation: string; setWorkstation: (v: string) => void;
-  280 |   path: string; setPath: (v: string) => void;
-  281 |   ready: boolean; inspecting: boolean; onInspect: () => void;
-  282 | }) {
-  283 |   const { mode, setMode } = props;
-  284 |   const modes: { id: MigrateMode; name: string; desc: string; icon: IconName }[] = [
-  285 |     { id: "network", name: "Сеть", desc: "Сервер ИРБИС64 по TCP: хост, порт, учётка, рабочая станция.", icon: "globe" },
-  286 |     { id: "local", name: "Локальный путь", desc: "Каталог данных ИРБИС на этой машине, напр. C:\\IRBIS64\\Datai.", icon: "folder-tree" },
-  287 |   ];
-  288 |   return (
-  289 |     <div className="irb-mig__card">
-  290 |       <div className="irb-mig__bar"><span className="irb-mig__cap">Шаг 1 · Источник миграции</span></div>
-  291 |       <div className="irb-mig__pad">
-  292 |         <div className="irb-mig__modes" role="radiogroup" aria-label="Режим источника">
-  293 |           {modes.map((m) => (
-  294 |             <button key={m.id} type="button" role="radio" aria-checked={mode === m.id}
-  295 |               className={"irb-mig__mode" + (mode === m.id ? " irb-mig__mode--on" : "")} onClick={() => setMode(m.id)}>
-  296 |               <span className="irb-mig__mode-ic"><Icon name={m.icon} size={20} /></span>
-  297 |               <span style={{ minWidth: 0 }}>
-  298 |                 <span className="irb-mig__mode-name" style={{ display: "block" }}>{m.name}</span>
-  299 |                 <span className="irb-mig__mode-desc" style={{ display: "block" }}>{m.desc}</span>
-  300 |               </span>
-  301 |             </button>
-  302 |           ))}
-  303 |         </div>
-  304 | 
-  305 |         {mode === "network" ? (
-  306 |           <div className="irb-mig__form">
-  307 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Хост сервера ИРБИС64</label>
+  253 |       })}
+  254 |     </div>
+  255 |   );
+  256 | 
+  257 |   return (
+  258 |     <div className="irb-mig">
+  259 |       {head}
+  260 |       {stepper}
+  261 |       {step === 1 && <SourceStep
+  262 |         mode={mode} setMode={setMode}
+  263 |         host={host} setHost={setHost} port={port} setPort={setPort}
+  264 |         user={user} setUser={setUser} pass={pass} setPass={setPass}
+  265 |         workstation={workstation} setWorkstation={setWorkstation}
+  266 |         path={path} setPath={setPath}
+  267 |         ready={sourceReady()} inspecting={inspecting} onInspect={inspect} />}
+  268 |       {step === 2 && (down
+  269 |         ? <MigDown title="Изучение источника подключается отдельно" />
+  270 |         : <InspectStep databases={databases} inspecting={inspecting}
+  271 |             mode={mode} buildSource={buildSource}
+  272 |             onReinspect={inspect} onNext={() => setStep(3)} />)}
+  273 |       {step === 3 && <SelectStep
+  274 |         databases={databases || []} selected={selected} setSelected={setSelected}
+  275 |         tenant={tenant} setTenant={setTenant} dryRun={dryRun} setDryRun={setDryRun}
+  276 |         selectedCount={selectedCodes.length} running={running} onRun={run} onBack={() => setStep(2)} />}
+  277 |       {step === 4 && (down
+  278 |         ? <MigDown title="Запуск миграции подключается отдельно" />
+  279 |         : <RunStep report={report} dry={ranDry} running={running}
+  280 |             onRestart={() => { setReport(null); setStep(1); }} onBackToSelect={() => setStep(3)} />)}
+  281 |     </div>
+  282 |   );
+  283 | }
+  284 | 
+  285 | // ===== Шаг 1: Источник =====================================================
+  286 | function SourceStep(props: {
+  287 |   mode: MigrateMode; setMode: (m: MigrateMode) => void;
+  288 |   host: string; setHost: (v: string) => void; port: string; setPort: (v: string) => void;
+  289 |   user: string; setUser: (v: string) => void; pass: string; setPass: (v: string) => void;
+  290 |   workstation: string; setWorkstation: (v: string) => void;
+  291 |   path: string; setPath: (v: string) => void;
+  292 |   ready: boolean; inspecting: boolean; onInspect: () => void;
+  293 | }) {
+  294 |   const { mode, setMode } = props;
+  295 |   const modes: { id: MigrateMode; name: string; desc: string; icon: IconName }[] = [
+  296 |     { id: "network", name: "Сеть", desc: "Сервер ИРБИС64 по TCP: хост, порт, учётка, рабочая станция.", icon: "globe" },
+  297 |     { id: "local", name: "Локальный путь", desc: "Каталог данных ИРБИС на этой машине, напр. C:\\IRBIS64\\Datai.", icon: "folder-tree" },
+  298 |   ];
+  299 |   return (
+  300 |     <div className="irb-mig__card">
+  301 |       <div className="irb-mig__bar"><span className="irb-mig__cap">Шаг 1 · Источник миграции</span></div>
+  302 |       <div className="irb-mig__pad">
+  303 |         <div className="irb-mig__modes" role="radiogroup" aria-label="Режим источника">
+  304 |           {modes.map((m) => (
+  305 |             <button key={m.id} type="button" role="radio" aria-checked={mode === m.id}
+  306 |               className={"irb-mig__mode" + (mode === m.id ? " irb-mig__mode--on" : "")} onClick={() => setMode(m.id)}>
+  307 |               <span className="irb-mig__mode-ic"><Icon name={m.icon} size={20} /></span>
 ```
 
 <!-- ─── страница 584 ─── -->
 
 ```tsx
-  308 |               <input className="irb-mig__in" value={props.host} onChange={(e) => props.setHost(e.target.value)} placeholder="127.0.0.1" autoComplete="off" /></div>
-  309 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Порт</label>
-  310 |               <input className="irb-mig__in" value={props.port} onChange={(e) => props.setPort(e.target.value)} placeholder="6666" inputMode="numeric" autoComplete="off" /></div>
-  311 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Логин</label>
-  312 |               <input className="irb-mig__in" value={props.user} onChange={(e) => props.setUser(e.target.value)} autoComplete="off" /></div>
-  313 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Пароль</label>
-  314 |               <input className="irb-mig__in" type="password" value={props.pass} onChange={(e) => props.setPass(e.target.value)} autoComplete="new-password" /></div>
-  315 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Рабочая станция</label>
-  316 |               <input className="irb-mig__in" value={props.workstation} onChange={(e) => props.setWorkstation(e.target.value)} placeholder="напр. C (каталогизатор)" autoComplete="off" /></div>
-  317 |           </div>
-  318 |         ) : (
-  319 |           <div className="irb-mig__form" style={{ gridTemplateColumns: "1fr" }}>
-  320 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Путь к каталогу данных ИРБИС</label>
-  321 |               <input className="irb-mig__in" value={props.path} onChange={(e) => props.setPath(e.target.value)} placeholder="C:\\IRBIS64\\Datai" autoComplete="off" /></div>
-  322 |           </div>
-  323 |         )}
-  324 | 
-  325 |         <div className="irb-mig__note">
-  326 |           <Icon name="shield" size={14} style={{ flex: "none", marginTop: 1, color: "var(--text-subtle)" }} />
-  327 |           <span>Реквизиты подключения используются только для этого переноса: они не сохраняются в браузере и не записываются в журналы.</span>
-  328 |         </div>
-  329 |       </div>
-  330 |       <div className="irb-mig__actions">
-  331 |         <Button iconLeft="search" loading={props.inspecting} disabled={!props.ready} onClick={props.onInspect}>Изучить источник</Button>
-  332 |       </div>
-  333 |     </div>
-  334 |   );
-  335 | }
-  336 | 
-  337 | // ===== Шаг 2: Изучение =====================================================
-  338 | function InspectStep({ databases, inspecting, onReinspect, onNext }: {
-  339 |   databases: MigrateDatabase[] | null; inspecting: boolean; onReinspect: () => void; onNext: () => void;
-  340 | }) {
-  341 |   if (databases === null) {
-  342 |     return (
-  343 |       <div className="irb-mig__card" style={{ padding: 4 }}>
-  344 |         <EmptyState icon="search" title={inspecting ? "Изучаем источник…" : "Источник ещё не изучен"}
-  345 |           description="Нажмите «Изучить источник» на шаге 1 — мастер обнаружит базы данных, посчитает записи и разберёт состав полей." />
-  346 |       </div>
-  347 |     );
-  348 |   }
-  349 |   if (databases.length === 0) {
-  350 |     return (
-  351 |       <div className="irb-mig__card">
-  352 |         <div className="irb-mig__bar">
-  353 |           <span className="irb-mig__cap">Шаг 2 · Обнаруженные базы</span>
-  354 |           <Button size="sm" variant="ghost" iconLeft="refresh-cw" loading={inspecting} onClick={onReinspect}>Изучить снова</Button>
-  355 |         </div>
-  356 |         <div style={{ padding: 4 }}>
-  357 |           <EmptyState icon="archive" title="Базы не обнаружены" description="В указанном источнике не найдено баз данных ИРБИС. Проверьте путь / реквизиты подключения и повторите изучение." />
-  358 |         </div>
+  308 |               <span style={{ minWidth: 0 }}>
+  309 |                 <span className="irb-mig__mode-name" style={{ display: "block" }}>{m.name}</span>
+  310 |                 <span className="irb-mig__mode-desc" style={{ display: "block" }}>{m.desc}</span>
+  311 |               </span>
+  312 |             </button>
+  313 |           ))}
+  314 |         </div>
+  315 | 
+  316 |         {mode === "network" ? (
+  317 |           <div className="irb-mig__form">
+  318 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Хост сервера ИРБИС64</label>
+  319 |               <input className="irb-mig__in" value={props.host} onChange={(e) => props.setHost(e.target.value)} placeholder="127.0.0.1" autoComplete="off" /></div>
+  320 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Порт</label>
+  321 |               <input className="irb-mig__in" value={props.port} onChange={(e) => props.setPort(e.target.value)} placeholder="6666" inputMode="numeric" autoComplete="off" /></div>
+  322 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Логин</label>
+  323 |               <input className="irb-mig__in" value={props.user} onChange={(e) => props.setUser(e.target.value)} autoComplete="off" /></div>
+  324 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Пароль</label>
+  325 |               <input className="irb-mig__in" type="password" value={props.pass} onChange={(e) => props.setPass(e.target.value)} autoComplete="new-password" /></div>
+  326 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Рабочая станция</label>
+  327 |               <input className="irb-mig__in" value={props.workstation} onChange={(e) => props.setWorkstation(e.target.value)} placeholder="напр. C (каталогизатор)" autoComplete="off" /></div>
+  328 |           </div>
+  329 |         ) : (
+  330 |           <div className="irb-mig__form" style={{ gridTemplateColumns: "1fr" }}>
+  331 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Путь к каталогу данных ИРБИС</label>
+  332 |               <input className="irb-mig__in" value={props.path} onChange={(e) => props.setPath(e.target.value)} placeholder="C:\\IRBIS64\\Datai" autoComplete="off" /></div>
+  333 |           </div>
+  334 |         )}
+  335 | 
+  336 |         <div className="irb-mig__note">
+  337 |           <Icon name="shield" size={14} style={{ flex: "none", marginTop: 1, color: "var(--text-subtle)" }} />
+  338 |           <span>Реквизиты подключения используются только для этого переноса: они не сохраняются в браузере и не записываются в журналы.</span>
+  339 |         </div>
+  340 |       </div>
+  341 |       <div className="irb-mig__actions">
+  342 |         <Button iconLeft="search" loading={props.inspecting} disabled={!props.ready} onClick={props.onInspect}>Изучить источник</Button>
+  343 |       </div>
+  344 |     </div>
+  345 |   );
+  346 | }
+  347 | 
+  348 | // ===== Шаг 2: Изучение =====================================================
+  349 | function InspectStep({ databases, inspecting, mode, buildSource, onReinspect, onNext }: {
+  350 |   databases: MigrateDatabase[] | null; inspecting: boolean;
+  351 |   mode: MigrateMode; buildSource: () => MigrateSource;
+  352 |   onReinspect: () => void; onNext: () => void;
+  353 | }) {
+  354 |   if (databases === null) {
+  355 |     return (
+  356 |       <div className="irb-mig__card" style={{ padding: 4 }}>
+  357 |         <EmptyState icon="search" title={inspecting ? "Изучаем источник…" : "Источник ещё не изучен"}
+  358 |           description="Нажмите «Изучить источник» на шаге 1 — мастер обнаружит базы данных, посчитает записи и разберёт состав полей." />
   359 |       </div>
   360 |     );
   361 |   }
-  362 |   const totalRecords = databases.reduce((s, d) => s + (d.recordCount || 0), 0);
+  362 |   if (databases.length === 0) {
 ```
 
 <!-- ─── страница 585 ─── -->
 
 ```tsx
-  363 |   return (
-  364 |     <div className="irb-mig__card">
-  365 |       <div className="irb-mig__bar">
-  366 |         <span className="irb-mig__cap">Шаг 2 · Обнаружено баз: {databases.length} · записей: {fmtNum(totalRecords)}</span>
-  367 |         <Button size="sm" variant="ghost" iconLeft="refresh-cw" loading={inspecting} onClick={onReinspect}>Изучить снова</Button>
-  368 |       </div>
-  369 |       <div style={{ overflowX: "auto" }}>
-  370 |         <table className="irb-mig__tbl">
-  371 |           <thead><tr><th style={{ width: 28 }} aria-label="Раскрыть" /><th>Код</th><th>Название</th><th>Тип</th><th style={{ textAlign: "right" }}>Записей</th><th style={{ textAlign: "right" }}>Читателей</th><th style={{ textAlign: "right" }}>Полей</th></tr></thead>
-  372 |           <tbody>
-  373 |             {databases.map((db) => <DbRow key={db.code} db={db} />)}
-  374 |           </tbody>
-  375 |         </table>
-  376 |       </div>
-  377 |       <div className="irb-mig__actions">
-  378 |         <Button iconLeft="chevron-right" onClick={onNext}>К выбору баз</Button>
-  379 |       </div>
-  380 |     </div>
-  381 |   );
-  382 | }
-  383 | 
-  384 | // Строка БД с раскрываемым списком полей (тег / метка / подполя / частота /
-  385 | // пометка «допполе» для кастомных полей вне штатной схемы).
-  386 | function DbRow({ db }: { db: MigrateDatabase }) {
-  387 |   const [open, setOpen] = React.useState(false);
-  388 |   const fields: MigrateField[] = db.fields || [];
-  389 |   return (
-  390 |     <>
-  391 |       <tr className="irb-mig__db" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-  392 |         <td><span className={"irb-mig__caret" + (open ? " irb-mig__caret--open" : "")}><Icon name="chevron-right" size={15} /></span></td>
-  393 |         <td className="irb-mig__mono">{db.code}</td>
-  394 |         <td>{db.name || "—"}</td>
-  395 |         <td><span className="irb-mig__kind">{kindLabel(db.kind)}</span></td>
-  396 |         <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(db.recordCount)}</td>
-  397 |         <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(db.readerCount)}</td>
-  398 |         <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fields.length}</td>
-  399 |       </tr>
-  400 |       {open && (
-  401 |         <tr className="irb-mig__fields">
-  402 |           <td colSpan={7} style={{ padding: "8px 14px 12px 40px" }}>
-  403 |             {fields.length === 0 ? (
-  404 |               <span style={{ fontSize: 12, color: "var(--text-subtle)" }}>Состав полей не определён.</span>
-  405 |             ) : (
-  406 |               <table className="irb-mig__ftbl">
-  407 |                 <thead><tr><th>Тег</th><th>Метка</th><th>Подполя</th><th style={{ textAlign: "right" }}>Частота</th></tr></thead>
-  408 |                 <tbody>
-  409 |                   {fields.map((f) => (
-  410 |                     <tr key={f.tag}>
-  411 |                       <td className="irb-mig__ftag">
-  412 |                         {f.tag}
-  413 |                         {f.custom && <span className="irb-mig__custom" style={{ marginLeft: 7 }} title="Поле вне штатной схемы РУСМАРК"><Icon name="tag" size={10} />допполе</span>}
-  414 |                       </td>
-  415 |                       <td>{f.label || "—"}</td>
-  416 |                       <td className="irb-mig__sub">{(f.subfields || []).length ? (f.subfields || []).map((s) => "^" + s).join(" ") : "—"}</td>
-  417 |                       <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(f.freq)}</td>
+  363 |     return (
+  364 |       <div className="irb-mig__card">
+  365 |         <div className="irb-mig__bar">
+  366 |           <span className="irb-mig__cap">Шаг 2 · Обнаруженные базы</span>
+  367 |           <Button size="sm" variant="ghost" iconLeft="refresh-cw" loading={inspecting} onClick={onReinspect}>Изучить снова</Button>
+  368 |         </div>
+  369 |         <div style={{ padding: 4 }}>
+  370 |           <EmptyState icon="archive" title="Базы не обнаружены" description="В указанном источнике не найдено баз данных ИРБИС. Проверьте путь / реквизиты подключения и повторите изучение." />
+  371 |         </div>
+  372 |       </div>
+  373 |     );
+  374 |   }
+  375 |   const totalRecords = databases.reduce((s, d) => s + (d.recordCount || 0), 0);
+  376 |   return (
+  377 |     <div className="irb-mig__card">
+  378 |       <div className="irb-mig__bar">
+  379 |         <span className="irb-mig__cap">Шаг 2 · Обнаружено баз: {databases.length} · записей: {fmtNum(totalRecords)}</span>
+  380 |         <Button size="sm" variant="ghost" iconLeft="refresh-cw" loading={inspecting} onClick={onReinspect}>Изучить снова</Button>
+  381 |       </div>
+  382 |       <div style={{ overflowX: "auto" }}>
+  383 |         <table className="irb-mig__tbl">
+  384 |           <thead><tr><th style={{ width: 28 }} aria-label="Раскрыть" /><th>Код</th><th>Название</th><th>Тип</th><th style={{ textAlign: "right" }}>Записей</th><th style={{ textAlign: "right" }}>Читателей</th><th>Поля</th></tr></thead>
+  385 |           <tbody>
+  386 |             {databases.map((db) => <DbRow key={db.code} db={db} mode={mode} buildSource={buildSource} />)}
+  387 |           </tbody>
+  388 |         </table>
+  389 |       </div>
+  390 |       <div className="irb-mig__note" style={{ padding: "0 16px 12px" }}>
+  391 |         <Icon name="info" size={14} style={{ flex: "none", marginTop: 1, color: "var(--text-subtle)" }} />
+  392 |         <span>Список баз получен мгновенно. Состав полей (с пометкой «допполе») подгружается по каждой базе отдельно — раскройте строку или нажмите «Показать поля».</span>
+  393 |       </div>
+  394 |       <div className="irb-mig__actions">
+  395 |         <Button iconLeft="chevron-right" onClick={onNext}>К выбору баз</Button>
+  396 |       </div>
+  397 |     </div>
+  398 |   );
+  399 | }
+  400 | 
+  401 | // Строка БД с ЛЕНИВО подгружаемым списком полей. Сам список баз приходит быстрым
+  402 | // /inspect без dbs (полей нет), поэтому инвентарь полей конкретной базы
+  403 | // (тег / метка / подполя / частота / пометка «допполе» для кастомных полей вне
+  404 | // штатной схемы) добирается отдельным /inspect с dbs=[код] — только при первом
+  405 | // раскрытии строки. Результат кэшируется в состоянии строки: повторное
+  406 | // раскрытие не перезапрашивает сервер. Спиннер на время запроса; ошибка/404 —
+  407 | // информер по строке со ссылкой «Повторить», приложение не падает.
+  408 | function DbRow({ db, mode, buildSource }: {
+  409 |   db: MigrateDatabase; mode: MigrateMode; buildSource: () => MigrateSource;
+  410 | }) {
+  411 |   const [open, setOpen] = React.useState(false);
+  412 |   // Кэш полей именно этой базы: null — ещё не грузили; массив — загружено.
+  413 |   const [fields, setFields] = React.useState<MigrateField[] | null>(db.fields ?? null);
+  414 |   const [loading, setLoading] = React.useState(false);
+  415 |   const [error, setError] = React.useState<string | null>(null);
+  416 | 
+  417 |   // Ленивая загрузка полей этой БД (один раз). Повторный вызов после ошибки —
 ```
 
 <!-- ─── страница 586 ─── -->
 
 ```tsx
-  418 |                     </tr>
-  419 |                   ))}
-  420 |                 </tbody>
-  421 |               </table>
-  422 |             )}
-  423 |           </td>
-  424 |         </tr>
-  425 |       )}
-  426 |     </>
-  427 |   );
-  428 | }
-  429 | 
-  430 | // ===== Шаг 3: Выбор ========================================================
-  431 | function SelectStep({ databases, selected, setSelected, tenant, setTenant, dryRun, setDryRun, selectedCount, running, onRun, onBack }: {
-  432 |   databases: MigrateDatabase[]; selected: Record<string, boolean>; setSelected: (s: Record<string, boolean>) => void;
-  433 |   tenant: string; setTenant: (v: string) => void; dryRun: boolean; setDryRun: (v: boolean) => void;
-  434 |   selectedCount: number; running: boolean; onRun: () => void; onBack: () => void;
-  435 | }) {
-  436 |   const toggle = (code: string) => setSelected({ ...selected, [code]: !selected[code] });
-  437 |   return (
-  438 |     <div className="irb-mig__card">
-  439 |       <div className="irb-mig__bar">
-  440 |         <span className="irb-mig__cap">Шаг 3 · Какие базы мигрировать · выбрано: {selectedCount} из {databases.length}</span>
-  441 |       </div>
-  442 |       <div>
-  443 |         {databases.map((db) => (
-  444 |           <label key={db.code} className="irb-mig__chk">
-  445 |             <input type="checkbox" checked={!!selected[db.code]} onChange={() => toggle(db.code)} aria-label={"Мигрировать базу " + db.code} />
-  446 |             <span className="irb-mig__chk-main">
-  447 |               <span className="irb-mig__chk-name" style={{ display: "block" }}>{db.name || db.code} <span className="irb-mig__mono" style={{ color: "var(--text-subtle)", fontWeight: 400 }}>({db.code})</span></span>
-  448 |               <span className="irb-mig__chk-sub" style={{ display: "block" }}>{kindLabel(db.kind)} · записей {fmtNum(db.recordCount)}{typeof db.readerCount === "number" ? " · читателей " + fmtNum(db.readerCount) : ""} · полей {(db.fields || []).length}</span>
-  449 |             </span>
-  450 |           </label>
-  451 |         ))}
-  452 |       </div>
-  453 |       <div className="irb-mig__pad" style={{ paddingTop: 16, paddingBottom: 4 }}>
-  454 |         <div className="irb-mig__fld" style={{ maxWidth: 360 }}>
-  455 |           <label className="irb-mig__fld-lab">Целевой арендатор</label>
-  456 |           <input className="irb-mig__in" value={tenant} onChange={(e) => setTenant(e.target.value)} placeholder="слаг арендатора, напр. spbtl" autoComplete="off" />
-  457 |         </div>
-  458 |         <div className="irb-mig__dry">
-  459 |           <div style={{ minWidth: 0 }}>
-  460 |             <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)" }}>Пробный прогон (dry-run)</div>
-  461 |             <div style={{ fontSize: 11.5, color: "var(--text-subtle)", lineHeight: 1.45 }}>Только анализ: записи читаются и проверяются, но ничего не записывается в арендатора.</div>
-  462 |           </div>
-  463 |           <button type="button" role="switch" aria-checked={dryRun} aria-label="Пробный прогон" className="irb-mig__sw" onClick={() => setDryRun(!dryRun)}><i /></button>
-  464 |         </div>
-  465 |       </div>
-  466 |       <div className="irb-mig__actions">
-  467 |         <Button variant="ghost" iconLeft="chevron-left" onClick={onBack}>Назад</Button>
-  468 |         <Button iconLeft="download" loading={running} disabled={!selectedCount || !tenant.trim()} onClick={onRun}>
-  469 |           {dryRun ? "Пробный прогон" : "Мигрировать"}
-  470 |         </Button>
-  471 |       </div>
-  472 |     </div>
+  418 |   // через «Повторить». force=true перезапрашивает после неудачи.
+  419 |   async function loadFields(force = false) {
+  420 |     if (loading) return;
+  421 |     if (fields !== null && !force) return; // уже в кэше — не перезапрашиваем
+  422 |     setLoading(true); setError(null);
+  423 |     const r = await api.migrateInspect(mode, buildSource(), [db.code]);
+  424 |     setLoading(false);
+  425 |     if (r.status === 404 || r.status === 501) {
+  426 |       setError("Инвентарь полей этой базы пока недоступен на сервере.");
+  427 |       return;
+  428 |     }
+  429 |     if (r.status === 403) { setError("Недостаточно прав для разбора полей (нужен грант admin.db)."); return; }
+  430 |     if (r.json?.ok && r.json.data) {
+  431 |       const found = (r.json.data.databases || []).find((d) => d.code === db.code) || (r.json.data.databases || [])[0];
+  432 |       setFields(found?.fields || []);
+  433 |     } else {
+  434 |       setError("Не удалось разобрать состав полей. Повторите попытку.");
+  435 |     }
+  436 |   }
+  437 | 
+  438 |   function toggle() {
+  439 |     const next = !open;
+  440 |     setOpen(next);
+  441 |     if (next) void loadFields(); // грузим поля при раскрытии (если ещё не в кэше)
+  442 |   }
+  443 | 
+  444 |   const count = fields !== null ? fields.length : null;
+  445 |   return (
+  446 |     <>
+  447 |       <tr className="irb-mig__db" onClick={toggle} aria-expanded={open}>
+  448 |         <td><span className={"irb-mig__caret" + (open ? " irb-mig__caret--open" : "")}><Icon name="chevron-right" size={15} /></span></td>
+  449 |         <td className="irb-mig__mono">{db.code}</td>
+  450 |         <td>{db.name || "—"}</td>
+  451 |         <td><span className="irb-mig__kind">{kindLabel(db.kind)}</span></td>
+  452 |         <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(db.recordCount)}</td>
+  453 |         <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(db.readerCount)}</td>
+  454 |         <td>
+  455 |           {loading ? (
+  456 |             <span className="irb-mig__floading"><span className="irb-mig__spin" aria-hidden="true" />Загрузка…</span>
+  457 |           ) : count !== null ? (
+  458 |             <span className="irb-mig__mono">{count}</span>
+  459 |           ) : (
+  460 |             <button type="button" className="irb-mig__showf"
+  461 |               onClick={(e) => { e.stopPropagation(); if (!open) setOpen(true); void loadFields(); }}>
+  462 |               Показать поля
+  463 |             </button>
+  464 |           )}
+  465 |         </td>
+  466 |       </tr>
+  467 |       {open && (
+  468 |         <tr className="irb-mig__fields">
+  469 |           <td colSpan={7} style={{ padding: "8px 14px 12px 40px" }}>
+  470 |             {loading ? (
+  471 |               <span className="irb-mig__floading"><span className="irb-mig__spin" aria-hidden="true" />Загрузка полей…</span>
+  472 |             ) : error ? (
 ```
 
 <!-- ─── страница 587 ─── -->
 
 ```tsx
-  473 |   );
-  474 | }
-  475 | 
-  476 | // ===== Шаг 4: Запуск / Отчёт ===============================================
-  477 | function RunStep({ report, dry, running, onRestart, onBackToSelect }: {
-  478 |   report: MigrateReport | null; dry: boolean; running: boolean; onRestart: () => void; onBackToSelect: () => void;
-  479 | }) {
-  480 |   if (running && !report) {
-  481 |     return (
-  482 |       <div className="irb-mig__card" style={{ padding: 4 }}>
-  483 |         <EmptyState icon="download" title="Миграция выполняется…" description="Идёт перенос выбранных баз. Это может занять время в зависимости от объёма данных." />
-  484 |       </div>
-  485 |     );
-  486 |   }
-  487 |   if (!report) {
-  488 |     return (
-  489 |       <div className="irb-mig__card" style={{ padding: 4 }}>
-  490 |         <EmptyState icon="download" title="Отчёт появится после запуска" description="Вернитесь к шагу 3, выберите базы и запустите миграцию (или пробный прогон) — здесь покажется отчёт." />
-  491 |         <div className="irb-mig__actions"><Button variant="ghost" iconLeft="chevron-left" onClick={onBackToSelect}>К выбору баз</Button></div>
-  492 |       </div>
-  493 |     );
-  494 |   }
-  495 |   const metrics: { lab: string; icon: IconName; val: number; bad?: boolean }[] = [
-  496 |     { lab: "Прочитано записей", icon: "file-text", val: report.records_read },
-  497 |     { lab: "Загружено записей", icon: "check-circle", val: report.records_loaded },
-  498 |     { lab: "Загружено читателей", icon: "users", val: report.readers_loaded },
-  499 |     { lab: "Пропущено", icon: "minus", val: report.skipped },
-  500 |     { lab: "Ошибок", icon: "alert-triangle", val: report.errors, bad: report.errors > 0 },
-  501 |   ];
-  502 |   return (
-  503 |     <div className="irb-mig__card">
-  504 |       <div className="irb-mig__bar">
-  505 |         <span className="irb-mig__cap">Шаг 4 · Отчёт о миграции</span>
-  506 |       </div>
-  507 |       <div className="irb-mig__pad">
-  508 |         <div className={"irb-mig__banner " + (dry ? "irb-mig__banner--dry" : "irb-mig__banner--done")}>
-  509 |           <Icon name={dry ? "info" : "check-circle"} size={16} style={{ flex: "none", marginTop: 1 }} />
-  510 |           <span>{dry
-  511 |             ? "Это пробный прогон (dry-run): данные проанализированы, но в арендатора ничего не записано. Снимите тумблер на шаге 3, чтобы выполнить реальную миграцию."
-  512 |             : "Миграция завершена. Данные загружены в арендатора."}</span>
-  513 |         </div>
-  514 |         <div className="irb-mig__report">
-  515 |           {metrics.map((m) => (
-  516 |             <div className="irb-mig__metric" key={m.lab}>
-  517 |               <span className={"irb-mig__metric-val" + (m.bad ? " irb-mig__metric-val--bad" : "")}>{fmtNum(m.val)}</span>
-  518 |               <span className="irb-mig__metric-lab"><Icon name={m.icon} size={14} />{m.lab}</span>
-  519 |             </div>
-  520 |           ))}
-  521 |         </div>
-  522 |       </div>
-  523 |       <div className="irb-mig__actions">
-  524 |         <Button variant="ghost" iconLeft="chevron-left" onClick={onBackToSelect}>К выбору баз</Button>
-  525 |         <Button variant="secondary" iconLeft="rotate-ccw" onClick={onRestart}>Новая миграция</Button>
-  526 |       </div>
-  527 |     </div>
+  473 |               <span className="irb-mig__ferr">
+  474 |                 <Icon name="alert-triangle" size={14} style={{ flex: "none", marginTop: 1 }} />
+  475 |                 <span>{error}<button type="button" className="irb-mig__flink" onClick={() => void loadFields(true)}>Повторить</button></span>
+  476 |               </span>
+  477 |             ) : fields === null ? (
+  478 |               <span style={{ fontSize: 12, color: "var(--text-subtle)" }}>Поля ещё не загружены.</span>
+  479 |             ) : fields.length === 0 ? (
+  480 |               <span style={{ fontSize: 12, color: "var(--text-subtle)" }}>Состав полей не определён.</span>
+  481 |             ) : (
+  482 |               <table className="irb-mig__ftbl">
+  483 |                 <thead><tr><th>Тег</th><th>Метка</th><th>Подполя</th><th style={{ textAlign: "right" }}>Частота</th></tr></thead>
+  484 |                 <tbody>
+  485 |                   {fields.map((f) => (
+  486 |                     <tr key={f.tag}>
+  487 |                       <td className="irb-mig__ftag">
+  488 |                         {f.tag}
+  489 |                         {f.custom && <span className="irb-mig__custom" style={{ marginLeft: 7 }} title="Поле вне штатной схемы РУСМАРК"><Icon name="tag" size={10} />допполе</span>}
+  490 |                       </td>
+  491 |                       <td>{f.label || "—"}</td>
+  492 |                       <td className="irb-mig__sub">{(f.subfields || []).length ? (f.subfields || []).map((s) => "^" + s).join(" ") : "—"}</td>
+  493 |                       <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(f.freq)}</td>
+  494 |                     </tr>
+  495 |                   ))}
+  496 |                 </tbody>
+  497 |               </table>
+  498 |             )}
+  499 |           </td>
+  500 |         </tr>
+  501 |       )}
+  502 |     </>
+  503 |   );
+  504 | }
+  505 | 
+  506 | // ===== Шаг 3: Выбор ========================================================
+  507 | function SelectStep({ databases, selected, setSelected, tenant, setTenant, dryRun, setDryRun, selectedCount, running, onRun, onBack }: {
+  508 |   databases: MigrateDatabase[]; selected: Record<string, boolean>; setSelected: (s: Record<string, boolean>) => void;
+  509 |   tenant: string; setTenant: (v: string) => void; dryRun: boolean; setDryRun: (v: boolean) => void;
+  510 |   selectedCount: number; running: boolean; onRun: () => void; onBack: () => void;
+  511 | }) {
+  512 |   const toggle = (code: string) => setSelected({ ...selected, [code]: !selected[code] });
+  513 |   return (
+  514 |     <div className="irb-mig__card">
+  515 |       <div className="irb-mig__bar">
+  516 |         <span className="irb-mig__cap">Шаг 3 · Какие базы мигрировать · выбрано: {selectedCount} из {databases.length}</span>
+  517 |       </div>
+  518 |       <div>
+  519 |         {databases.map((db) => (
+  520 |           <label key={db.code} className="irb-mig__chk">
+  521 |             <input type="checkbox" checked={!!selected[db.code]} onChange={() => toggle(db.code)} aria-label={"Мигрировать базу " + db.code} />
+  522 |             <span className="irb-mig__chk-main">
+  523 |               <span className="irb-mig__chk-name" style={{ display: "block" }}>{db.name || db.code} <span className="irb-mig__mono" style={{ color: "var(--text-subtle)", fontWeight: 400 }}>({db.code})</span></span>
+  524 |               <span className="irb-mig__chk-sub" style={{ display: "block" }}>{kindLabel(db.kind)} · записей {fmtNum(db.recordCount)}{typeof db.readerCount === "number" ? " · читателей " + fmtNum(db.readerCount) : ""}{db.fields && db.fields.length ? " · полей " + db.fields.length : ""}</span>
+  525 |             </span>
+  526 |           </label>
+  527 |         ))}
 ```
 
 <!-- ─── страница 588 ─── -->
 
 ```tsx
-  528 |   );
-  529 | }
+  528 |       </div>
+  529 |       <div className="irb-mig__pad" style={{ paddingTop: 16, paddingBottom: 4 }}>
+  530 |         <div className="irb-mig__fld" style={{ maxWidth: 360 }}>
+  531 |           <label className="irb-mig__fld-lab">Целевой арендатор</label>
+  532 |           <input className="irb-mig__in" value={tenant} onChange={(e) => setTenant(e.target.value)} placeholder="слаг арендатора, напр. spbtl" autoComplete="off" />
+  533 |         </div>
+  534 |         <div className="irb-mig__dry">
+  535 |           <div style={{ minWidth: 0 }}>
+  536 |             <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)" }}>Пробный прогон (dry-run)</div>
+  537 |             <div style={{ fontSize: 11.5, color: "var(--text-subtle)", lineHeight: 1.45 }}>Только анализ: записи читаются и проверяются, но ничего не записывается в арендатора.</div>
+  538 |           </div>
+  539 |           <button type="button" role="switch" aria-checked={dryRun} aria-label="Пробный прогон" className="irb-mig__sw" onClick={() => setDryRun(!dryRun)}><i /></button>
+  540 |         </div>
+  541 |       </div>
+  542 |       <div className="irb-mig__actions">
+  543 |         <Button variant="ghost" iconLeft="chevron-left" onClick={onBack}>Назад</Button>
+  544 |         <Button iconLeft="download" loading={running} disabled={!selectedCount || !tenant.trim()} onClick={onRun}>
+  545 |           {dryRun ? "Пробный прогон" : "Мигрировать"}
+  546 |         </Button>
+  547 |       </div>
+  548 |     </div>
+  549 |   );
+  550 | }
+  551 | 
+  552 | // ===== Шаг 4: Запуск / Отчёт ===============================================
+  553 | function RunStep({ report, dry, running, onRestart, onBackToSelect }: {
+  554 |   report: MigrateReport | null; dry: boolean; running: boolean; onRestart: () => void; onBackToSelect: () => void;
+  555 | }) {
+  556 |   if (running && !report) {
+  557 |     return (
+  558 |       <div className="irb-mig__card" style={{ padding: 4 }}>
+  559 |         <EmptyState icon="download" title="Миграция выполняется…" description="Идёт перенос выбранных баз. Это может занять время в зависимости от объёма данных." />
+  560 |       </div>
+  561 |     );
+  562 |   }
+  563 |   if (!report) {
+  564 |     return (
+  565 |       <div className="irb-mig__card" style={{ padding: 4 }}>
+  566 |         <EmptyState icon="download" title="Отчёт появится после запуска" description="Вернитесь к шагу 3, выберите базы и запустите миграцию (или пробный прогон) — здесь покажется отчёт." />
+  567 |         <div className="irb-mig__actions"><Button variant="ghost" iconLeft="chevron-left" onClick={onBackToSelect}>К выбору баз</Button></div>
+  568 |       </div>
+  569 |     );
+  570 |   }
+  571 |   const metrics: { lab: string; icon: IconName; val: number; bad?: boolean }[] = [
+  572 |     { lab: "Прочитано записей", icon: "file-text", val: report.records_read },
+  573 |     { lab: "Загружено записей", icon: "check-circle", val: report.records_loaded },
+  574 |     { lab: "Загружено читателей", icon: "users", val: report.readers_loaded },
+  575 |     { lab: "Пропущено", icon: "minus", val: report.skipped },
+  576 |     { lab: "Ошибок", icon: "alert-triangle", val: report.errors, bad: report.errors > 0 },
+  577 |   ];
+  578 |   return (
+  579 |     <div className="irb-mig__card">
+  580 |       <div className="irb-mig__bar">
+  581 |         <span className="irb-mig__cap">Шаг 4 · Отчёт о миграции</span>
+  582 |       </div>
+```
+
+<!-- ─── страница 589 ─── -->
+
+```tsx
+  583 |       <div className="irb-mig__pad">
+  584 |         <div className={"irb-mig__banner " + (dry ? "irb-mig__banner--dry" : "irb-mig__banner--done")}>
+  585 |           <Icon name={dry ? "info" : "check-circle"} size={16} style={{ flex: "none", marginTop: 1 }} />
+  586 |           <span>{dry
+  587 |             ? "Это пробный прогон (dry-run): данные проанализированы, но в арендатора ничего не записано. Снимите тумблер на шаге 3, чтобы выполнить реальную миграцию."
+  588 |             : "Миграция завершена. Данные загружены в арендатора."}</span>
+  589 |         </div>
+  590 |         <div className="irb-mig__report">
+  591 |           {metrics.map((m) => (
+  592 |             <div className="irb-mig__metric" key={m.lab}>
+  593 |               <span className={"irb-mig__metric-val" + (m.bad ? " irb-mig__metric-val--bad" : "")}>{fmtNum(m.val)}</span>
+  594 |               <span className="irb-mig__metric-lab"><Icon name={m.icon} size={14} />{m.lab}</span>
+  595 |             </div>
+  596 |           ))}
+  597 |         </div>
+  598 |       </div>
+  599 |       <div className="irb-mig__actions">
+  600 |         <Button variant="ghost" iconLeft="chevron-left" onClick={onBackToSelect}>К выбору баз</Button>
+  601 |         <Button variant="secondary" iconLeft="rotate-ccw" onClick={onRestart}>Новая миграция</Button>
+  602 |       </div>
+  603 |     </div>
+  604 |   );
+  605 | }
 ```
 
 ### Файл: `irbis-web/frontend/src/PlatformDesk.tsx`  · строк: 440
@@ -35804,6 +35885,11 @@
    30 | .irb-plat__tab--on{background:var(--surface-card);color:var(--text-strong);font-weight:600;box-shadow:var(--shadow-sm);}
    31 | .irb-plat__card{background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);overflow:hidden;}
    32 | .irb-plat__cap{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle);}
+```
+
+<!-- ─── страница 590 ─── -->
+
+```tsx
    33 | .irb-plat__bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border-subtle);flex-wrap:wrap;}
    34 | .irb-plat__tbl{width:100%;border-collapse:collapse;font-size:13px;}
    35 | .irb-plat__tbl th{text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);padding:10px 14px;border-bottom:1px solid var(--border-subtle);background:var(--surface-sunken);white-space:nowrap;}
@@ -35825,11 +35911,6 @@
    51 | .irb-plat__pickbtn:disabled{opacity:.55;cursor:default;}
    52 | .irb-plat__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;}
    53 | .irb-plat__meter{display:flex;flex-direction:column;gap:7px;padding:14px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-card);}
-```
-
-<!-- ─── страница 589 ─── -->
-
-```tsx
    54 | .irb-plat__meter-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
    55 | .irb-plat__meter-name{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--text-strong);}
    56 | .irb-plat__meter-val{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);}
@@ -35864,6 +35945,11 @@
    85 |   circulation: "Книговыдача",
    86 |   acquisition: "Комплектование",
    87 |   bookprovision: "Книгообеспеченность",
+```
+
+<!-- ─── страница 591 ─── -->
+
+```tsx
    88 |   reader: "Читательский кабинет",
    89 |   admin: "Администрирование",
    90 |   analytics: "Аналитика и отчёты",
@@ -35885,11 +35971,6 @@
   106 | // Информер «эндпойнт вкладки не развёрнут».
   107 | function SectionDown({ icon, title }: { icon: IconName; title: string }) {
   108 |   return (
-```
-
-<!-- ─── страница 590 ─── -->
-
-```tsx
   109 |     <div className="irb-plat__card" style={{ padding: 4 }}>
   110 |       <EmptyState icon={icon} title={title}
   111 |         description="Раздел свёрстан в Стиле A и работает поверх движка платформы (#207/#209). На текущем сервере соответствующий эндпойнт /api/admin/* ещё не развёрнут — данные появятся после его публикации. Остальные разделы продолжают работать." />
@@ -35924,6 +36005,11 @@
   140 |           </button>
   141 |         ))}
   142 |       </div>
+```
+
+<!-- ─── страница 592 ─── -->
+
+```tsx
   143 |       {tab === "tenants"
   144 |         ? <TenantsTab toast={toast} selected={selected} onSelect={setSelected} onManage={openBilling} />
   145 |         : <BillingTab toast={toast} selected={selected} onSelect={setSelected} />}
@@ -35945,11 +36031,6 @@
   161 |   const [adminLogin, setAdminLogin] = React.useState("");
   162 |   const [plan, setPlan] = React.useState<string>("standard");
   163 |   const [creating, setCreating] = React.useState(false);
-```
-
-<!-- ─── страница 591 ─── -->
-
-```tsx
   164 | 
   165 |   async function load() {
   166 |     const r = await api.adminTenants();
@@ -35984,6 +36065,11 @@
   195 |       <div className="irb-plat__bar">
   196 |         <span className="irb-plat__cap">Арендаторы контура {tenants ? "· " + tenants.length : ""}</span>
   197 |         <Button size="sm" iconLeft={showCreate ? "x" : "plus"} variant={showCreate ? "ghost" : "primary"} onClick={() => setShowCreate((v) => !v)}>{showCreate ? "Свернуть" : "Новый арендатор"}</Button>
+```
+
+<!-- ─── страница 593 ─── -->
+
+```tsx
   198 |       </div>
   199 | 
   200 |       {showCreate && (
@@ -36005,11 +36091,6 @@
   216 |         <div style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка арендаторов…</div>
   217 |       ) : tenants.length === 0 ? (
   218 |         <div style={{ padding: 4 }}><EmptyState icon="layers" title="Арендаторов нет" description="Создайте первого арендатора контура — отдельное пространство с собственными базами, учётками и тарифом." /></div>
-```
-
-<!-- ─── страница 592 ─── -->
-
-```tsx
   219 |       ) : (
   220 |         <div className="irb-plat__scroll">
   221 |           <table className="irb-plat__tbl">
@@ -36044,6 +36125,11 @@
   250 |   const [billingDown, setBillingDown] = React.useState(false);
   251 |   const [loading, setLoading] = React.useState(false);
   252 |   const [busyPlan, setBusyPlan] = React.useState<string | null>(null);
+```
+
+<!-- ─── страница 594 ─── -->
+
+```tsx
   253 |   const [busyModule, setBusyModule] = React.useState<string | null>(null);
   254 | 
   255 |   // справочник арендаторов для выпадающего выбора
@@ -36065,11 +36151,6 @@
   271 |     if (r.json?.ok && r.json.data) setBilling(r.json.data);
   272 |     else { setBilling(null); toast({ variant: "info", title: "Тариф недоступен", message: "Не удалось получить тариф арендатора " + slug + "." }); }
   273 |   }
-```
-
-<!-- ─── страница 593 ─── -->
-
-```tsx
   274 |   React.useEffect(() => { if (selected) void loadBilling(selected); else setBilling(null); }, [selected]);
   275 | 
   276 |   async function changePlan(plan: string) {
@@ -36104,6 +36185,11 @@
   305 |     else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
   306 |     else toast({ variant: "error", title: "Не изменено", message: "Повторите попытку." });
   307 |   }
+```
+
+<!-- ─── страница 595 ─── -->
+
+```tsx
   308 | 
   309 |   if (tenantsDown) return <SectionDown icon="credit-card" title="Тарифы и лимиты подключаются отдельно" />;
   310 | 
@@ -36125,11 +36211,6 @@
   326 |   if (!selected) {
   327 |     content = <div style={{ padding: 4 }}><EmptyState icon="layers" title="Выберите арендатора" description="Выберите арендатора, чтобы увидеть его тариф, лимиты, потребление и состав функциональных модулей." /></div>;
   328 |   } else if (billingDown) {
-```
-
-<!-- ─── страница 594 ─── -->
-
-```tsx
   329 |     content = <div style={{ padding: 4 }}><EmptyState icon="credit-card" title="Тариф арендатора подключается отдельно" description="Раздел свёрстан в Стиле A и работает поверх движка платформы (#209). На текущем сервере /api/admin/billing ещё не развёрнут — данные появятся после публикации." /></div>;
   330 |   } else if (loading && !billing) {
   331 |     content = <div style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка тарифа…</div>;
@@ -36164,6 +36245,11 @@
   360 | 
   361 |         {/* Лимиты vs потребление — лимит из snake_case карты limits, потребление
   362 |             из частичной карты usage (ресурс без значения → «—»). */}
+```
+
+<!-- ─── страница 596 ─── -->
+
+```tsx
   363 |         <div>
   364 |           <span className="irb-plat__cap">Лимиты и потребление</span>
   365 |           <div className="irb-plat__grid" style={{ marginTop: 9 }}>
@@ -36185,11 +36271,6 @@
   381 |               {moduleCodes.map((code) => {
   382 |                 const on = enabledSet.has(code);
   383 |                 return (
-```
-
-<!-- ─── страница 595 ─── -->
-
-```tsx
   384 |                   <div className="irb-plat__mod" key={code}>
   385 |                     <div style={{ minWidth: 0 }}>
   386 |                       <div className="irb-plat__mod-name">{moduleLabel(code)}</div>
@@ -36224,6 +36305,11 @@
   415 |   icon: IconName; name: string; used?: number; limit: number | null; unit?: string;
   416 | }) {
   417 |   const hasUsed = typeof used === "number" && Number.isFinite(used);
+```
+
+<!-- ─── страница 597 ─── -->
+
+```tsx
   418 |   const u = hasUsed ? (used as number) : 0;
   419 |   // null или ≤0 → лимита нет (∞). Иначе — конечный потолок.
   420 |   const lim = typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : null;
@@ -36245,11 +36331,6 @@
   436 |       <div className="irb-plat__track"><div className="irb-plat__fill" style={{ width: (lim && hasUsed ? pct : 0) + "%", background: color }} /></div>
   437 |       <span className="irb-plat__meter-pct">{note}</span>
   438 |     </div>
-```
-
-<!-- ─── страница 596 ─── -->
-
-```tsx
   439 |   );
   440 | }
 ```
@@ -36289,6 +36370,11 @@
    30 |   { id: "inv", label: "Инвентаризация", icon: "scan-line", grant: "record.read", desc: "Сверка фонда с ТСД", route: "stub" as const },
    31 |   { id: "admin", label: "Администрирование", icon: "sliders", grant: "admin.users", desc: "Учётки, гранты, роли, аудит", route: "admin" as const },
    32 |   { id: "platform", label: "Платформа", icon: "layers", grant: "admin.db", desc: "Арендаторы, тариф, лимиты, функциональные модули", route: "platform" as const },
+```
+
+<!-- ─── страница 598 ─── -->
+
+```tsx
    33 |   { id: "migration", label: "Миграция", icon: "download", grant: "admin.db", desc: "Онбординг-мастер переноса данных из ИРБИС64 в арендатора", route: "migration" as const },
    34 | ];
    35 | const hasGrant = (grants: Grant[], fn: string) => (grants || []).some((g) => g.function === fn);
@@ -36310,11 +36396,6 @@
    51 |       if (fd.subfields) { if (occ && typeof occ === "object") str = fd.subfields.map((sf) => { const t = (occ[sf.code] || "").trim(); return t ? "^" + sf.code + t : ""; }).join(""); }
    52 |       else str = (occ || "").toString().trim();
    53 |       if (str) out.push({ tag: fd.code, value: str });
-```
-
-<!-- ─── страница 597 ─── -->
-
-```tsx
    54 |     });
    55 |   });
    56 |   return out;
@@ -36349,6 +36430,11 @@
    85 | function recordToValues(fields: any[], wl: WLField[]) {
    86 |   const values: Record<string, any> = {};
    87 |   const pick = (f: any, c: string) => f.subfields[c] || f.subfields[c.toUpperCase()] || f.subfields[c.toLowerCase()] || "";
+```
+
+<!-- ─── страница 599 ─── -->
+
+```tsx
    88 |   (wl || []).forEach((fd) => {
    89 |     const matches = fields.filter((f) => f.tag === fd.code);
    90 |     if (fd.subfields) {
@@ -36370,11 +36456,6 @@
   106 | .stf{display:grid;grid-template-columns:208px 1fr;gap:0;min-height:560px;
   107 |   background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);overflow:hidden;
   108 |   box-shadow:var(--shadow-sm);font-family:var(--font-ui);}
-```
-
-<!-- ─── страница 598 ─── -->
-
-```tsx
   109 | .stf--compact{--row-py:8px;--cell-fs:13px;}
   110 | .stf--comfortable{--row-py:13px;--cell-fs:14px;}
   111 | .stf__side{background:var(--surface-sunken);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;min-width:0;}
@@ -36409,6 +36490,11 @@
   140 |   background:var(--status-available-bg);color:var(--status-available);font-size:11px;font-weight:600;white-space:nowrap;}
   141 | .stf__online .dot{width:6px;height:6px;border-radius:var(--radius-full);background:var(--status-available);}
   142 | .stf__body{flex:1;padding:18px 22px 28px;min-width:0;}
+```
+
+<!-- ─── страница 600 ─── -->
+
+```tsx
   143 | .stf__pagehead{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px;flex-wrap:wrap;}
   144 | .stf__h1{display:flex;align-items:center;gap:11px;}
   145 | .stf__h1 h2{font-family:var(--font-display);font-weight:600;font-size:21px;letter-spacing:-.02em;margin:0;}
@@ -36430,11 +36516,6 @@
   161 |    оставляя контрол, подсказку и ФЛК-сообщение. */
   162 | .stf__row .irb-dyn__head{display:none;}
   163 | .stf__row .irb-dyn{gap:6px;}
-```
-
-<!-- ─── страница 599 ─── -->
-
-```tsx
   164 | .stf__row--bad .stf__row-name{color:var(--danger-500);}
   165 | 
   166 | /* search-to-edit — поиск записи в базе и список результатов */
@@ -36469,6 +36550,11 @@
   195 |   .stf__nav-cap,.stf__user{display:none;}
   196 |   .stf__row{grid-template-columns:1fr;gap:6px;}
   197 | }
+```
+
+<!-- ─── страница 601 ─── -->
+
+```tsx
   198 | `;
   199 | if (typeof document !== "undefined" && !document.getElementById("stf-shell-css")) {
   200 |   const s = document.createElement("style"); s.id = "stf-shell-css"; s.textContent = SHELL_CSS; document.head.appendChild(s);
@@ -36490,11 +36576,6 @@
   216 |   if (route === "provision") return "provision";
   217 |   if (route === "admin") return "admin";
   218 |   if (route === "platform") return "platform";
-```
-
-<!-- ─── страница 600 ─── -->
-
-```tsx
   219 |   if (route === "migration") return "migration";
   220 |   if (route === "desktop" || !route) return "desktop";
   221 |   return "stub";
@@ -36529,6 +36610,11 @@
   250 |             <div className="stf__brand-name">Biblio</div>
   251 |             <div className="stf__brand-sub">Рабочее пространство</div>
   252 |           </div>
+```
+
+<!-- ─── страница 602 ─── -->
+
+```tsx
   253 |         </div>
   254 |         <div className="stf__nav">
   255 |           <span className="stf__nav-cap">Рабочее место</span>
@@ -36550,11 +36636,6 @@
   271 |           <div style={{ minWidth: 0 }}>
   272 |             <div className="stf__user-name">{staff.name || staff.login}</div>
   273 |             <div className="stf__user-role">{staff.grants.length} грант(ов)</div>
-```
-
-<!-- ─── страница 601 ─── -->
-
-```tsx
   274 |           </div>
   275 |         </div>
   276 |       </nav>
@@ -36589,6 +36670,11 @@
   305 |       </div>
   306 |     </div>
   307 |   );
+```
+
+<!-- ─── страница 603 ─── -->
+
+```tsx
   308 | }
   309 | 
   310 | function StaffDesktop({ staff, tiles, onOpen }: { staff: StaffSession; tiles: typeof DOMAINS; onOpen: (d: typeof DOMAINS[number]) => void }) {
@@ -36610,11 +36696,6 @@
   326 |             onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent-weak-border)"; e.currentTarget.style.background = "var(--surface-sunken)"; }}
   327 |             onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-subtle)"; e.currentTarget.style.background = "var(--surface-card)"; }}>
   328 |             <span style={{ background: "var(--accent-weak)", color: "var(--accent)", borderRadius: "var(--radius-md)", padding: 8, flex: "none", display: "inline-flex" }}><Icon name={d.icon} size={20} /></span>
-```
-
-<!-- ─── страница 602 ─── -->
-
-```tsx
   329 |             <span style={{ minWidth: 0 }}>
   330 |               <span style={{ display: "block", fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{d.label}</span>
   331 |               <span style={{ display: "block", color: "var(--text-subtle)", fontSize: 12.5, lineHeight: 1.45 }}>{d.desc}</span>
@@ -36649,6 +36730,11 @@
   360 | 
   361 | const KIND_RU: Record<string, string> = { building: "Здание", floor: "Этаж", room: "Помещение", rack: "Стеллаж", shelf: "Полка", postamat: "Постамат выдачи", return: "Станция книгоприёма" };
   362 | // Цвет ячейки = домен-статус из токенов Стиля A.
+```
+
+<!-- ─── страница 604 ─── -->
+
+```tsx
   363 | const cellColor = (c: any) => !c.occupied ? "var(--surface-hover)"
   364 |   : ({ available: "var(--status-available)", hold: "var(--status-postamat)", returned: "var(--status-return)", issued: "var(--status-issued)" } as any)[c.status] || "var(--text-subtle)";
   365 | 
@@ -36670,11 +36756,6 @@
   381 |     <div style={{ overflowX: "auto", margin: "4px 0 8px" }}>
   382 |       <svg viewBox={`0 0 ${W} ${H}`} width={Math.min(W, 720)} style={{ maxWidth: "100%", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", background: "var(--surface-sunken)" }}>
   383 |         <rect x={0} y={H - 13} width={W} height={13} fill="var(--surface-hover)" />
-```
-
-<!-- ─── страница 603 ─── -->
-
-```tsx
   384 |         <text x={6} y={H - 3.5} fontSize={8} fill="var(--text-subtle)">вход</text>
   385 |         {racks.map((r: any, i: number) => (
   386 |           <g key={i} onClick={() => onPick(r)} style={{ cursor: "pointer" }}>
@@ -36709,6 +36790,11 @@
   415 | }
   416 | 
   417 | function StorageNode({ node, depth }: { node: any; depth: number }) {
+```
+
+<!-- ─── страница 605 ─── -->
+
+```tsx
   418 |   const [open, setOpen] = React.useState(depth < 2);
   419 |   const kids: any[] = node.children || [];
   420 |   const leaves = kids.filter((k) => k.kind === "cell" || k.kind === "slot");
@@ -36730,11 +36816,6 @@
   436 |   );
   437 | }
   438 | 
-```
-
-<!-- ─── страница 604 ─── -->
-
-```tsx
   439 | function CellMap() {
   440 |   const [data, setData] = React.useState<any>(null);
   441 |   const [err, setErr] = React.useState(false);
@@ -36769,6 +36850,11 @@
   470 |       </div>
   471 |     </div>
   472 |   );
+```
+
+<!-- ─── страница 606 ─── -->
+
+```tsx
   473 |   if (!data) return <div>{head}<div style={{ color: "var(--text-subtle)", fontSize: 13 }}>Загрузка карты хранения…</div></div>;
   474 |   return (
   475 |     <div>
@@ -36790,11 +36876,6 @@
   491 | // Деградация: нет /api/validate → клиентская проверка обязательных полей; нет
   492 | // /api/worklist → информер. Сохранение — в песочницу WORK (правка не на боевой).
   493 | // ============================================================================
-```
-
-<!-- ─── страница 605 ─── -->
-
-```tsx
   494 | 
   495 | // Строка экземпляра (поле 910): инвентарный номер (^b), штрих-код/RFID (^h),
   496 | // место хранения (^d). Базовый ввод — MVP, расширяется статусом/КСУ позже.
@@ -36829,6 +36910,11 @@
   525 |   React.useEffect(() => { (async () => {
   526 |     const r = await api.worklist(SANDBOX);
   527 |     if (r.json?.ok && r.json.data && r.json.data.fields) { setWl(r.json.data.fields); setValues(emptyValues(r.json.data.fields)); }
+```
+
+<!-- ─── страница 607 ─── -->
+
+```tsx
   528 |     else setWlMissing(true);
   529 |   })(); }, []);
   530 | 
@@ -36850,11 +36936,6 @@
   546 |     const r = await api.search(SEARCH_DB, prefix, q, 1, 25);
   547 |     setSearching(false);
   548 |     if (r.json?.ok && r.json.data) setResults(r.json.data.items);
-```
-
-<!-- ─── страница 606 ─── -->
-
-```tsx
   549 |     else { setResults([]); toast({ variant: "info", title: "Поиск недоступен", message: "Не удалось выполнить поиск в базе " + SEARCH_DB + "." }); }
   550 |   }
   551 |   async function pickRecord(item: ResultItem) {
@@ -36889,6 +36970,11 @@
   580 |         const v = values[fd.code];
   581 |         const ok = fd.subfields ? (v && typeof v === "object" && Object.values(v).some(Boolean)) : !!(v && v.toString().trim());
   582 |         if (!ok) errs[fd.code] = "ФЛК: обязательное поле не заполнено";
+```
+
+<!-- ─── страница 608 ─── -->
+
+```tsx
   583 |       }
   584 |     });
   585 |     return errs;
@@ -36910,11 +36996,6 @@
   601 |       // движок ФЛК не развёрнут → клиентская обязательность
   602 |       const errs = clientRequired(); setErrors(errs); setViolations([]);
   603 |       return { hardBlocked: Object.keys(errs).length > 0, soft: false, serverUp: false };
-```
-
-<!-- ─── страница 607 ─── -->
-
-```tsx
   604 |     }
   605 |     const data = r.json.data;
   606 |     applyViolations(data.violations || []);
@@ -36949,6 +37030,11 @@
   635 |     setChecked(true);
   636 |     const res = await runFlk();
   637 |     if (res.hardBlocked) {
+```
+
+<!-- ─── страница 609 ─── -->
+
+```tsx
   638 |       toast({ variant: "warning", title: "Сохранение заблокировано (ФЛК)", message: res.serverUp ? "Есть непреодолимые нарушения — исправьте отмеченные поля." : "Заполните обязательные поля." });
   639 |       return; // severity-1 блокирует
   640 |     }
@@ -36970,11 +37056,6 @@
   656 |       <input value={x.b} onChange={(e) => setExemplar(i, { b: e.target.value })} placeholder="Инв. номер (^b)" aria-label={"Инвентарный номер экземпляра " + (i + 1)} />
   657 |       <input value={x.h} onChange={(e) => setExemplar(i, { h: e.target.value })} placeholder="Штрих-код / RFID (^h)" aria-label={"Штрих-код экземпляра " + (i + 1)} />
   658 |       <input value={x.d} onChange={(e) => setExemplar(i, { d: e.target.value })} placeholder="Место хранения (^d)" aria-label={"Место хранения экземпляра " + (i + 1)} />
-```
-
-<!-- ─── страница 608 ─── -->
-
-```tsx
   659 |       <Button variant="ghost" size="sm" iconLeft="trash" aria-label="Удалить экземпляр" onClick={() => delExemplar(i)} />
   660 |     </div>
   661 |   );
@@ -37009,6 +37090,11 @@
   690 |       {head}
   691 | 
   692 |       {/* ===== Поиск записи в базе → выбор для правки ===== */}
+```
+
+<!-- ─── страница 610 ─── -->
+
+```tsx
   693 |       <div className="stf__search">
   694 |         <select value={prefix} onChange={(e) => setPrefix(e.target.value)} aria-label="Точка доступа поиска"
   695 |           style={{ padding: "8px 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)", background: "var(--surface-card)", color: "var(--text-body)", fontFamily: "var(--font-ui)", fontSize: 13 }}>
@@ -37030,11 +37116,6 @@
   711 | 
   712 |       {results !== null && (
   713 |         results.length === 0
-```
-
-<!-- ─── страница 609 ─── -->
-
-```tsx
   714 |           ? <div style={{ color: "var(--text-subtle)", fontSize: 13, marginBottom: 14 }}>Ничего не найдено — уточните запрос или создайте новую запись.</div>
   715 |           : <div className="stf__results" role="listbox" aria-label="Результаты поиска">
   716 |               {results.map((it) => (
@@ -37069,6 +37150,11 @@
   745 |               <div className="stf__row-lab">
   746 |                 <span className="stf__row-code">910</span>
   747 |                 <span className="stf__row-name">Экземпляры</span>
+```
+
+<!-- ─── страница 611 ─── -->
+
+```tsx
   748 |                 <span style={{ fontSize: 11.5, color: "var(--text-subtle)" }}>· {exemplars.length}</span>
   749 |               </div>
   750 |               <Button variant="secondary" size="sm" iconLeft="plus" onClick={addExemplar}>Добавить экземпляр</Button>
@@ -37090,11 +37176,6 @@
   766 |               <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12 }}>
   767 |                 {violations.map((v, i) => (
   768 |                   <div key={v.ruleId + ":" + i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: v.severity === 1 ? "var(--danger-500)" : "var(--text-body)" }}>
-```
-
-<!-- ─── страница 610 ─── -->
-
-```tsx
   769 |                     <Icon name={v.severity === 1 ? "alert-octagon" : "alert-triangle"} size={15} style={{ color: v.severity === 1 ? "var(--danger-500)" : "var(--status-issued)", flex: "none", marginTop: 1 }} />
   770 |                     <span>{v.path ? <b style={{ fontFamily: "var(--font-mono)", fontWeight: 600 }}>{v.path}</b> : null} {v.message}</span>
   771 |                   </div>
@@ -37129,6 +37210,11 @@
   800 | }
   801 | 
   802 | export function StaffLoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (l: string, p: string) => void }) {
+```
+
+<!-- ─── страница 612 ─── -->
+
+```tsx
   803 |   const [l, setL] = React.useState("");
   804 |   const [p, setP] = React.useState("");
   805 |   const inp: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)", marginBottom: 10, background: "var(--surface-card)", color: "var(--text-body)", fontFamily: "var(--font-ui)" };
@@ -37150,16 +37236,11 @@
   821 | }
 ```
 
-### Файл: `irbis-web/frontend/src/api.ts`  · строк: 530
+### Файл: `irbis-web/frontend/src/api.ts`  · строк: 532
 
 ```ts
     1 | // Typed client for the IRBIS64 web backend (same-origin /api). Bearer token kept
     2 | // in memory only (no localStorage — secure contour). Mirrors backend core.py.
-```
-
-<!-- ─── страница 611 ─── -->
-
-```ts
     3 | 
     4 | export interface Envelope<T> { ok: boolean; data?: T; error?: { code: string; message: string }; }
     5 | export interface Health { server: string; version: string; db: string; maxmfn: number; }
@@ -37194,6 +37275,11 @@
    34 | export interface OrderItem {
    35 |   id?: string | number; mfn: number; db?: string; title?: string; author?: string;
    36 |   status?: string; statusLabel?: string; created?: string; place?: string; cancelable?: boolean;
+```
+
+<!-- ─── страница 613 ─── -->
+
+```ts
    37 | }
    38 | // Бронирование (#222) — заявка на удержание экземпляра с позицией в очереди.
    39 | //   status: 'ready' — готов к получению; 'queued' — в очереди (position — ваш номер).
@@ -37215,11 +37301,6 @@
    55 | // читателя (если оставлял), для режима «редактировать/удалить свой».
    56 | export interface Review { id: string | number; readerName?: string; rating: number; text?: string; ts?: string; mine?: boolean; }
    57 | export interface ReviewsResult { avg: number; count: number; mine?: Review | null; items: Review[]; }
-```
-
-<!-- ─── страница 612 ─── -->
-
-```ts
    58 | // Рекомендации (#133). reason — человекочитаемое обоснование («похоже по теме»,
    59 | // «читатели также брали», «новинка по вашим интересам»).
    60 | export interface Recommendation { db: string; mfn: number; title: string; author?: string; reason?: string; }
@@ -37254,6 +37335,11 @@
    89 | }
    90 | // Запись для ФЛК — карта поле→значение: скаляр, {подполе:значение} или массив
    91 | // (повторяемое). Совпадает с record-draft движка flk.py.
+```
+
+<!-- ─── страница 614 ─── -->
+
+```ts
    92 | export type FlkRecord = Record<string, string | Record<string, string> | Array<string | Record<string, string>>>;
    93 | 
    94 | // --- Книговыдача (#185) ----------------------------------------------------
@@ -37275,11 +37361,6 @@
   110 | export interface CircActionResult { ok?: boolean; message?: string; loan?: CircLoan; block?: string; }
   111 | 
   112 | // --- Комплектование (#184) -------------------------------------------------
-```
-
-<!-- ─── страница 613 ─── -->
-
-```ts
   113 | // Заказ на комплектование: издание, поставщик, число экземпляров, цена,
   114 | // источник финансирования. status — стадия (создан / отправлен / частично
   115 | // получен / получен / отменён); statusLabel — человекочитаемая метка.
@@ -37314,6 +37395,11 @@
   144 | export interface BpDiscipline {
   145 |   id: string | number; specialtyId?: string | number;
   146 |   discId?: string; name: string; semester?: number; students?: number;
+```
+
+<!-- ─── страница 615 ─── -->
+
+```ts
   147 | }
   148 | // Привязанная к дисциплине литература: вид (осн./доп.), число экземпляров.
   149 | //   kind: 'main' — основная, 'extra' — дополнительная.
@@ -37335,11 +37421,6 @@
   165 | // Карточка специальности: дисциплины с их Кко + сводный Кко по специальности.
   166 | export interface BpSpecialtyCard {
   167 |   specialty: BpSpecialty; disciplines: BpDisciplineCard[]; kko?: BpKko;
-```
-
-<!-- ─── страница 614 ─── -->
-
-```ts
   168 | }
   169 | 
   170 | // --- Администрирование (#187) ----------------------------------------------
@@ -37374,6 +37455,11 @@
   199 |   max_readers: number | null;
   200 |   max_storage_mb: number | null;
   201 | }
+```
+
+<!-- ─── страница 616 ─── -->
+
+```ts
   202 | // Потребление — ЧАСТИЧНАЯ карта тех же ресурсов (billing.tenant_usage). Ресурс,
   203 | // который сервер не смог посчитать, просто отсутствует (трактуем как «—»/0).
   204 | export interface PlanUsage {
@@ -37395,11 +37481,6 @@
   220 | export interface BillingInfo {
   221 |   tenant?: string;
   222 |   plan: string;
-```
-
-<!-- ─── страница 615 ─── -->
-
-```ts
   223 |   limits: PlanLimits;
   224 |   usage: PlanUsage;
   225 |   modules: string[];
@@ -37434,6 +37515,11 @@
   254 | // Локальный источник — путь к каталогу данных ИРБИС.
   255 | export interface MigrateLocalSource { path: string; }
   256 | export type MigrateSource = MigrateNetworkSource | MigrateLocalSource;
+```
+
+<!-- ─── страница 617 ─── -->
+
+```ts
   257 | // Поле обнаруженной БД: MARC-тег, метка, состав подполей, частота встречаемости
   258 | // и флаг «допполе» (custom:true) — поле вне штатной схемы РУСМАРК (локальное
   259 | // расширение библиотеки), которое мастер помечает оператору при изучении.
@@ -37442,297 +37528,299 @@
   262 |   freq?: number; custom?: boolean;
   263 | }
   264 | // Обнаруженная при изучении источника база: код, наименование, тип (kind —
-  265 | // напр. bibliographic/reader/authority), число записей, состав полей и (для
-  266 | // читательских БД) число читателей.
-  267 | export interface MigrateDatabase {
-  268 |   code: string; name: string; kind?: string;
-  269 |   recordCount?: number; readerCount?: number;
-  270 |   fields: MigrateField[];
-  271 | }
-  272 | // Результат изучения источника (POST /api/admin/migrate/inspect).
-  273 | export interface MigrateInspect { databases: MigrateDatabase[]; }
-  274 | // Отчёт о миграции (POST /api/admin/migrate/run): прочитано/загружено записей,
-  275 | // загружено читателей, пропущено, ошибок. Для dry-run загрузка = 0 (ничего не
-  276 | // записано), но счётчики чтения/пропусков отражают пробный анализ.
-  277 | export interface MigrateReport {
-```
-
-<!-- ─── страница 616 ─── -->
-
-```ts
-  278 |   records_read: number; records_loaded: number;
-  279 |   readers_loaded: number; skipped: number; errors: number;
-  280 | }
-  281 | // Ответ запуска миграции: отчёт (синхронно) и/или идентификатор фоновой задачи
-  282 | // (jobId) — тогда статус добирается через GET /api/admin/migrate/status.
-  283 | export interface MigrateRunResult { report: MigrateReport; jobId?: string; }
-  284 | // Статус фоновой задачи миграции (GET /api/admin/migrate/status?jobId=):
-  285 | //   state: queued|running|done|error; report появляется по завершении.
-  286 | export interface MigrateStatus { jobId?: string; state: string; report?: MigrateReport; error?: string; }
-  287 | 
-  288 | let token: string | null = null;
-  289 | const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
-  290 | 
-  291 | async function jget<T>(path: string): Promise<{ status: number; json: Envelope<T> | null }> {
-  292 |   const r = await fetch(path, { headers: authHeaders() });
-  293 |   return { status: r.status, json: await r.json().catch(() => null) };
-  294 | }
-  295 | async function jpost<T>(path: string, body?: unknown): Promise<{ status: number; json: Envelope<T> | null }> {
-  296 |   const r = await fetch(path, {
-  297 |     method: "POST",
-  298 |     headers: { "Content-Type": "application/json", ...authHeaders() },
-  299 |     body: body !== undefined ? JSON.stringify(body) : undefined,
-  300 |   });
-  301 |   return { status: r.status, json: await r.json().catch(() => null) };
-  302 | }
-  303 | const qs = (o: Record<string, string | number>) =>
-  304 |   Object.keys(o).map((k) => k + "=" + encodeURIComponent(String(o[k]))).join("&");
-  305 | 
-  306 | export const api = {
-  307 |   hasToken: () => !!token,
-  308 |   async initGuest() {
-  309 |     const r = await fetch("/api/auth/guest", { method: "POST" });
-  310 |     const j = await r.json();
-  311 |     token = j.data.token;
-  312 |     return j.data as { token: string; kind: string };
-  313 |   },
-  314 |   health: () => jget<Health>("/api/health"),
-  315 |   databases: () => jget<{ items: DbItem[]; default: string }>("/api/databases"),
-  316 |   search: (db: string, prefix: string, q: string, page: number, pageSize: number) =>
-  317 |     jget<SearchResult>("/api/search?" + qs({ db, prefix, q, page, pageSize })),
-  318 |   searchExpr: (db: string, expr: string, page: number, pageSize: number) =>
-  319 |     jget<SearchResult>("/api/search?" + qs({ db, expr, page, pageSize })),
-  320 |   facets: (db: string, prefix: string, q: string) =>
-  321 |     jget<FacetsResult>("/api/facets?" + qs({ db, prefix, q })),
-  322 |   facetsExpr: (db: string, expr: string) =>
-  323 |     jget<FacetsResult>("/api/facets?" + qs({ db, expr })),
-  324 |   terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
-  325 |   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
-  326 |   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),
-  327 |   order: (db: string, mfn: number) => jpost("/api/order", { db, mfn }),
-  328 |   // Discovery showcase (G2): new arrivals etc. `kind` defaults to "new" on the backend.
-  329 |   showcase: (db: string, kind = "new", limit = 12) =>
-  330 |     jget<{ items: ShowcaseItem[] }>("/api/showcase?" + qs({ db, kind, limit })),
-  331 |   // Rubricator terms with counts (browse navigators) — used for example-query seeds.
-  332 |   rubricator: (db: string, prefix: string, limit = 12) =>
-```
-
-<!-- ─── страница 617 ─── -->
-
-```ts
-  333 |     jget<{ terms: Term[] }>("/api/rubricator?" + qs({ db, prefix, limit })),
-  334 |   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
-  335 |   // Reader orders (G12). Endpoint may not exist yet → caller stubs the list on 404.
-  336 |   orders: () => jget<{ items: OrderItem[] }>("/api/me/orders"),
-  337 |   cancelOrder: (id: string | number, db?: string, mfn?: number) =>
-  338 |     jpost("/api/me/orders/cancel", { id, db, mfn }),
-  339 |   storage: (db: string) => jget<{ db: string; tree: StorageNode[]; holdings: number }>("/api/storage?" + qs({ db })),
-  340 |   async loginReader(ticket: string) {
-  341 |     const r = await jpost<{ token: string; name?: string }>("/api/auth/reader", { ticket });
-  342 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
-  343 |     return r;
-  344 |   },
-  345 |   async loginStaff(login: string, password: string) {
-  346 |     const r = await jpost<{ token: string; login: string; name?: string; grants: Grant[] }>("/api/auth/staff", { login, password });
-  347 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
-  348 |     return r;
-  349 |   },
-  350 |   // --- Бронирование (#222) -------------------------------------------------
-  351 |   // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
-  352 |   hold: (db: string, mfn: number) => jpost<HoldResult>("/api/hold", { db, mfn }),
-  353 |   // Список активных броней читателя с позицией в очереди.
-  354 |   holds: () => jget<{ items: Hold[] }>("/api/holds"),
-  355 |   // Снять бронь по её идентификатору.
-  356 |   cancelHold: (holdId: string) => jpost("/api/hold/cancel", { holdId }),
-  357 |   // --- Уведомления читателя (#222) -----------------------------------------
-  358 |   // Лента уведомлений; unread=1 — только непрочитанные. Возвращает счётчик unread.
-  359 |   notifications: (unreadOnly = false) =>
-  360 |     jget<{ items: Notification[]; unread: number }>("/api/notifications?" + qs({ unread: unreadOnly ? 1 : 0 })),
-  361 |   // Отметить прочитанным: одно (по id) либо все (all:true).
-  362 |   markNotificationRead: (idOrAll: { id: string | number } | { all: true }) =>
-  363 |     jpost<{ unread: number }>("/api/notifications/read", idOrAll),
-  364 |   // --- Полки / списки чтения (#222) ----------------------------------------
-  365 |   shelves: () => jget<{ lists: Shelf[] }>("/api/shelves"),
-  366 |   createShelf: (name: string) => jpost<{ id: string; name: string; system?: boolean }>("/api/shelves", { name }),
-  367 |   addToShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item", { listId, db, mfn }),
-  368 |   removeFromShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item/remove", { listId, db, mfn }),
-  369 |   worklist: (db: string) => jget<{ db: string; fields: WorklistField[] }>("/api/worklist/" + db),
-  370 |   saveRecord: (db: string, mfn: number, fields: { tag: string; value: string }[]) =>
-  371 |     jpost<{ db: string; mfn: number; created: boolean; returnCode: number; violations?: FlkViolation[] }>("/api/record/" + db + "/" + mfn, { fields }),
-  372 |   // --- ФЛК «на лету» (#188) ------------------------------------------------
-  373 |   // Прогнать декларативный ФЛК по черновику записи. record — карта поле→значение
-  374 |   // (см. FlkRecord). phase: 'save' (полная проверка) | 'field' (точечная по
-  375 |   // одному полю). 404/501 → деградируем к клиентской проверке обязательных полей.
-  376 |   validate: (db: string, record: FlkRecord, phase: "save" | "field" = "save", field?: string, currentMfn?: number) =>
-  377 |     jpost<FlkResult>("/api/validate", { db, record, phase, field, currentMfn }),
-  378 |   // --- Книговыдача (#185) --------------------------------------------------
-  379 |   // Формуляр читателя по билету: карточка + активные выдачи + служебные блоки.
-  380 |   circReader: (ticket: string) => jget<CircFormular>("/api/circ/reader?" + qs({ ticket })),
-  381 |   // Выдать экземпляр (инв./RFID) читателю. Сервер запускает контроль (должник,
-  382 |   // лимит, бронеблок) и возвращает block при отказе.
-  383 |   circIssue: (ticket: string, db: string, item: string) =>
-  384 |     jpost<CircActionResult>("/api/circ/issue", { ticket, db, item }),
-  385 |   // Принять возврат экземпляра.
-  386 |   circReturn: (ticket: string, db: string, item: string) =>
-  387 |     jpost<CircActionResult>("/api/circ/return", { ticket, db, item }),
+  265 | // напр. bibliographic/reader/authority), число записей и (для читательских БД)
+  266 | // число читателей. Инвентарь полей (fields) грузится ЛЕНИВО — отдельным
+  267 | // вызовом migrateInspect(mode, source, [code]) при раскрытии конкретной БД,
+  268 | // поэтому в быстром списке баз он отсутствует (поле опциональное).
+  269 | export interface MigrateDatabase {
+  270 |   code: string; name: string; kind?: string;
+  271 |   recordCount?: number; readerCount?: number;
+  272 |   fields?: MigrateField[];
+  273 | }
+  274 | // Результат изучения источника (POST /api/admin/migrate/inspect).
+  275 | export interface MigrateInspect { databases: MigrateDatabase[]; }
+  276 | // Отчёт о миграции (POST /api/admin/migrate/run): прочитано/загружено записей,
+  277 | // загружено читателей, пропущено, ошибок. Для dry-run загрузка = 0 (ничего не
+  278 | // записано), но счётчики чтения/пропусков отражают пробный анализ.
+  279 | export interface MigrateReport {
+  280 |   records_read: number; records_loaded: number;
+  281 |   readers_loaded: number; skipped: number; errors: number;
+  282 | }
+  283 | // Ответ запуска миграции: отчёт (синхронно) и/или идентификатор фоновой задачи
+  284 | // (jobId) — тогда статус добирается через GET /api/admin/migrate/status.
+  285 | export interface MigrateRunResult { report: MigrateReport; jobId?: string; }
+  286 | // Статус фоновой задачи миграции (GET /api/admin/migrate/status?jobId=):
+  287 | //   state: queued|running|done|error; report появляется по завершении.
+  288 | export interface MigrateStatus { jobId?: string; state: string; report?: MigrateReport; error?: string; }
+  289 | 
+  290 | let token: string | null = null;
+  291 | const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
+  292 | 
+  293 | async function jget<T>(path: string): Promise<{ status: number; json: Envelope<T> | null }> {
+  294 |   const r = await fetch(path, { headers: authHeaders() });
+  295 |   return { status: r.status, json: await r.json().catch(() => null) };
+  296 | }
+  297 | async function jpost<T>(path: string, body?: unknown): Promise<{ status: number; json: Envelope<T> | null }> {
+  298 |   const r = await fetch(path, {
+  299 |     method: "POST",
+  300 |     headers: { "Content-Type": "application/json", ...authHeaders() },
+  301 |     body: body !== undefined ? JSON.stringify(body) : undefined,
+  302 |   });
+  303 |   return { status: r.status, json: await r.json().catch(() => null) };
+  304 | }
+  305 | const qs = (o: Record<string, string | number>) =>
+  306 |   Object.keys(o).map((k) => k + "=" + encodeURIComponent(String(o[k]))).join("&");
+  307 | 
+  308 | export const api = {
+  309 |   hasToken: () => !!token,
+  310 |   async initGuest() {
+  311 |     const r = await fetch("/api/auth/guest", { method: "POST" });
 ```
 
 <!-- ─── страница 618 ─── -->
 
 ```ts
-  388 |   // Продлить выдачу (новый срок — в loan.due).
-  389 |   circRenew: (ticket: string, db: string, item: string) =>
-  390 |     jpost<CircActionResult>("/api/circ/renew", { ticket, db, item }),
-  391 |   // Штрафы читателя: список начислений + итог.
-  392 |   circFines: (ticket: string) => jget<CircFines>("/api/circ/fines?" + qs({ ticket })),
-  393 |   // --- Отзывы и оценки (#134) ----------------------------------------------
-  394 |   // Отзывы по записи: средняя оценка, число, список и (если вошёл) свой отзыв.
-  395 |   reviews: (db: string, mfn: number) =>
-  396 |     jget<ReviewsResult>("/api/reviews?" + qs({ db, mfn })),
-  397 |   // Оставить / обновить свой отзыв (1–5 звёзд + опц. текст). 404/501 → degrade.
-  398 |   postReview: (db: string, mfn: number, rating: number, text?: string) =>
-  399 |     jpost<Review>("/api/review", { db, mfn, rating, text }),
-  400 |   // Удалить свой отзыв по идентификатору.
-  401 |   deleteReview: (id: string | number) => jpost("/api/review/delete", { id }),
-  402 |   // --- Рекомендации (#133) -------------------------------------------------
-  403 |   // «Похожие издания» к конкретной записи.
-  404 |   recommendations: (db: string, mfn: number) =>
-  405 |     jget<{ items: Recommendation[] }>("/api/recommendations?" + qs({ db, mfn })),
-  406 |   // «Для вас» — персональная подборка на главной (по истории/интересам).
-  407 |   recommendationsForYou: () =>
-  408 |     jget<{ items: Recommendation[] }>("/api/recommendations/foryou"),
-  409 |   // --- История просмотров (#134) -------------------------------------------
-  410 |   history: () => jget<{ items: HistoryItem[] }>("/api/history"),
-  411 |   // --- Сохранённые запросы (#133) ------------------------------------------
-  412 |   savedSearches: () => jget<{ items: SavedSearch[] }>("/api/savedsearch"),
-  413 |   saveSearch: (name: string, db: string, prefix: string, query: string) =>
-  414 |     jpost<SavedSearch>("/api/savedsearch", { name, db, prefix, query }),
-  415 |   deleteSavedSearch: (id: string | number) => jpost("/api/savedsearch/delete", { id }),
-  416 | 
-  417 |   // --- Комплектование (#184) ----------------------------------------------
-  418 |   // Создать заказ на комплектование. → AcqOrder. 404/501 → degrade (информер).
-  419 |   acqOrder: (o: { title: string; author?: string; supplier?: string; copies: number; price?: number; funding_source?: string }) =>
-  420 |     jpost<AcqOrder>("/api/acq/order", o),
-  421 |   // Отменить заказ (до поступления).
-  422 |   acqCancelOrder: (id: string | number) => jpost<AcqOrder>("/api/acq/order/cancel", { id }),
-  423 |   // Оформить поступление по заказу → запись КСУ + ToCat (создание/правка
-  424 |   // каталожной записи). Возвращает номер КСУ и MFN созданной/обновлённой записи.
-  425 |   acqReceive: (r: { orderId: string | number; ksuNo?: string; copies: number; unitPrice?: number; invNumbers?: string[]; actRef?: string }) =>
-  426 |     jpost<AcqReceiveResult>("/api/acq/receive", r),
-  427 |   // Получить заказ по идентификатору (для обновления карточки / списка).
-  428 |   acqGetOrder: (id: string | number) => jget<{ items?: AcqOrder[]; order?: AcqOrder }>("/api/acq/order?" + qs({ id })),
-  429 |   // Лента/список заказов (без id). 404 → degrade.
-  430 |   acqOrders: () => jget<{ items: AcqOrder[] }>("/api/acq/order"),
-  431 |   // Найти запись КСУ по номеру.
-  432 |   acqKsu: (no: string) => jget<{ entry?: KsuEntry; items?: KsuEntry[] }>("/api/acq/ksu?" + qs({ no })),
-  433 | 
-  434 |   // --- Книгообеспеченность (#186) -----------------------------------------
-  435 |   // Создать факультет связки.
-  436 |   bpFaculty: (f: { code: string; name: string }) => jpost<BpFaculty>("/api/bp/faculty", f),
-  437 |   // Создать специальность под факультетом.
-  438 |   bpSpecialty: (s: { facultyId: string | number; napr?: string; spec?: string; vid?: string; form?: string; name: string }) =>
-  439 |     jpost<BpSpecialty>("/api/bp/specialty", s),
-  440 |   // Создать дисциплину под специальностью (семестр, число студентов).
-  441 |   bpDiscipline: (d: { specialtyId: string | number; discId?: string; name: string; semester?: number; students?: number }) =>
-  442 |     jpost<BpDiscipline>("/api/bp/discipline", d),
+  312 |     const j = await r.json();
+  313 |     token = j.data.token;
+  314 |     return j.data as { token: string; kind: string };
+  315 |   },
+  316 |   health: () => jget<Health>("/api/health"),
+  317 |   databases: () => jget<{ items: DbItem[]; default: string }>("/api/databases"),
+  318 |   search: (db: string, prefix: string, q: string, page: number, pageSize: number) =>
+  319 |     jget<SearchResult>("/api/search?" + qs({ db, prefix, q, page, pageSize })),
+  320 |   searchExpr: (db: string, expr: string, page: number, pageSize: number) =>
+  321 |     jget<SearchResult>("/api/search?" + qs({ db, expr, page, pageSize })),
+  322 |   facets: (db: string, prefix: string, q: string) =>
+  323 |     jget<FacetsResult>("/api/facets?" + qs({ db, prefix, q })),
+  324 |   facetsExpr: (db: string, expr: string) =>
+  325 |     jget<FacetsResult>("/api/facets?" + qs({ db, expr })),
+  326 |   terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
+  327 |   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
+  328 |   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),
+  329 |   order: (db: string, mfn: number) => jpost("/api/order", { db, mfn }),
+  330 |   // Discovery showcase (G2): new arrivals etc. `kind` defaults to "new" on the backend.
+  331 |   showcase: (db: string, kind = "new", limit = 12) =>
+  332 |     jget<{ items: ShowcaseItem[] }>("/api/showcase?" + qs({ db, kind, limit })),
+  333 |   // Rubricator terms with counts (browse navigators) — used for example-query seeds.
+  334 |   rubricator: (db: string, prefix: string, limit = 12) =>
+  335 |     jget<{ terms: Term[] }>("/api/rubricator?" + qs({ db, prefix, limit })),
+  336 |   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
+  337 |   // Reader orders (G12). Endpoint may not exist yet → caller stubs the list on 404.
+  338 |   orders: () => jget<{ items: OrderItem[] }>("/api/me/orders"),
+  339 |   cancelOrder: (id: string | number, db?: string, mfn?: number) =>
+  340 |     jpost("/api/me/orders/cancel", { id, db, mfn }),
+  341 |   storage: (db: string) => jget<{ db: string; tree: StorageNode[]; holdings: number }>("/api/storage?" + qs({ db })),
+  342 |   async loginReader(ticket: string) {
+  343 |     const r = await jpost<{ token: string; name?: string }>("/api/auth/reader", { ticket });
+  344 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
+  345 |     return r;
+  346 |   },
+  347 |   async loginStaff(login: string, password: string) {
+  348 |     const r = await jpost<{ token: string; login: string; name?: string; grants: Grant[] }>("/api/auth/staff", { login, password });
+  349 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
+  350 |     return r;
+  351 |   },
+  352 |   // --- Бронирование (#222) -------------------------------------------------
+  353 |   // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
+  354 |   hold: (db: string, mfn: number) => jpost<HoldResult>("/api/hold", { db, mfn }),
+  355 |   // Список активных броней читателя с позицией в очереди.
+  356 |   holds: () => jget<{ items: Hold[] }>("/api/holds"),
+  357 |   // Снять бронь по её идентификатору.
+  358 |   cancelHold: (holdId: string) => jpost("/api/hold/cancel", { holdId }),
+  359 |   // --- Уведомления читателя (#222) -----------------------------------------
+  360 |   // Лента уведомлений; unread=1 — только непрочитанные. Возвращает счётчик unread.
+  361 |   notifications: (unreadOnly = false) =>
+  362 |     jget<{ items: Notification[]; unread: number }>("/api/notifications?" + qs({ unread: unreadOnly ? 1 : 0 })),
+  363 |   // Отметить прочитанным: одно (по id) либо все (all:true).
+  364 |   markNotificationRead: (idOrAll: { id: string | number } | { all: true }) =>
+  365 |     jpost<{ unread: number }>("/api/notifications/read", idOrAll),
+  366 |   // --- Полки / списки чтения (#222) ----------------------------------------
 ```
 
 <!-- ─── страница 619 ─── -->
 
 ```ts
-  443 |   // Задать контингент (число студентов) дисциплины — пересчитывает Кко.
-  444 |   bpContingent: (c: { discId: string | number; students: number }) =>
-  445 |     jpost<BpDiscipline>("/api/bp/contingent", c),
-  446 |   // Привязать литературу (осн./доп.) к дисциплине.
-  447 |   bpBind: (b: { disciplineId: string | number; title: string; kind: "main" | "extra"; copies: number }) =>
-  448 |     jpost<BpBinding>("/api/bp/bind", b),
-  449 |   // Карточка дисциплины с расчётом Кко. normalize — применить нормализацию
-  450 |   // (учёт многоразового использования/семестровой нагрузки) при расчёте.
-  451 |   bpDisciplineCard: (id: string | number, normalize = false) =>
-  452 |     jget<BpDisciplineCard>("/api/bp/discipline?" + qs({ id, normalize: normalize ? 1 : 0 })),
-  453 |   // Карточка специальности: дисциплины с Кко + сводный Кко.
-  454 |   bpSpecialtyCard: (id: string | number, normalize = false) =>
-  455 |     jget<BpSpecialtyCard>("/api/bp/specialty?" + qs({ id, normalize: normalize ? 1 : 0 })),
-  456 | 
-  457 |   // --- Администрирование (#187) -------------------------------------------
-  458 |   // Список учётных записей сотрудников.
-  459 |   adminUsers: () => jget<{ items: AdminUser[] }>("/api/admin/users"),
-  460 |   // Создать учётную запись (логин, ФИО, пароль, опц. роли).
-  461 |   adminCreateUser: (u: { login: string; fullName: string; password: string; roles?: string[] }) =>
-  462 |     jpost<AdminUser>("/api/admin/users", u),
-  463 |   // Назначить набор ролей пользователю.
-  464 |   adminSetRoles: (userId: string | number, roles: string[]) =>
-  465 |     jpost<AdminUser>("/api/admin/users/roles", { userId, roles }),
-  466 |   // Включить / отключить учётную запись.
-  467 |   adminSetActive: (userId: string | number, active: boolean) =>
-  468 |     jpost<AdminUser>("/api/admin/users/active", { userId, active }),
-  469 |   // Справочник ролей.
-  470 |   adminRoles: () => jget<{ items: AdminRole[] }>("/api/admin/roles"),
-  471 |   // Журнал аудита (последние limit записей).
-  472 |   adminAudit: (limit = 50) => jget<{ items: AuditEntry[] }>("/api/admin/audit?" + qs({ limit })),
-  473 |   // Список баз данных контура (код / имя / публичность).
-  474 |   adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
-  475 | 
-  476 |   // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) -------
-  477 |   // Список арендаторов контура. 404/501 → degrade (информер).
-  478 |   adminTenants: () => jget<{ tenants: Tenant[] }>("/api/admin/tenants"),
-  479 |   // Создать (провизионировать) арендатора: слаг, наименование, логин админа,
-  480 |   // тариф. → отчёт о провизионировании {slug,name,plan,modules,admin,postgres}.
-  481 |   // 404/501/403 → degrade.
-  482 |   adminCreateTenant: (t: { slug: string; name: string; adminLogin: string; plan: string }) =>
-  483 |     jpost<{ slug: string; name: string; plan: string; modules: string[];
-  484 |             admin: { id: number | string; login: string }; postgres: boolean }>(
-  485 |       "/api/admin/tenant", t),
-  486 |   // Тариф, лимиты, потребление, модули и каталог тарифов выбранного арендатора.
-  487 |   adminBilling: (tenant: string) => jget<BillingInfo>("/api/admin/billing?" + qs({ tenant })),
-  488 |   // Сменить тариф арендатора → {tenant,plan,modules,limits,applied}. После смены
-  489 |   // плана клиент перечитывает биллинг, чтобы обновить usage/plans.
-  490 |   adminSetPlan: (tenant: string, plan: string) =>
-  491 |     jpost<{ tenant: string; plan: string; modules: string[]; limits: PlanLimits; applied: boolean }>(
-  492 |       "/api/admin/billing/plan", { tenant, plan }),
-  493 |   // Включить / отключить функциональный модуль арендатора →
-  494 |   // {tenant,module,enabled,applied,modules} (modules — обновлённый список включённых).
-  495 |   adminSetModule: (tenant: string, module: string, enabled: boolean) =>
-  496 |     jpost<{ tenant: string; module: string; enabled: boolean; applied: boolean; modules: string[] }>(
-  497 |       "/api/admin/billing/module", { tenant, module, enabled }),
+  367 |   shelves: () => jget<{ lists: Shelf[] }>("/api/shelves"),
+  368 |   createShelf: (name: string) => jpost<{ id: string; name: string; system?: boolean }>("/api/shelves", { name }),
+  369 |   addToShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item", { listId, db, mfn }),
+  370 |   removeFromShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item/remove", { listId, db, mfn }),
+  371 |   worklist: (db: string) => jget<{ db: string; fields: WorklistField[] }>("/api/worklist/" + db),
+  372 |   saveRecord: (db: string, mfn: number, fields: { tag: string; value: string }[]) =>
+  373 |     jpost<{ db: string; mfn: number; created: boolean; returnCode: number; violations?: FlkViolation[] }>("/api/record/" + db + "/" + mfn, { fields }),
+  374 |   // --- ФЛК «на лету» (#188) ------------------------------------------------
+  375 |   // Прогнать декларативный ФЛК по черновику записи. record — карта поле→значение
+  376 |   // (см. FlkRecord). phase: 'save' (полная проверка) | 'field' (точечная по
+  377 |   // одному полю). 404/501 → деградируем к клиентской проверке обязательных полей.
+  378 |   validate: (db: string, record: FlkRecord, phase: "save" | "field" = "save", field?: string, currentMfn?: number) =>
+  379 |     jpost<FlkResult>("/api/validate", { db, record, phase, field, currentMfn }),
+  380 |   // --- Книговыдача (#185) --------------------------------------------------
+  381 |   // Формуляр читателя по билету: карточка + активные выдачи + служебные блоки.
+  382 |   circReader: (ticket: string) => jget<CircFormular>("/api/circ/reader?" + qs({ ticket })),
+  383 |   // Выдать экземпляр (инв./RFID) читателю. Сервер запускает контроль (должник,
+  384 |   // лимит, бронеблок) и возвращает block при отказе.
+  385 |   circIssue: (ticket: string, db: string, item: string) =>
+  386 |     jpost<CircActionResult>("/api/circ/issue", { ticket, db, item }),
+  387 |   // Принять возврат экземпляра.
+  388 |   circReturn: (ticket: string, db: string, item: string) =>
+  389 |     jpost<CircActionResult>("/api/circ/return", { ticket, db, item }),
+  390 |   // Продлить выдачу (новый срок — в loan.due).
+  391 |   circRenew: (ticket: string, db: string, item: string) =>
+  392 |     jpost<CircActionResult>("/api/circ/renew", { ticket, db, item }),
+  393 |   // Штрафы читателя: список начислений + итог.
+  394 |   circFines: (ticket: string) => jget<CircFines>("/api/circ/fines?" + qs({ ticket })),
+  395 |   // --- Отзывы и оценки (#134) ----------------------------------------------
+  396 |   // Отзывы по записи: средняя оценка, число, список и (если вошёл) свой отзыв.
+  397 |   reviews: (db: string, mfn: number) =>
+  398 |     jget<ReviewsResult>("/api/reviews?" + qs({ db, mfn })),
+  399 |   // Оставить / обновить свой отзыв (1–5 звёзд + опц. текст). 404/501 → degrade.
+  400 |   postReview: (db: string, mfn: number, rating: number, text?: string) =>
+  401 |     jpost<Review>("/api/review", { db, mfn, rating, text }),
+  402 |   // Удалить свой отзыв по идентификатору.
+  403 |   deleteReview: (id: string | number) => jpost("/api/review/delete", { id }),
+  404 |   // --- Рекомендации (#133) -------------------------------------------------
+  405 |   // «Похожие издания» к конкретной записи.
+  406 |   recommendations: (db: string, mfn: number) =>
+  407 |     jget<{ items: Recommendation[] }>("/api/recommendations?" + qs({ db, mfn })),
+  408 |   // «Для вас» — персональная подборка на главной (по истории/интересам).
+  409 |   recommendationsForYou: () =>
+  410 |     jget<{ items: Recommendation[] }>("/api/recommendations/foryou"),
+  411 |   // --- История просмотров (#134) -------------------------------------------
+  412 |   history: () => jget<{ items: HistoryItem[] }>("/api/history"),
+  413 |   // --- Сохранённые запросы (#133) ------------------------------------------
+  414 |   savedSearches: () => jget<{ items: SavedSearch[] }>("/api/savedsearch"),
+  415 |   saveSearch: (name: string, db: string, prefix: string, query: string) =>
+  416 |     jpost<SavedSearch>("/api/savedsearch", { name, db, prefix, query }),
+  417 |   deleteSavedSearch: (id: string | number) => jpost("/api/savedsearch/delete", { id }),
+  418 | 
+  419 |   // --- Комплектование (#184) ----------------------------------------------
+  420 |   // Создать заказ на комплектование. → AcqOrder. 404/501 → degrade (информер).
+  421 |   acqOrder: (o: { title: string; author?: string; supplier?: string; copies: number; price?: number; funding_source?: string }) =>
 ```
 
 <!-- ─── страница 620 ─── -->
 
 ```ts
-  498 | 
-  499 |   // --- Соответствие 152-ФЗ (#199; MVP фаза 3) ------------------------------
-  500 |   // Текущее согласие читателя на обработку ПДн. 404/501 → согласие не запрашиваем.
-  501 |   readerConsent: () => jget<ConsentState>("/api/reader/consent"),
-  502 |   // Дать / отозвать согласие на обработку ПДн. → {ok}. 404/501/401 → degrade.
-  503 |   setReaderConsent: (given: boolean) => jpost<{ ok: boolean }>("/api/reader/consent", { given }),
-  504 |   // Право на забвение: удалить читательские данные (отзывы/брони/полки/история/
-  505 |   // запросы). confirm:true — обязательное подтверждение. Каталог библиотеки не
-  506 |   // трогается. → {erased:{…счётчики}}. 404/501/401 → degrade.
-  507 |   eraseReaderData: () => jpost<{ erased: ErasureResult }>("/api/reader/erase", { confirm: true }),
-  508 |   // Журнал доступа к ПДн (последние limit записей) — для админ-деска. 404/501 → информер.
-  509 |   pdnAccess: (limit = 50) => jget<{ items: PdnAccessEntry[] }>("/api/admin/pdn-access?" + qs({ limit })),
-  510 | 
-  511 |   // --- Миграция данных из ИРБИС64 (#225; epic #223) ------------------------
-  512 |   // Изучить источник (сетевой сервер ИРБИС64 / локальный каталог данных):
-  513 |   // обнаружить базы, число записей и состав полей (с пометкой «допполе» для
-  514 |   // кастомных). dbs — опц. сужение перечня изучаемых баз. 404/501 → degrade.
-  515 |   migrateInspect: (mode: MigrateMode, source: MigrateSource, dbs?: string[]) =>
-  516 |     jpost<MigrateInspect>("/api/admin/migrate/inspect", { mode, source, dbs }),
-  517 |   // Запустить миграцию выбранных баз в арендатора. dryRun:true — пробный прогон
-  518 |   // (ничего не записывается). → отчёт {records_read, records_loaded,
-  519 |   // readers_loaded, skipped, errors} (+ опц. jobId фоновой задачи). 404/501 → degrade.
-  520 |   migrateRun: (params: { mode: MigrateMode; source: MigrateSource; tenant: string; dbs: string[]; dryRun: boolean }) =>
-  521 |     jpost<MigrateRunResult>("/api/admin/migrate/run", params),
-  522 |   // Статус фоновой задачи миграции по её jobId (если run вернул jobId).
-  523 |   migrateStatus: (jobId: string) =>
-  524 |     jget<MigrateStatus>("/api/admin/migrate/status?" + qs({ jobId })),
-  525 | };
-  526 | 
-  527 | export const LANG: Record<string, string> = {
-  528 |   rus: "русский", eng: "английский", fre: "французский", ger: "немецкий",
-  529 |   ita: "итальянский", spa: "испанский", lat: "латинский", ukr: "украинский",
-  530 | };
+  422 |     jpost<AcqOrder>("/api/acq/order", o),
+  423 |   // Отменить заказ (до поступления).
+  424 |   acqCancelOrder: (id: string | number) => jpost<AcqOrder>("/api/acq/order/cancel", { id }),
+  425 |   // Оформить поступление по заказу → запись КСУ + ToCat (создание/правка
+  426 |   // каталожной записи). Возвращает номер КСУ и MFN созданной/обновлённой записи.
+  427 |   acqReceive: (r: { orderId: string | number; ksuNo?: string; copies: number; unitPrice?: number; invNumbers?: string[]; actRef?: string }) =>
+  428 |     jpost<AcqReceiveResult>("/api/acq/receive", r),
+  429 |   // Получить заказ по идентификатору (для обновления карточки / списка).
+  430 |   acqGetOrder: (id: string | number) => jget<{ items?: AcqOrder[]; order?: AcqOrder }>("/api/acq/order?" + qs({ id })),
+  431 |   // Лента/список заказов (без id). 404 → degrade.
+  432 |   acqOrders: () => jget<{ items: AcqOrder[] }>("/api/acq/order"),
+  433 |   // Найти запись КСУ по номеру.
+  434 |   acqKsu: (no: string) => jget<{ entry?: KsuEntry; items?: KsuEntry[] }>("/api/acq/ksu?" + qs({ no })),
+  435 | 
+  436 |   // --- Книгообеспеченность (#186) -----------------------------------------
+  437 |   // Создать факультет связки.
+  438 |   bpFaculty: (f: { code: string; name: string }) => jpost<BpFaculty>("/api/bp/faculty", f),
+  439 |   // Создать специальность под факультетом.
+  440 |   bpSpecialty: (s: { facultyId: string | number; napr?: string; spec?: string; vid?: string; form?: string; name: string }) =>
+  441 |     jpost<BpSpecialty>("/api/bp/specialty", s),
+  442 |   // Создать дисциплину под специальностью (семестр, число студентов).
+  443 |   bpDiscipline: (d: { specialtyId: string | number; discId?: string; name: string; semester?: number; students?: number }) =>
+  444 |     jpost<BpDiscipline>("/api/bp/discipline", d),
+  445 |   // Задать контингент (число студентов) дисциплины — пересчитывает Кко.
+  446 |   bpContingent: (c: { discId: string | number; students: number }) =>
+  447 |     jpost<BpDiscipline>("/api/bp/contingent", c),
+  448 |   // Привязать литературу (осн./доп.) к дисциплине.
+  449 |   bpBind: (b: { disciplineId: string | number; title: string; kind: "main" | "extra"; copies: number }) =>
+  450 |     jpost<BpBinding>("/api/bp/bind", b),
+  451 |   // Карточка дисциплины с расчётом Кко. normalize — применить нормализацию
+  452 |   // (учёт многоразового использования/семестровой нагрузки) при расчёте.
+  453 |   bpDisciplineCard: (id: string | number, normalize = false) =>
+  454 |     jget<BpDisciplineCard>("/api/bp/discipline?" + qs({ id, normalize: normalize ? 1 : 0 })),
+  455 |   // Карточка специальности: дисциплины с Кко + сводный Кко.
+  456 |   bpSpecialtyCard: (id: string | number, normalize = false) =>
+  457 |     jget<BpSpecialtyCard>("/api/bp/specialty?" + qs({ id, normalize: normalize ? 1 : 0 })),
+  458 | 
+  459 |   // --- Администрирование (#187) -------------------------------------------
+  460 |   // Список учётных записей сотрудников.
+  461 |   adminUsers: () => jget<{ items: AdminUser[] }>("/api/admin/users"),
+  462 |   // Создать учётную запись (логин, ФИО, пароль, опц. роли).
+  463 |   adminCreateUser: (u: { login: string; fullName: string; password: string; roles?: string[] }) =>
+  464 |     jpost<AdminUser>("/api/admin/users", u),
+  465 |   // Назначить набор ролей пользователю.
+  466 |   adminSetRoles: (userId: string | number, roles: string[]) =>
+  467 |     jpost<AdminUser>("/api/admin/users/roles", { userId, roles }),
+  468 |   // Включить / отключить учётную запись.
+  469 |   adminSetActive: (userId: string | number, active: boolean) =>
+  470 |     jpost<AdminUser>("/api/admin/users/active", { userId, active }),
+  471 |   // Справочник ролей.
+  472 |   adminRoles: () => jget<{ items: AdminRole[] }>("/api/admin/roles"),
+  473 |   // Журнал аудита (последние limit записей).
+  474 |   adminAudit: (limit = 50) => jget<{ items: AuditEntry[] }>("/api/admin/audit?" + qs({ limit })),
+  475 |   // Список баз данных контура (код / имя / публичность).
+  476 |   adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
+```
+
+<!-- ─── страница 621 ─── -->
+
+```ts
+  477 | 
+  478 |   // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) -------
+  479 |   // Список арендаторов контура. 404/501 → degrade (информер).
+  480 |   adminTenants: () => jget<{ tenants: Tenant[] }>("/api/admin/tenants"),
+  481 |   // Создать (провизионировать) арендатора: слаг, наименование, логин админа,
+  482 |   // тариф. → отчёт о провизионировании {slug,name,plan,modules,admin,postgres}.
+  483 |   // 404/501/403 → degrade.
+  484 |   adminCreateTenant: (t: { slug: string; name: string; adminLogin: string; plan: string }) =>
+  485 |     jpost<{ slug: string; name: string; plan: string; modules: string[];
+  486 |             admin: { id: number | string; login: string }; postgres: boolean }>(
+  487 |       "/api/admin/tenant", t),
+  488 |   // Тариф, лимиты, потребление, модули и каталог тарифов выбранного арендатора.
+  489 |   adminBilling: (tenant: string) => jget<BillingInfo>("/api/admin/billing?" + qs({ tenant })),
+  490 |   // Сменить тариф арендатора → {tenant,plan,modules,limits,applied}. После смены
+  491 |   // плана клиент перечитывает биллинг, чтобы обновить usage/plans.
+  492 |   adminSetPlan: (tenant: string, plan: string) =>
+  493 |     jpost<{ tenant: string; plan: string; modules: string[]; limits: PlanLimits; applied: boolean }>(
+  494 |       "/api/admin/billing/plan", { tenant, plan }),
+  495 |   // Включить / отключить функциональный модуль арендатора →
+  496 |   // {tenant,module,enabled,applied,modules} (modules — обновлённый список включённых).
+  497 |   adminSetModule: (tenant: string, module: string, enabled: boolean) =>
+  498 |     jpost<{ tenant: string; module: string; enabled: boolean; applied: boolean; modules: string[] }>(
+  499 |       "/api/admin/billing/module", { tenant, module, enabled }),
+  500 | 
+  501 |   // --- Соответствие 152-ФЗ (#199; MVP фаза 3) ------------------------------
+  502 |   // Текущее согласие читателя на обработку ПДн. 404/501 → согласие не запрашиваем.
+  503 |   readerConsent: () => jget<ConsentState>("/api/reader/consent"),
+  504 |   // Дать / отозвать согласие на обработку ПДн. → {ok}. 404/501/401 → degrade.
+  505 |   setReaderConsent: (given: boolean) => jpost<{ ok: boolean }>("/api/reader/consent", { given }),
+  506 |   // Право на забвение: удалить читательские данные (отзывы/брони/полки/история/
+  507 |   // запросы). confirm:true — обязательное подтверждение. Каталог библиотеки не
+  508 |   // трогается. → {erased:{…счётчики}}. 404/501/401 → degrade.
+  509 |   eraseReaderData: () => jpost<{ erased: ErasureResult }>("/api/reader/erase", { confirm: true }),
+  510 |   // Журнал доступа к ПДн (последние limit записей) — для админ-деска. 404/501 → информер.
+  511 |   pdnAccess: (limit = 50) => jget<{ items: PdnAccessEntry[] }>("/api/admin/pdn-access?" + qs({ limit })),
+  512 | 
+  513 |   // --- Миграция данных из ИРБИС64 (#225; epic #223) ------------------------
+  514 |   // Изучить источник (сетевой сервер ИРБИС64 / локальный каталог данных):
+  515 |   // обнаружить базы, число записей и состав полей (с пометкой «допполе» для
+  516 |   // кастомных). dbs — опц. сужение перечня изучаемых баз. 404/501 → degrade.
+  517 |   migrateInspect: (mode: MigrateMode, source: MigrateSource, dbs?: string[]) =>
+  518 |     jpost<MigrateInspect>("/api/admin/migrate/inspect", { mode, source, dbs }),
+  519 |   // Запустить миграцию выбранных баз в арендатора. dryRun:true — пробный прогон
+  520 |   // (ничего не записывается). → отчёт {records_read, records_loaded,
+  521 |   // readers_loaded, skipped, errors} (+ опц. jobId фоновой задачи). 404/501 → degrade.
+  522 |   migrateRun: (params: { mode: MigrateMode; source: MigrateSource; tenant: string; dbs: string[]; dryRun: boolean }) =>
+  523 |     jpost<MigrateRunResult>("/api/admin/migrate/run", params),
+  524 |   // Статус фоновой задачи миграции по её jobId (если run вернул jobId).
+  525 |   migrateStatus: (jobId: string) =>
+  526 |     jget<MigrateStatus>("/api/admin/migrate/status?" + qs({ jobId })),
+  527 | };
+  528 | 
+  529 | export const LANG: Record<string, string> = {
+  530 |   rus: "русский", eng: "английский", fre: "французский", ger: "немецкий",
+  531 |   ita: "итальянский", spa: "испанский", lat: "латинский", ukr: "украинский",
+```
+
+<!-- ─── страница 622 ─── -->
+
+```ts
+  532 | };
 ```
 
 ### Файл: `irbis-web/frontend/src/biblio-bridge.css`  · строк: 104
@@ -37760,11 +37848,6 @@
    20 |    Biblio token names. No hard-coded palette here.
    21 | 
    22 |    Theming axes preserved:
-```
-
-<!-- ─── страница 621 ─── -->
-
-```css
    23 |      • STYLE A is the default skin → :root plus the app's default skins
    24 |        [data-theme="theatrical"] / [data-theme="working"] (header «Рабочая» /
    25 |        «Театр» buttons) so both render Style A.
@@ -37797,6 +37880,11 @@
    52 |   /* Borders */
    53 |   --border-subtle:  var(--border);
    54 |   --border-default: var(--border-strong);
+```
+
+<!-- ─── страница 623 ─── -->
+
+```css
    55 | 
    56 |   /* Accent — app aliases mapped onto Biblio accent / tint tokens */
    57 |   --accent-press:       var(--accent-hover);
@@ -37820,11 +37908,6 @@
    75 |   --status-unknown:        var(--text-subtle);
    76 |   --status-unknown-strong: var(--text-subtle);
    77 |   --status-unknown-bg:     var(--surface-2);
-```
-
-<!-- ─── страница 622 ─── -->
-
-```css
    78 |   --status-unknown-border: var(--border);
    79 | 
    80 |   /* Feedback semantics */
@@ -37862,6 +37945,11 @@
     3 | // Field mapping (ИРБИС/UNIMARC-подобный формат записи):
     4 | //   200 a/e/f — заглавие; 700/701 — авторы; 210 a/c/d — место/издательство/год;
     5 | //   215 — объём; 10 a — ISBN; 101 a — язык; 675 a — УДК.
+```
+
+<!-- ─── страница 624 ─── -->
+
+```ts
     6 | import type { RecordData, FieldVal, ResultItem } from "./api";
     7 | import { LANG } from "./api";
     8 | 
@@ -37885,11 +37973,6 @@
    26 | 
    27 | function authorName(f: FieldVal): string {
    28 |   const a = sf(f, "A");
-```
-
-<!-- ─── страница 623 ─── -->
-
-```ts
    29 |   const g = sf(f, "G") || sf(f, "B");
    30 |   if (!a) return "";
    31 |   return g ? a + ", " + g : a;
@@ -37922,6 +38005,11 @@
    58 | // RIS AU expects «Last, First».
    59 | const yearDigits = (y: string) => (y.match(/\d{4}/) || [""])[0] || y;
    60 | 
+```
+
+<!-- ─── страница 625 ─── -->
+
+```ts
    61 | export function toRIS(c: CiteFields): string {
    62 |   const L: string[] = [];
    63 |   L.push("TY  - BOOK");
@@ -37945,11 +38033,6 @@
    81 | 
    82 | export function toBibTeX(c: CiteFields): string {
    83 |   const fields: [string, string][] = [];
-```
-
-<!-- ─── страница 624 ─── -->
-
-```ts
    84 |   if (c.authors.length) fields.push(["author", c.authors.join(" and ")]);
    85 |   if (c.title) fields.push(["title", c.title]);
    86 |   if (c.publisher) fields.push(["publisher", c.publisher]);
@@ -37982,6 +38065,11 @@
   113 |   if (c.udc) parts.push("— УДК " + c.udc + ".");
   114 |   // join: «Заголовок Заглавие. — Место…»
   115 |   return parts.join(" ").replace(/\.\s*—/g, ". —").trim() + "\n";
+```
+
+<!-- ─── страница 626 ─── -->
+
+```ts
   116 | }
   117 | 
   118 | // Краткая строка для корзины / письма.
@@ -38005,11 +38093,6 @@
   136 |   const blob = new Blob([data], { type: MIME[ext] || "text/plain;charset=utf-8" });
   137 |   const url = URL.createObjectURL(blob);
   138 |   const a = document.createElement("a");
-```
-
-<!-- ─── страница 625 ─── -->
-
-```ts
   139 |   a.href = url;
   140 |   a.download = filename;
   141 |   document.body.appendChild(a);
@@ -38042,6 +38125,11 @@
   168 | }
   169 | 
   170 | export function exportBasket(items: ResultItem[], fmt: "ris" | "bib" | "txt"): void {
+```
+
+<!-- ─── страница 627 ─── -->
+
+```ts
   171 |   const cites = items.map(citeFromItem);
   172 |   if (fmt === "ris") {
   173 |     downloadText("basket.ris", cites.map(toRIS).join("\r\n"), "ris");
@@ -38070,11 +38158,6 @@
     3 | import "../styles.css";               // design tokens + base (CSS variables)
     4 | import "./biblio-bridge.css";         // Biblio Style A skin: maps app aliases → Biblio tokens
     5 | import { App } from "./App";
-```
-
-<!-- ─── страница 626 ─── -->
-
-```tsx
     6 | 
     7 | createRoot(document.getElementById("root")!).render(
     8 |   <React.StrictMode>
@@ -38112,6 +38195,11 @@
    24 |   line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
    25 | .irb-arch__meta{font-size:var(--text-xs);color:var(--text-subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
    26 | .irb-arch__aside{flex:none;display:flex;align-items:center;gap:10px;}
+```
+
+<!-- ─── страница 628 ─── -->
+
+```tsx
    27 | .irb-arch__check{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;flex:none;
    28 |   border-radius:var(--radius-sm,7px);border:1px solid var(--border-strong,#cdd3da);background:var(--surface-card,#fff);
    29 |   color:var(--text-body);cursor:pointer;}
@@ -38135,11 +38223,6 @@
    47 | }) {
    48 |   return (
    49 |     <div className="irb-arch" role="list">
-```
-
-<!-- ─── страница 627 ─── -->
-
-```tsx
    50 |       {items.map((it, i) => {
    51 |         const on = inBasket(it.mfn);
    52 |         return (
@@ -38172,6 +38255,11 @@
    79 |       })}
    80 |     </div>
    81 |   );
+```
+
+<!-- ─── страница 629 ─── -->
+
+```tsx
    82 | }
 ```
 
@@ -38200,11 +38288,6 @@
    20 | .irb-cal__card{display:flex;flex-direction:column;gap:7px;background:var(--surface-card);
    21 |   border:1px solid var(--border-subtle);border-radius:var(--radius-lg,13px);padding:13px 14px;text-align:left;
    22 |   cursor:pointer;font-family:inherit;transition:border-color var(--dur,.18s) var(--ease-standard,ease),box-shadow var(--dur,.18s) var(--ease-standard,ease);}
-```
-
-<!-- ─── страница 628 ─── -->
-
-```tsx
    23 | .irb-cal__card:hover{border-color:var(--border-strong,#cdd3da);box-shadow:var(--shadow-sm);}
    24 | .irb-cal__card:focus-visible{outline:2px solid var(--focus-ring-color,var(--accent));outline-offset:2px;}
    25 | .irb-cal__title{font-family:var(--font-record-title,var(--font-display,inherit));font-size:var(--text-base,15.5px);
@@ -38237,6 +38320,11 @@
    52 |   onToggleBasket: (it: ResultItem) => void;
    53 |   onOpen: (mfn: number) => void;
    54 | }) {
+```
+
+<!-- ─── страница 630 ─── -->
+
+```tsx
    55 |   // Группируем по году, сохраняя порядок появления групп (новые/известные сначала).
    56 |   const groups = React.useMemo(() => {
    57 |     const map = new Map<string, ResultItem[]>();
@@ -38260,11 +38348,6 @@
    75 |       {groups.map(([year, list]) => (
    76 |         <section key={year} className="irb-cal__group" aria-label={"Год: " + year}>
    77 |           <div className="irb-cal__year">
-```
-
-<!-- ─── страница 629 ─── -->
-
-```tsx
    78 |             <Icon name="calendar" size={17} style={{ color: "var(--accent)" }} />
    79 |             {year}
    80 |             <span className="irb-cal__year-badge">{list.length}</span>
@@ -38297,6 +38380,11 @@
   107 |           </div>
   108 |         </section>
   109 |       ))}
+```
+
+<!-- ─── страница 631 ─── -->
+
+```tsx
   110 |     </div>
   111 |   );
   112 | }
@@ -38325,11 +38413,6 @@
    18 | import type { ConsentState, ErasureResult } from "../api";
    19 | import type { ToastVariant } from "../../components/feedback/Toast.jsx";
    20 | import { Button } from "../../components/forms/Button.jsx";
-```
-
-<!-- ─── страница 630 ─── -->
-
-```tsx
    21 | import { Icon } from "../../components/icon/Icon.jsx";
    22 | 
    23 | type Toast = (t: { variant: ToastVariant; title: string; message?: string }) => void;
@@ -38362,6 +38445,11 @@
    50 | .irb-erase__li{display:flex;align-items:center;gap:9px;font-size:var(--text-sm);color:var(--text-body);}
    51 | .irb-erase__li i{flex:none;display:flex;color:var(--error,var(--danger-500));}
    52 | .irb-erase__note{font-size:var(--text-xs);color:var(--text-subtle);line-height:1.55;
+```
+
+<!-- ─── страница 632 ─── -->
+
+```tsx
    53 |   background:var(--surface-sunken,#f5f4ee);border-radius:10px;padding:10px 12px;margin-top:12px;
    54 |   display:flex;gap:8px;align-items:flex-start;}
    55 | .irb-erase__counts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
@@ -38385,11 +38473,6 @@
    73 |   { key: "history", label: "История просмотров" },
    74 |   { key: "savedSearches", label: "Сохранённые запросы" },
    75 | ];
-```
-
-<!-- ─── страница 631 ─── -->
-
-```tsx
    76 | 
    77 | // Общий хук состояния согласия. unavailable=true → эндпойнт согласия не развёрнут.
    78 | function useConsent() {
@@ -38422,6 +38505,11 @@
   105 |       toast({ variant: "success", title: "Согласие сохранено", message: "Спасибо! Изменить решение можно в кабинете." });
   106 |     } else if (r.status === 404 || r.status === 501) {
   107 |       setDismissed(true);
+```
+
+<!-- ─── страница 633 ─── -->
+
+```tsx
   108 |       toast({ variant: "info", title: "Согласие недоступно", message: "Модуль обработки согласий ещё подключается." });
   109 |     } else {
   110 |       toast({ variant: "error", title: "Не удалось сохранить", message: "Повторите попытку позже." });
@@ -38445,11 +38533,6 @@
   128 |         </div>
   129 |         <div className="irb-consent-banner__actions">
   130 |           <Button variant="ghost" size="sm" onClick={() => setDismissed(true)}>Позже</Button>
-```
-
-<!-- ─── страница 632 ─── -->
-
-```tsx
   131 |           <Button size="sm" iconLeft="check" loading={busy} onClick={accept}>Принять</Button>
   132 |         </div>
   133 |       </div>
@@ -38482,6 +38565,11 @@
   160 |   if (unavailable) return null;
   161 |   const given = !!state?.given;
   162 | 
+```
+
+<!-- ─── страница 634 ─── -->
+
+```tsx
   163 |   return (
   164 |     <div style={{ ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: 18 }}>
   165 |       <div className="irb-consent-toggle">
@@ -38505,11 +38593,6 @@
   183 |           : <Button size="sm" iconLeft="check" loading={busy} onClick={() => set(true)} disabled={state === null}>Дать согласие</Button>}
   184 |       </div>
   185 |     </div>
-```
-
-<!-- ─── страница 633 ─── -->
-
-```tsx
   186 |   );
   187 | }
   188 | 
@@ -38542,6 +38625,11 @@
   215 |     }
   216 |   }
   217 | 
+```
+
+<!-- ─── страница 635 ─── -->
+
+```tsx
   218 |   return (
   219 |     <div style={{ ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: 18, borderColor: "var(--danger-200,var(--border-subtle))" }}>
   220 |       <div style={{ display: "flex", alignItems: "flex-start", gap: 13 }}>
@@ -38565,11 +38653,6 @@
   238 |             </span>
   239 |           ))}
   240 |         </div>
-```
-
-<!-- ─── страница 634 ─── -->
-
-```tsx
   241 |       ) : (
   242 |         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
   243 |           <Button variant="ghost" size="sm" iconLeft="trash" onClick={() => setConfirmOpen(true)}>Удалить мои данные</Button>
@@ -38602,6 +38685,11 @@
   270 |               <Button variant="danger" iconLeft="trash" loading={busy} onClick={erase}>Удалить безвозвратно</Button>
   271 |             </div>
   272 |           </div>
+```
+
+<!-- ─── страница 636 ─── -->
+
+```tsx
   273 |         </div>
   274 |       )}
   275 |     </div>
@@ -38630,11 +38718,6 @@
     7 | // Грациозная деградация: если у картинки не грузится src (onError) — показываем
     8 | // заглушку «страница недоступна», окно не падает. Клавиатура: ←/→ листают,
     9 | // +/− зумируют, Esc закрывает.
-```
-
-<!-- ─── страница 635 ─── -->
-
-```tsx
    10 | import React from "react";
    11 | import { Icon } from "../../components/icon/Icon.jsx";
    12 | 
@@ -38667,6 +38750,11 @@
    39 |   color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:9px;padding:7px 11px;cursor:pointer;
    40 |   font-size:var(--text-sm);font-family:var(--font-ui,inherit);}
    41 | .irb-doc__btn:hover:not(:disabled){background:rgba(255,255,255,.22);}
+```
+
+<!-- ─── страница 637 ─── -->
+
+```tsx
    42 | .irb-doc__btn:disabled{opacity:.4;cursor:not-allowed;}
    43 | .irb-doc__btn--icon{padding:7px 9px;}
    44 | .irb-doc__stage{flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center;padding:20px;}
@@ -38690,11 +38778,6 @@
    62 | .irb-doc__thumb--on{background:var(--accent);border-color:var(--accent);}
    63 | `;
    64 | if (typeof document !== "undefined" && !document.getElementById("irb-doc-css")) {
-```
-
-<!-- ─── страница 636 ─── -->
-
-```tsx
    65 |   const s = document.createElement("style"); s.id = "irb-doc-css"; s.textContent = CSS; document.head.appendChild(s);
    66 | }
    67 | 
@@ -38727,6 +38810,11 @@
    94 |       else if (e.key === "ArrowRight") go(idx + 1);
    95 |       else if (e.key === "ArrowLeft") go(idx - 1);
    96 |       else if (e.key === "+" || e.key === "=") setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)));
+```
+
+<!-- ─── страница 638 ─── -->
+
+```tsx
    97 |       else if (e.key === "-" || e.key === "_") setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)));
    98 |     };
    99 |     document.addEventListener("keydown", onKey);
@@ -38750,11 +38838,6 @@
   117 |             </button>
   118 |             <span className="irb-doc__count" style={{ minWidth: 44, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
   119 |             <button type="button" className="irb-doc__btn irb-doc__btn--icon" onClick={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))} disabled={zoom >= 4} aria-label="Увеличить" title="Увеличить (+)">
-```
-
-<!-- ─── страница 637 ─── -->
-
-```tsx
   120 |               <Icon name="plus" size={16} />
   121 |             </button>
   122 |             <button type="button" className="irb-doc__btn irb-doc__btn--icon" onClick={() => setZoom(1)} disabled={zoom === 1} aria-label="Сбросить масштаб" title="Сбросить масштаб">
@@ -38787,6 +38870,11 @@
   149 |         ) : (
   150 |           <div className="irb-doc__file">
   151 |             <span className="irb-doc__file-ic" aria-hidden="true">
+```
+
+<!-- ─── страница 639 ─── -->
+
+```tsx
   152 |               <Icon name={imgError ? "image" : "file-text"} size={40} />
   153 |             </span>
   154 |             <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-lg)" }}>
@@ -38810,11 +38898,6 @@
   172 |             <Icon name="chevron-right" size={22} />
   173 |           </button>
   174 |         )}
-```
-
-<!-- ─── страница 638 ─── -->
-
-```tsx
   175 |       </div>
   176 | 
   177 |       {/* Лента-нумератор страниц */}
@@ -38852,6 +38935,11 @@
    13 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
    14 | ];
    15 | 
+```
+
+<!-- ─── страница 640 ─── -->
+
+```tsx
    16 | const CSS = `
    17 | .irb-gal{display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
    18 | .irb-gcard{position:relative;display:flex;flex-direction:column;gap:9px;background:none;border:none;padding:0;text-align:left;font-family:inherit;}
@@ -38875,11 +38963,6 @@
    36 | .irb-gcard__meta{min-width:0;}
    37 | .irb-gcard__title{font-family:var(--font-record-title,var(--font-display,inherit));font-size:var(--text-base,15.5px);
    38 |   font-weight:var(--weight-semibold,600);color:var(--text-strong);line-height:1.25;cursor:pointer;
-```
-
-<!-- ─── страница 639 ─── -->
-
-```tsx
    39 |   background:none;border:none;padding:0;text-align:left;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
    40 | .irb-gcard__title:hover{color:var(--accent-hover);text-decoration:underline;text-underline-offset:3px;}
    41 | .irb-gcard__by{font-size:var(--text-xs);color:var(--text-subtle);margin-top:3px;
@@ -38912,6 +38995,11 @@
    68 |       {items.map((it, i) => {
    69 |         const on = inBasket(it.mfn);
    70 |         const tint = "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.42))";
+```
+
+<!-- ─── страница 641 ─── -->
+
+```tsx
    71 |         return (
    72 |           <article key={it.mfn} role="listitem" className="irb-gcard">
    73 |             <span
@@ -38935,11 +39023,6 @@
    91 |                 <StatusBadge status={it.availability || "unknown"} size="sm" />
    92 |               </span>
    93 |             </span>
-```
-
-<!-- ─── страница 640 ─── -->
-
-```tsx
    94 |             <span className="irb-gcard__meta">
    95 |               <button type="button" className="irb-gcard__title" onClick={() => onOpen(it.mfn)}>{it.title || "Без заглавия"}</button>
    96 |               {(it.author || it.year) && <span className="irb-gcard__by">{[it.author, it.year].filter(Boolean).join(" · ")}</span>}
@@ -38977,6 +39060,11 @@
    10 | 
    11 | const COVER_TINTS = [
    12 |   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
+```
+
+<!-- ─── страница 642 ─── -->
+
+```tsx
    13 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
    14 | ];
    15 | 
@@ -39000,11 +39088,6 @@
    33 |   standalone?: boolean;
    34 | }) {
    35 |   const [items, setItems] = React.useState<HistoryItem[] | null>(null);
-```
-
-<!-- ─── страница 641 ─── -->
-
-```tsx
    36 |   const [unavailable, setUnavailable] = React.useState(false);
    37 | 
    38 |   const load = React.useCallback(async () => {
@@ -39037,6 +39120,11 @@
    65 |   return (
    66 |     <section aria-labelledby="cab-history">
    67 |       <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+```
+
+<!-- ─── страница 643 ─── -->
+
+```tsx
    68 |         <h2 id="cab-history" style={h2Sx}>История просмотров</h2>
    69 |         {items && items.length > 0 && (
    70 |           <span style={{ fontSize: "var(--text-sm)", color: "var(--text-subtle)" }}>· {items.length}</span>
@@ -39060,11 +39148,6 @@
    88 |               <div style={{ flex: 1, minWidth: 0 }}>
    89 |                 <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-base,15.5px)", lineHeight: 1.25, color: "var(--text-strong)", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{it.title || "Издание · " + it.db + "/" + it.mfn}</div>
    90 |                 <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
-```
-
-<!-- ─── страница 642 ─── -->
-
-```tsx
    91 |                   <span style={{ fontFamily: "var(--font-mono)" }}>{it.db} · {it.mfn}</span>
    92 |                   {it.ts && <span>просмотрено {fmtTs(it.ts)}</span>}
    93 |                 </div>
@@ -39102,6 +39185,11 @@
    18 | 
    19 | function readyChip(): React.CSSProperties {
    20 |   return { display: "inline-flex", alignItems: "center", gap: 6, background: "var(--status-available-bg,#E4F0E8)", color: "var(--status-available-strong,#2E7D52)", borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
+```
+
+<!-- ─── страница 644 ─── -->
+
+```tsx
    21 | }
    22 | function queueChip(): React.CSSProperties {
    23 |   return { display: "inline-flex", alignItems: "center", gap: 6, background: "var(--status-hold-bg,#E3ECF8)", color: "var(--status-hold,#2F6DB5)", borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
@@ -39125,11 +39213,6 @@
    41 | }) {
    42 |   const [holds, setHolds] = React.useState<Hold[] | null>(null);
    43 |   const [unavailable, setUnavailable] = React.useState(false);
-```
-
-<!-- ─── страница 643 ─── -->
-
-```tsx
    44 |   const [busy, setBusy] = React.useState<string | null>(null);
    45 | 
    46 |   const load = React.useCallback(async () => {
@@ -39162,6 +39245,11 @@
    73 | 
    74 |   return (
    75 |     <section aria-labelledby="cab-holds">
+```
+
+<!-- ─── страница 645 ─── -->
+
+```tsx
    76 |       <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
    77 |         <h2 id="cab-holds" style={h2Sx}>Очередь брони</h2>
    78 |         {holds && holds.length > 0 && (
@@ -39185,11 +39273,6 @@
    96 |                 <div style={{ display: "flex", gap: 13, alignItems: "flex-start" }}>
    97 |                   <span aria-hidden="true" style={{ width: 38, height: 52, flex: "none", borderRadius: 6, background: "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.35))", boxShadow: "var(--shadow-md)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 4 }}>
    98 |                     <Icon name="book" size={12} style={{ color: "rgba(255,255,255,.85)" }} />
-```
-
-<!-- ─── страница 644 ─── -->
-
-```tsx
    99 |                   </span>
   100 |                   <div style={{ minWidth: 0, flex: 1 }}>
   101 |                     <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-sm,15px)", lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{h.title || "Издание"}</div>
@@ -39227,6 +39310,11 @@
     7 | // onSearch(prefix, query) / onPickDb(code) / onOpen(mfn, db). Стиль — Biblio-токены.
     8 | import React from "react";
     9 | import type { DbItem } from "../api";
+```
+
+<!-- ─── страница 646 ─── -->
+
+```tsx
    10 | import { api } from "../api";
    11 | import type { Term } from "../api";
    12 | import { Icon } from "../../components/icon/Icon.jsx";
@@ -39250,11 +39338,6 @@
    30 |   text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.16);padding:5px 12px;border-radius:var(--radius-pill,999px);}
    31 | .irb-hero__title{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-bold,700);
    32 |   font-size:clamp(1.3rem,2.6vw,1.9rem);line-height:1.1;letter-spacing:-.02em;margin:8px 0 5px;}
-```
-
-<!-- ─── страница 645 ─── -->
-
-```tsx
    33 | .irb-hero__lead{font-size:var(--text-sm,.95rem);opacity:.92;margin:0 0 14px;line-height:1.4;}
    34 | .irb-hero__search{background:var(--surface-card);border-radius:var(--radius-xl,16px);padding:10px;
    35 |   box-shadow:var(--shadow-lg);display:flex;gap:8px;align-items:stretch;text-align:left;}
@@ -39287,6 +39370,11 @@
    62 | 
    63 | const DB_ICONS: Record<string, string> = { IBIS: "book", IMAGE: "images", PERIO: "newspaper", ARCH: "archive" };
    64 | 
+```
+
+<!-- ─── страница 647 ─── -->
+
+```tsx
    65 | export function HomeScreen({
    66 |   databases, db, onPickDb, onSearch, onOpen,
    67 | }: {
@@ -39310,11 +39398,6 @@
    85 |       const terms: Term[] = r.json?.ok && r.json.data ? (r.json.data.terms || []) : [];
    86 |       const live = terms
    87 |         .map((t) => (t.term || "").replace(/^[A-ZА-Я]=/, "").trim())
-```
-
-<!-- ─── страница 646 ─── -->
-
-```tsx
    88 |         .filter((s) => s.length >= 3 && s.length <= 28);
    89 |       if (live.length >= 3) setExamples(Array.from(new Set(live)).slice(0, 6));
    90 |       else setExamples(SEED_EXAMPLES);
@@ -39347,6 +39430,11 @@
   117 |               <select
   118 |                 aria-label="Область поиска" value={prefix} onChange={(e) => setPrefix(e.target.value)}
   119 |                 style={{ width: "100%", height: "100%", boxSizing: "border-box", padding: "0 12px", borderRadius: "var(--radius-md,8px)", border: "1px solid var(--border-strong,#cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", fontFamily: "var(--font-ui,inherit)", fontSize: "var(--text-sm)" }}
+```
+
+<!-- ─── страница 648 ─── -->
+
+```tsx
   120 |               >
   121 |                 {PREFIX_OPTS.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
   122 |               </select>
@@ -39370,11 +39458,6 @@
   140 |       </section>
   141 | 
   142 |       {/* ===== Богатый селектор баз (G17) ===== */}
-```
-
-<!-- ─── страница 647 ─── -->
-
-```tsx
   143 |       {selectorDbs.length > 1 && (
   144 |         <div className="irb-home__pick">
   145 |           <div className="irb-home__picklabel">Где искать</div>
@@ -39412,6 +39495,11 @@
     8 | import type { Notification } from "../api";
     9 | import { Icon } from "../../components/icon/Icon.jsx";
    10 | 
+```
+
+<!-- ─── страница 649 ─── -->
+
+```tsx
    11 | const CSS = `
    12 | .irb-nbell{position:relative;display:inline-flex;}
    13 | .irb-nbell__btn{position:relative;display:inline-flex;align-items:center;justify-content:center;
@@ -39435,11 +39523,6 @@
    31 | .irb-npanel__list{flex:1;overflow-y:auto;}
    32 | .irb-nitem{display:flex;gap:10px;align-items:flex-start;padding:12px 15px;border-top:1px solid var(--border-subtle);
    33 |   cursor:default;}
-```
-
-<!-- ─── страница 648 ─── -->
-
-```tsx
    34 | .irb-nitem:first-child{border-top:none;}
    35 | .irb-nitem--unread{background:var(--accent-weak,#eef2f7);}
    36 | .irb-nitem__dot{flex:none;width:8px;height:8px;border-radius:999px;margin-top:6px;background:transparent;}
@@ -39472,6 +39555,11 @@
    63 |   const hr = Math.floor(min / 60);
    64 |   if (hr < 24) return hr + " " + plural(hr, "час", "часа", "часов") + " назад";
    65 |   const day = Math.floor(hr / 24);
+```
+
+<!-- ─── страница 650 ─── -->
+
+```tsx
    66 |   if (day < 30) return day + " " + plural(day, "день", "дня", "дней") + " назад";
    67 |   return d.toLocaleDateString("ru-RU");
    68 | }
@@ -39495,11 +39583,6 @@
    86 |       setItems(r.json.data.items);
    87 |       setUnread(typeof r.json.data.unread === "number" ? r.json.data.unread : r.json.data.items.filter((n) => !n.read).length);
    88 |       setUnavailable(false);
-```
-
-<!-- ─── страница 649 ─── -->
-
-```tsx
    89 |     } else {
    90 |       // 404/501/сеть — модуль уведомлений ещё не подключён: тихо деградируем.
    91 |       setItems([]); setUnread(0); setUnavailable(true);
@@ -39532,6 +39615,11 @@
   118 | 
   119 |   function toggle() {
   120 |     const next = !open;
+```
+
+<!-- ─── страница 651 ─── -->
+
+```tsx
   121 |     setOpen(next);
   122 |     if (next) fetchAll();
   123 |   }
@@ -39555,11 +39643,6 @@
   141 |       <button
   142 |         type="button" className={"irb-nbell__btn" + (open ? " irb-nbell__btn--on" : "")}
   143 |         onClick={toggle} aria-expanded={open} aria-haspopup="dialog"
-```
-
-<!-- ─── страница 650 ─── -->
-
-```tsx
   144 |         title="Уведомления" aria-label={"Уведомления" + (unread ? ", непрочитанных: " + unread : "")}
   145 |       >
   146 |         <Icon name="bell" size={17} />
@@ -39592,6 +39675,11 @@
   173 |                     {relTime(n.ts) && <div className="irb-nitem__time">{relTime(n.ts)}</div>}
   174 |                   </div>
   175 |                   {!n.read && (
+```
+
+<!-- ─── страница 652 ─── -->
+
+```tsx
   176 |                     <button type="button" className="irb-nitem__mark" onClick={() => markOne(n)} title="Отметить прочитанным" aria-label="Отметить прочитанным">
   177 |                       <Icon name="check" size={16} />
   178 |                     </button>
@@ -39620,11 +39708,6 @@
     8 | import type { OrderItem } from "../api";
     9 | import type { ToastVariant } from "../../components/feedback/Toast.jsx";
    10 | import { Button } from "../../components/forms/Button.jsx";
-```
-
-<!-- ─── страница 651 ─── -->
-
-```tsx
    11 | import { Icon } from "../../components/icon/Icon.jsx";
    12 | import { EmptyState } from "../../components/feedback/EmptyState.jsx";
    13 | 
@@ -39657,6 +39740,11 @@
    40 | 
    41 |   const load = React.useCallback(async () => {
    42 |     const r = await api.orders();
+```
+
+<!-- ─── страница 653 ─── -->
+
+```tsx
    43 |     if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) {
    44 |       setOrders(r.json.data.items); setStub(false);
    45 |     } else {
@@ -39680,11 +39768,6 @@
    63 |     setBusy(null);
    64 |     if (r.status === 200) {
    65 |       setOrders((list) => (list || []).map((x) => (x.id ?? x.mfn) === key ? { ...x, status: "cancelled", statusLabel: "Отменён", cancelable: false } : x));
-```
-
-<!-- ─── страница 652 ─── -->
-
-```tsx
    66 |       toast({ variant: "success", title: "Заказ отменён", message: o.title || "" });
    67 |     } else if (r.status === 401 || r.status === 403) {
    68 |       toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." });
@@ -39717,6 +39800,11 @@
    95 |         {orders.map((o) => {
    96 |           const st = o.status || "queued";
    97 |           const cfg = ORDER_STATUS[st] || ORDER_STATUS.queued;
+```
+
+<!-- ─── страница 654 ─── -->
+
+```tsx
    98 |           const key = o.id ?? o.mfn;
    99 |           return (
   100 |             <div key={String(key)} style={{ display: "flex", alignItems: "center", gap: 16, ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: "14px 16px", opacity: st === "cancelled" ? .6 : 1 }}>
@@ -39740,11 +39828,6 @@
   118 |             </div>
   119 |           );
   120 |         })}
-```
-
-<!-- ─── страница 653 ─── -->
-
-```tsx
   121 |       </div>
   122 |     </div>
   123 |   );
@@ -39782,6 +39865,11 @@
    26 |   background:var(--surface-card,#fff);border:1px solid var(--border-subtle);border-radius:var(--radius-lg,12px);
    27 |   padding:12px;cursor:pointer;font-family:inherit;box-shadow:var(--shadow-sm);
    28 |   transition:transform var(--dur,.18s) var(--ease-standard,ease),box-shadow var(--dur,.18s) var(--ease-standard,ease),border-color var(--dur,.18s) var(--ease-standard,ease);}
+```
+
+<!-- ─── страница 655 ─── -->
+
+```tsx
    29 | .irb-recs__card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:var(--border-strong,#cdd3da);}
    30 | .irb-recs__card:focus-visible{outline:2px solid var(--focus-ring-color,var(--accent));outline-offset:2px;}
    31 | .irb-recs__cover{width:40px;height:56px;flex:none;border-radius:6px;box-shadow:var(--shadow-md);
@@ -39805,11 +39893,6 @@
    49 |   return (
    50 |     <section className={"irb-recs" + (variant === "rec" ? " irb-recs--rec" : "")} aria-label={title}>
    51 |       <div className="irb-recs__head">
-```
-
-<!-- ─── страница 654 ─── -->
-
-```tsx
    52 |         <h2 className="irb-recs__title">{title}</h2>
    53 |         {sub && <span className="irb-recs__sub">{sub}</span>}
    54 |       </div>
@@ -39842,6 +39925,11 @@
    81 |   React.useEffect(() => {
    82 |     let alive = true; setItems(null);
    83 |     (async () => {
+```
+
+<!-- ─── страница 656 ─── -->
+
+```tsx
    84 |       const r = await api.recommendations(db, mfn);
    85 |       if (!alive) return;
    86 |       if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) setItems(r.json.data.items);
@@ -39865,11 +39953,6 @@
   104 |       const r = await api.recommendationsForYou();
   105 |       if (!alive) return;
   106 |       if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) setItems(r.json.data.items);
-```
-
-<!-- ─── страница 655 ─── -->
-
-```tsx
   107 |       else setItems([]);
   108 |     })();
   109 |     return () => { alive = false; };
@@ -39907,6 +39990,11 @@
    22 | .irb-rtoolbar__group{display:flex;align-items:center;gap:8px;}
    23 | .irb-rtoolbar__lbl{font-size:var(--text-xs);color:var(--text-subtle);}
    24 | .irb-rtoolbar__sort{padding:7px 10px;border-radius:var(--radius-md,8px);border:1px solid var(--border-strong,#cdd3da);
+```
+
+<!-- ─── страница 657 ─── -->
+
+```tsx
    25 |   background:var(--surface-card,#fff);color:var(--text-body);font-family:var(--font-ui,inherit);font-size:var(--text-sm);cursor:pointer;}
    26 | .irb-seg{display:inline-flex;gap:2px;padding:2px;background:var(--surface-sunken,#eee);border-radius:var(--radius-md,10px);}
    27 | .irb-seg__b{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--text-body);
@@ -39930,11 +40018,6 @@
    45 | export function sortItems<T extends { title?: string; year?: string }>(items: T[], sort: SortKey): T[] {
    46 |   if (sort === "relevance") return items;
    47 |   const arr = items.map((it, i) => ({ it, i }));
-```
-
-<!-- ─── страница 656 ─── -->
-
-```tsx
    48 |   arr.sort((a, b) => {
    49 |     if (sort === "title") {
    50 |       const c = (a.it.title || "").localeCompare(b.it.title || "", "ru");
@@ -39967,6 +40050,11 @@
    77 |         <label className="irb-rtoolbar__lbl" htmlFor="irb-sort">Сортировка</label>
    78 |         <select id="irb-sort" className="irb-rtoolbar__sort" value={sort} onChange={(e) => onSort(e.target.value as SortKey)} aria-label="Сортировка результатов">
    79 |           {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+```
+
+<!-- ─── страница 658 ─── -->
+
+```tsx
    80 |         </select>
    81 |       </div>
    82 | 
@@ -39995,11 +40083,6 @@
     3 | // удалить СВОЙ отзыв (1–5 звёзд + текст). Гость видит отзывы только для чтения и
     4 | // мягкую подсказку «войдите, чтобы оценить».
     5 | //
-```
-
-<!-- ─── страница 657 ─── -->
-
-```tsx
     6 | // Грациозная деградация: при 404/501 эндпойнтов отзывов (модуль ещё не подключён)
     7 | // весь блок скрывается (unavailable) — карточка записи не падает и не пустует
     8 | // заглушками. Запись/обновление/удаление при ошибке откатываются с мягким тостом.
@@ -40032,6 +40115,11 @@
    35 |   color:var(--accent);display:flex;align-items:center;justify-content:center;font:600 14px var(--font-ui,inherit);}
    36 | .irb-rev__body{flex:1;min-width:0;}
    37 | .irb-rev__by{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+```
+
+<!-- ─── страница 659 ─── -->
+
+```tsx
    38 | .irb-rev__name{font-weight:600;font-size:var(--text-sm);color:var(--text-strong);}
    39 | .irb-rev__ts{font-size:var(--text-xs);color:var(--text-subtle);}
    40 | .irb-rev__text{font-size:var(--text-sm);color:var(--text-body);line-height:1.5;margin:5px 0 0;white-space:pre-wrap;overflow-wrap:break-word;}
@@ -40055,11 +40143,6 @@
    58 | function plural(n: number, one: string, few: string, many: string): string {
    59 |   const m10 = n % 10, m100 = n % 100;
    60 |   if (m10 === 1 && m100 !== 11) return one;
-```
-
-<!-- ─── страница 658 ─── -->
-
-```tsx
    61 |   if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
    62 |   return many;
    63 | }
@@ -40092,6 +40175,11 @@
    90 | 
    91 | // Интерактивный выбор звёзд (форма отзыва).
    92 | function StarInput({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+```
+
+<!-- ─── страница 660 ─── -->
+
+```tsx
    93 |   const [hover, setHover] = React.useState(0);
    94 |   const shown = hover || value;
    95 |   return (
@@ -40115,11 +40203,6 @@
   113 |   const [unavailable, setUnavailable] = React.useState(false);
   114 |   const [editing, setEditing] = React.useState(false);
   115 |   const [rating, setRating] = React.useState(0);
-```
-
-<!-- ─── страница 659 ─── -->
-
-```tsx
   116 |   const [text, setText] = React.useState("");
   117 |   const [busy, setBusy] = React.useState(false);
   118 | 
@@ -40152,6 +40235,11 @@
   145 |       setEditing(false);
   146 |       toast({ variant: "success", title: mine ? "Отзыв обновлён" : "Спасибо за отзыв" });
   147 |       load();
+```
+
+<!-- ─── страница 661 ─── -->
+
+```tsx
   148 |     } else if (r.status === 401 || r.status === 403) {
   149 |       toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." });
   150 |     } else {
@@ -40175,11 +40263,6 @@
   168 | 
   169 |   // Модуль отзывов ещё не подключён → блок скрываем (мягкая деградация).
   170 |   if (unavailable) return null;
-```
-
-<!-- ─── страница 660 ─── -->
-
-```tsx
   171 |   if (data === null) {
   172 |     return (
   173 |       <div className="irb-rev">
@@ -40212,6 +40295,11 @@
   200 |         )}
   201 |       </div>
   202 | 
+```
+
+<!-- ─── страница 662 ─── -->
+
+```tsx
   203 |       {/* Форма отзыва — вошедшему, по запросу. */}
   204 |       {loggedIn && editing && (
   205 |         <div className="irb-rev__form">
@@ -40235,11 +40323,6 @@
   223 |       )}
   224 | 
   225 |       {/* Свой отзыв сверху (если есть и форма закрыта). */}
-```
-
-<!-- ─── страница 661 ─── -->
-
-```tsx
   226 |       {mine && !editing && (
   227 |         <div className="irb-rev__list" style={{ marginBottom: others.length ? 18 : 0 }}>
   228 |           <div className="irb-rev__item">
@@ -40272,6 +40355,11 @@
   255 |                   <span className="irb-rev__name">{rv.readerName || "Читатель"}</span>
   256 |                   <Stars value={rv.rating} size={14} />
   257 |                   {rv.ts && <span className="irb-rev__ts">{fmtTs(rv.ts)}</span>}
+```
+
+<!-- ─── страница 663 ─── -->
+
+```tsx
   258 |                 </div>
   259 |                 {rv.text && <p className="irb-rev__text">{rv.text}</p>}
   260 |               </div>
@@ -40300,11 +40388,6 @@
     7 | // меню/панель показывают пустое состояние и не рушат страницу.
     8 | import React from "react";
     9 | import { api } from "../api";
-```
-
-<!-- ─── страница 662 ─── -->
-
-```tsx
    10 | import type { SavedSearch } from "../api";
    11 | import type { ToastVariant } from "../../components/feedback/Toast.jsx";
    12 | import { Button } from "../../components/forms/Button.jsx";
@@ -40337,6 +40420,11 @@
    39 | .irb-ssrow__meta{display:block;font-size:var(--text-xs);color:var(--text-subtle);margin-top:1px;
    40 |   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
    41 | .irb-ssrow__del{background:none;border:none;cursor:pointer;color:var(--text-subtle);flex:none;padding:2px;}
+```
+
+<!-- ─── страница 664 ─── -->
+
+```tsx
    42 | .irb-ssrow__del:hover{color:var(--error,var(--danger-500));}
    43 | `;
    44 | if (typeof document !== "undefined" && !document.getElementById("irb-ss-css")) {
@@ -40360,11 +40448,6 @@
    62 |     document.addEventListener("mousedown", onDoc); document.addEventListener("keydown", onKey);
    63 |     return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
    64 |   }, [open]);
-```
-
-<!-- ─── страница 663 ─── -->
-
-```tsx
    65 | 
    66 |   function toggle() { const next = !open; setOpen(next); if (next) setName(defaultName || query); }
    67 | 
@@ -40397,6 +40480,11 @@
    94 |     <div className="irb-ssmenu" ref={wrapRef}>
    95 |       <button type="button" style={btnSx} onClick={toggle} aria-expanded={open} title="Сохранить текущий запрос">
    96 |         <Icon name="save" size={compact ? 14 : 15} /> Сохранить запрос
+```
+
+<!-- ─── страница 665 ─── -->
+
+```tsx
    97 |       </button>
    98 |       {open && (
    99 |         <div className="irb-ssmenu__pop" role="dialog" aria-label="Сохранить запрос" onClick={(e) => e.stopPropagation()}>
@@ -40420,11 +40508,6 @@
   117 | }
   118 | 
   119 | // Общий хук загрузки/удаления списка сохранённых запросов.
-```
-
-<!-- ─── страница 664 ─── -->
-
-```tsx
   120 | function useSavedSearches(refreshKey?: number) {
   121 |   const [items, setItems] = React.useState<SavedSearch[] | null>(null);
   122 |   const [unavailable, setUnavailable] = React.useState(false);
@@ -40457,6 +40540,11 @@
   149 |   const wrapRef = React.useRef<HTMLDivElement>(null);
   150 | 
   151 |   React.useEffect(() => {
+```
+
+<!-- ─── страница 666 ─── -->
+
+```tsx
   152 |     if (!open) return;
   153 |     const onDoc = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false); };
   154 |     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
@@ -40480,11 +40568,6 @@
   172 |       {open && (
   173 |         <div className="irb-ssmenu__pop" role="menu" onClick={(e) => e.stopPropagation()}>
   174 |           <div className="irb-ssmenu__hd">Сохранённые запросы</div>
-```
-
-<!-- ─── страница 665 ─── -->
-
-```tsx
   175 |           <div className="irb-ssmenu__list">
   176 |             {items.map((s) => (
   177 |               <div key={s.id} className="irb-ssrow" role="menuitem">
@@ -40517,6 +40600,11 @@
   204 |   React.useEffect(() => { if (unavailable) onUnavailable?.(); }, [unavailable, onUnavailable]);
   205 | 
   206 |   if (unavailable) {
+```
+
+<!-- ─── страница 667 ─── -->
+
+```tsx
   207 |     if (!standalone) return null;
   208 |     return (
   209 |       <section aria-labelledby="cab-saved">
@@ -40540,11 +40628,6 @@
   227 |       </div>
   228 | 
   229 |       {items === null ? (
-```
-
-<!-- ─── страница 666 ─── -->
-
-```tsx
   230 |         <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", padding: "4px 2px" }}>Загрузка запросов…</div>
   231 |       ) : items.length === 0 ? (
   232 |         <div style={cardSx}>
@@ -40582,6 +40665,11 @@
 ```tsx
     1 | // Полки / списки чтения читателя (#222). Два экспорта:
     2 | //   ShelvesPanel — раздел кабинета: реальные списки из GET /api/shelves, создание
+```
+
+<!-- ─── страница 668 ─── -->
+
+```tsx
     3 | //     нового списка, разворачивание со списком изданий и удалением позиции;
     4 | //   ShelfMenu — выпадающий контрол «В список ▾» на карточке записи/результата:
     5 | //     добавляет издание в «Хочу прочитать»/«Избранное»/пользовательский список.
@@ -40605,11 +40693,6 @@
    23 |   if (n.includes("избран")) return "star";
    24 |   if (n.includes("работ")) return "briefcase";
    25 |   return system ? "bookmark" : "list";
-```
-
-<!-- ─── страница 667 ─── -->
-
-```tsx
    26 | }
    27 | function plural(n: number, one: string, few: string, many: string): string {
    28 |   const m10 = n % 10, m100 = n % 100;
@@ -40642,6 +40725,11 @@
    55 | 
    56 | // «В список ▾» — выпадающий список полок с добавлением издания (#222).
    57 | export function ShelfMenu({
+```
+
+<!-- ─── страница 669 ─── -->
+
+```tsx
    58 |   db, mfn, title, toast, compact = false,
    59 | }: {
    60 |   db: string; mfn: number; title?: string; toast: Toast; compact?: boolean;
@@ -40665,11 +40753,6 @@
    78 |     else setLists([]);
    79 |   }
    80 |   function toggle() { const next = !open; setOpen(next); if (next && lists === null) loadLists(); }
-```
-
-<!-- ─── страница 668 ─── -->
-
-```tsx
    81 | 
    82 |   function has(list: Shelf): boolean { return list.items.some((it) => it.db === db && it.mfn === mfn); }
    83 | 
@@ -40702,6 +40785,11 @@
   110 |     } else {
   111 |       toast({ variant: "info", title: "Списки недоступны", message: "Не удалось создать список — повторите позже." });
   112 |     }
+```
+
+<!-- ─── страница 670 ─── -->
+
+```tsx
   113 |   }
   114 | 
   115 |   const btnSx: React.CSSProperties = compact
@@ -40725,11 +40813,6 @@
   133 |               lists.map((l) => {
   134 |                 const on = has(l);
   135 |                 return (
-```
-
-<!-- ─── страница 669 ─── -->
-
-```tsx
   136 |                   <button key={l.id} type="button" role="menuitem" className={"irb-shmenu__opt" + (on ? " irb-shmenu__opt--on" : "")} onClick={() => add(l)}>
   137 |                     <Icon name={shelfIcon(l.name, l.system)} size={16} />
   138 |                     <span className="irb-shmenu__opt-name">{l.name}</span>
@@ -40762,6 +40845,11 @@
   165 |   onOpenRecord?: (db: string, mfn: number) => void;
   166 | }) {
   167 |   const [lists, setLists] = React.useState<Shelf[] | null>(null);
+```
+
+<!-- ─── страница 671 ─── -->
+
+```tsx
   168 |   const [unavailable, setUnavailable] = React.useState(false);
   169 |   const [openId, setOpenId] = React.useState<string | null>(null);
   170 |   const [creating, setCreating] = React.useState(false);
@@ -40785,11 +40873,6 @@
   188 |       setNewName(""); setCreating(false);
   189 |       toast({ variant: "success", title: "Список создан", message: name });
   190 |     } else {
-```
-
-<!-- ─── страница 670 ─── -->
-
-```tsx
   191 |       toast({ variant: "error", title: "Не удалось создать список", message: "Повторите попытку позже." });
   192 |     }
   193 |   }
@@ -40822,6 +40905,11 @@
   220 |             </span>
   221 |           ) : (
   222 |             <Button size="sm" variant="secondary" iconLeft="plus" onClick={() => setCreating(true)}>Новый список</Button>
+```
+
+<!-- ─── страница 672 ─── -->
+
+```tsx
   223 |           )}
   224 |         </div>
   225 |       </div>
@@ -40845,11 +40933,6 @@
   243 |                   </span>
   244 |                   <span style={{ flex: 1, minWidth: 0 }}>
   245 |                     <span style={{ display: "block", fontWeight: 600, fontSize: "var(--text-sm)", color: "var(--text-strong)" }}>{l.name}</span>
-```
-
-<!-- ─── страница 671 ─── -->
-
-```tsx
   246 |                     <span style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2 }}>{l.items.length} {plural(l.items.length, "издание", "издания", "изданий")}</span>
   247 |                   </span>
   248 |                   <Icon name={expanded ? "chevron-up" : "chevron-down"} size={18} style={{ color: "var(--text-subtle)", flex: "none" }} />
@@ -40882,6 +40965,11 @@
   275 |       )}
   276 |     </section>
   277 |   );
+```
+
+<!-- ─── страница 673 ─── -->
+
+```tsx
   278 | }
 ```
 
@@ -40910,11 +40998,6 @@
    20 | .irb-showcase__sub{font-size:var(--text-sm);color:var(--text-subtle);}
    21 | .irb-showcase__rail{display:flex;gap:14px;overflow-x:auto;padding:4px 2px 12px;scroll-snap-type:x mandatory;
    22 |   scrollbar-width:thin;}
-```
-
-<!-- ─── страница 672 ─── -->
-
-```tsx
    23 | .irb-showcase__card{flex:none;width:140px;scroll-snap-align:start;display:flex;flex-direction:column;gap:8px;
    24 |   background:none;border:none;padding:0;cursor:pointer;text-align:left;font-family:inherit;}
    25 | .irb-showcase__cover{width:140px;height:196px;border-radius:var(--radius-lg,12px);overflow:hidden;
@@ -40947,6 +41030,11 @@
    52 | 
    53 | export function Showcase({ db, onOpen }: { db: string; onOpen: (mfn: number, db: string) => void }) {
    54 |   const [items, setItems] = React.useState<ShowcaseItem[] | null>(null);
+```
+
+<!-- ─── страница 674 ─── -->
+
+```tsx
    55 | 
    56 |   React.useEffect(() => {
    57 |     let alive = true;
@@ -40970,11 +41058,6 @@
    75 |             <div key={i} className="irb-showcase__card" style={{ pointerEvents: "none" }}>
    76 |               <div className="irb-showcase__cover" style={{ background: "var(--surface-sunken)", boxShadow: "none" }} />
    77 |             </div>
-```
-
-<!-- ─── страница 673 ─── -->
-
-```tsx
    78 |           ))}
    79 |         </div>
    80 |       </section>
@@ -41007,6 +41090,11 @@
   107 |             <span className="irb-showcase__meta">
   108 |               <span className="irb-showcase__name">{it.title || "Без заглавия"}</span>
   109 |               {(it.author || it.year) && <span className="irb-showcase__by">{[it.author, it.year].filter(Boolean).join(" · ")}</span>}
+```
+
+<!-- ─── страница 675 ─── -->
+
+```tsx
   110 |             </span>
   111 |           </button>
   112 |         ))}
@@ -41035,11 +41123,6 @@
    14 |   // Доступные виды в порядке предпочтения; первый — вид по умолчанию.
    15 |   views: LayoutKind[];
    16 |   // Подпись профиля для подсказок (необязательно).
-```
-
-<!-- ─── страница 674 ─── -->
-
-```ts
    17 |   hint?: string;
    18 | }
    19 | 

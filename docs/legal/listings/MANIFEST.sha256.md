@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-22**
-- Версия кода (git): **`f43055a`**
-- Файлов: **128** · строк: **37046** · условных страниц: **674**
-- **SHA-256 всего листинга:** `8e75caa306960208d69c8719cf3474b0175118bf4a677e63968e7171dd4bc095`
+- Версия кода (git): **`4b29ba2`**
+- Файлов: **128** · строк: **37124** · условных страниц: **675**
+- **SHA-256 всего листинга:** `5b4d7a04617b2eb26261971c36c22312dff9183a17a012f5483fcee528ce54c6`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -114,10 +114,10 @@
 | `irbis-web/frontend/src/App.tsx` | 1185 | `5dfca071952101701d9b8e82135a20f524d6792afb13c6ae551173b462b350ad` |
 | `irbis-web/frontend/src/BookProvisionDesk.tsx` | 411 | `916bf2f103776fc96a0dab037e1ce1228f532e8cafbc80fef28f1a2e30ce1d45` |
 | `irbis-web/frontend/src/CirculationDesk.tsx` | 332 | `4d0861eb8c4edd2cd4479a180fc653f8f290c107134c009c548af296e58234d7` |
-| `irbis-web/frontend/src/MigrationWizard.tsx` | 529 | `ce6f8e67da0e0a3a179903b9f4bd2a79d7b2115904eaf8523499ba5bef46b152` |
+| `irbis-web/frontend/src/MigrationWizard.tsx` | 605 | `1a1333e120567d4b279f188d7310f6ff26514198b8bd59383867c53a726a23a1` |
 | `irbis-web/frontend/src/PlatformDesk.tsx` | 440 | `d370cac9359e35650bc7279f5b1d074c55f0c195c9fa5ed87e7165c0e8f71868` |
 | `irbis-web/frontend/src/Staff.tsx` | 821 | `b45a28c55daa1e4b879676a6384582ad982a76bb5a35385823008c804895711e` |
-| `irbis-web/frontend/src/api.ts` | 530 | `fcd76183ce7ca3886fa709ebdbae730dc32744d4d648c85fc16fe21628e8f30b` |
+| `irbis-web/frontend/src/api.ts` | 532 | `075f6d7519642cbe013451f0a10ded7a83a71cfa56a780e820f14ca815869251` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 188 | `b364926e1a4282a688eff2a9e07101820e16bfad8f68e12b7a137aad82d2685f` |
 | `irbis-web/frontend/src/main.tsx` | 11 | `d7130f76cb0d10b06b105080797ef037c9cfd03dc79dbc2df85fda93b04a74c4` |
