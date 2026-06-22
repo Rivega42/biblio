@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-22**
-- Версия кода (git): **`816b902`**
-- Файлов: **133** · строк: **39289** · условных страниц: **715**
-- **SHA-256 всего листинга:** `f06f92c2100fa2909fcc657f7723a6cc39b64467e8aca5a0d77491f6f9f76025`
+- Версия кода (git): **`234f26c`**
+- Файлов: **134** · строк: **39736** · условных страниц: **723**
+- **SHA-256 всего листинга:** `9d8f8e536b416b622666f1903701816906cb6af08712f980dd1f4a52b80adab8`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -112,11 +112,12 @@
 | `irbis-web/frontend/src/AcquisitionDesk.tsx` | 403 | `5045d3da6afd968fc3355bf75800a919e9eec29a48ad914e815f2b5cd8e3e70f` |
 | `irbis-web/frontend/src/AdminDesk.tsx` | 432 | `9ac98ed39635096b0e2904b6f53b4da1183e5e9536b35ebec955369e77011e5c` |
 | `irbis-web/frontend/src/App.tsx` | 1383 | `6b1f8cad75edcc5cd6dc4301c09ca108a1e76fe8103125e4aae41b4b71227866` |
+| `irbis-web/frontend/src/BenchmarkPanel.tsx` | 442 | `365e5de598e181cc0520a964d1c470cb296d42a182ac44699366cac24909442a` |
 | `irbis-web/frontend/src/BookProvisionDesk.tsx` | 411 | `916bf2f103776fc96a0dab037e1ce1228f532e8cafbc80fef28f1a2e30ce1d45` |
 | `irbis-web/frontend/src/CirculationDesk.tsx` | 423 | `47330dfbaca24b73685d42522d5fa7ff5d068a51e35b63d5d08af4d5f8692fb4` |
 | `irbis-web/frontend/src/MigrationWizard.tsx` | 605 | `1a1333e120567d4b279f188d7310f6ff26514198b8bd59383867c53a726a23a1` |
 | `irbis-web/frontend/src/PlatformDesk.tsx` | 440 | `d370cac9359e35650bc7279f5b1d074c55f0c195c9fa5ed87e7165c0e8f71868` |
-| `irbis-web/frontend/src/Staff.tsx` | 1047 | `f2ff364d8e2fe3c99809d86da80ba2d8cd499d3ce6d4422238631480e8101c25` |
+| `irbis-web/frontend/src/Staff.tsx` | 1052 | `e4e3610fecb332486a03f22ae83e73602935639f12e2c962572a9c4ae9102f3a` |
 | `irbis-web/frontend/src/api.ts` | 560 | `31801308bd4a93d3e2985960ed3b2c618c0483177c7741edb23bd308c2fbf349` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 188 | `b364926e1a4282a688eff2a9e07101820e16bfad8f68e12b7a137aad82d2685f` |
