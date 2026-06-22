@@ -142,6 +142,49 @@ WORKLIST_MAP_TO_CAT = {
 NON_CATALOG_WORKLISTS = frozenset(
     ('ZK', 'SZ', 'KSU', 'KS2', 'KS3', 'KSI', 'IZD', 'OJK', 'AZP', 'KAT', 'POLZV'))
 
+# --------------------------------------------------------------------------- #
+# FST subfield-maps: построчный CMPL БО → IBIS маппинг подполей (STN.FST/MNOG.FST/
+# UMARCIW.FST логика, источник — FIELD_DICTIONARY + DB_ACQUISITION A.3.1/A.8).
+# Каждый кортеж — (src-подполе в CMPL, dst-подполе в IBIS). Регистр src терпим
+# (probe upper+lower). CMPL и IBIS делят один формат RUSMARC-подобных полей, поэтому
+# подполя в основном переносятся «как есть»; маппинг фиксирует ЗНАЧИМЫЕ подполя
+# (по словарю полей), служебные/непереносимые — опускаются.
+# --------------------------------------------------------------------------- #
+# Поле 210 — выходные данные (FIELD_DICTIONARY: ^A Город/место, ^C Издательство,
+# ^D Год, ^1 Место печати, ^E Год оконч. СИ). Задача: ^a место / ^c издатель / ^d год.
+SUBMAP_210 = (('a', 'a'), ('c', 'c'), ('d', 'd'), ('1', '1'),
+              ('e', 'e'), ('x', 'x'), ('y', 'y'))
+
+# Поле 215 — количественные характеристики (объём ^A, ед.изм. ^1, иллюстрации ^C,
+# сопроводит. ^E, тираж ^X). FIELD_DICTIONARY 215.
+SUBMAP_215 = (('a', 'a'), ('1', '1'), ('c', 'c'), ('e', 'e'), ('x', 'x'),
+              ('2', '2'), ('z', 'z'))
+
+# Поле 10 — ISBN/цена (FIELD_DICTIONARY: ^A ISBN, ^D Цена, ^C Валюта). CMPL ISBN
+# в БО лежит в 10^A; ^B — уточнение, ^Z — ошибочный ISBN.
+SUBMAP_10 = (('a', 'a'), ('d', 'd'), ('c', 'c'), ('b', 'b'), ('z', 'z'))
+
+# Поле 463 — издание-хозяин аналитики (FIELD_DICTIONARY: ^C Заглавие, ^J ISSN/связь,
+# ^G/^D/^V/^1/^N/^O/^P/^A/^H/^S/^7/^I/^K/^L/^W). Переносим значимый набор.
+SUBMAP_463 = (('c', 'C'), ('C', 'C'), ('v', 'V'), ('V', 'V'), ('j', 'J'),
+              ('J', 'J'), ('g', 'G'), ('G', 'G'), ('d', 'D'), ('D', 'D'),
+              ('1', '1'), ('n', 'N'), ('N', 'N'), ('o', 'O'), ('O', 'O'),
+              ('p', 'P'), ('P', 'P'), ('s', 'S'), ('S', 'S'), ('h', 'H'),
+              ('H', 'H'), ('a', 'A'), ('A', 'A'))
+
+# Поля 675 (УДК) / 621 (ББК) — индексы классификации. В IBIS значение индекса —
+# основное (без именованных подполей в простом случае); 675 несёт ^V издание-
+# источник. CMPL хранит индекс как скаляр или ^A. Маппинг: скаляр/^a → ^a, ^v→^v.
+SUBMAP_INDEX = (('a', 'a'), ('A', 'a'), ('v', 'v'), ('V', 'v'),
+                ('1', '1'), ('2', '2'), ('3', '3'))
+
+# Поле 906 — систематический (расстановочный) шифр. Без именованных подполей
+# (FIELD_DICTIONARY 906) — скалярное значение шифра.
+SUBMAP_906 = (('a', 'a'), ('A', 'a'))
+
+# Поле 610 — ключевые слова (свободное индексирование). Скалярное значение.
+SUBMAP_610 = (('a', 'a'), ('A', 'a'))
+
 # Поле 66 — флаг переноса в ЭК (ToCat trigger). Считаем флаг «взведённым», если
 # поле 66 присутствует и не помечено явным «выкл.». Реальная FST-строка 66 в
 # CMPL — это вычисляемый признак РЛ (PAZKK/SPECK/PVKK); здесь триггер — наличие
@@ -577,7 +620,57 @@ def _author_heading(inst):
         heading['b'] = parts[1].strip()
     if role:
         heading['9'] = str(role)
+    # расширение заголовка ^g (полная форма имени, FIELD_DICTIONARY 700/701 ^G).
+    if isinstance(inst, dict):
+        ext = inst.get('g') or inst.get('G')
+        if ext:
+            heading['g'] = str(ext)
     return heading
+
+
+def _carry_subfields(inst, sub_map):
+    """Carry recognized subfields of a CMPL instance into an IBIS instance dict.
+
+    ``sub_map`` is an ordered iterable of ``(src, dst)`` pairs (case-tolerant on
+    ``src`` — both upper/lower are probed). The first non-empty source for a given
+    ``dst`` wins (so a CMPL БО that already carries the IBIS-cased subfield is
+    transferred verbatim). Returns a fresh dict (no mutation of ``inst``) or
+    ``None`` for an empty/scalar instance with nothing recognized."""
+    if not isinstance(inst, dict):
+        return None
+    out = {}
+    for src, dst in sub_map:
+        if dst in out:
+            continue
+        val = inst.get(src)
+        if val is None and src != src.upper():
+            val = inst.get(src.upper())
+        if val is None and src != src.lower():
+            val = inst.get(src.lower())
+        if val is not None and str(val).strip():
+            out[dst] = str(val)
+    return out or None
+
+
+def _carry_field(cmpl_rec, tag, sub_map):
+    """Реформат всех инстансов поля ``tag`` БО CMPL → IBIS по ``sub_map``.
+
+    Структурный перенос поля «как есть» с нормализацией подполей: каждый инстанс
+    проходит через :func:`_carry_subfields`. Скалярный инстанс (строка) кладётся в
+    первый ``dst`` из ``sub_map`` (обычно ^a — основное значение поля). Returns a
+    list of IBIS instance dicts (возможно пустой)."""
+    out = []
+    default_dst = sub_map[0][1] if sub_map else 'a'
+    for inst in _as_list(cmpl_rec.get(tag)):
+        if isinstance(inst, dict):
+            carried = _carry_subfields(inst, sub_map)
+            if carried:
+                out.append(carried)
+        else:
+            s = str(inst or '').strip()
+            if s:
+                out.append({default_dst: s})
+    return out
 
 
 class AcquisitionError(Exception):
@@ -927,14 +1020,26 @@ class AcquisitionEngine:
             → 700 (1-й автор) + 701 (прочие); 922^C/330^C (заглавие статьи) → 200^a,
             если своего 200 нет.
           * **аналитика → 463**: ссылка на издание-хозяина (журнал/сборник). Из
-            CMPL 463 (если есть) — как есть; иначе строим заглушку 463^C из загл.
+            CMPL 463 (если есть) — нормализуем подполя (:data:`SUBMAP_463`); иначе
+            строим заглушку 463^C из загл.
+          * **210** (выходные данные): ^a место / ^c издатель / ^d год
+            (:data:`SUBMAP_210`).
+          * **215** (объём / кол-во характеристики): ^a объём, ^1 ед.изм., …
+            (:data:`SUBMAP_215`).
+          * **10** (ISBN/цена): ^a ISBN, ^d цена, ^c валюта (:data:`SUBMAP_10`).
+          * **675/621** (УДК/ББК): индексы классификации (:data:`SUBMAP_INDEX`).
+          * **906** (систематический/расстановочный шифр), **610** (ключ. слова).
           * существующие 700/701 БО CMPL переносятся как есть (приоритет над
-            реконструкцией из аналитики).
+            реконструкцией из аналитики); ^a/^b/^g подполя сохраняются.
 
         Returns a fresh IBIS-format record dict (the I1 field/subfield draft). The
-        input ``cmpl_rec`` is NOT mutated. Поля, чей построчный маппинг recon не
-        транскрибировал (910 спец-подполя, КСУ-распределение) — помечены TODO и в
-        реформате опущены (их переносят отдельные шаги 1.2–1.4).
+        input ``cmpl_rec`` is NOT mutated. Все «значимые» библиографические поля БО
+        переносятся структурно через :func:`_carry_field` (подполя — по FST submap'ам
+        выше). Поля, чей построчный FST-маппинг recon НЕ транскрибировал (922/330
+        ^5/^7→610, ^L/^M/^N/^O→690/463; 910 КСУ-распределение 44–49) — помечены
+        явным TODO(recon #CMPL-04) и НЕ домысливаются: переносятся лишь если БО уже
+        несёт их в IBIS-совместимом виде. Экземпляры (910), 938, 901 переносят
+        отдельные шаги 1.2–1.4.
         """
         rec = {}
 
@@ -953,15 +1058,18 @@ class AcquisitionEngine:
         rec['920'] = WORKLIST_MAP_TO_CAT.get(code.upper(), code.upper() or
                                              self.worklist)
 
-        # --- 200 (заглавие) ---
+        # --- 200 (заглавие) -> ^a осн. загл. + ^e свед. к загл. + ^f 1-е свед.
+        # об отв. + ^v номер тома (FIELD_DICTIONARY 200). ---
         title_insts = _as_list(cmpl_rec.get('200'))
         title_dict = None
         for inst in title_insts:
             if isinstance(inst, dict) and (inst.get('a') or inst.get('A')):
                 title_dict = {'a': str(inst.get('a') or inst.get('A'))}
-                resp = inst.get('f') or inst.get('F')
-                if resp:
-                    title_dict['f'] = str(resp)
+                for src, dst in (('e', 'e'), ('E', 'e'), ('f', 'f'), ('F', 'f'),
+                                 ('v', 'v'), ('V', 'v')):
+                    val = inst.get(src)
+                    if val and dst not in title_dict:
+                        title_dict[dst] = str(val)
                 break
             if isinstance(inst, str) and inst.strip():
                 title_dict = {'a': inst.strip()}
@@ -1007,20 +1115,60 @@ class AcquisitionEngine:
                 rec['701'] = headings[1:]
 
         # --- 463 (связь с изданием-хозяином для аналитики) ---
-        host = _as_list(cmpl_rec.get('463'))
+        host = _carry_field(cmpl_rec, '463', SUBMAP_463)
         if host:
-            carried = []
-            for inst in host:
-                if isinstance(inst, dict):
-                    carried.append(dict(inst))
-                elif str(inst or '').strip():
-                    carried.append({'C': str(inst).strip()})
-            if carried:
-                rec['463'] = carried
+            rec['463'] = host
         elif rec.get('920') in ('ASP',) and rec.get('200'):
             # аналитика без явного 463 — строим заглушку host из заглавия (TODO:
             # полный маппинг host-сведений из 922/330 ^L/^M/^N/^O не транскрибирован).
             rec['463'] = [{'C': rec['200'][0]['a']}]  # TODO(recon #CMPL-04)
+
+        # --- 210 (выходные данные): ^a место / ^c издатель / ^d год ---
+        # (FIELD_DICTIONARY 210: ^A Город `MI=`, ^C Издательство `O=`, ^D Год `G=`).
+        pub = _carry_field(cmpl_rec, '210', SUBMAP_210)
+        if pub:
+            rec['210'] = pub
+
+        # --- 215 (количественные характеристики / объём) ---
+        # (FIELD_DICTIONARY 215: ^A Объём, ^1 Ед.изм., ^C иллюстр., ^X тираж).
+        extent = _carry_field(cmpl_rec, '215', SUBMAP_215)
+        if extent:
+            rec['215'] = extent
+
+        # --- 10 (ISBN / цена): ^A ISBN, ^D Цена, ^C Валюта (FIELD_DICTIONARY 10) ---
+        isbn = _carry_field(cmpl_rec, '10', SUBMAP_10)
+        if isbn:
+            rec['10'] = isbn
+
+        # --- 675 (УДК) / 621 (ББК): индексы классификации (`U=`) ---
+        udk = _carry_field(cmpl_rec, '675', SUBMAP_INDEX)
+        if udk:
+            rec['675'] = udk
+        bbk = _carry_field(cmpl_rec, '621', SUBMAP_INDEX)
+        if bbk:
+            rec['621'] = bbk
+
+        # --- 906 (систематический/расстановочный шифр) ---
+        shelf = _carry_field(cmpl_rec, '906', SUBMAP_906)
+        if shelf:
+            rec['906'] = shelf
+
+        # --- 610 (ключевые слова) -> переносим как есть; для аналитики 922/330
+        # ключ.слова лежат в ^5/^6/^7 — они описывают СТАТЬЮ, маппинг 610↔922^5..^7
+        # в STN.FST recon не транскрибирован построчно — TODO(recon #CMPL-04). ---
+        kw = _carry_field(cmpl_rec, '610', SUBMAP_610)
+        if kw:
+            rec['610'] = kw
+
+        # TODO(recon #CMPL-04): построчный маппинг ряда полей в STN.FST/UMARCIW.FST
+        # не транскрибирован и здесь НЕ домысливается:
+        #   * 922/330 ^5/^6/^7 (ключ.слова статьи) -> 610 — порядок/склейка неясны;
+        #   * 922/330 ^L/^M/^N/^O (издат. индекс / части-разделы) -> 463/690;
+        #   * 690 (издат. индекс 4 уровня ^L/^M/^N/^O) — источник в CMPL не разведён;
+        #   * 102 (страна) / 101 ^N/^G (наборы символов/графика) — нет в recon-БО;
+        #   * 906 авторский знак vs расст. шифр (906 vs 908) — различие не уточнено.
+        # Эти поля переносятся ТОЛЬКО если БО CMPL уже несёт их в IBIS-совместимом
+        # виде (через структурный _carry_field выше), иначе опускаются (не выдумываем).
 
         # --- 101 язык (умолчание rus, как в _new_bib_record) ---
         lang = cmpl_rec.get('101')
