@@ -10,11 +10,11 @@
 |---|---|
 | Продукт | Biblio — система автоматизации библиотек (АБИС) |
 | Дата сборки листинга | 2026-06-22 |
-| Версия кода (git) | `5fd8e0d` |
-| Файлов в листинге | 150 |
-| Всего строк исходного кода | 47858 |
-| Условных страниц (~55 строк) | 871 |
-| **SHA-256 всего листинга** | `3dec8b157b6b3cc26bc6a9405391df0779494b029abec0f516772cc9937ad2d6` |
+| Версия кода (git) | `e86c42b` |
+| Файлов в листинге | 152 |
+| Всего строк исходного кода | 49017 |
+| Условных страниц (~55 строк) | 892 |
+| **SHA-256 всего листинга** | `3595e82970c386a72f691a025dea8ae8c3c9c778f9a0cd3d3b2fd325a4929e4f` |
 
 Перечень файлов и их контрольные суммы — в `MANIFEST.sha256.md`.
 
@@ -4702,7 +4702,7 @@
   948 |             sql, (db, limit, offset)).fetchall()]
 ```
 
-### Файл: `irbis-web/backend/access/circulation.py`  · строк: 1297
+### Файл: `irbis-web/backend/access/circulation.py`  · строк: 1411
 
 ```py
     1 | #!/usr/bin/env python3
@@ -4811,1320 +4811,1444 @@
    94 | 
    95 | 
    96 | # --------------------------------------------------------------------------- #
-   97 | # Policy — the per-tenant ``circ_policy`` (defaults from SPEC §5.3 / §7).
+   97 | # reservstatus (RQST 910^A 0–4) ↔ наш enum hold.status — ребро 2.6.
    98 | # --------------------------------------------------------------------------- #
-   99 | # Limit matrix keyed by reader category (50.mnu: В01–В05 adults, Д01–Д03 kids,
-  100 | # STD student, GUEST guest). Values are the spec's starting defaults; a tenant
-  101 | # tunes them via the low-code configurator (D1). ``_DEFAULT`` is the fallback
-  102 | # profile used before 50.mnu is seeded (A5) / for an unknown category.
-  103 | _LIMIT_MATRIX = {
-  104 |     'В01': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
-  105 |     'В02': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
-  106 |     'В03': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
-  107 |     'В04': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
-  108 |     'В05': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
-  109 |     'Д01': {'max_books': 7,  'max_dolg_books': 1, 'max_return_days': 14, 'max_prolong': 3},
-  110 |     'Д02': {'max_books': 7,  'max_dolg_books': 1, 'max_return_days': 14, 'max_prolong': 3},
-  111 |     'Д03': {'max_books': 7,  'max_dolg_books': 1, 'max_return_days': 14, 'max_prolong': 3},
-  112 |     'STD': {'max_books': 15, 'max_dolg_books': 2, 'max_return_days': 30, 'max_prolong': 5},
-  113 |     'GUEST': {'max_books': 1, 'max_dolg_books': 0, 'max_return_days': 1,  'max_prolong': 0},
-  114 |     '_DEFAULT': {'max_books': 5, 'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
-  115 | }
-  116 | 
-  117 | 
-  118 | def default_policy(tenant_id='public'):
-  119 |     """Return a fresh per-tenant ``circ_policy`` dict (defaults from §5.3 / §7).
-  120 | 
-  121 |     A fresh deep-ish copy each call so a caller mutating one tenant's policy
-  122 |     never leaks into another (isolation, AC7). Values are the spec's documented
-  123 |     starting defaults — every one is meant to be tuned per-tenant.
-  124 |     """
-  125 |     return {
+   99 | # «Одно подполе — разные кодировки» (recon #CIRC-06, DB_CIRCULATION §6, ws3 §6):
+  100 | # 910^A в RQST (статус БРОНИ, словарь `reservstatus.mnu`, коды 0–4) — это НЕ то
+  101 | # же, что 910^A в ЭК (статус ЭКЗЕМПЛЯРА, `ste.mnu`). Наш движок хранит статус
+  102 | # брони отдельным enum'ом `hold.status` (queued|ready|fulfilled|cancelled|expired) —
+  103 | # дизайн их верно разводит; здесь — двусторонний словарь кодов <-> enum.
+  104 | #
+  105 | # Семантика `reservstatus.mnu` (DB_CIRCULATION §5 «БРОНИРОВАНИЕ»):
+  106 | #   0 — заказ отправлен с места хранения (МХР) на место выдачи (МВ): экз. в пути,
+  107 | #       читатель ещё ждёт → у нас бронь стоит в очереди      => 'queued'
+  108 | #   1 — получен на МВ / готов для выдачи: бронь «на полке»,
+  109 | #       читатель может забирать                              => 'ready'
+  110 | #   2 — получен от читателя (бронь сработала, выдан/закрыт)  => 'fulfilled'
+  111 | #   3 — для возврата на МХР: экз. больше не держится за читателем,
+  112 | #       уходит в фонд (бронь не реализована)                 => 'expired'
+  113 | #   4 — отправлен с МВ обратно на МХР (тот же исход — снят с полки) => 'expired'
+  114 | #
+  115 | # Прямое отображение код->enum (resolve_hold_status_in):
+  116 | RESERVSTATUS_TO_HOLD = {
+  117 |     '0': 'queued',
+  118 |     '1': 'ready',
+  119 |     '2': 'fulfilled',
+  120 |     '3': 'expired',
+  121 |     '4': 'expired',
+  122 | }
+  123 | # Обратное enum->код (hold_status_to_reservstatus). 3 и 4 оба означают «снят с
+  124 | # полки»; для каноничной обратной проводки expired → '3' (на МХР), как первый из
+  125 | # пары «возврат в фонд». `cancelled` — чисто наш статус (отмена читателем до
 ```
 
 <!-- ─── страница 81 ─── -->
 
 ```py
-  126 |         'tenant_id': tenant_id,
-  127 |         # §5 limits — by category × item kind (here: by category).
-  128 |         'limits': {cat: dict(lim) for cat, lim in _LIMIT_MATRIX.items()},
-  129 |         # §1 renewal.
-  130 |         'renewal': {
-  131 |             'holds_block_renewal': 'block',   # block | threshold | allow
-  132 |             'hold_block_threshold': 0,        # threshold mode: queue len that still allows
-  133 |             'strong_prolong': True,
-  134 |         },
-  135 |         # §2 debtor.
-  136 |         'debt': {
-  137 |             'overdue_grace_days': 1,          # soft window: not yet a hard debtor
-  138 |             'reader_block_on_hard': True,     # hard debtor self-service gate
-  139 |             'override_grant': 'circ.lend.override_debt',
-  140 |         },
-  141 |         # §3 fines — min(fine_per_day × billable_days, fine_cap).
-  142 |         'fine': {
-  143 |             'fine_per_day': {'_DEFAULT': 5.0, 'Д01': 0.0, 'Д02': 0.0, 'Д03': 0.0,
-  144 |                              'rare_fund': 20.0},
-  145 |             'fine_cap': 500.0,                # ceiling per loan (≤ item price, §3.2)
-  146 |             'overdue_grace_days': 1,          # billing grace before accrual starts
-  147 |             'currency': 'RUB',
-  148 |             'pay_dbn': 'PAY',
-  149 |             'waive_grant': 'circ.fine.waive',
-  150 |         },
-  151 |         # §4 lost.
-  152 |         'lost': {
-  153 |             'lost_after_days': 60,            # overdue beyond this ⇒ lost_candidate
-  154 |             'multiplier': 1.0,                # replacement = price × mult + fee
-  155 |             'handling_fee': 0.0,
-  156 |             'default_replacement_value': 100.0,  # fallback when 910^E empty/0
-  157 |             'lost_supersedes_fine': True,
-  158 |             'confirm_grant': 'circ.lost.confirm',
-  159 |         },
-  160 |         # §6 hold queue.
-  161 |         'hold': {
-  162 |             'priority': 'fifo',
-  163 |             'hold_shelf_days': 3,             # = pickup_ttl in a locker (§6.4)
-  164 |             'return_to_reservable': True,
-  165 |         },
-  166 |     }
-  167 | 
-  168 | 
-  169 | def category_limits(policy, category):
-  170 |     """The limit row for ``category`` (falls back to ``_DEFAULT``)."""
-  171 |     limits = policy['limits']
-  172 |     return limits.get(category) or limits['_DEFAULT']
-  173 | 
-  174 | 
-  175 | def fine_per_day(policy, category, item_kind=None):
-  176 |     """Per-day fine rate for ``category`` (and optional ``item_kind`` override)."""
-  177 |     table = policy['fine']['fine_per_day']
-  178 |     if item_kind and item_kind in table:
-  179 |         return float(table[item_kind])
-  180 |     if category in table:
+  126 | # срабатывания брони): в `reservstatus.mnu` отдельного кода нет, бронь просто
+  127 | # исчезает из RQST (транзитная БД чистится `rqst_clear.gbl`) — отображаем в None.
+  128 | HOLD_TO_RESERVSTATUS = {
+  129 |     'queued': '0',
+  130 |     'ready': '1',
+  131 |     'fulfilled': '2',
+  132 |     'expired': '3',
+  133 |     'cancelled': None,
+  134 | }
+  135 | 
+  136 | 
+  137 | # --------------------------------------------------------------------------- #
+  138 | # Policy — the per-tenant ``circ_policy`` (defaults from SPEC §5.3 / §7).
+  139 | # --------------------------------------------------------------------------- #
+  140 | # Limit matrix keyed by reader category (50.mnu: В01–В05 adults, Д01–Д03 kids,
+  141 | # STD student, GUEST guest). Values are the spec's starting defaults; a tenant
+  142 | # tunes them via the low-code configurator (D1). ``_DEFAULT`` is the fallback
+  143 | # profile used before 50.mnu is seeded (A5) / for an unknown category.
+  144 | _LIMIT_MATRIX = {
+  145 |     'В01': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
+  146 |     'В02': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
+  147 |     'В03': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
+  148 |     'В04': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
+  149 |     'В05': {'max_books': 5,  'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
+  150 |     'Д01': {'max_books': 7,  'max_dolg_books': 1, 'max_return_days': 14, 'max_prolong': 3},
+  151 |     'Д02': {'max_books': 7,  'max_dolg_books': 1, 'max_return_days': 14, 'max_prolong': 3},
+  152 |     'Д03': {'max_books': 7,  'max_dolg_books': 1, 'max_return_days': 14, 'max_prolong': 3},
+  153 |     'STD': {'max_books': 15, 'max_dolg_books': 2, 'max_return_days': 30, 'max_prolong': 5},
+  154 |     'GUEST': {'max_books': 1, 'max_dolg_books': 0, 'max_return_days': 1,  'max_prolong': 0},
+  155 |     '_DEFAULT': {'max_books': 5, 'max_dolg_books': 1, 'max_return_days': 20, 'max_prolong': 5},
+  156 | }
+  157 | 
+  158 | 
+  159 | def default_policy(tenant_id='public'):
+  160 |     """Return a fresh per-tenant ``circ_policy`` dict (defaults from §5.3 / §7).
+  161 | 
+  162 |     A fresh deep-ish copy each call so a caller mutating one tenant's policy
+  163 |     never leaks into another (isolation, AC7). Values are the spec's documented
+  164 |     starting defaults — every one is meant to be tuned per-tenant.
+  165 |     """
+  166 |     return {
+  167 |         'tenant_id': tenant_id,
+  168 |         # §5 limits — by category × item kind (here: by category).
+  169 |         'limits': {cat: dict(lim) for cat, lim in _LIMIT_MATRIX.items()},
+  170 |         # §1 renewal.
+  171 |         'renewal': {
+  172 |             'holds_block_renewal': 'block',   # block | threshold | allow
+  173 |             'hold_block_threshold': 0,        # threshold mode: queue len that still allows
+  174 |             'strong_prolong': True,
+  175 |         },
+  176 |         # §2 debtor.
+  177 |         'debt': {
+  178 |             'overdue_grace_days': 1,          # soft window: not yet a hard debtor
+  179 |             'reader_block_on_hard': True,     # hard debtor self-service gate
+  180 |             'override_grant': 'circ.lend.override_debt',
 ```
 
 <!-- ─── страница 82 ─── -->
 
 ```py
-  181 |         return float(table[category])
-  182 |     return float(table.get('_DEFAULT', 0.0))
-  183 | 
-  184 | 
-  185 | # --------------------------------------------------------------------------- #
-  186 | # Decision — the rule predicate result (allow | deny | require_override).
-  187 | # --------------------------------------------------------------------------- #
-  188 | ALLOW = 'allow'
-  189 | DENY = 'deny'
-  190 | REQUIRE_OVERRIDE = 'require_override'
-  191 | 
-  192 | 
-  193 | class Decision:
-  194 |     """Result of a rule: ``decision`` + machine ``reasons`` + ``computed`` data.
-  195 | 
-  196 |     ``ok`` is True only for :data:`ALLOW`. ``reasons`` is a list of short stable
-  197 |     codes (``limit_exceeded`` / ``reader_has_debt`` / ``hold_exists`` /
-  198 |     ``max_prolong_reached`` …) for the UI / notification layer. ``events`` carries
-  199 |     any A6 event intents the operation produced.
-  200 |     """
-  201 | 
-  202 |     def __init__(self, decision, reasons=None, computed=None, events=None):
-  203 |         self.decision = decision
-  204 |         self.reasons = list(reasons or [])
-  205 |         self.computed = dict(computed or {})
-  206 |         self.events = list(events or [])
-  207 | 
-  208 |     @property
-  209 |     def ok(self):
-  210 |         return self.decision == ALLOW
-  211 | 
-  212 |     def __repr__(self):
-  213 |         return 'Decision(%s, reasons=%r, computed=%r)' % (
-  214 |             self.decision, self.reasons, self.computed)
+  181 |         },
+  182 |         # §3 fines — min(fine_per_day × billable_days, fine_cap).
+  183 |         'fine': {
+  184 |             'fine_per_day': {'_DEFAULT': 5.0, 'Д01': 0.0, 'Д02': 0.0, 'Д03': 0.0,
+  185 |                              'rare_fund': 20.0},
+  186 |             'fine_cap': 500.0,                # ceiling per loan (≤ item price, §3.2)
+  187 |             'overdue_grace_days': 1,          # billing grace before accrual starts
+  188 |             'currency': 'RUB',
+  189 |             'pay_dbn': 'PAY',
+  190 |             'waive_grant': 'circ.fine.waive',
+  191 |         },
+  192 |         # §4 lost.
+  193 |         'lost': {
+  194 |             'lost_after_days': 60,            # overdue beyond this ⇒ lost_candidate
+  195 |             'multiplier': 1.0,                # replacement = price × mult + fee
+  196 |             'handling_fee': 0.0,
+  197 |             'default_replacement_value': 100.0,  # fallback when 910^E empty/0
+  198 |             'lost_supersedes_fine': True,
+  199 |             'confirm_grant': 'circ.lost.confirm',
+  200 |         },
+  201 |         # §6 hold queue.
+  202 |         'hold': {
+  203 |             'priority': 'fifo',
+  204 |             'hold_shelf_days': 3,             # = pickup_ttl in a locker (§6.4)
+  205 |             'return_to_reservable': True,
+  206 |         },
+  207 |     }
+  208 | 
+  209 | 
+  210 | def category_limits(policy, category):
+  211 |     """The limit row for ``category`` (falls back to ``_DEFAULT``)."""
+  212 |     limits = policy['limits']
+  213 |     return limits.get(category) or limits['_DEFAULT']
+  214 | 
   215 | 
-  216 | 
-  217 | # --------------------------------------------------------------------------- #
-  218 | # Store — own sqlite (reader / loan / hold / fine). create-on-init.
-  219 | # --------------------------------------------------------------------------- #
-  220 | SCHEMA_SQLITE = """
-  221 | CREATE TABLE IF NOT EXISTS reader (
-  222 |   id TEXT PRIMARY KEY,
-  223 |   category TEXT NOT NULL DEFAULT '_DEFAULT',
-  224 |   blocked INTEGER NOT NULL DEFAULT 0
-  225 | );
-  226 | CREATE TABLE IF NOT EXISTS loan (
-  227 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  228 |   reader TEXT NOT NULL REFERENCES reader(id),
-  229 |   item TEXT NOT NULL,             -- shifr / 903
-  230 |   item_kind TEXT,                 -- читальный зал / редкий фонд / NULL
-  231 |   item_price REAL,                -- 910^E (replacement basis)
-  232 |   due REAL NOT NULL,              -- planned return epoch (40^E)
-  233 |   checked_out_at REAL NOT NULL,
-  234 |   returned INTEGER NOT NULL DEFAULT 0,   -- 40^F: 0='******' on-hand, 1=returned
-  235 |   returned_at REAL,
+  216 | def fine_per_day(policy, category, item_kind=None):
+  217 |     """Per-day fine rate for ``category`` (and optional ``item_kind`` override)."""
+  218 |     table = policy['fine']['fine_per_day']
+  219 |     if item_kind and item_kind in table:
+  220 |         return float(table[item_kind])
+  221 |     if category in table:
+  222 |         return float(table[category])
+  223 |     return float(table.get('_DEFAULT', 0.0))
+  224 | 
+  225 | 
+  226 | # --------------------------------------------------------------------------- #
+  227 | # Decision — the rule predicate result (allow | deny | require_override).
+  228 | # --------------------------------------------------------------------------- #
+  229 | ALLOW = 'allow'
+  230 | DENY = 'deny'
+  231 | REQUIRE_OVERRIDE = 'require_override'
+  232 | 
+  233 | 
+  234 | class Decision:
+  235 |     """Result of a rule: ``decision`` + machine ``reasons`` + ``computed`` data.
 ```
 
 <!-- ─── страница 83 ─── -->
 
 ```py
-  236 |   renewals INTEGER NOT NULL DEFAULT 0,   -- prolong_count (MAXPROLONGCOUNT)
-  237 |   lost_status TEXT NOT NULL DEFAULT 'none'  -- none | lost_candidate | lost
-  238 |        CHECK (lost_status IN ('none','lost_candidate','lost'))
-  239 | );
-  240 | CREATE INDEX IF NOT EXISTS loan_reader_idx ON loan(reader, returned);
-  241 | CREATE INDEX IF NOT EXISTS loan_item_idx ON loan(item, returned);
-  242 | CREATE TABLE IF NOT EXISTS hold (
-  243 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  244 |   reader TEXT NOT NULL REFERENCES reader(id),
-  245 |   item TEXT NOT NULL,
-  246 |   status TEXT NOT NULL DEFAULT 'queued'   -- queued | ready | fulfilled | cancelled | expired
-  247 |        CHECK (status IN ('queued','ready','fulfilled','cancelled','expired')),
-  248 |   queued_at REAL NOT NULL,
-  249 |   ready_at REAL
-  250 | );
-  251 | CREATE INDEX IF NOT EXISTS hold_item_idx ON hold(item, status, queued_at);
-  252 | CREATE TABLE IF NOT EXISTS fine (
-  253 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  254 |   reader TEXT NOT NULL REFERENCES reader(id),
-  255 |   loan INTEGER REFERENCES loan(id),
-  256 |   amount REAL NOT NULL DEFAULT 0,
-  257 |   status TEXT NOT NULL DEFAULT 'accrued'  -- accrued | charged | paid | waived
-  258 |        CHECK (status IN ('accrued','charged','paid','waived')),
-  259 |   kind TEXT NOT NULL DEFAULT 'fine_overdue'  -- fine_overdue | lost_replacement
-  260 |        CHECK (kind IN ('fine_overdue','lost_replacement')),
-  261 |   accrued_through REAL,           -- last day already accrued (idempotency)
-  262 |   updated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
-  263 |   UNIQUE(loan, kind)              -- one fine row per loan per kind (§3.4 idempotent)
-  264 | );
-  265 | CREATE INDEX IF NOT EXISTS fine_reader_idx ON fine(reader, status);
-  266 | CREATE TABLE IF NOT EXISTS rdr_arh (
-  267 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  268 |   loan INTEGER,                   -- исходная выдача (loan.id), для трассировки
-  269 |   reader TEXT NOT NULL,           -- 30 (RI=) читатель
-  270 |   item TEXT NOT NULL,             -- 40^B инв.№ / 910^b
-  271 |   due REAL,                       -- 40^E план. возврат
-  272 |   checked_out_at REAL,            -- 40^D дата выдачи
-  273 |   returned_at REAL NOT NULL,      -- 40^F дата факт. возврата
-  274 |   lost_status TEXT,               -- состояние на момент архивации
-  275 |   archived_at REAL NOT NULL       -- момент переноса в архив (152-ФЗ ретенция)
-  276 | );
-  277 | CREATE INDEX IF NOT EXISTS rdr_arh_reader_idx ON rdr_arh(reader);
-  278 | CREATE INDEX IF NOT EXISTS rdr_arh_item_idx ON rdr_arh(item);
-  279 | """
-  280 | 
-  281 | 
-  282 | class CirculationStore:
-  283 |     """Own sqlite store for circulation state (reader / loan / hold / fine).
-  284 | 
-  285 |     ``db_path=':memory:'`` (default) or a temp file for tests; create-on-init.
-  286 |     Connection is thread-local (house style); ``sqlite3.Row`` rows are returned
-  287 |     as plain dicts from the accessors.
-  288 |     """
-  289 | 
-  290 |     def __init__(self, db_path=':memory:'):
+  236 | 
+  237 |     ``ok`` is True only for :data:`ALLOW`. ``reasons`` is a list of short stable
+  238 |     codes (``limit_exceeded`` / ``reader_has_debt`` / ``hold_exists`` /
+  239 |     ``max_prolong_reached`` …) for the UI / notification layer. ``events`` carries
+  240 |     any A6 event intents the operation produced.
+  241 |     """
+  242 | 
+  243 |     def __init__(self, decision, reasons=None, computed=None, events=None):
+  244 |         self.decision = decision
+  245 |         self.reasons = list(reasons or [])
+  246 |         self.computed = dict(computed or {})
+  247 |         self.events = list(events or [])
+  248 | 
+  249 |     @property
+  250 |     def ok(self):
+  251 |         return self.decision == ALLOW
+  252 | 
+  253 |     def __repr__(self):
+  254 |         return 'Decision(%s, reasons=%r, computed=%r)' % (
+  255 |             self.decision, self.reasons, self.computed)
+  256 | 
+  257 | 
+  258 | # --------------------------------------------------------------------------- #
+  259 | # Store — own sqlite (reader / loan / hold / fine). create-on-init.
+  260 | # --------------------------------------------------------------------------- #
+  261 | SCHEMA_SQLITE = """
+  262 | CREATE TABLE IF NOT EXISTS reader (
+  263 |   id TEXT PRIMARY KEY,
+  264 |   category TEXT NOT NULL DEFAULT '_DEFAULT',
+  265 |   blocked INTEGER NOT NULL DEFAULT 0
+  266 | );
+  267 | CREATE TABLE IF NOT EXISTS loan (
+  268 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  269 |   reader TEXT NOT NULL REFERENCES reader(id),
+  270 |   item TEXT NOT NULL,             -- shifr / 903
+  271 |   item_kind TEXT,                 -- читальный зал / редкий фонд / NULL
+  272 |   item_price REAL,                -- 910^E (replacement basis)
+  273 |   due REAL NOT NULL,              -- planned return epoch (40^E)
+  274 |   checked_out_at REAL NOT NULL,
+  275 |   returned INTEGER NOT NULL DEFAULT 0,   -- 40^F: 0='******' on-hand, 1=returned
+  276 |   returned_at REAL,
+  277 |   renewals INTEGER NOT NULL DEFAULT 0,   -- prolong_count (MAXPROLONGCOUNT)
+  278 |   lost_status TEXT NOT NULL DEFAULT 'none'  -- none | lost_candidate | lost
+  279 |        CHECK (lost_status IN ('none','lost_candidate','lost'))
+  280 | );
+  281 | CREATE INDEX IF NOT EXISTS loan_reader_idx ON loan(reader, returned);
+  282 | CREATE INDEX IF NOT EXISTS loan_item_idx ON loan(item, returned);
+  283 | CREATE TABLE IF NOT EXISTS hold (
+  284 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  285 |   reader TEXT NOT NULL REFERENCES reader(id),
+  286 |   item TEXT NOT NULL,
+  287 |   status TEXT NOT NULL DEFAULT 'queued'   -- queued | ready | fulfilled | cancelled | expired
+  288 |        CHECK (status IN ('queued','ready','fulfilled','cancelled','expired')),
+  289 |   queued_at REAL NOT NULL,
+  290 |   ready_at REAL
 ```
 
 <!-- ─── страница 84 ─── -->
 
 ```py
-  291 |         self.db_path = db_path
-  292 |         self._local = threading.local()
-  293 |         self.ensure_schema()
-  294 | 
-  295 |     def _conn(self):
-  296 |         c = getattr(self._local, 'conn', None)
-  297 |         if c is None:
-  298 |             c = sqlite3.connect(self.db_path)
-  299 |             c.row_factory = sqlite3.Row
-  300 |             c.execute('PRAGMA foreign_keys=ON')
-  301 |             self._local.conn = c
-  302 |         return c
-  303 | 
-  304 |     def ensure_schema(self):
-  305 |         c = self._conn()
-  306 |         c.executescript(SCHEMA_SQLITE)
-  307 |         c.commit()
-  308 | 
-  309 |     # ---- readers ---------------------------------------------------------- #
-  310 |     def add_reader(self, reader_id, category='_DEFAULT', blocked=0):
-  311 |         c = self._conn()
-  312 |         c.execute('INSERT OR REPLACE INTO reader(id,category,blocked) VALUES(?,?,?)',
-  313 |                   (reader_id, category, 1 if blocked else 0))
-  314 |         c.commit()
-  315 |         return self.get_reader(reader_id)
-  316 | 
-  317 |     def get_reader(self, reader_id):
-  318 |         r = self._conn().execute(
-  319 |             'SELECT * FROM reader WHERE id=?', (reader_id,)).fetchone()
-  320 |         return dict(r) if r else None
+  291 | );
+  292 | CREATE INDEX IF NOT EXISTS hold_item_idx ON hold(item, status, queued_at);
+  293 | CREATE TABLE IF NOT EXISTS fine (
+  294 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  295 |   reader TEXT NOT NULL REFERENCES reader(id),
+  296 |   loan INTEGER REFERENCES loan(id),
+  297 |   amount REAL NOT NULL DEFAULT 0,
+  298 |   status TEXT NOT NULL DEFAULT 'accrued'  -- accrued | charged | paid | waived
+  299 |        CHECK (status IN ('accrued','charged','paid','waived')),
+  300 |   kind TEXT NOT NULL DEFAULT 'fine_overdue'  -- fine_overdue | lost_replacement
+  301 |        CHECK (kind IN ('fine_overdue','lost_replacement')),
+  302 |   accrued_through REAL,           -- last day already accrued (idempotency)
+  303 |   updated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+  304 |   UNIQUE(loan, kind)              -- one fine row per loan per kind (§3.4 idempotent)
+  305 | );
+  306 | CREATE INDEX IF NOT EXISTS fine_reader_idx ON fine(reader, status);
+  307 | CREATE TABLE IF NOT EXISTS rdr_arh (
+  308 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  309 |   loan INTEGER,                   -- исходная выдача (loan.id), для трассировки
+  310 |   reader TEXT NOT NULL,           -- 30 (RI=) читатель
+  311 |   item TEXT NOT NULL,             -- 40^B инв.№ / 910^b
+  312 |   due REAL,                       -- 40^E план. возврат
+  313 |   checked_out_at REAL,            -- 40^D дата выдачи
+  314 |   returned_at REAL NOT NULL,      -- 40^F дата факт. возврата
+  315 |   lost_status TEXT,               -- состояние на момент архивации
+  316 |   archived_at REAL NOT NULL       -- момент переноса в архив (152-ФЗ ретенция)
+  317 | );
+  318 | CREATE INDEX IF NOT EXISTS rdr_arh_reader_idx ON rdr_arh(reader);
+  319 | CREATE INDEX IF NOT EXISTS rdr_arh_item_idx ON rdr_arh(item);
+  320 | """
   321 | 
-  322 |     def set_blocked(self, reader_id, blocked):
-  323 |         c = self._conn()
-  324 |         c.execute('UPDATE reader SET blocked=? WHERE id=?',
-  325 |                   (1 if blocked else 0, reader_id))
-  326 |         c.commit()
-  327 | 
-  328 |     # ---- loans ------------------------------------------------------------ #
-  329 |     def add_loan(self, reader_id, item, due, checked_out_at,
-  330 |                  item_kind=None, item_price=None):
-  331 |         c = self._conn()
-  332 |         cur = c.execute(
-  333 |             'INSERT INTO loan(reader,item,item_kind,item_price,due,'
-  334 |             'checked_out_at) VALUES(?,?,?,?,?,?)',
-  335 |             (reader_id, item, item_kind, item_price, due, checked_out_at))
-  336 |         c.commit()
-  337 |         return self.get_loan(cur.lastrowid)
-  338 | 
-  339 |     def get_loan(self, loan_id):
-  340 |         r = self._conn().execute(
-  341 |             'SELECT * FROM loan WHERE id=?', (loan_id,)).fetchone()
-  342 |         return dict(r) if r else None
-  343 | 
-  344 |     def loans_on_hand(self, reader_id):
-  345 |         """RDR.40 rows still on hand (``40^F='******'``) for a reader."""
+  322 | 
+  323 | class CirculationStore:
+  324 |     """Own sqlite store for circulation state (reader / loan / hold / fine).
+  325 | 
+  326 |     ``db_path=':memory:'`` (default) or a temp file for tests; create-on-init.
+  327 |     Connection is thread-local (house style); ``sqlite3.Row`` rows are returned
+  328 |     as plain dicts from the accessors.
+  329 |     """
+  330 | 
+  331 |     def __init__(self, db_path=':memory:'):
+  332 |         self.db_path = db_path
+  333 |         self._local = threading.local()
+  334 |         self.ensure_schema()
+  335 | 
+  336 |     def _conn(self):
+  337 |         c = getattr(self._local, 'conn', None)
+  338 |         if c is None:
+  339 |             c = sqlite3.connect(self.db_path)
+  340 |             c.row_factory = sqlite3.Row
+  341 |             c.execute('PRAGMA foreign_keys=ON')
+  342 |             self._local.conn = c
+  343 |         return c
+  344 | 
+  345 |     def ensure_schema(self):
 ```
 
 <!-- ─── страница 85 ─── -->
 
 ```py
-  346 |         return [dict(r) for r in self._conn().execute(
-  347 |             'SELECT * FROM loan WHERE reader=? AND returned=0 AND lost_status!=? '
-  348 |             'ORDER BY id', (reader_id, 'lost')).fetchall()]
+  346 |         c = self._conn()
+  347 |         c.executescript(SCHEMA_SQLITE)
+  348 |         c.commit()
   349 | 
-  350 |     def reader_loans(self, reader_id):
-  351 |         """Все выдачи читателя (на руках + возвращённые) — для полного формуляра."""
-  352 |         return [dict(r) for r in self._conn().execute(
-  353 |             'SELECT * FROM loan WHERE reader=? ORDER BY id',
-  354 |             (reader_id,)).fetchall()]
-  355 | 
-  356 |     def count_on_hand(self, reader_id):
-  357 |         """``count_on_hand`` = number of RDR.40 with ``40^F='******'`` (§5.4)."""
-  358 |         return self._conn().execute(
-  359 |             'SELECT COUNT(*) AS n FROM loan WHERE reader=? AND returned=0 '
-  360 |             'AND lost_status!=?', (reader_id, 'lost')).fetchone()['n']
-  361 | 
-  362 |     def item_on_hand_count(self, item):
-  363 |         """Number of on-hand (not returned, not lost) loans of ``item`` (910^b).
-  364 | 
-  365 |         The read book-provision uses to decide whether an issued copy still
-  366 |         belongs to the фонд (INTEGRATION_MAP ребро 4.4/4.7): a copy on a reader's
-  367 |         hands is provisioned, just in use. A confirmed-lost copy has left the фонд
-  368 |         (``lost_status='lost'``) and is excluded."""
-  369 |         return self._conn().execute(
-  370 |             'SELECT COUNT(*) AS n FROM loan WHERE item=? AND returned=0 '
-  371 |             'AND lost_status!=?', (item, 'lost')).fetchone()['n']
-  372 | 
-  373 |     def open_overdue_loans(self, today_epoch, grace_days=0):
-  374 |         """On-hand loans past ``due + grace`` (basis for accrual / lost scan)."""
-  375 |         cutoff = today_epoch - grace_days * SECONDS_PER_DAY
-  376 |         return [dict(r) for r in self._conn().execute(
-  377 |             'SELECT * FROM loan WHERE returned=0 AND lost_status!=? AND due<? '
-  378 |             'ORDER BY id', ('lost', cutoff)).fetchall()]
+  350 |     # ---- readers ---------------------------------------------------------- #
+  351 |     def add_reader(self, reader_id, category='_DEFAULT', blocked=0):
+  352 |         c = self._conn()
+  353 |         c.execute('INSERT OR REPLACE INTO reader(id,category,blocked) VALUES(?,?,?)',
+  354 |                   (reader_id, category, 1 if blocked else 0))
+  355 |         c.commit()
+  356 |         return self.get_reader(reader_id)
+  357 | 
+  358 |     def get_reader(self, reader_id):
+  359 |         r = self._conn().execute(
+  360 |             'SELECT * FROM reader WHERE id=?', (reader_id,)).fetchone()
+  361 |         return dict(r) if r else None
+  362 | 
+  363 |     def set_blocked(self, reader_id, blocked):
+  364 |         c = self._conn()
+  365 |         c.execute('UPDATE reader SET blocked=? WHERE id=?',
+  366 |                   (1 if blocked else 0, reader_id))
+  367 |         c.commit()
+  368 | 
+  369 |     # ---- loans ------------------------------------------------------------ #
+  370 |     def add_loan(self, reader_id, item, due, checked_out_at,
+  371 |                  item_kind=None, item_price=None):
+  372 |         c = self._conn()
+  373 |         cur = c.execute(
+  374 |             'INSERT INTO loan(reader,item,item_kind,item_price,due,'
+  375 |             'checked_out_at) VALUES(?,?,?,?,?,?)',
+  376 |             (reader_id, item, item_kind, item_price, due, checked_out_at))
+  377 |         c.commit()
+  378 |         return self.get_loan(cur.lastrowid)
   379 | 
-  380 |     def mark_returned(self, loan_id, returned_at):
-  381 |         c = self._conn()
-  382 |         c.execute('UPDATE loan SET returned=1, returned_at=? WHERE id=?',
-  383 |                   (returned_at, loan_id))
-  384 |         c.commit()
-  385 | 
-  386 |     def bump_renewal(self, loan_id, new_due):
-  387 |         c = self._conn()
-  388 |         c.execute('UPDATE loan SET renewals=renewals+1, due=? WHERE id=?',
-  389 |                   (new_due, loan_id))
-  390 |         c.commit()
-  391 | 
-  392 |     def set_lost_status(self, loan_id, status):
-  393 |         c = self._conn()
-  394 |         c.execute('UPDATE loan SET lost_status=? WHERE id=?', (status, loan_id))
-  395 |         c.commit()
+  380 |     def get_loan(self, loan_id):
+  381 |         r = self._conn().execute(
+  382 |             'SELECT * FROM loan WHERE id=?', (loan_id,)).fetchone()
+  383 |         return dict(r) if r else None
+  384 | 
+  385 |     def loans_on_hand(self, reader_id):
+  386 |         """RDR.40 rows still on hand (``40^F='******'``) for a reader."""
+  387 |         return [dict(r) for r in self._conn().execute(
+  388 |             'SELECT * FROM loan WHERE reader=? AND returned=0 AND lost_status!=? '
+  389 |             'ORDER BY id', (reader_id, 'lost')).fetchall()]
+  390 | 
+  391 |     def reader_loans(self, reader_id):
+  392 |         """Все выдачи читателя (на руках + возвращённые) — для полного формуляра."""
+  393 |         return [dict(r) for r in self._conn().execute(
+  394 |             'SELECT * FROM loan WHERE reader=? ORDER BY id',
+  395 |             (reader_id,)).fetchall()]
   396 | 
-  397 |     # ---- archive (RDR_ARH) ------------------------------------------------ #
-  398 |     def archive_loan(self, loan, returned_at, archived_at):
-  399 |         """Перенести завершённую (возвращённую) выдачу в архив ``rdr_arh``.
-  400 | 
+  397 |     def count_on_hand(self, reader_id):
+  398 |         """``count_on_hand`` = number of RDR.40 with ``40^F='******'`` (§5.4)."""
+  399 |         return self._conn().execute(
+  400 |             'SELECT COUNT(*) AS n FROM loan WHERE reader=? AND returned=0 '
 ```
 
 <!-- ─── страница 86 ─── -->
 
 ```py
-  401 |         Ребро INTEGRATION_MAP 2.5: при возврате запись о выдаче дублируется в
-  402 |         отдельную сущность-архив RDR_ARH (152-ФЗ ретенция). Это **opt-in**
-  403 |         добавление: сама строка ``loan`` остаётся помеченной ``returned=1`` —
-  404 |         архив её не заменяет, а накапливает историю. Возвращает строку архива.
-  405 |         """
-  406 |         c = self._conn()
-  407 |         cur = c.execute(
-  408 |             'INSERT INTO rdr_arh(loan,reader,item,due,checked_out_at,'
-  409 |             'returned_at,lost_status,archived_at) VALUES(?,?,?,?,?,?,?,?)',
-  410 |             (loan['id'], loan['reader'], loan['item'], loan['due'],
-  411 |              loan['checked_out_at'], returned_at, loan['lost_status'],
-  412 |              archived_at))
-  413 |         c.commit()
-  414 |         return self.get_archived(cur.lastrowid)
-  415 | 
-  416 |     def get_archived(self, arh_id):
-  417 |         r = self._conn().execute(
-  418 |             'SELECT * FROM rdr_arh WHERE id=?', (arh_id,)).fetchone()
-  419 |         return dict(r) if r else None
+  401 |             'AND lost_status!=?', (reader_id, 'lost')).fetchone()['n']
+  402 | 
+  403 |     def item_on_hand_count(self, item):
+  404 |         """Number of on-hand (not returned, not lost) loans of ``item`` (910^b).
+  405 | 
+  406 |         The read book-provision uses to decide whether an issued copy still
+  407 |         belongs to the фонд (INTEGRATION_MAP ребро 4.4/4.7): a copy on a reader's
+  408 |         hands is provisioned, just in use. A confirmed-lost copy has left the фонд
+  409 |         (``lost_status='lost'``) and is excluded."""
+  410 |         return self._conn().execute(
+  411 |             'SELECT COUNT(*) AS n FROM loan WHERE item=? AND returned=0 '
+  412 |             'AND lost_status!=?', (item, 'lost')).fetchone()['n']
+  413 | 
+  414 |     def open_overdue_loans(self, today_epoch, grace_days=0):
+  415 |         """On-hand loans past ``due + grace`` (basis for accrual / lost scan)."""
+  416 |         cutoff = today_epoch - grace_days * SECONDS_PER_DAY
+  417 |         return [dict(r) for r in self._conn().execute(
+  418 |             'SELECT * FROM loan WHERE returned=0 AND lost_status!=? AND due<? '
+  419 |             'ORDER BY id', ('lost', cutoff)).fetchall()]
   420 | 
-  421 |     def archived_loans(self, reader_id):
-  422 |         """Архивные (возвращённые) выдачи читателя — поле 40 в RDR_ARH."""
-  423 |         return [dict(r) for r in self._conn().execute(
-  424 |             'SELECT * FROM rdr_arh WHERE reader=? ORDER BY id',
-  425 |             (reader_id,)).fetchall()]
+  421 |     def mark_returned(self, loan_id, returned_at):
+  422 |         c = self._conn()
+  423 |         c.execute('UPDATE loan SET returned=1, returned_at=? WHERE id=?',
+  424 |                   (returned_at, loan_id))
+  425 |         c.commit()
   426 | 
-  427 |     def count_archived(self, reader_id=None):
-  428 |         """Число архивных записей (всего или по читателю)."""
-  429 |         if reader_id is None:
-  430 |             return self._conn().execute(
-  431 |                 'SELECT COUNT(*) AS n FROM rdr_arh').fetchone()['n']
-  432 |         return self._conn().execute(
-  433 |             'SELECT COUNT(*) AS n FROM rdr_arh WHERE reader=?',
-  434 |             (reader_id,)).fetchone()['n']
-  435 | 
-  436 |     # ---- holds ------------------------------------------------------------ #
-  437 |     def add_hold(self, reader_id, item, queued_at):
-  438 |         c = self._conn()
-  439 |         cur = c.execute(
-  440 |             'INSERT INTO hold(reader,item,queued_at) VALUES(?,?,?)',
-  441 |             (reader_id, item, queued_at))
-  442 |         c.commit()
-  443 |         return self.get_hold(cur.lastrowid)
-  444 | 
-  445 |     def get_hold(self, hold_id):
-  446 |         r = self._conn().execute(
-  447 |             'SELECT * FROM hold WHERE id=?', (hold_id,)).fetchone()
-  448 |         return dict(r) if r else None
-  449 | 
-  450 |     def active_holds(self, item):
-  451 |         """Queue for an item: queued/ready, FIFO by ``queued_at`` then id."""
-  452 |         return [dict(r) for r in self._conn().execute(
-  453 |             "SELECT * FROM hold WHERE item=? AND status IN ('queued','ready') "
-  454 |             'ORDER BY queued_at, id', (item,)).fetchall()]
-  455 | 
+  427 |     def bump_renewal(self, loan_id, new_due):
+  428 |         c = self._conn()
+  429 |         c.execute('UPDATE loan SET renewals=renewals+1, due=? WHERE id=?',
+  430 |                   (new_due, loan_id))
+  431 |         c.commit()
+  432 | 
+  433 |     def set_lost_status(self, loan_id, status):
+  434 |         c = self._conn()
+  435 |         c.execute('UPDATE loan SET lost_status=? WHERE id=?', (status, loan_id))
+  436 |         c.commit()
+  437 | 
+  438 |     # ---- archive (RDR_ARH) ------------------------------------------------ #
+  439 |     def archive_loan(self, loan, returned_at, archived_at):
+  440 |         """Перенести завершённую (возвращённую) выдачу в архив ``rdr_arh``.
+  441 | 
+  442 |         Ребро INTEGRATION_MAP 2.5: при возврате запись о выдаче дублируется в
+  443 |         отдельную сущность-архив RDR_ARH (152-ФЗ ретенция). Это **opt-in**
+  444 |         добавление: сама строка ``loan`` остаётся помеченной ``returned=1`` —
+  445 |         архив её не заменяет, а накапливает историю. Возвращает строку архива.
+  446 |         """
+  447 |         c = self._conn()
+  448 |         cur = c.execute(
+  449 |             'INSERT INTO rdr_arh(loan,reader,item,due,checked_out_at,'
+  450 |             'returned_at,lost_status,archived_at) VALUES(?,?,?,?,?,?,?,?)',
+  451 |             (loan['id'], loan['reader'], loan['item'], loan['due'],
+  452 |              loan['checked_out_at'], returned_at, loan['lost_status'],
+  453 |              archived_at))
+  454 |         c.commit()
+  455 |         return self.get_archived(cur.lastrowid)
 ```
 
 <!-- ─── страница 87 ─── -->
 
 ```py
-  456 |     def set_hold_status(self, hold_id, status, ready_at=None):
-  457 |         c = self._conn()
-  458 |         if ready_at is not None:
-  459 |             c.execute('UPDATE hold SET status=?, ready_at=? WHERE id=?',
-  460 |                       (status, ready_at, hold_id))
-  461 |         else:
-  462 |             c.execute('UPDATE hold SET status=? WHERE id=?', (status, hold_id))
-  463 |         c.commit()
-  464 | 
-  465 |     # ---- fines ------------------------------------------------------------ #
-  466 |     def upsert_fine(self, reader_id, loan_id, amount, kind='fine_overdue',
-  467 |                     status='accrued', accrued_through=None):
-  468 |         """Idempotent per ``(loan, kind)`` — one fine row per loan per kind."""
-  469 |         c = self._conn()
-  470 |         c.execute(
-  471 |             'INSERT INTO fine(reader,loan,amount,kind,status,accrued_through,'
-  472 |             'updated_at) VALUES(?,?,?,?,?,?,?) '
-  473 |             'ON CONFLICT(loan,kind) DO UPDATE SET amount=excluded.amount, '
-  474 |             'status=excluded.status, accrued_through=excluded.accrued_through, '
-  475 |             'updated_at=excluded.updated_at',
-  476 |             (reader_id, loan_id, amount, kind, status, accrued_through, time.time()))
-  477 |         c.commit()
-  478 |         return self.get_fine(loan_id, kind)
-  479 | 
-  480 |     def get_fine(self, loan_id, kind='fine_overdue'):
-  481 |         r = self._conn().execute(
-  482 |             'SELECT * FROM fine WHERE loan=? AND kind=?',
-  483 |             (loan_id, kind)).fetchone()
-  484 |         return dict(r) if r else None
+  456 | 
+  457 |     def get_archived(self, arh_id):
+  458 |         r = self._conn().execute(
+  459 |             'SELECT * FROM rdr_arh WHERE id=?', (arh_id,)).fetchone()
+  460 |         return dict(r) if r else None
+  461 | 
+  462 |     def archived_loans(self, reader_id):
+  463 |         """Архивные (возвращённые) выдачи читателя — поле 40 в RDR_ARH."""
+  464 |         return [dict(r) for r in self._conn().execute(
+  465 |             'SELECT * FROM rdr_arh WHERE reader=? ORDER BY id',
+  466 |             (reader_id,)).fetchall()]
+  467 | 
+  468 |     def count_archived(self, reader_id=None):
+  469 |         """Число архивных записей (всего или по читателю)."""
+  470 |         if reader_id is None:
+  471 |             return self._conn().execute(
+  472 |                 'SELECT COUNT(*) AS n FROM rdr_arh').fetchone()['n']
+  473 |         return self._conn().execute(
+  474 |             'SELECT COUNT(*) AS n FROM rdr_arh WHERE reader=?',
+  475 |             (reader_id,)).fetchone()['n']
+  476 | 
+  477 |     # ---- holds ------------------------------------------------------------ #
+  478 |     def add_hold(self, reader_id, item, queued_at):
+  479 |         c = self._conn()
+  480 |         cur = c.execute(
+  481 |             'INSERT INTO hold(reader,item,queued_at) VALUES(?,?,?)',
+  482 |             (reader_id, item, queued_at))
+  483 |         c.commit()
+  484 |         return self.get_hold(cur.lastrowid)
   485 | 
-  486 |     def set_fine_status(self, fine_id, status):
-  487 |         c = self._conn()
-  488 |         c.execute('UPDATE fine SET status=?, updated_at=? WHERE id=?',
-  489 |                   (status, time.time(), fine_id))
-  490 |         c.commit()
-  491 | 
-  492 |     def outstanding_fines(self, reader_id):
-  493 |         """Unpaid / un-waived fines for a reader (accrued or charged)."""
-  494 |         return [dict(r) for r in self._conn().execute(
-  495 |             "SELECT * FROM fine WHERE reader=? AND status IN ('accrued','charged') "
-  496 |             'ORDER BY id', (reader_id,)).fetchall()]
-  497 | 
-  498 |     def total_outstanding(self, reader_id):
-  499 |         row = self._conn().execute(
-  500 |             "SELECT COALESCE(SUM(amount),0) AS s FROM fine WHERE reader=? "
-  501 |             "AND status IN ('accrued','charged')", (reader_id,)).fetchone()
-  502 |         return float(row['s'])
-  503 | 
-  504 | 
-  505 | # --------------------------------------------------------------------------- #
-  506 | # Debt model — §2.1: none | soft | hard.
-  507 | # --------------------------------------------------------------------------- #
-  508 | def debt_level(store, policy, reader_id, today_epoch):
-  509 |     """Classify a reader's debt (§2.1): ``none`` / ``soft`` / ``hard``.
-  510 | 
+  486 |     def get_hold(self, hold_id):
+  487 |         r = self._conn().execute(
+  488 |             'SELECT * FROM hold WHERE id=?', (hold_id,)).fetchone()
+  489 |         return dict(r) if r else None
+  490 | 
+  491 |     def active_holds(self, item):
+  492 |         """Queue for an item: queued/ready, FIFO by ``queued_at`` then id."""
+  493 |         return [dict(r) for r in self._conn().execute(
+  494 |             "SELECT * FROM hold WHERE item=? AND status IN ('queued','ready') "
+  495 |             'ORDER BY queued_at, id', (item,)).fetchall()]
+  496 | 
+  497 |     def set_hold_status(self, hold_id, status, ready_at=None):
+  498 |         c = self._conn()
+  499 |         if ready_at is not None:
+  500 |             c.execute('UPDATE hold SET status=?, ready_at=? WHERE id=?',
+  501 |                       (status, ready_at, hold_id))
+  502 |         else:
+  503 |             c.execute('UPDATE hold SET status=? WHERE id=?', (status, hold_id))
+  504 |         c.commit()
+  505 | 
+  506 |     # ---- fines ------------------------------------------------------------ #
+  507 |     def upsert_fine(self, reader_id, loan_id, amount, kind='fine_overdue',
+  508 |                     status='accrued', accrued_through=None):
+  509 |         """Idempotent per ``(loan, kind)`` — one fine row per loan per kind."""
+  510 |         c = self._conn()
 ```
 
 <!-- ─── страница 88 ─── -->
 
 ```py
-  511 |     ``hard`` if any of: an overdue on-hand loan past the overdue grace; a
-  512 |     confirmed-lost loan with an unpaid replacement; an unpaid fine over the money
-  513 |     grace. ``soft`` = something owed but inside grace. ``none`` = clean.
-  514 |     """
-  515 |     grace_days = policy['debt']['overdue_grace_days']
-  516 |     cutoff_hard = today_epoch - grace_days * SECONDS_PER_DAY
-  517 | 
-  518 |     has_soft = False
-  519 |     # overdue on-hand loans
-  520 |     for ln in store.loans_on_hand(reader_id):
-  521 |         if ln['due'] < today_epoch:
-  522 |             if ln['due'] < cutoff_hard:
-  523 |                 return 'hard'
-  524 |             has_soft = True
-  525 |     # unpaid fines / lost replacement
-  526 |     fines = store.outstanding_fines(reader_id)
-  527 |     for f in fines:
-  528 |         if f['kind'] == 'lost_replacement' and f['amount'] > 0:
-  529 |             return 'hard'
-  530 |     total = sum(f['amount'] for f in fines)
-  531 |     if total > 0:
-  532 |         # money grace: a token amount stays soft; here grace is the per-day rate
-  533 |         # floor — any non-trivial balance is hard. Default money grace = 0 ⇒ hard.
-  534 |         return 'hard'
-  535 |     return 'soft' if has_soft else 'none'
-  536 | 
-  537 | 
-  538 | # --------------------------------------------------------------------------- #
-  539 | # Engine — operations (each gated op returns a Decision).
-  540 | # --------------------------------------------------------------------------- #
-  541 | class CirculationEngine:
-  542 |     """Circulation operations over a :class:`CirculationStore` + ``circ_policy``.
-  543 | 
-  544 |     ``notifier`` (optional) is an :class:`access.notifications.NotificationQueue`;
-  545 |     when present, event intents are also enqueued (idempotent). ``tenant`` scopes
-  546 |     enqueued events. All time arguments are epoch seconds — tests inject ``today``
-  547 |     deterministically.
-  548 |     """
-  549 | 
-  550 |     def __init__(self, store=None, policy=None, notifier=None, tenant='public',
-  551 |                  catalog=None, catalog_db='IBIS', notifications=None,
-  552 |                  staff_recipient='staff', acquisition=None,
-  553 |                  archive_on_return=False):
-  554 |         self.store = store or CirculationStore(':memory:')
-  555 |         self.policy = policy or default_policy(tenant)
-  556 |         # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
-  557 |         # ``notifications`` is the documented handle (an
-  558 |         # :class:`access.notifications.NotificationQueue`); ``notifier`` is a
-  559 |         # back-compat alias for the same role. Whichever is supplied wins
-  560 |         # (``notifications`` takes precedence if both are given). With no handle
-  561 |         # the engine stays fully standalone — events are only *returned* as
-  562 |         # intents, never dispatched (back-compat, mirrors the ``catalog=`` seam).
-  563 |         self.notifier = notifications if notifications is not None else notifier
-  564 |         # Staff-facing events (``staff_alert``) are addressed to a librarian, not
-  565 |         # the reader; this is the recipient handle they enqueue to.
+  511 |         c.execute(
+  512 |             'INSERT INTO fine(reader,loan,amount,kind,status,accrued_through,'
+  513 |             'updated_at) VALUES(?,?,?,?,?,?,?) '
+  514 |             'ON CONFLICT(loan,kind) DO UPDATE SET amount=excluded.amount, '
+  515 |             'status=excluded.status, accrued_through=excluded.accrued_through, '
+  516 |             'updated_at=excluded.updated_at',
+  517 |             (reader_id, loan_id, amount, kind, status, accrued_through, time.time()))
+  518 |         c.commit()
+  519 |         return self.get_fine(loan_id, kind)
+  520 | 
+  521 |     def get_fine(self, loan_id, kind='fine_overdue'):
+  522 |         r = self._conn().execute(
+  523 |             'SELECT * FROM fine WHERE loan=? AND kind=?',
+  524 |             (loan_id, kind)).fetchone()
+  525 |         return dict(r) if r else None
+  526 | 
+  527 |     def set_fine_status(self, fine_id, status):
+  528 |         c = self._conn()
+  529 |         c.execute('UPDATE fine SET status=?, updated_at=? WHERE id=?',
+  530 |                   (status, time.time(), fine_id))
+  531 |         c.commit()
+  532 | 
+  533 |     def outstanding_fines(self, reader_id):
+  534 |         """Unpaid / un-waived fines for a reader (accrued or charged)."""
+  535 |         return [dict(r) for r in self._conn().execute(
+  536 |             "SELECT * FROM fine WHERE reader=? AND status IN ('accrued','charged') "
+  537 |             'ORDER BY id', (reader_id,)).fetchall()]
+  538 | 
+  539 |     def total_outstanding(self, reader_id):
+  540 |         row = self._conn().execute(
+  541 |             "SELECT COALESCE(SUM(amount),0) AS s FROM fine WHERE reader=? "
+  542 |             "AND status IN ('accrued','charged')", (reader_id,)).fetchone()
+  543 |         return float(row['s'])
+  544 | 
+  545 | 
+  546 | # --------------------------------------------------------------------------- #
+  547 | # Debt model — §2.1: none | soft | hard.
+  548 | # --------------------------------------------------------------------------- #
+  549 | def debt_level(store, policy, reader_id, today_epoch):
+  550 |     """Classify a reader's debt (§2.1): ``none`` / ``soft`` / ``hard``.
+  551 | 
+  552 |     ``hard`` if any of: an overdue on-hand loan past the overdue grace; a
+  553 |     confirmed-lost loan with an unpaid replacement; an unpaid fine over the money
+  554 |     grace. ``soft`` = something owed but inside grace. ``none`` = clean.
+  555 |     """
+  556 |     grace_days = policy['debt']['overdue_grace_days']
+  557 |     cutoff_hard = today_epoch - grace_days * SECONDS_PER_DAY
+  558 | 
+  559 |     has_soft = False
+  560 |     # overdue on-hand loans
+  561 |     for ln in store.loans_on_hand(reader_id):
+  562 |         if ln['due'] < today_epoch:
+  563 |             if ln['due'] < cutoff_hard:
+  564 |                 return 'hard'
+  565 |             has_soft = True
 ```
 
 <!-- ─── страница 89 ─── -->
 
 ```py
-  566 |         self.staff_recipient = staff_recipient
-  567 |         self.tenant = tenant
-  568 |         # Optional Catalog↔Circulation seam (INTEGRATION_MAP edges 2.1/2.2). When a
-  569 |         # ``catalog`` (access.catalog.CatalogStore) handle is wired, checkout flips
-  570 |         # the matching exemplar's ``910^A`` 0→1 (issued) and return flips it 1→0
-  571 |         # (free); availability reads come from the catalog. ``catalog_db`` is the
-  572 |         # base whose exemplars this engine reflects into (default IBIS / ЭК). With
-  573 |         # no handle the engine stays fully standalone (back-compat).
-  574 |         self.catalog = catalog
-  575 |         self.catalog_db = catalog_db
-  576 |         # Optional Acquisition (КСУ) seam (INTEGRATION_MAP ребро 5.2:
-  577 |         # Книговыдача→Комплектование). When an ``acquisition``
-  578 |         # (access.acquisition.AcquisitionEngine) handle is wired, a confirmed loss
-  579 |         # (``mark_lost(confirm=True)``) is reflected into the acquisition КСУ
-  580 |         # выбытия: the lost copy is written off as выбытие (910^V/^X, статус
-  581 |         # «списан»). Best-effort, optional — with no handle circulation stays fully
-  582 |         # standalone (back-compat, mirrors the ``catalog=`` seam).
-  583 |         self.acquisition = acquisition
-  584 |         # Архив выдач RDR_ARH (ребро 2.5). **Opt-in**: когда True, ``return_item``
-  585 |         # дополнительно к ``returned=1`` переносит завершённую выдачу в архив
-  586 |         # ``rdr_arh`` (152-ФЗ ретенция — отдельная сущность истории выдач). По
-  587 |         # умолчанию (False) поведение прежнее: только флаг ``returned=1`` в той
-  588 |         # же таблице, без архива (back-compat).
-  589 |         self.archive_on_return = archive_on_return
+  566 |     # unpaid fines / lost replacement
+  567 |     fines = store.outstanding_fines(reader_id)
+  568 |     for f in fines:
+  569 |         if f['kind'] == 'lost_replacement' and f['amount'] > 0:
+  570 |             return 'hard'
+  571 |     total = sum(f['amount'] for f in fines)
+  572 |     if total > 0:
+  573 |         # money grace: a token amount stays soft; here grace is the per-day rate
+  574 |         # floor — any non-trivial balance is hard. Default money grace = 0 ⇒ hard.
+  575 |         return 'hard'
+  576 |     return 'soft' if has_soft else 'none'
+  577 | 
+  578 | 
+  579 | # --------------------------------------------------------------------------- #
+  580 | # Engine — operations (each gated op returns a Decision).
+  581 | # --------------------------------------------------------------------------- #
+  582 | class CirculationEngine:
+  583 |     """Circulation operations over a :class:`CirculationStore` + ``circ_policy``.
+  584 | 
+  585 |     ``notifier`` (optional) is an :class:`access.notifications.NotificationQueue`;
+  586 |     when present, event intents are also enqueued (idempotent). ``tenant`` scopes
+  587 |     enqueued events. All time arguments are epoch seconds — tests inject ``today``
+  588 |     deterministically.
+  589 |     """
   590 | 
-  591 |     # ---- acquisition-driven seams (поступление → выдача · выдача → КСУ) ---- #
-  592 |     def register_acquired_item(self, item, catalog_db=None):
-  593 |         """Confirm a freshly-acquired copy (``item`` = 910^b) is lendable now.
-  594 | 
-  595 |         The Комплектование↔Книговыдача seam (called by
-  596 |         :meth:`access.acquisition.AcquisitionEngine.receive` through its
-  597 |         ``circulation`` handle). A received copy that has been reflected into the
-  598 |         catalog as a free 910 exemplar is checkout-ready: this returns True iff the
-  599 |         copy is free per the catalog (``910^A=0``). When no catalog is wired the
-  600 |         copy is accepted as lendable by default (circulation keeps no inventory of
-  601 |         its own — the loan only references the item shifr). Read-only: it asserts
-  602 |         lendability, it does not create a loan."""
-  603 |         db = catalog_db or self.catalog_db
-  604 |         if self.catalog is None:
-  605 |             return True  # no catalog opinion — circulation lends against the shifr
-  606 |         try:
-  607 |             found = self.catalog.find_exemplar(db, item)
-  608 |             if found is None:
-  609 |                 return False  # not in the catalog ⇒ not yet a known lendable copy
-  610 |             return self.catalog.is_available(db, item)
-  611 |         except Exception:
-  612 |             return False
-  613 | 
-  614 |     def item_on_hand(self, item):
-  615 |         """True iff ``item`` (910^b) is on an on-hand loan (not returned, not lost).
-  616 | 
-  617 |         The read-only probe book-provision uses to count a checked-out copy as
-  618 |         still-provisioned фонд (INTEGRATION_MAP ребро 4.4/4.7)."""
-  619 |         return self.store.item_on_hand_count(item) > 0
-  620 | 
+  591 |     def __init__(self, store=None, policy=None, notifier=None, tenant='public',
+  592 |                  catalog=None, catalog_db='IBIS', notifications=None,
+  593 |                  staff_recipient='staff', acquisition=None,
+  594 |                  archive_on_return=False):
+  595 |         self.store = store or CirculationStore(':memory:')
+  596 |         self.policy = policy or default_policy(tenant)
+  597 |         # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
+  598 |         # ``notifications`` is the documented handle (an
+  599 |         # :class:`access.notifications.NotificationQueue`); ``notifier`` is a
+  600 |         # back-compat alias for the same role. Whichever is supplied wins
+  601 |         # (``notifications`` takes precedence if both are given). With no handle
+  602 |         # the engine stays fully standalone — events are only *returned* as
+  603 |         # intents, never dispatched (back-compat, mirrors the ``catalog=`` seam).
+  604 |         self.notifier = notifications if notifications is not None else notifier
+  605 |         # Staff-facing events (``staff_alert``) are addressed to a librarian, not
+  606 |         # the reader; this is the recipient handle they enqueue to.
+  607 |         self.staff_recipient = staff_recipient
+  608 |         self.tenant = tenant
+  609 |         # Optional Catalog↔Circulation seam (INTEGRATION_MAP edges 2.1/2.2). When a
+  610 |         # ``catalog`` (access.catalog.CatalogStore) handle is wired, checkout flips
+  611 |         # the matching exemplar's ``910^A`` 0→1 (issued) and return flips it 1→0
+  612 |         # (free); availability reads come from the catalog. ``catalog_db`` is the
+  613 |         # base whose exemplars this engine reflects into (default IBIS / ЭК). With
+  614 |         # no handle the engine stays fully standalone (back-compat).
+  615 |         self.catalog = catalog
+  616 |         self.catalog_db = catalog_db
+  617 |         # Optional Acquisition (КСУ) seam (INTEGRATION_MAP ребро 5.2:
+  618 |         # Книговыдача→Комплектование). When an ``acquisition``
+  619 |         # (access.acquisition.AcquisitionEngine) handle is wired, a confirmed loss
+  620 |         # (``mark_lost(confirm=True)``) is reflected into the acquisition КСУ
 ```
 
 <!-- ─── страница 90 ─── -->
 
 ```py
-  621 |     # ---- event emission --------------------------------------------------- #
-  622 |     # Events that are addressed to library staff (not the reader): they describe
-  623 |     # an action a librarian must take (write-off candidate), so they enqueue to
-  624 |     # ``staff_recipient`` and the catalog routes them to the staff channel.
-  625 |     _STAFF_EVENTS = frozenset({'staff_alert'})
-  626 | 
-  627 |     def _notice_context(self, event, recipient, payload):
-  628 |         """Map a circulation event payload to its A6 *template* render context.
-  629 | 
-  630 |         The notification templates (access.notifications.EventCatalog) interpolate
-  631 |         reader-friendly slots — ``title`` / ``reader_name`` / ``due_date`` /
-  632 |         ``amount`` / ``currency`` / ``hold_until`` … — but the circulation engine
-  633 |         speaks in domain terms (``item`` shifr, ``due`` epoch, ``price`` …). This
-  634 |         bridges the two so a template never renders with a literal ``{title}`` for
-  635 |         want of the key. Unknown slots degrade gracefully (the renderer leaves a
-  636 |         missing placeholder verbatim), but the common ones are always supplied.
-  637 | 
-  638 |         The reader/staff identity drives ``reader_name``; ``ref`` is carried
-  639 |         through verbatim so A6's dedup key stays the circulation domain id (one
-  640 |         enqueue per logical event, no double-send).
-  641 |         """
-  642 |         ctx = dict(payload or {})
-  643 |         # reader/staff display name — the store holds no human name, so the
-  644 |         # reader id is the best available label (a real directory would map it).
-  645 |         ctx.setdefault('reader_name', payload.get('reader_name') or recipient)
-  646 |         # item shifr stands in for the human title until a catalog title is wired.
-  647 |         item = payload.get('item')
-  648 |         if item is not None:
-  649 |             ctx.setdefault('title', payload.get('title', item))
-  650 |         # epoch fields → human dates the templates print.
-  651 |         for src, dst in (('due', 'due_date'), ('hold_until', 'hold_until')):
-  652 |             val = payload.get(src)
-  653 |             if val is not None and dst not in ctx:
-  654 |                 ctx[dst] = self._fmt_date(val)
-  655 |         # lost replacement carries ``price`` as the charge basis → ``amount``.
-  656 |         if 'amount' not in ctx and payload.get('price') is not None:
-  657 |             ctx['amount'] = payload['price']
-  658 |         # currency default so {currency} never renders verbatim on money notices.
-  659 |         if 'amount' in ctx:
-  660 |             ctx.setdefault('currency', self.policy['fine']['currency'])
-  661 |         return ctx
-  662 | 
-  663 |     @staticmethod
-  664 |     def _fmt_date(value):
-  665 |         """Format an epoch (or pass through a string) as YYYY-MM-DD for a notice."""
-  666 |         try:
-  667 |             return time.strftime('%Y-%m-%d', time.localtime(float(value)))
-  668 |         except (TypeError, ValueError):
-  669 |             return value
+  621 |         # выбытия: the lost copy is written off as выбытие (910^V/^X, статус
+  622 |         # «списан»). Best-effort, optional — with no handle circulation stays fully
+  623 |         # standalone (back-compat, mirrors the ``catalog=`` seam).
+  624 |         self.acquisition = acquisition
+  625 |         # Архив выдач RDR_ARH (ребро 2.5). **Opt-in**: когда True, ``return_item``
+  626 |         # дополнительно к ``returned=1`` переносит завершённую выдачу в архив
+  627 |         # ``rdr_arh`` (152-ФЗ ретенция — отдельная сущность истории выдач). По
+  628 |         # умолчанию (False) поведение прежнее: только флаг ``returned=1`` в той
+  629 |         # же таблице, без архива (back-compat).
+  630 |         self.archive_on_return = archive_on_return
+  631 | 
+  632 |     # ---- acquisition-driven seams (поступление → выдача · выдача → КСУ) ---- #
+  633 |     def register_acquired_item(self, item, catalog_db=None):
+  634 |         """Confirm a freshly-acquired copy (``item`` = 910^b) is lendable now.
+  635 | 
+  636 |         The Комплектование↔Книговыдача seam (called by
+  637 |         :meth:`access.acquisition.AcquisitionEngine.receive` through its
+  638 |         ``circulation`` handle). A received copy that has been reflected into the
+  639 |         catalog as a free 910 exemplar is checkout-ready: this returns True iff the
+  640 |         copy is free per the catalog (``910^A=0``). When no catalog is wired the
+  641 |         copy is accepted as lendable by default (circulation keeps no inventory of
+  642 |         its own — the loan only references the item shifr). Read-only: it asserts
+  643 |         lendability, it does not create a loan."""
+  644 |         db = catalog_db or self.catalog_db
+  645 |         if self.catalog is None:
+  646 |             return True  # no catalog opinion — circulation lends against the shifr
+  647 |         try:
+  648 |             found = self.catalog.find_exemplar(db, item)
+  649 |             if found is None:
+  650 |                 return False  # not in the catalog ⇒ not yet a known lendable copy
+  651 |             return self.catalog.is_available(db, item)
+  652 |         except Exception:
+  653 |             return False
+  654 | 
+  655 |     def item_on_hand(self, item):
+  656 |         """True iff ``item`` (910^b) is on an on-hand loan (not returned, not lost).
+  657 | 
+  658 |         The read-only probe book-provision uses to count a checked-out copy as
+  659 |         still-provisioned фонд (INTEGRATION_MAP ребро 4.4/4.7)."""
+  660 |         return self.store.item_on_hand_count(item) > 0
+  661 | 
+  662 |     # ---- event emission --------------------------------------------------- #
+  663 |     # Events that are addressed to library staff (not the reader): they describe
+  664 |     # an action a librarian must take (write-off candidate), so they enqueue to
+  665 |     # ``staff_recipient`` and the catalog routes them to the staff channel.
+  666 |     _STAFF_EVENTS = frozenset({'staff_alert'})
+  667 | 
+  668 |     def _notice_context(self, event, recipient, payload):
+  669 |         """Map a circulation event payload to its A6 *template* render context.
   670 | 
-  671 |     def _emit(self, event, recipient, payload):
-  672 |         """Build an event intent; render + enqueue it through A6 when wired.
-  673 | 
-  674 |         Returns the event *intent* (``{'event','recipient','payload'}``) regardless
-  675 |         of dispatch — the rule layer never depends on A6 being present. When a
+  671 |         The notification templates (access.notifications.EventCatalog) interpolate
+  672 |         reader-friendly slots — ``title`` / ``reader_name`` / ``due_date`` /
+  673 |         ``amount`` / ``currency`` / ``hold_until`` … — but the circulation engine
+  674 |         speaks in domain terms (``item`` shifr, ``due`` epoch, ``price`` …). This
+  675 |         bridges the two so a template never renders with a literal ``{title}`` for
 ```
 
 <!-- ─── страница 91 ─── -->
 
 ```py
-  676 |         notifications handle IS wired the notice is also routed to A6:
-  677 | 
-  678 |           * the event is mapped to its template (A6 ``EventCatalog``) and a
-  679 |             reader-friendly render context is built (:meth:`_notice_context`);
-  680 |           * a reader-facing event notifies the reader; ``staff_alert`` is
-  681 |             re-addressed to ``staff_recipient`` (the catalog routes it to the
-  682 |             staff channel);
-  683 |           * ``enqueue`` resolves the template's default channels and queues a
-  684 |             single notice (idempotent by dedup_key — no double-send).
-  685 | 
-  686 |         Robustness: an event with no matching template, or any dispatch failure,
-  687 |         is logged-and-skipped — it never propagates out of the circulation
-  688 |         operation (the loan/return/hold still succeeds).
-  689 |         """
-  690 |         intent = {'event': event, 'recipient': recipient, 'payload': dict(payload)}
-  691 |         notifier = self.notifier
-  692 |         if notifier is None:
-  693 |             return intent  # standalone — only the intent, no dispatch (back-compat)
-  694 |         try:
-  695 |             # No template for this event → skip gracefully rather than letting the
-  696 |             # intent fall through silently or raising out of the circulation op.
-  697 |             catalog = getattr(notifier, 'catalog', None)
-  698 |             if catalog is not None and not catalog.has(event):
-  699 |                 return intent
-  700 |             to = self.staff_recipient if event in self._STAFF_EVENTS else recipient
-  701 |             ctx = self._notice_context(event, recipient, payload)
-  702 |             notifier.enqueue(event, to, ctx, tenant=self.tenant)
-  703 |         except Exception:
-  704 |             # A6 is best-effort: a bad template / queue error must NOT break the
-  705 |             # circulation operation. The intent is still returned for the caller.
-  706 |             pass
-  707 |         return intent
-  708 | 
-  709 |     # ---- catalog 910^A write-back (edges 2.1/2.2) ------------------------- #
-  710 |     def _flip_catalog_status(self, item, status):
-  711 |         """Reflect a loan-state change into the catalog exemplar's ``910^A``.
-  712 | 
-  713 |         Resolves ``item`` (903/inventory) to the matching ``910`` copy and flips
-  714 |         its ``910^A`` to ``status`` (``'1'`` issued on checkout, ``'0'`` free on
-  715 |         return). A no-op (returns None) when no catalog is wired or the copy isn't
-  716 |         found in the catalog — the engine never depends on the catalog being
-  717 |         present (back-compat) and degrades gracefully if the copy is unknown.
-  718 |         Returns the catalog mfn flipped, or None."""
-  719 |         if self.catalog is None:
-  720 |             return None
-  721 |         try:
-  722 |             return self.catalog.set_exemplar_status(self.catalog_db, item, status)
-  723 |         except Exception:
-  724 |             return None  # catalog write is best-effort; the loan still stands
-  725 | 
-  726 |     def catalog_available(self, item):
-  727 |         """Is ``item`` free per the catalog's ``910^A``? (edge 2.2).
-  728 | 
-  729 |         Returns True/False from the catalog when wired and the copy is known;
-  730 |         returns None when no catalog is wired or the copy is unknown (caller treats
+  676 |         want of the key. Unknown slots degrade gracefully (the renderer leaves a
+  677 |         missing placeholder verbatim), but the common ones are always supplied.
+  678 | 
+  679 |         The reader/staff identity drives ``reader_name``; ``ref`` is carried
+  680 |         through verbatim so A6's dedup key stays the circulation domain id (one
+  681 |         enqueue per logical event, no double-send).
+  682 |         """
+  683 |         ctx = dict(payload or {})
+  684 |         # reader/staff display name — the store holds no human name, so the
+  685 |         # reader id is the best available label (a real directory would map it).
+  686 |         ctx.setdefault('reader_name', payload.get('reader_name') or recipient)
+  687 |         # item shifr stands in for the human title until a catalog title is wired.
+  688 |         item = payload.get('item')
+  689 |         if item is not None:
+  690 |             ctx.setdefault('title', payload.get('title', item))
+  691 |         # epoch fields → human dates the templates print.
+  692 |         for src, dst in (('due', 'due_date'), ('hold_until', 'hold_until')):
+  693 |             val = payload.get(src)
+  694 |             if val is not None and dst not in ctx:
+  695 |                 ctx[dst] = self._fmt_date(val)
+  696 |         # lost replacement carries ``price`` as the charge basis → ``amount``.
+  697 |         if 'amount' not in ctx and payload.get('price') is not None:
+  698 |             ctx['amount'] = payload['price']
+  699 |         # currency default so {currency} never renders verbatim on money notices.
+  700 |         if 'amount' in ctx:
+  701 |             ctx.setdefault('currency', self.policy['fine']['currency'])
+  702 |         return ctx
+  703 | 
+  704 |     @staticmethod
+  705 |     def _fmt_date(value):
+  706 |         """Format an epoch (or pass through a string) as YYYY-MM-DD for a notice."""
+  707 |         try:
+  708 |             return time.strftime('%Y-%m-%d', time.localtime(float(value)))
+  709 |         except (TypeError, ValueError):
+  710 |             return value
+  711 | 
+  712 |     def _emit(self, event, recipient, payload):
+  713 |         """Build an event intent; render + enqueue it through A6 when wired.
+  714 | 
+  715 |         Returns the event *intent* (``{'event','recipient','payload'}``) regardless
+  716 |         of dispatch — the rule layer never depends on A6 being present. When a
+  717 |         notifications handle IS wired the notice is also routed to A6:
+  718 | 
+  719 |           * the event is mapped to its template (A6 ``EventCatalog``) and a
+  720 |             reader-friendly render context is built (:meth:`_notice_context`);
+  721 |           * a reader-facing event notifies the reader; ``staff_alert`` is
+  722 |             re-addressed to ``staff_recipient`` (the catalog routes it to the
+  723 |             staff channel);
+  724 |           * ``enqueue`` resolves the template's default channels and queues a
+  725 |             single notice (idempotent by dedup_key — no double-send).
+  726 | 
+  727 |         Robustness: an event with no matching template, or any dispatch failure,
+  728 |         is logged-and-skipped — it never propagates out of the circulation
+  729 |         operation (the loan/return/hold still succeeds).
+  730 |         """
 ```
 
 <!-- ─── страница 92 ─── -->
 
 ```py
-  731 |         None as "no catalog opinion" and falls back to its own loan/queue state)."""
-  732 |         if self.catalog is None:
-  733 |             return None
-  734 |         try:
-  735 |             if self.catalog.find_exemplar(self.catalog_db, item) is None:
-  736 |                 return None
-  737 |             return self.catalog.is_available(self.catalog_db, item)
-  738 |         except Exception:
-  739 |             return None
-  740 | 
-  741 |     # ---- RDR.40 materialization (ребро 2.4) ------------------------------- #
-  742 |     def _resolve_exemplar40(self, item):
-  743 |         """Достать из каталога подполя поля 40, привязанные к экземпляру ``item``.
-  744 | 
-  745 |         Ребро 2.4: при выдаче формат ``RQSTRDR.pft`` строит RDR.40 из заказа и
-  746 |         записи ЭК. У нас ``loan.item`` = инвентарный номер (910^b); каталог по
-  747 |         нему резолвит запись и отдаёт остальные подполя:
-  748 | 
-  749 |           * ``^A`` = 903 шифр документа (= ``I=`` в ЭК),
-  750 |           * ``^H`` = 910^H штрих-код,
-  751 |           * ``^K`` = 910^D место хранения,
-  752 |           * ``^C`` = brief (краткое описание).
+  731 |         intent = {'event': event, 'recipient': recipient, 'payload': dict(payload)}
+  732 |         notifier = self.notifier
+  733 |         if notifier is None:
+  734 |             return intent  # standalone — only the intent, no dispatch (back-compat)
+  735 |         try:
+  736 |             # No template for this event → skip gracefully rather than letting the
+  737 |             # intent fall through silently or raising out of the circulation op.
+  738 |             catalog = getattr(notifier, 'catalog', None)
+  739 |             if catalog is not None and not catalog.has(event):
+  740 |                 return intent
+  741 |             to = self.staff_recipient if event in self._STAFF_EVENTS else recipient
+  742 |             ctx = self._notice_context(event, recipient, payload)
+  743 |             notifier.enqueue(event, to, ctx, tenant=self.tenant)
+  744 |         except Exception:
+  745 |             # A6 is best-effort: a bad template / queue error must NOT break the
+  746 |             # circulation operation. The intent is still returned for the caller.
+  747 |             pass
+  748 |         return intent
+  749 | 
+  750 |     # ---- catalog 910^A write-back (edges 2.1/2.2) ------------------------- #
+  751 |     def _flip_catalog_status(self, item, status):
+  752 |         """Reflect a loan-state change into the catalog exemplar's ``910^A``.
   753 | 
-  754 |         Возвращает dict с найденными подполями (отсутствующие — пустые). Когда
-  755 |         каталог не подключён или экземпляр в нём не найден — отдаёт пустой
-  756 |         результат: поле 40 материализуется из loan-модели и без каталога
-  757 |         (back-compat), просто без обогащения из ЭК. Чисто читающая операция.
-  758 |         """
-  759 |         out = {'A': '', 'H': '', 'K': '', 'C': ''}
+  754 |         Resolves ``item`` (903/inventory) to the matching ``910`` copy and flips
+  755 |         its ``910^A`` to ``status`` (``'1'`` issued on checkout, ``'0'`` free on
+  756 |         return). A no-op (returns None) when no catalog is wired or the copy isn't
+  757 |         found in the catalog — the engine never depends on the catalog being
+  758 |         present (back-compat) and degrades gracefully if the copy is unknown.
+  759 |         Returns the catalog mfn flipped, or None."""
   760 |         if self.catalog is None:
-  761 |             return out
+  761 |             return None
   762 |         try:
-  763 |             found = self.catalog.find_exemplar(self.catalog_db, item)
-  764 |             if found is None:
-  765 |                 return out
-  766 |             mfn, _idx, inst = found
-  767 |             # подполя 910 экземпляра (^H штрих-код, ^D место хранения)
-  768 |             if isinstance(inst, dict):
-  769 |                 out['H'] = str(inst.get('h') or inst.get('H') or '')
-  770 |                 out['K'] = str(inst.get('d') or inst.get('D') or '')
-  771 |             # 903 шифр документа + brief — из полной записи каталога
-  772 |             record = self.catalog.get(self.catalog_db, mfn)
-  773 |             if record is not None:
-  774 |                 out['A'] = self._first_903(record)
-  775 |             try:
-  776 |                 out['C'] = self.catalog.brief(self.catalog_db, mfn) or ''
-  777 |             except Exception:
-  778 |                 out['C'] = ''
+  763 |             return self.catalog.set_exemplar_status(self.catalog_db, item, status)
+  764 |         except Exception:
+  765 |             return None  # catalog write is best-effort; the loan still stands
+  766 | 
+  767 |     def catalog_available(self, item):
+  768 |         """Is ``item`` free per the catalog's ``910^A``? (edge 2.2).
+  769 | 
+  770 |         Returns True/False from the catalog when wired and the copy is known;
+  771 |         returns None when no catalog is wired or the copy is unknown (caller treats
+  772 |         None as "no catalog opinion" and falls back to its own loan/queue state)."""
+  773 |         if self.catalog is None:
+  774 |             return None
+  775 |         try:
+  776 |             if self.catalog.find_exemplar(self.catalog_db, item) is None:
+  777 |                 return None
+  778 |             return self.catalog.is_available(self.catalog_db, item)
   779 |         except Exception:
-  780 |             return {'A': '', 'H': '', 'K': '', 'C': ''}
-  781 |         return out
-  782 | 
-  783 |     @staticmethod
-  784 |     def _first_903(record):
-  785 |         """Значение поля 903 (шифр документа) из записи каталога, или ''.
+  780 |             return None
+  781 | 
+  782 |     # ---- RDR.40 materialization (ребро 2.4) ------------------------------- #
+  783 |     def _resolve_exemplar40(self, item):
+  784 |         """Достать из каталога подполя поля 40, привязанные к экземпляру ``item``.
+  785 | 
 ```
 
 <!-- ─── страница 93 ─── -->
 
 ```py
-  786 | 
-  787 |         903 — целое поле (не подполя). Поддерживает обе формы хранения: строку
-  788 |         и dict-инстанс (``''``/``value``/конкатенация подполей)."""
-  789 |         raw = record.get('903') if record else None
-  790 |         if raw is None:
-  791 |             return ''
-  792 |         if isinstance(raw, list):
-  793 |             raw = raw[0] if raw else ''
-  794 |         if isinstance(raw, dict):
-  795 |             return str(raw.get('') or raw.get('value')
-  796 |                        or ''.join(str(v) for v in raw.values()))
-  797 |         return str(raw)
-  798 | 
-  799 |     def loan_field40(self, loan):
-  800 |         """Материализовать одну выдачу (``loan``) в структуру **поля 40 RDR**.
-  801 | 
-  802 |         Ребро 2.4 — ДОП. представление поверх текущей loan-модели (не меняет
-  803 |         колонки/сценарии). Маппинг подполей (DB_CIRCULATION §3 «развёртка поля
-  804 |         40», §5 модель циркуляции, §8 связи):
-  805 | 
-  806 |           | ^x | смысл                       | источник                       |
-  807 |           |----|-----------------------------|--------------------------------|
-  808 |           | ^A | шифр документа              | 903 (резолв ЭК по инв.№)       |
-  809 |           | ^B | инвентарный номер           | 910^B = ``loan.item``          |
-  810 |           | ^H | штрих-код                   | 910^H (резолв ЭК)              |
-  811 |           | ^K | место хранения экземпляра   | 910^D (резолв ЭК)              |
-  812 |           | ^D | дата выдачи                 | 41 = ``loan.checked_out_at``   |
-  813 |           | ^E | дата планового возврата     | 42 = ``loan.due``              |
-  814 |           | ^F | дата факт. возврата / долг  | ``******`` на руках, иначе дата|
-  815 |           | ^G | имя БД каталога             | ``catalog_db``                 |
-  816 |           | ^C | краткое описание (brief)    | резолв ЭК                      |
-  817 |           | ^U | признак утерянной книги     | ``'1'`` при ``lost``           |
-  818 | 
-  819 |         ``^F``: пока на руках/в долгу — маркер ``******`` (FST ``DOLG=``); после
-  820 |         возврата — дата фактического возврата (``loan.returned_at``). Даты —
-  821 |         epoch-секунды (как и весь движок); форматирование в ГГГГММДД оставлено
-  822 |         слою представления.
-  823 |         """
-  824 |         ex = self._resolve_exemplar40(loan['item'])
-  825 |         f40 = {
-  826 |             'A': ex['A'],                       # 903 шифр
-  827 |             'B': str(loan['item']),             # 910^B инв.№
-  828 |             'H': ex['H'],                       # 910^H штрих-код
-  829 |             'K': ex['K'],                       # 910^D место хранения
-  830 |             'D': loan['checked_out_at'],        # 41 дата выдачи
-  831 |             'E': loan['due'],                   # 42 срок
-  832 |             'G': self.catalog_db,               # имя БД ЭК
-  833 |             'C': ex['C'],                       # brief
-  834 |         }
-  835 |         # ^F — дата факт. возврата либо маркер долга/«на руках».
-  836 |         if loan['returned']:
-  837 |             f40['F'] = loan.get('returned_at')
-  838 |         else:
-  839 |             f40['F'] = DEBT_MARKER
-  840 |         # ^U — утерянная книга (HU=).
+  786 |         Ребро 2.4: при выдаче формат ``RQSTRDR.pft`` строит RDR.40 из заказа и
+  787 |         записи ЭК. У нас ``loan.item`` = инвентарный номер (910^b); каталог по
+  788 |         нему резолвит запись и отдаёт остальные подполя:
+  789 | 
+  790 |           * ``^A`` = 903 шифр документа (= ``I=`` в ЭК),
+  791 |           * ``^H`` = 910^H штрих-код,
+  792 |           * ``^K`` = 910^D место хранения,
+  793 |           * ``^C`` = brief (краткое описание).
+  794 | 
+  795 |         Возвращает dict с найденными подполями (отсутствующие — пустые). Когда
+  796 |         каталог не подключён или экземпляр в нём не найден — отдаёт пустой
+  797 |         результат: поле 40 материализуется из loan-модели и без каталога
+  798 |         (back-compat), просто без обогащения из ЭК. Чисто читающая операция.
+  799 |         """
+  800 |         out = {'A': '', 'H': '', 'K': '', 'C': ''}
+  801 |         if self.catalog is None:
+  802 |             return out
+  803 |         try:
+  804 |             found = self.catalog.find_exemplar(self.catalog_db, item)
+  805 |             if found is None:
+  806 |                 return out
+  807 |             mfn, _idx, inst = found
+  808 |             # подполя 910 экземпляра (^H штрих-код, ^D место хранения)
+  809 |             if isinstance(inst, dict):
+  810 |                 out['H'] = str(inst.get('h') or inst.get('H') or '')
+  811 |                 out['K'] = str(inst.get('d') or inst.get('D') or '')
+  812 |             # 903 шифр документа + brief — из полной записи каталога
+  813 |             record = self.catalog.get(self.catalog_db, mfn)
+  814 |             if record is not None:
+  815 |                 out['A'] = self._first_903(record)
+  816 |             try:
+  817 |                 out['C'] = self.catalog.brief(self.catalog_db, mfn) or ''
+  818 |             except Exception:
+  819 |                 out['C'] = ''
+  820 |         except Exception:
+  821 |             return {'A': '', 'H': '', 'K': '', 'C': ''}
+  822 |         return out
+  823 | 
+  824 |     @staticmethod
+  825 |     def _first_903(record):
+  826 |         """Значение поля 903 (шифр документа) из записи каталога, или ''.
+  827 | 
+  828 |         903 — целое поле (не подполя). Поддерживает обе формы хранения: строку
+  829 |         и dict-инстанс (``''``/``value``/конкатенация подполей)."""
+  830 |         raw = record.get('903') if record else None
+  831 |         if raw is None:
+  832 |             return ''
+  833 |         if isinstance(raw, list):
+  834 |             raw = raw[0] if raw else ''
+  835 |         if isinstance(raw, dict):
+  836 |             return str(raw.get('') or raw.get('value')
+  837 |                        or ''.join(str(v) for v in raw.values()))
+  838 |         return str(raw)
+  839 | 
+  840 |     # ---- order ↔ catalog record resolve (ребро 2.3) ----------------------- #
 ```
 
 <!-- ─── страница 94 ─── -->
 
 ```py
-  841 |         if loan.get('lost_status') == 'lost':
-  842 |             f40['U'] = '1'
-  843 |         return f40
-  844 | 
-  845 |     def reader_field40(self, reader_id, include_returned=False):
-  846 |         """Поле 40 читателя как список инстансов (повторяющееся поле, RDR §3).
-  847 | 
-  848 |         По умолчанию — только выдачи «на руках» (``40^F='******'``), как в
-  849 |         формуляре RDR. ``include_returned=True`` добавляет возвращённые (для
-  850 |         полного формуляра). Каждый элемент — dict подполей (см.
-  851 |         :meth:`loan_field40`)."""
-  852 |         rows = (self.store.loans_on_hand(reader_id) if not include_returned
-  853 |                 else self.store.reader_loans(reader_id))
-  854 |         return [self.loan_field40(ln) for ln in rows]
-  855 | 
-  856 |     # ---- checkout (§2 debtor gate + §5 limits) ---------------------------- #
-  857 |     def checkout(self, reader_id, item, today, item_kind=None, item_price=None,
-  858 |                  staff_override=False, override_grant=False):
-  859 |         """Lend ``item`` to ``reader_id``. Enforces limits + the debtor gate.
-  860 | 
-  861 |         ``staff_override`` lets a librarian lend over a deny — but only when the
-  862 |         override is actually authorised (``override_grant=True``, the
-  863 |         ``circ.lend.override_debt`` / ``circ.lend.override_limit`` right). An
-  864 |         unauthorised override is ignored (the deny stands).
-  865 | 
-  866 |         Returns a :class:`Decision`; on ALLOW ``computed['loan']`` is the new loan.
-  867 |         """
-  868 |         reader = self.store.get_reader(reader_id)
-  869 |         if reader is None:
-  870 |             return Decision(DENY, ['unknown_reader'])
-  871 | 
-  872 |         category = reader['category']
-  873 |         limits = category_limits(self.policy, category)
-  874 |         reasons = []
-  875 | 
-  876 |         # §2 debtor self-service gate (rule A): a hard debtor is denied.
-  877 |         level = debt_level(self.store, self.policy, reader_id, today)
-  878 |         if level == 'hard' and self.policy['debt']['reader_block_on_hard']:
-  879 |             reasons.append('reader_has_debt')
-  880 | 
-  881 |         # §5 limits: max_books, or max_dolg_books when in debt.
-  882 |         on_hand = self.store.count_on_hand(reader_id)
-  883 |         cap = limits['max_dolg_books'] if level != 'none' else limits['max_books']
-  884 |         if on_hand >= cap:
-  885 |             reasons.append('limit_exceeded')
+  841 |     def resolve_order_record(self, item_or_shifr, catalog_db=None):
+  842 |         """Резолвить запись каталога для заказа/выдачи — ребро 2.3 (903 ↔ ``I=``).
+  843 | 
+  844 |         Заказ RQST привязан к записи ЭК по **шифру** ``903`` = ``I=`` в каталоге
+  845 |         (``DBNPREFSHIFR=I=``, DB_CIRCULATION §8 «RQST → IBIS»), а не только по
+  846 |         инвентарному номеру ``910^b``. Этот метод замыкает оба пути резолва в один
+  847 |         контракт и возвращает ``mfn`` записи каталога (или ``None``):
+  848 | 
+  849 |           1. **по шифру 903** — поиск каталога по инвертированному префиксу
+  850 |              ``I=`` (``catalog.search(db, 'I=<шифр>')``); берётся первый
+  851 |              найденный mfn. Это «правильный» путь заказа: ``loan.item`` /
+  852 |              переданный аргумент трактуется как шифр документа.
+  853 |           2. **по инв.№ 910^b** (fallback, НЕ ломаем существующий резолв) —
+  854 |              если по шифру не нашлось, пробуем ``catalog.find_exemplar(db, item)``
+  855 |              (как в ``_resolve_exemplar40`` / ``_flip_catalog_status``): аргумент
+  856 |              трактуется как 910^b, возвращается mfn его записи.
+  857 | 
+  858 |         ``catalog_db`` — имя БД ЭК (по умолчанию ``self.catalog_db``). Когда каталог
+  859 |         не подключён — ``None`` (движок остаётся автономным, back-compat: заказ
+  860 |         живёт по строке-шифру без записи каталога). Любая ошибка каталога
+  861 |         деградирует в ``None`` — резолв не должен ронять операцию выдачи.
+  862 |         Чисто читающая операция (поиск/чтение, без записи).
+  863 |         """
+  864 |         if self.catalog is None:
+  865 |             return None
+  866 |         db = catalog_db or self.catalog_db
+  867 |         key = '' if item_or_shifr is None else str(item_or_shifr).strip()
+  868 |         if not key:
+  869 |             return None
+  870 |         # 1) по шифру 903 через инвертированный индекс I= (основной путь заказа).
+  871 |         try:
+  872 |             res = self.catalog.search(db, 'I=' + key, limit=1)
+  873 |             items = (res or {}).get('items') or []
+  874 |             if items:
+  875 |                 return items[0].get('mfn')
+  876 |         except Exception:
+  877 |             pass  # поиск-резолв best-effort — падаем на резолв по инв.№
+  878 |         # 2) fallback по инв.№ 910^b (существующий путь — не ломаем его).
+  879 |         try:
+  880 |             found = self.catalog.find_exemplar(db, key)
+  881 |             if found is not None:
+  882 |                 return found[0]
+  883 |         except Exception:
+  884 |             pass
+  885 |         return None
   886 | 
-  887 |         if reader['blocked']:
-  888 |             reasons.append('reader_blocked')
-  889 | 
-  890 |         if reasons:
-  891 |             # Only the debt/limit reasons are override-able by authorised staff.
-  892 |             overridable = set(reasons) <= {'reader_has_debt', 'limit_exceeded'}
-  893 |             authorised = staff_override and override_grant
-  894 |             if overridable and authorised:
-  895 |                 pass  # rule B — staff override (would be journalled by 152-ФЗ layer)
+  887 |     # ---- reservstatus (RQST 910^A 0–4) ↔ hold.status (ребро 2.6) ----------- #
+  888 |     @staticmethod
+  889 |     def resolve_hold_status_in(reservstatus):
+  890 |         """Код брони RQST ``910^A`` (``reservstatus.mnu`` 0–4) → наш ``hold.status``.
+  891 | 
+  892 |         Ребро 2.6 / recon #CIRC-06: входной код брони из RQST переводится в наш
+  893 |         enum статусов брони (см. :data:`RESERVSTATUS_TO_HOLD`). Принимает строку
+  894 |         или число (``0``/``'0'``). Неизвестный/пустой код → ``None`` (нечего
+  895 |         отображать). Не путать со статусом ЭКЗЕМПЛЯРА ``ste.mnu`` — это разные
 ```
 
 <!-- ─── страница 95 ─── -->
 
 ```py
-  896 |             elif overridable and staff_override and not override_grant:
-  897 |                 return Decision(DENY, reasons + ['override_unauthorised'])
-  898 |             elif overridable:
-  899 |                 return Decision(REQUIRE_OVERRIDE, reasons)
-  900 |             else:
-  901 |                 return Decision(DENY, reasons)
-  902 | 
-  903 |         due = today + limits['max_return_days'] * SECONDS_PER_DAY
-  904 |         loan = self.store.add_loan(reader_id, item, due, today,
-  905 |                                    item_kind=item_kind, item_price=item_price)
-  906 |         # Edge 2.1: reflect the issue into the catalog exemplar (910^A 0→1).
-  907 |         cat_mfn = self._flip_catalog_status(item, '1')  # EXEMPLAR_ISSUED
-  908 |         computed = {'loan': loan, 'due': due, 'override': bool(reasons)}
-  909 |         if cat_mfn is not None:
-  910 |             computed['catalog_mfn'] = cat_mfn
-  911 |             computed['exemplar_status'] = '1'
-  912 |         return Decision(ALLOW, [], computed)
-  913 | 
-  914 |     # ---- renew (§1 holds-block-renewal + cap) ----------------------------- #
-  915 |     def renew(self, loan_id, today, staff_override=False, override_grant=False):
-  916 |         """Renew a loan. Blocks on an active hold (holds-block-renewal) and on the
-  917 |         renewal cap; ``staff_override`` (right ``circ.renew.override_hold``) lets a
-  918 |         librarian renew past a hold but never past the cap.
-  919 |         """
-  920 |         loan = self.store.get_loan(loan_id)
-  921 |         if loan is None:
-  922 |             return Decision(DENY, ['unknown_loan'])
-  923 |         if loan['returned']:
-  924 |             return Decision(DENY, ['loan_closed'])
-  925 | 
-  926 |         reader = self.store.get_reader(loan['reader'])
-  927 |         category = reader['category'] if reader else '_DEFAULT'
-  928 |         limits = category_limits(self.policy, category)
-  929 |         reasons = []
-  930 | 
-  931 |         # §1 renew cap — never override-able.
-  932 |         max_prolong = limits['max_prolong']
-  933 |         if loan['renewals'] >= max_prolong:
-  934 |             reasons.append('max_prolong_reached')
-  935 | 
-  936 |         # §1.2 renewable flag (reading room / rare fund) — never override-able here.
-  937 |         if limits['max_return_days'] <= 0:
-  938 |             reasons.append('not_renewable')
-  939 | 
-  940 |         # §1.3 holds-block-renewal.
-  941 |         queue = self.store.active_holds(loan['item'])
-  942 |         queue_len = len(queue)
-  943 |         mode = self.policy['renewal']['holds_block_renewal']
-  944 |         hold_blocks = False
-  945 |         if queue_len > 0:
-  946 |             if mode == 'block':
-  947 |                 hold_blocks = True
-  948 |             elif mode == 'threshold':
-  949 |                 if queue_len > self.policy['renewal']['hold_block_threshold']:
-  950 |                     hold_blocks = True
+  896 |         кодировки одного подполя в разных БД."""
+  897 |         if reservstatus is None:
+  898 |             return None
+  899 |         return RESERVSTATUS_TO_HOLD.get(str(reservstatus).strip())
+  900 | 
+  901 |     @staticmethod
+  902 |     def hold_status_to_reservstatus(status):
+  903 |         """Наш ``hold.status`` → код брони RQST ``910^A`` (``reservstatus.mnu``).
+  904 | 
+  905 |         Обратное отображение ребра 2.6 (см. :data:`HOLD_TO_RESERVSTATUS`).
+  906 |         ``expired`` отображается в каноничный ``'3'`` (возврат на МХР); ``cancelled``
+  907 |         — в ``None`` (в `reservstatus.mnu` отдельного кода нет: отменённая бронь
+  908 |         просто исчезает из транзитной RQST). Неизвестный enum → ``None``."""
+  909 |         if status is None:
+  910 |             return None
+  911 |         return HOLD_TO_RESERVSTATUS.get(str(status).strip())
+  912 | 
+  913 |     def loan_field40(self, loan):
+  914 |         """Материализовать одну выдачу (``loan``) в структуру **поля 40 RDR**.
+  915 | 
+  916 |         Ребро 2.4 — ДОП. представление поверх текущей loan-модели (не меняет
+  917 |         колонки/сценарии). Маппинг подполей (DB_CIRCULATION §3 «развёртка поля
+  918 |         40», §5 модель циркуляции, §8 связи):
+  919 | 
+  920 |           | ^x | смысл                       | источник                       |
+  921 |           |----|-----------------------------|--------------------------------|
+  922 |           | ^A | шифр документа              | 903 (резолв ЭК по инв.№)       |
+  923 |           | ^B | инвентарный номер           | 910^B = ``loan.item``          |
+  924 |           | ^H | штрих-код                   | 910^H (резолв ЭК)              |
+  925 |           | ^K | место хранения экземпляра   | 910^D (резолв ЭК)              |
+  926 |           | ^D | дата выдачи                 | 41 = ``loan.checked_out_at``   |
+  927 |           | ^E | дата планового возврата     | 42 = ``loan.due``              |
+  928 |           | ^F | дата факт. возврата / долг  | ``******`` на руках, иначе дата|
+  929 |           | ^G | имя БД каталога             | ``catalog_db``                 |
+  930 |           | ^C | краткое описание (brief)    | резолв ЭК                      |
+  931 |           | ^U | признак утерянной книги     | ``'1'`` при ``lost``           |
+  932 | 
+  933 |         ``^F``: пока на руках/в долгу — маркер ``******`` (FST ``DOLG=``); после
+  934 |         возврата — дата фактического возврата (``loan.returned_at``). Даты —
+  935 |         epoch-секунды (как и весь движок); форматирование в ГГГГММДД оставлено
+  936 |         слою представления.
+  937 |         """
+  938 |         ex = self._resolve_exemplar40(loan['item'])
+  939 |         f40 = {
+  940 |             'A': ex['A'],                       # 903 шифр
+  941 |             'B': str(loan['item']),             # 910^B инв.№
+  942 |             'H': ex['H'],                       # 910^H штрих-код
+  943 |             'K': ex['K'],                       # 910^D место хранения
+  944 |             'D': loan['checked_out_at'],        # 41 дата выдачи
+  945 |             'E': loan['due'],                   # 42 срок
+  946 |             'G': self.catalog_db,               # имя БД ЭК
+  947 |             'C': ex['C'],                       # brief
+  948 |         }
+  949 |         # ^F — дата факт. возврата либо маркер долга/«на руках».
+  950 |         if loan['returned']:
 ```
 
 <!-- ─── страница 96 ─── -->
 
 ```py
-  951 |             # 'allow' → never blocks
-  952 |         if hold_blocks:
-  953 |             reasons.append('hold_exists')
-  954 | 
-  955 |         # §1.2 debtor blocks renewal too (self-service gate).
-  956 |         level = debt_level(self.store, self.policy, loan['reader'], today)
-  957 |         if level == 'hard' and self.policy['debt']['reader_block_on_hard']:
-  958 |             reasons.append('reader_has_debt')
-  959 | 
-  960 |         hard_reasons = {'max_prolong_reached', 'not_renewable'}
-  961 |         if reasons:
-  962 |             blocking_hard = hard_reasons & set(reasons)
-  963 |             if blocking_hard:
-  964 |                 return Decision(DENY, reasons)
-  965 |             # remaining reasons (hold_exists / reader_has_debt) are override-able
-  966 |             authorised = staff_override and override_grant
-  967 |             if authorised:
-  968 |                 pass  # rule override (journalled by 152-ФЗ layer)
-  969 |             elif staff_override and not override_grant:
-  970 |                 return Decision(DENY, reasons + ['override_unauthorised'])
-  971 |             else:
-  972 |                 return Decision(REQUIRE_OVERRIDE, reasons)
-  973 | 
-  974 |         new_due = today + limits['max_return_days'] * SECONDS_PER_DAY
-  975 |         self.store.bump_renewal(loan_id, new_due)
-  976 |         updated = self.store.get_loan(loan_id)
-  977 |         ev = self._emit('renewal_confirmed', loan['reader'],
-  978 |                         {'ref': loan_id, 'item': loan['item'], 'due': new_due})
-  979 |         return Decision(ALLOW, [], {'loan': updated, 'due': new_due}, [ev])
-  980 | 
-  981 |     # ---- return (§3.5 clear marker + §6 trigger next hold) ---------------- #
-  982 |     def return_item(self, loan_id, today):
-  983 |         """Return a loan. Marks it returned, fixes any accrued fine (assessment →
-  984 |         charged), and — if a queue exists on the item — hands it to the head
-  985 |         (``hold_ready`` + shelf TTL), holds-aware (§6.5).
-  986 | 
-  987 |         Returns a :class:`Decision` (always ALLOW for an open loan) whose
-  988 |         ``computed`` reports ``fine_charged`` and ``hold_ready`` and whose
-  989 |         ``events`` carries the A6 intents.
-  990 |         """
-  991 |         loan = self.store.get_loan(loan_id)
-  992 |         if loan is None:
-  993 |             return Decision(DENY, ['unknown_loan'])
-  994 |         if loan['returned']:
-  995 |             return Decision(DENY, ['already_returned'])
-  996 | 
-  997 |         events = []
-  998 |         computed = {}
-  999 | 
- 1000 |         # §3.3 assessment — fix any accrued overdue fine into a charge at return.
- 1001 |         self.accrue_fines(today, reader_id=loan['reader'])
- 1002 |         fine = self.store.get_fine(loan_id, 'fine_overdue')
- 1003 |         if fine and fine['status'] == 'accrued' and fine['amount'] > 0:
- 1004 |             self.store.set_fine_status(fine['id'], 'charged')
- 1005 |             computed['fine_charged'] = fine['amount']
+  951 |             f40['F'] = loan.get('returned_at')
+  952 |         else:
+  953 |             f40['F'] = DEBT_MARKER
+  954 |         # ^U — утерянная книга (HU=).
+  955 |         if loan.get('lost_status') == 'lost':
+  956 |             f40['U'] = '1'
+  957 |         return f40
+  958 | 
+  959 |     def reader_field40(self, reader_id, include_returned=False):
+  960 |         """Поле 40 читателя как список инстансов (повторяющееся поле, RDR §3).
+  961 | 
+  962 |         По умолчанию — только выдачи «на руках» (``40^F='******'``), как в
+  963 |         формуляре RDR. ``include_returned=True`` добавляет возвращённые (для
+  964 |         полного формуляра). Каждый элемент — dict подполей (см.
+  965 |         :meth:`loan_field40`)."""
+  966 |         rows = (self.store.loans_on_hand(reader_id) if not include_returned
+  967 |                 else self.store.reader_loans(reader_id))
+  968 |         return [self.loan_field40(ln) for ln in rows]
+  969 | 
+  970 |     # ---- checkout (§2 debtor gate + §5 limits) ---------------------------- #
+  971 |     def checkout(self, reader_id, item, today, item_kind=None, item_price=None,
+  972 |                  staff_override=False, override_grant=False):
+  973 |         """Lend ``item`` to ``reader_id``. Enforces limits + the debtor gate.
+  974 | 
+  975 |         ``staff_override`` lets a librarian lend over a deny — but only when the
+  976 |         override is actually authorised (``override_grant=True``, the
+  977 |         ``circ.lend.override_debt`` / ``circ.lend.override_limit`` right). An
+  978 |         unauthorised override is ignored (the deny stands).
+  979 | 
+  980 |         Returns a :class:`Decision`; on ALLOW ``computed['loan']`` is the new loan.
+  981 |         """
+  982 |         reader = self.store.get_reader(reader_id)
+  983 |         if reader is None:
+  984 |             return Decision(DENY, ['unknown_reader'])
+  985 | 
+  986 |         category = reader['category']
+  987 |         limits = category_limits(self.policy, category)
+  988 |         reasons = []
+  989 | 
+  990 |         # §2 debtor self-service gate (rule A): a hard debtor is denied.
+  991 |         level = debt_level(self.store, self.policy, reader_id, today)
+  992 |         if level == 'hard' and self.policy['debt']['reader_block_on_hard']:
+  993 |             reasons.append('reader_has_debt')
+  994 | 
+  995 |         # §5 limits: max_books, or max_dolg_books when in debt.
+  996 |         on_hand = self.store.count_on_hand(reader_id)
+  997 |         cap = limits['max_dolg_books'] if level != 'none' else limits['max_books']
+  998 |         if on_hand >= cap:
+  999 |             reasons.append('limit_exceeded')
+ 1000 | 
+ 1001 |         if reader['blocked']:
+ 1002 |             reasons.append('reader_blocked')
+ 1003 | 
+ 1004 |         if reasons:
+ 1005 |             # Only the debt/limit reasons are override-able by authorised staff.
 ```
 
 <!-- ─── страница 97 ─── -->
 
 ```py
- 1006 |             events.append(self._emit('fine_charged', loan['reader'],
- 1007 |                           {'ref': loan_id, 'amount': fine['amount'],
- 1008 |                            'currency': self.policy['fine']['currency']}))
- 1009 | 
- 1010 |         # ws3 op: clear 40^F (the return gesture closes the loan).
- 1011 |         self.store.mark_returned(loan_id, today)
- 1012 | 
- 1013 |         # Ребро 2.5: opt-in перенос завершённой выдачи в архив RDR_ARH (152-ФЗ
- 1014 |         # ретенция) — В ДОПОЛНЕНИЕ к ``returned=1`` (флаг off ⇒ как раньше, без
- 1015 |         # архива). Архивируется пост-возвратное состояние выдачи (40^F = дата).
- 1016 |         if self.archive_on_return:
- 1017 |             closed = self.store.get_loan(loan_id)
- 1018 |             arh = self.store.archive_loan(closed, returned_at=today,
- 1019 |                                           archived_at=today)
- 1020 |             if arh is not None:
- 1021 |                 computed['archived'] = arh['id']
- 1022 | 
- 1023 |         # Edge 2.2: reflect the return into the catalog exemplar (910^A 1→0 free).
- 1024 |         # The physical copy is back on the desk; circulation's hold queue (below)
- 1025 |         # is the logical reservation layer, kept separate from the catalog flag.
- 1026 |         cat_mfn = self._flip_catalog_status(loan['item'], '0')  # EXEMPLAR_FREE
- 1027 |         if cat_mfn is not None:
- 1028 |             computed['catalog_mfn'] = cat_mfn
- 1029 |             computed['exemplar_status'] = '0'
- 1030 | 
- 1031 |         # §6.5 holds-aware: freed item goes to the queue head, not the free shelf.
- 1032 |         if self.policy['hold']['return_to_reservable']:
- 1033 |             queue = self.store.active_holds(loan['item'])
- 1034 |             head = next((h for h in queue if h['status'] == 'queued'), None)
- 1035 |             if head is not None:
- 1036 |                 self.store.set_hold_status(head['id'], 'ready', ready_at=today)
- 1037 |                 shelf_until = today + self.policy['hold']['hold_shelf_days'] * SECONDS_PER_DAY
- 1038 |                 computed['hold_ready'] = head['id']
- 1039 |                 events.append(self._emit('hold_ready', head['reader'],
- 1040 |                               {'ref': head['id'], 'item': loan['item'],
- 1041 |                                'hold_until': shelf_until}))
- 1042 | 
- 1043 |         return Decision(ALLOW, [], computed, events)
+ 1006 |             overridable = set(reasons) <= {'reader_has_debt', 'limit_exceeded'}
+ 1007 |             authorised = staff_override and override_grant
+ 1008 |             if overridable and authorised:
+ 1009 |                 pass  # rule B — staff override (would be journalled by 152-ФЗ layer)
+ 1010 |             elif overridable and staff_override and not override_grant:
+ 1011 |                 return Decision(DENY, reasons + ['override_unauthorised'])
+ 1012 |             elif overridable:
+ 1013 |                 return Decision(REQUIRE_OVERRIDE, reasons)
+ 1014 |             else:
+ 1015 |                 return Decision(DENY, reasons)
+ 1016 | 
+ 1017 |         due = today + limits['max_return_days'] * SECONDS_PER_DAY
+ 1018 |         loan = self.store.add_loan(reader_id, item, due, today,
+ 1019 |                                    item_kind=item_kind, item_price=item_price)
+ 1020 |         # Edge 2.1: reflect the issue into the catalog exemplar (910^A 0→1).
+ 1021 |         cat_mfn = self._flip_catalog_status(item, '1')  # EXEMPLAR_ISSUED
+ 1022 |         computed = {'loan': loan, 'due': due, 'override': bool(reasons)}
+ 1023 |         if cat_mfn is not None:
+ 1024 |             computed['catalog_mfn'] = cat_mfn
+ 1025 |             computed['exemplar_status'] = '1'
+ 1026 |         return Decision(ALLOW, [], computed)
+ 1027 | 
+ 1028 |     # ---- renew (§1 holds-block-renewal + cap) ----------------------------- #
+ 1029 |     def renew(self, loan_id, today, staff_override=False, override_grant=False):
+ 1030 |         """Renew a loan. Blocks on an active hold (holds-block-renewal) and on the
+ 1031 |         renewal cap; ``staff_override`` (right ``circ.renew.override_hold``) lets a
+ 1032 |         librarian renew past a hold but never past the cap.
+ 1033 |         """
+ 1034 |         loan = self.store.get_loan(loan_id)
+ 1035 |         if loan is None:
+ 1036 |             return Decision(DENY, ['unknown_loan'])
+ 1037 |         if loan['returned']:
+ 1038 |             return Decision(DENY, ['loan_closed'])
+ 1039 | 
+ 1040 |         reader = self.store.get_reader(loan['reader'])
+ 1041 |         category = reader['category'] if reader else '_DEFAULT'
+ 1042 |         limits = category_limits(self.policy, category)
+ 1043 |         reasons = []
  1044 | 
- 1045 |     # ---- place_hold (§6 FIFO queue position) ------------------------------ #
- 1046 |     def place_hold(self, reader_id, item, today):
- 1047 |         """Place a hold; returns ALLOW with ``computed['position']`` (1-based FIFO).
- 1048 | 
- 1049 |         If the item is free (no on-hand loan, no queue) the hold is created and
- 1050 |         immediately ``ready`` at position 1.
- 1051 |         """
- 1052 |         reader = self.store.get_reader(reader_id)
- 1053 |         if reader is None:
- 1054 |             return Decision(DENY, ['unknown_reader'])
- 1055 | 
- 1056 |         # A reader already in this item's queue keeps their place (no double-hold).
- 1057 |         existing = [h for h in self.store.active_holds(item)
- 1058 |                     if h['reader'] == reader_id]
- 1059 |         if existing:
- 1060 |             pos = self.queue_position(item, reader_id)
+ 1045 |         # §1 renew cap — never override-able.
+ 1046 |         max_prolong = limits['max_prolong']
+ 1047 |         if loan['renewals'] >= max_prolong:
+ 1048 |             reasons.append('max_prolong_reached')
+ 1049 | 
+ 1050 |         # §1.2 renewable flag (reading room / rare fund) — never override-able here.
+ 1051 |         if limits['max_return_days'] <= 0:
+ 1052 |             reasons.append('not_renewable')
+ 1053 | 
+ 1054 |         # §1.3 holds-block-renewal.
+ 1055 |         queue = self.store.active_holds(loan['item'])
+ 1056 |         queue_len = len(queue)
+ 1057 |         mode = self.policy['renewal']['holds_block_renewal']
+ 1058 |         hold_blocks = False
+ 1059 |         if queue_len > 0:
+ 1060 |             if mode == 'block':
 ```
 
 <!-- ─── страница 98 ─── -->
 
 ```py
- 1061 |             return Decision(ALLOW, ['already_queued'],
- 1062 |                             {'hold': existing[0], 'position': pos})
- 1063 | 
- 1064 |         hold = self.store.add_hold(reader_id, item, today)
- 1065 |         # If nobody holds the item and the queue (besides us) is empty → ready now.
- 1066 |         item_on_loan = self.store._conn().execute(  # noqa: SLF001 (own store)
- 1067 |             'SELECT COUNT(*) AS n FROM loan WHERE item=? AND returned=0',
- 1068 |             (item,)).fetchone()['n']
- 1069 |         queue = self.store.active_holds(item)
- 1070 |         position = self.queue_position(item, reader_id)
- 1071 |         events = []
- 1072 |         # Edge 2.2: when a catalog is wired, also honour its 910^A availability —
- 1073 |         # a copy circulation thinks is free but the catalog marks issued (status
- 1074 |         # set out-of-band) must NOT be handed out as ready. None ⇒ no catalog
- 1075 |         # opinion, fall back to circulation's own loan/queue state.
- 1076 |         cat_avail = self.catalog_available(item)
- 1077 |         catalog_free = (cat_avail is not False)
- 1078 |         if item_on_loan == 0 and len(queue) == 1 and catalog_free:
- 1079 |             self.store.set_hold_status(hold['id'], 'ready', ready_at=today)
- 1080 |             shelf_until = today + self.policy['hold']['hold_shelf_days'] * SECONDS_PER_DAY
- 1081 |             events.append(self._emit('hold_ready', reader_id,
- 1082 |                           {'ref': hold['id'], 'item': item, 'hold_until': shelf_until}))
- 1083 |         hold = self.store.get_hold(hold['id'])
- 1084 |         return Decision(ALLOW, [], {'hold': hold, 'position': position}, events)
- 1085 | 
- 1086 |     def queue_position(self, item, reader_id):
- 1087 |         """1-based FIFO position of ``reader_id`` in ``item``'s queue (0 = absent).
- 1088 | 
- 1089 |         position = 1 + count(active holds queued strictly earlier) (§6.3, fifo).
- 1090 |         """
- 1091 |         queue = self.store.active_holds(item)  # already FIFO ordered
- 1092 |         for idx, h in enumerate(queue):
- 1093 |             if h['reader'] == reader_id:
- 1094 |                 return idx + 1
- 1095 |         return 0
- 1096 | 
- 1097 |     def cancel_hold(self, hold_id, today, reason='отменена читателем'):
- 1098 |         """Reader cancels a hold; frees the item to the next in queue (§6.5).
- 1099 | 
- 1100 |         Emits ``hold_cancelled`` (A6) to the reader whose hold was dropped.
- 1101 |         """
- 1102 |         hold = self.store.get_hold(hold_id)
- 1103 |         if hold is None:
- 1104 |             return Decision(DENY, ['unknown_hold'])
- 1105 |         self.store.set_hold_status(hold_id, 'cancelled')
- 1106 |         ev = self._emit('hold_cancelled', hold['reader'],
- 1107 |                         {'ref': hold_id, 'item': hold['item'], 'reason': reason})
- 1108 |         return Decision(ALLOW, [], {'cancelled': hold_id}, [ev])
- 1109 | 
- 1110 |     # ---- accrue_fines (§3.2 formula) -------------------------------------- #
- 1111 |     def accrue_fines(self, today, reader_id=None):
- 1112 |         """Daily accrual: ``min(fine_per_day × billable_days, fine_cap)`` (§3.2).
+ 1061 |                 hold_blocks = True
+ 1062 |             elif mode == 'threshold':
+ 1063 |                 if queue_len > self.policy['renewal']['hold_block_threshold']:
+ 1064 |                     hold_blocks = True
+ 1065 |             # 'allow' → never blocks
+ 1066 |         if hold_blocks:
+ 1067 |             reasons.append('hold_exists')
+ 1068 | 
+ 1069 |         # §1.2 debtor blocks renewal too (self-service gate).
+ 1070 |         level = debt_level(self.store, self.policy, loan['reader'], today)
+ 1071 |         if level == 'hard' and self.policy['debt']['reader_block_on_hard']:
+ 1072 |             reasons.append('reader_has_debt')
+ 1073 | 
+ 1074 |         hard_reasons = {'max_prolong_reached', 'not_renewable'}
+ 1075 |         if reasons:
+ 1076 |             blocking_hard = hard_reasons & set(reasons)
+ 1077 |             if blocking_hard:
+ 1078 |                 return Decision(DENY, reasons)
+ 1079 |             # remaining reasons (hold_exists / reader_has_debt) are override-able
+ 1080 |             authorised = staff_override and override_grant
+ 1081 |             if authorised:
+ 1082 |                 pass  # rule override (journalled by 152-ФЗ layer)
+ 1083 |             elif staff_override and not override_grant:
+ 1084 |                 return Decision(DENY, reasons + ['override_unauthorised'])
+ 1085 |             else:
+ 1086 |                 return Decision(REQUIRE_OVERRIDE, reasons)
+ 1087 | 
+ 1088 |         new_due = today + limits['max_return_days'] * SECONDS_PER_DAY
+ 1089 |         self.store.bump_renewal(loan_id, new_due)
+ 1090 |         updated = self.store.get_loan(loan_id)
+ 1091 |         ev = self._emit('renewal_confirmed', loan['reader'],
+ 1092 |                         {'ref': loan_id, 'item': loan['item'], 'due': new_due})
+ 1093 |         return Decision(ALLOW, [], {'loan': updated, 'due': new_due}, [ev])
+ 1094 | 
+ 1095 |     # ---- return (§3.5 clear marker + §6 trigger next hold) ---------------- #
+ 1096 |     def return_item(self, loan_id, today):
+ 1097 |         """Return a loan. Marks it returned, fixes any accrued fine (assessment →
+ 1098 |         charged), and — if a queue exists on the item — hands it to the head
+ 1099 |         (``hold_ready`` + shelf TTL), holds-aware (§6.5).
+ 1100 | 
+ 1101 |         Returns a :class:`Decision` (always ALLOW for an open loan) whose
+ 1102 |         ``computed`` reports ``fine_charged`` and ``hold_ready`` and whose
+ 1103 |         ``events`` carries the A6 intents.
+ 1104 |         """
+ 1105 |         loan = self.store.get_loan(loan_id)
+ 1106 |         if loan is None:
+ 1107 |             return Decision(DENY, ['unknown_loan'])
+ 1108 |         if loan['returned']:
+ 1109 |             return Decision(DENY, ['already_returned'])
+ 1110 | 
+ 1111 |         events = []
+ 1112 |         computed = {}
  1113 | 
- 1114 |         Scans open overdue loans (optionally a single reader), computes the
- 1115 |         accrued fine after ``overdue_grace_days``, and upserts the fine row. A
+ 1114 |         # §3.3 assessment — fix any accrued overdue fine into a charge at return.
+ 1115 |         self.accrue_fines(today, reader_id=loan['reader'])
 ```
 
 <!-- ─── страница 99 ─── -->
 
 ```py
- 1116 |         zero rate ⇒ fine-free (no row). Idempotent per ``(loan, day)`` because the
- 1117 |         amount is recomputed from ``today`` and stored on the single per-loan row
- 1118 |         (re-running with the same ``today`` yields the same amount, no doubling).
- 1119 | 
- 1120 |         Returns a list of ``{'loan','reader','amount','days'}`` dicts for the
- 1121 |         loans that accrued a positive fine.
- 1122 |         """
- 1123 |         grace = self.policy['fine']['overdue_grace_days']
- 1124 |         cap = self.policy['fine']['fine_cap']
- 1125 |         results = []
- 1126 |         for ln in self.store.open_overdue_loans(today, grace_days=0):
- 1127 |             if reader_id is not None and ln['reader'] != reader_id:
- 1128 |                 continue
- 1129 |             reader = self.store.get_reader(ln['reader'])
- 1130 |             category = reader['category'] if reader else '_DEFAULT'
- 1131 |             rate = fine_per_day(self.policy, category, ln['item_kind'])
- 1132 |             if rate <= 0:
- 1133 |                 continue  # fine-free
- 1134 |             days_overdue = int((today - ln['due']) // SECONDS_PER_DAY)
- 1135 |             billable_days = max(0, days_overdue - grace)
- 1136 |             if billable_days <= 0:
- 1137 |                 continue
- 1138 |             amount = min(rate * billable_days, cap)
- 1139 |             if amount <= 0:
- 1140 |                 continue
- 1141 |             self.store.upsert_fine(ln['reader'], ln['id'], amount,
- 1142 |                                    kind='fine_overdue', status='accrued',
- 1143 |                                    accrued_through=today)
- 1144 |             results.append({'loan': ln['id'], 'reader': ln['reader'],
- 1145 |                             'amount': amount, 'days': billable_days})
- 1146 |         return results
- 1147 | 
- 1148 |     def waive_fine(self, loan_id, override_grant=False):
- 1149 |         """Waive (zero) an accrued/charged overdue fine — right ``circ.fine.waive``.
- 1150 | 
- 1151 |         Returns ALLOW only when authorised (``override_grant=True``).
- 1152 |         """
- 1153 |         if not override_grant:
- 1154 |             return Decision(DENY, ['waive_unauthorised'])
- 1155 |         fine = self.store.get_fine(loan_id, 'fine_overdue')
- 1156 |         if fine is None:
- 1157 |             return Decision(DENY, ['no_fine'])
- 1158 |         self.store.set_fine_status(fine['id'], 'waived')
- 1159 |         return Decision(ALLOW, [], {'waived': loan_id})
- 1160 | 
- 1161 |     def pay_fine(self, loan_id, kind='fine_overdue'):
- 1162 |         """Apply an incoming ``payment_received`` (§3.5): mark the fine paid.
- 1163 | 
- 1164 |         Clearing ``40^F`` (the on-hand marker) is *separate* — it happens only on
- 1165 |         physical return, not on payment (§3.5). Returns the recomputed debt-clear.
- 1166 |         """
- 1167 |         fine = self.store.get_fine(loan_id, kind)
- 1168 |         if fine is None:
- 1169 |             return Decision(DENY, ['no_fine'])
- 1170 |         self.store.set_fine_status(fine['id'], 'paid')
+ 1116 |         fine = self.store.get_fine(loan_id, 'fine_overdue')
+ 1117 |         if fine and fine['status'] == 'accrued' and fine['amount'] > 0:
+ 1118 |             self.store.set_fine_status(fine['id'], 'charged')
+ 1119 |             computed['fine_charged'] = fine['amount']
+ 1120 |             events.append(self._emit('fine_charged', loan['reader'],
+ 1121 |                           {'ref': loan_id, 'amount': fine['amount'],
+ 1122 |                            'currency': self.policy['fine']['currency']}))
+ 1123 | 
+ 1124 |         # ws3 op: clear 40^F (the return gesture closes the loan).
+ 1125 |         self.store.mark_returned(loan_id, today)
+ 1126 | 
+ 1127 |         # Ребро 2.5: opt-in перенос завершённой выдачи в архив RDR_ARH (152-ФЗ
+ 1128 |         # ретенция) — В ДОПОЛНЕНИЕ к ``returned=1`` (флаг off ⇒ как раньше, без
+ 1129 |         # архива). Архивируется пост-возвратное состояние выдачи (40^F = дата).
+ 1130 |         if self.archive_on_return:
+ 1131 |             closed = self.store.get_loan(loan_id)
+ 1132 |             arh = self.store.archive_loan(closed, returned_at=today,
+ 1133 |                                           archived_at=today)
+ 1134 |             if arh is not None:
+ 1135 |                 computed['archived'] = arh['id']
+ 1136 | 
+ 1137 |         # Edge 2.2: reflect the return into the catalog exemplar (910^A 1→0 free).
+ 1138 |         # The physical copy is back on the desk; circulation's hold queue (below)
+ 1139 |         # is the logical reservation layer, kept separate from the catalog flag.
+ 1140 |         cat_mfn = self._flip_catalog_status(loan['item'], '0')  # EXEMPLAR_FREE
+ 1141 |         if cat_mfn is not None:
+ 1142 |             computed['catalog_mfn'] = cat_mfn
+ 1143 |             computed['exemplar_status'] = '0'
+ 1144 | 
+ 1145 |         # §6.5 holds-aware: freed item goes to the queue head, not the free shelf.
+ 1146 |         if self.policy['hold']['return_to_reservable']:
+ 1147 |             queue = self.store.active_holds(loan['item'])
+ 1148 |             head = next((h for h in queue if h['status'] == 'queued'), None)
+ 1149 |             if head is not None:
+ 1150 |                 self.store.set_hold_status(head['id'], 'ready', ready_at=today)
+ 1151 |                 shelf_until = today + self.policy['hold']['hold_shelf_days'] * SECONDS_PER_DAY
+ 1152 |                 computed['hold_ready'] = head['id']
+ 1153 |                 events.append(self._emit('hold_ready', head['reader'],
+ 1154 |                               {'ref': head['id'], 'item': loan['item'],
+ 1155 |                                'hold_until': shelf_until}))
+ 1156 | 
+ 1157 |         return Decision(ALLOW, [], computed, events)
+ 1158 | 
+ 1159 |     # ---- place_hold (§6 FIFO queue position) ------------------------------ #
+ 1160 |     def place_hold(self, reader_id, item, today):
+ 1161 |         """Place a hold; returns ALLOW with ``computed['position']`` (1-based FIFO).
+ 1162 | 
+ 1163 |         If the item is free (no on-hand loan, no queue) the hold is created and
+ 1164 |         immediately ``ready`` at position 1.
+ 1165 |         """
+ 1166 |         reader = self.store.get_reader(reader_id)
+ 1167 |         if reader is None:
+ 1168 |             return Decision(DENY, ['unknown_reader'])
+ 1169 | 
+ 1170 |         # A reader already in this item's queue keeps their place (no double-hold).
 ```
 
 <!-- ─── страница 100 ─── -->
 
 ```py
- 1171 |         ev = self._emit('fine_paid', fine['reader'],
- 1172 |                         {'ref': loan_id, 'amount': fine['amount']})
- 1173 |         return Decision(ALLOW, [], {'paid': loan_id}, [ev])
- 1174 | 
- 1175 |     # ---- mark_lost (§4 candidate → confirm) ------------------------------- #
- 1176 |     def scan_lost_candidates(self, today):
- 1177 |         """Mark over-overdue loans as ``lost_candidate`` + a ``staff_alert`` (§4.1).
- 1178 | 
- 1179 |         Over ``lost_after_days`` past due ⇒ candidate (NOT an auto-debt). Returns
- 1180 |         the candidate loan ids + their staff-alert event intents.
- 1181 |         """
- 1182 |         lost_after = self.policy['lost']['lost_after_days']
- 1183 |         cutoff = today - lost_after * SECONDS_PER_DAY
- 1184 |         flagged = []
+ 1171 |         existing = [h for h in self.store.active_holds(item)
+ 1172 |                     if h['reader'] == reader_id]
+ 1173 |         if existing:
+ 1174 |             pos = self.queue_position(item, reader_id)
+ 1175 |             return Decision(ALLOW, ['already_queued'],
+ 1176 |                             {'hold': existing[0], 'position': pos})
+ 1177 | 
+ 1178 |         hold = self.store.add_hold(reader_id, item, today)
+ 1179 |         # If nobody holds the item and the queue (besides us) is empty → ready now.
+ 1180 |         item_on_loan = self.store._conn().execute(  # noqa: SLF001 (own store)
+ 1181 |             'SELECT COUNT(*) AS n FROM loan WHERE item=? AND returned=0',
+ 1182 |             (item,)).fetchone()['n']
+ 1183 |         queue = self.store.active_holds(item)
+ 1184 |         position = self.queue_position(item, reader_id)
  1185 |         events = []
- 1186 |         for ln in self.store.open_overdue_loans(today, grace_days=0):
- 1187 |             if ln['lost_status'] != 'none':
- 1188 |                 continue
- 1189 |             if ln['due'] < cutoff:
- 1190 |                 self.store.set_lost_status(ln['id'], 'lost_candidate')
- 1191 |                 flagged.append(ln['id'])
- 1192 |                 events.append(self._emit('staff_alert', ln['reader'],
- 1193 |                               {'ref': ln['id'], 'item': ln['item'],
- 1194 |                                'kind': 'lost_candidate'}))
- 1195 |         return Decision(ALLOW, [], {'candidates': flagged}, events)
- 1196 | 
- 1197 |     def mark_lost(self, loan_id, today, confirm=False, override_grant=False,
- 1198 |                   ksu_disp_no=None):
- 1199 |         """Lost workflow (§4): without ``confirm`` ⇒ ``lost_candidate`` (fail-safe,
- 1200 |         no auto-debt); with ``confirm`` ⇒ ``lost`` + replacement charge.
- 1201 | 
- 1202 |         Confirm requires authorisation (``override_grant``, right
- 1203 |         ``circ.lost.confirm``). Replacement = ``910^E × multiplier + handling_fee``
- 1204 |         with a fallback when the item price is empty/0. ``lost_supersedes_fine``
- 1205 |         waives the accrued overdue fine so the reader isn't billed twice (§4.2).
- 1206 |         Emits ``lost_confirmed`` (→ ws2 write-off signal) + ``fine_charged`` (A6).
- 1207 | 
- 1208 |         Книговыдача→Комплектование (INTEGRATION_MAP ребро 5.2): when an
- 1209 |         ``acquisition`` handle is wired, a confirmed loss is also reflected into the
- 1210 |         acquisition КСУ выбытия — the lost copy is written off as выбытие
- 1211 |         (``record_disposal``). ``ksu_disp_no`` is the акт списания number to book it
- 1212 |         under (defaults to a per-day ``LOST-<YYYY-MM-DD>`` акт). The write-off is
- 1213 |         best-effort: an acquisition error never blocks the loss confirmation.
- 1214 |         """
- 1215 |         loan = self.store.get_loan(loan_id)
- 1216 |         if loan is None:
- 1217 |             return Decision(DENY, ['unknown_loan'])
- 1218 |         if loan['returned']:
- 1219 |             return Decision(DENY, ['loan_closed'])
- 1220 | 
- 1221 |         if not confirm:
- 1222 |             self.store.set_lost_status(loan_id, 'lost_candidate')
- 1223 |             ev = self._emit('staff_alert', loan['reader'],
- 1224 |                             {'ref': loan_id, 'item': loan['item'],
- 1225 |                              'kind': 'lost_candidate'})
+ 1186 |         # Edge 2.2: when a catalog is wired, also honour its 910^A availability —
+ 1187 |         # a copy circulation thinks is free but the catalog marks issued (status
+ 1188 |         # set out-of-band) must NOT be handed out as ready. None ⇒ no catalog
+ 1189 |         # opinion, fall back to circulation's own loan/queue state.
+ 1190 |         cat_avail = self.catalog_available(item)
+ 1191 |         catalog_free = (cat_avail is not False)
+ 1192 |         if item_on_loan == 0 and len(queue) == 1 and catalog_free:
+ 1193 |             self.store.set_hold_status(hold['id'], 'ready', ready_at=today)
+ 1194 |             shelf_until = today + self.policy['hold']['hold_shelf_days'] * SECONDS_PER_DAY
+ 1195 |             events.append(self._emit('hold_ready', reader_id,
+ 1196 |                           {'ref': hold['id'], 'item': item, 'hold_until': shelf_until}))
+ 1197 |         hold = self.store.get_hold(hold['id'])
+ 1198 |         return Decision(ALLOW, [], {'hold': hold, 'position': position}, events)
+ 1199 | 
+ 1200 |     def queue_position(self, item, reader_id):
+ 1201 |         """1-based FIFO position of ``reader_id`` in ``item``'s queue (0 = absent).
+ 1202 | 
+ 1203 |         position = 1 + count(active holds queued strictly earlier) (§6.3, fifo).
+ 1204 |         """
+ 1205 |         queue = self.store.active_holds(item)  # already FIFO ordered
+ 1206 |         for idx, h in enumerate(queue):
+ 1207 |             if h['reader'] == reader_id:
+ 1208 |                 return idx + 1
+ 1209 |         return 0
+ 1210 | 
+ 1211 |     def cancel_hold(self, hold_id, today, reason='отменена читателем'):
+ 1212 |         """Reader cancels a hold; frees the item to the next in queue (§6.5).
+ 1213 | 
+ 1214 |         Emits ``hold_cancelled`` (A6) to the reader whose hold was dropped.
+ 1215 |         """
+ 1216 |         hold = self.store.get_hold(hold_id)
+ 1217 |         if hold is None:
+ 1218 |             return Decision(DENY, ['unknown_hold'])
+ 1219 |         self.store.set_hold_status(hold_id, 'cancelled')
+ 1220 |         ev = self._emit('hold_cancelled', hold['reader'],
+ 1221 |                         {'ref': hold_id, 'item': hold['item'], 'reason': reason})
+ 1222 |         return Decision(ALLOW, [], {'cancelled': hold_id}, [ev])
+ 1223 | 
+ 1224 |     # ---- accrue_fines (§3.2 formula) -------------------------------------- #
+ 1225 |     def accrue_fines(self, today, reader_id=None):
 ```
 
 <!-- ─── страница 101 ─── -->
 
 ```py
- 1226 |             return Decision(ALLOW, ['lost_candidate'],
- 1227 |                             {'lost_status': 'lost_candidate'}, [ev])
- 1228 | 
- 1229 |         # confirm → must be authorised (circ.lost.confirm)
- 1230 |         if not override_grant:
- 1231 |             return Decision(DENY, ['lost_confirm_unauthorised'])
- 1232 | 
- 1233 |         # §4.2 replacement value.
- 1234 |         price = loan['item_price']
- 1235 |         if not price or price <= 0:
- 1236 |             price = self.policy['lost']['default_replacement_value']
- 1237 |         replacement = (price * self.policy['lost']['multiplier']
- 1238 |                        + self.policy['lost']['handling_fee'])
- 1239 | 
- 1240 |         self.store.set_lost_status(loan_id, 'lost')
- 1241 | 
- 1242 |         # §4.2 lost supersedes fine — waive accrued overdue fine.
- 1243 |         if self.policy['lost']['lost_supersedes_fine']:
- 1244 |             of = self.store.get_fine(loan_id, 'fine_overdue')
- 1245 |             if of and of['status'] in ('accrued', 'charged'):
- 1246 |                 self.store.set_fine_status(of['id'], 'waived')
- 1247 | 
- 1248 |         self.store.upsert_fine(loan['reader'], loan_id, replacement,
- 1249 |                                kind='lost_replacement', status='charged')
- 1250 | 
- 1251 |         # Книговыдача→Комплектование (ребро 5.2): write the lost copy off into the
- 1252 |         # acquisition КСУ выбытия (910^V/^X, статус «списан»). Best-effort.
- 1253 |         disposal = self._record_disposal(loan, today, ksu_disp_no)
- 1254 | 
- 1255 |         events = [
- 1256 |             self._emit('lost_confirmed', loan['reader'],
- 1257 |                        {'ref': loan_id, 'item': loan['item'], 'price': replacement}),
- 1258 |             self._emit('fine_charged', loan['reader'],
- 1259 |                        {'ref': loan_id, 'amount': replacement,
- 1260 |                         'currency': self.policy['fine']['currency'],
- 1261 |                         'kind': 'lost_replacement'}),
- 1262 |         ]
- 1263 |         computed = {'lost_status': 'lost', 'replacement_value': replacement}
- 1264 |         if disposal is not None:
- 1265 |             computed['disposal'] = disposal
- 1266 |         return Decision(ALLOW, [], computed, events)
- 1267 | 
- 1268 |     def _record_disposal(self, loan, today, ksu_disp_no=None):
- 1269 |         """Reflect a confirmed loss into the acquisition КСУ выбытия (ребро 5.2).
- 1270 | 
- 1271 |         When an ``acquisition`` handle is wired, write the lost copy off as выбытие
- 1272 |         under the акт списания ``ksu_disp_no`` (default ``LOST-<YYYY-MM-DD>``),
- 1273 |         keyed by the loan's item (910^b), reason ``lost``, ref = loan id. Returns
- 1274 |         the disposal row dict, or None when no handle is wired / the write-off
- 1275 |         degrades (the loss confirmation still stands — best-effort, mirrors ToCat).
- 1276 |         """
- 1277 |         if self.acquisition is None:
- 1278 |             return None
- 1279 |         record = getattr(self.acquisition, 'record_disposal', None)
- 1280 |         if record is None:
+ 1226 |         """Daily accrual: ``min(fine_per_day × billable_days, fine_cap)`` (§3.2).
+ 1227 | 
+ 1228 |         Scans open overdue loans (optionally a single reader), computes the
+ 1229 |         accrued fine after ``overdue_grace_days``, and upserts the fine row. A
+ 1230 |         zero rate ⇒ fine-free (no row). Idempotent per ``(loan, day)`` because the
+ 1231 |         amount is recomputed from ``today`` and stored on the single per-loan row
+ 1232 |         (re-running with the same ``today`` yields the same amount, no doubling).
+ 1233 | 
+ 1234 |         Returns a list of ``{'loan','reader','amount','days'}`` dicts for the
+ 1235 |         loans that accrued a positive fine.
+ 1236 |         """
+ 1237 |         grace = self.policy['fine']['overdue_grace_days']
+ 1238 |         cap = self.policy['fine']['fine_cap']
+ 1239 |         results = []
+ 1240 |         for ln in self.store.open_overdue_loans(today, grace_days=0):
+ 1241 |             if reader_id is not None and ln['reader'] != reader_id:
+ 1242 |                 continue
+ 1243 |             reader = self.store.get_reader(ln['reader'])
+ 1244 |             category = reader['category'] if reader else '_DEFAULT'
+ 1245 |             rate = fine_per_day(self.policy, category, ln['item_kind'])
+ 1246 |             if rate <= 0:
+ 1247 |                 continue  # fine-free
+ 1248 |             days_overdue = int((today - ln['due']) // SECONDS_PER_DAY)
+ 1249 |             billable_days = max(0, days_overdue - grace)
+ 1250 |             if billable_days <= 0:
+ 1251 |                 continue
+ 1252 |             amount = min(rate * billable_days, cap)
+ 1253 |             if amount <= 0:
+ 1254 |                 continue
+ 1255 |             self.store.upsert_fine(ln['reader'], ln['id'], amount,
+ 1256 |                                    kind='fine_overdue', status='accrued',
+ 1257 |                                    accrued_through=today)
+ 1258 |             results.append({'loan': ln['id'], 'reader': ln['reader'],
+ 1259 |                             'amount': amount, 'days': billable_days})
+ 1260 |         return results
+ 1261 | 
+ 1262 |     def waive_fine(self, loan_id, override_grant=False):
+ 1263 |         """Waive (zero) an accrued/charged overdue fine — right ``circ.fine.waive``.
+ 1264 | 
+ 1265 |         Returns ALLOW only when authorised (``override_grant=True``).
+ 1266 |         """
+ 1267 |         if not override_grant:
+ 1268 |             return Decision(DENY, ['waive_unauthorised'])
+ 1269 |         fine = self.store.get_fine(loan_id, 'fine_overdue')
+ 1270 |         if fine is None:
+ 1271 |             return Decision(DENY, ['no_fine'])
+ 1272 |         self.store.set_fine_status(fine['id'], 'waived')
+ 1273 |         return Decision(ALLOW, [], {'waived': loan_id})
+ 1274 | 
+ 1275 |     def pay_fine(self, loan_id, kind='fine_overdue'):
+ 1276 |         """Apply an incoming ``payment_received`` (§3.5): mark the fine paid.
+ 1277 | 
+ 1278 |         Clearing ``40^F`` (the on-hand marker) is *separate* — it happens only on
+ 1279 |         physical return, not on payment (§3.5). Returns the recomputed debt-clear.
+ 1280 |         """
 ```
 
 <!-- ─── страница 102 ─── -->
 
 ```py
- 1281 |             return None
- 1282 |         act = ksu_disp_no or ('LOST-' + self._fmt_date(today))
- 1283 |         try:
- 1284 |             return record(loan['item'], act, reason='lost', ref=str(loan['id']))
- 1285 |         except Exception:
- 1286 |             return None  # acquisition write is best-effort; the loss still stands
- 1287 | 
- 1288 |     # ---- debt summary (GET /api/circ/reader/{id}/debt) -------------------- #
- 1289 |     def reader_debt(self, reader_id, today):
- 1290 |         """Debt summary for the reader formulary / ЛК (§8.1)."""
- 1291 |         return {
- 1292 |             'reader': reader_id,
- 1293 |             'debt_level': debt_level(self.store, self.policy, reader_id, today),
- 1294 |             'on_hand': self.store.count_on_hand(reader_id),
- 1295 |             'outstanding': self.store.total_outstanding(reader_id),
- 1296 |             'fines': self.store.outstanding_fines(reader_id),
- 1297 |         }
+ 1281 |         fine = self.store.get_fine(loan_id, kind)
+ 1282 |         if fine is None:
+ 1283 |             return Decision(DENY, ['no_fine'])
+ 1284 |         self.store.set_fine_status(fine['id'], 'paid')
+ 1285 |         ev = self._emit('fine_paid', fine['reader'],
+ 1286 |                         {'ref': loan_id, 'amount': fine['amount']})
+ 1287 |         return Decision(ALLOW, [], {'paid': loan_id}, [ev])
+ 1288 | 
+ 1289 |     # ---- mark_lost (§4 candidate → confirm) ------------------------------- #
+ 1290 |     def scan_lost_candidates(self, today):
+ 1291 |         """Mark over-overdue loans as ``lost_candidate`` + a ``staff_alert`` (§4.1).
+ 1292 | 
+ 1293 |         Over ``lost_after_days`` past due ⇒ candidate (NOT an auto-debt). Returns
+ 1294 |         the candidate loan ids + their staff-alert event intents.
+ 1295 |         """
+ 1296 |         lost_after = self.policy['lost']['lost_after_days']
+ 1297 |         cutoff = today - lost_after * SECONDS_PER_DAY
+ 1298 |         flagged = []
+ 1299 |         events = []
+ 1300 |         for ln in self.store.open_overdue_loans(today, grace_days=0):
+ 1301 |             if ln['lost_status'] != 'none':
+ 1302 |                 continue
+ 1303 |             if ln['due'] < cutoff:
+ 1304 |                 self.store.set_lost_status(ln['id'], 'lost_candidate')
+ 1305 |                 flagged.append(ln['id'])
+ 1306 |                 events.append(self._emit('staff_alert', ln['reader'],
+ 1307 |                               {'ref': ln['id'], 'item': ln['item'],
+ 1308 |                                'kind': 'lost_candidate'}))
+ 1309 |         return Decision(ALLOW, [], {'candidates': flagged}, events)
+ 1310 | 
+ 1311 |     def mark_lost(self, loan_id, today, confirm=False, override_grant=False,
+ 1312 |                   ksu_disp_no=None):
+ 1313 |         """Lost workflow (§4): without ``confirm`` ⇒ ``lost_candidate`` (fail-safe,
+ 1314 |         no auto-debt); with ``confirm`` ⇒ ``lost`` + replacement charge.
+ 1315 | 
+ 1316 |         Confirm requires authorisation (``override_grant``, right
+ 1317 |         ``circ.lost.confirm``). Replacement = ``910^E × multiplier + handling_fee``
+ 1318 |         with a fallback when the item price is empty/0. ``lost_supersedes_fine``
+ 1319 |         waives the accrued overdue fine so the reader isn't billed twice (§4.2).
+ 1320 |         Emits ``lost_confirmed`` (→ ws2 write-off signal) + ``fine_charged`` (A6).
+ 1321 | 
+ 1322 |         Книговыдача→Комплектование (INTEGRATION_MAP ребро 5.2): when an
+ 1323 |         ``acquisition`` handle is wired, a confirmed loss is also reflected into the
+ 1324 |         acquisition КСУ выбытия — the lost copy is written off as выбытие
+ 1325 |         (``record_disposal``). ``ksu_disp_no`` is the акт списания number to book it
+ 1326 |         under (defaults to a per-day ``LOST-<YYYY-MM-DD>`` акт). The write-off is
+ 1327 |         best-effort: an acquisition error never blocks the loss confirmation.
+ 1328 |         """
+ 1329 |         loan = self.store.get_loan(loan_id)
+ 1330 |         if loan is None:
+ 1331 |             return Decision(DENY, ['unknown_loan'])
+ 1332 |         if loan['returned']:
+ 1333 |             return Decision(DENY, ['loan_closed'])
+ 1334 | 
+ 1335 |         if not confirm:
 ```
 
-### Файл: `irbis-web/backend/access/acquisition.py`  · строк: 1459
+<!-- ─── страница 103 ─── -->
+
+```py
+ 1336 |             self.store.set_lost_status(loan_id, 'lost_candidate')
+ 1337 |             ev = self._emit('staff_alert', loan['reader'],
+ 1338 |                             {'ref': loan_id, 'item': loan['item'],
+ 1339 |                              'kind': 'lost_candidate'})
+ 1340 |             return Decision(ALLOW, ['lost_candidate'],
+ 1341 |                             {'lost_status': 'lost_candidate'}, [ev])
+ 1342 | 
+ 1343 |         # confirm → must be authorised (circ.lost.confirm)
+ 1344 |         if not override_grant:
+ 1345 |             return Decision(DENY, ['lost_confirm_unauthorised'])
+ 1346 | 
+ 1347 |         # §4.2 replacement value.
+ 1348 |         price = loan['item_price']
+ 1349 |         if not price or price <= 0:
+ 1350 |             price = self.policy['lost']['default_replacement_value']
+ 1351 |         replacement = (price * self.policy['lost']['multiplier']
+ 1352 |                        + self.policy['lost']['handling_fee'])
+ 1353 | 
+ 1354 |         self.store.set_lost_status(loan_id, 'lost')
+ 1355 | 
+ 1356 |         # §4.2 lost supersedes fine — waive accrued overdue fine.
+ 1357 |         if self.policy['lost']['lost_supersedes_fine']:
+ 1358 |             of = self.store.get_fine(loan_id, 'fine_overdue')
+ 1359 |             if of and of['status'] in ('accrued', 'charged'):
+ 1360 |                 self.store.set_fine_status(of['id'], 'waived')
+ 1361 | 
+ 1362 |         self.store.upsert_fine(loan['reader'], loan_id, replacement,
+ 1363 |                                kind='lost_replacement', status='charged')
+ 1364 | 
+ 1365 |         # Книговыдача→Комплектование (ребро 5.2): write the lost copy off into the
+ 1366 |         # acquisition КСУ выбытия (910^V/^X, статус «списан»). Best-effort.
+ 1367 |         disposal = self._record_disposal(loan, today, ksu_disp_no)
+ 1368 | 
+ 1369 |         events = [
+ 1370 |             self._emit('lost_confirmed', loan['reader'],
+ 1371 |                        {'ref': loan_id, 'item': loan['item'], 'price': replacement}),
+ 1372 |             self._emit('fine_charged', loan['reader'],
+ 1373 |                        {'ref': loan_id, 'amount': replacement,
+ 1374 |                         'currency': self.policy['fine']['currency'],
+ 1375 |                         'kind': 'lost_replacement'}),
+ 1376 |         ]
+ 1377 |         computed = {'lost_status': 'lost', 'replacement_value': replacement}
+ 1378 |         if disposal is not None:
+ 1379 |             computed['disposal'] = disposal
+ 1380 |         return Decision(ALLOW, [], computed, events)
+ 1381 | 
+ 1382 |     def _record_disposal(self, loan, today, ksu_disp_no=None):
+ 1383 |         """Reflect a confirmed loss into the acquisition КСУ выбытия (ребро 5.2).
+ 1384 | 
+ 1385 |         When an ``acquisition`` handle is wired, write the lost copy off as выбытие
+ 1386 |         under the акт списания ``ksu_disp_no`` (default ``LOST-<YYYY-MM-DD>``),
+ 1387 |         keyed by the loan's item (910^b), reason ``lost``, ref = loan id. Returns
+ 1388 |         the disposal row dict, or None when no handle is wired / the write-off
+ 1389 |         degrades (the loss confirmation still stands — best-effort, mirrors ToCat).
+ 1390 |         """
+```
+
+<!-- ─── страница 104 ─── -->
+
+```py
+ 1391 |         if self.acquisition is None:
+ 1392 |             return None
+ 1393 |         record = getattr(self.acquisition, 'record_disposal', None)
+ 1394 |         if record is None:
+ 1395 |             return None
+ 1396 |         act = ksu_disp_no or ('LOST-' + self._fmt_date(today))
+ 1397 |         try:
+ 1398 |             return record(loan['item'], act, reason='lost', ref=str(loan['id']))
+ 1399 |         except Exception:
+ 1400 |             return None  # acquisition write is best-effort; the loss still stands
+ 1401 | 
+ 1402 |     # ---- debt summary (GET /api/circ/reader/{id}/debt) -------------------- #
+ 1403 |     def reader_debt(self, reader_id, today):
+ 1404 |         """Debt summary for the reader formulary / ЛК (§8.1)."""
+ 1405 |         return {
+ 1406 |             'reader': reader_id,
+ 1407 |             'debt_level': debt_level(self.store, self.policy, reader_id, today),
+ 1408 |             'on_hand': self.store.count_on_hand(reader_id),
+ 1409 |             'outstanding': self.store.total_outstanding(reader_id),
+ 1410 |             'fines': self.store.outstanding_fines(reader_id),
+ 1411 |         }
+```
+
+### Файл: `irbis-web/backend/access/acquisition.py`  · строк: 1869
 
 ```py
     1 | #!/usr/bin/env python3
@@ -6161,15 +6285,15 @@
    32 |      back-link on the bib record (field **66/938**, the ``66^u`` КСУ marker the
    33 |      SPEC names as the ToCat trigger). New-vs-existing title is resolved by a
    34 |      normalized (title, author) key so re-supply of an existing title **adds
+```
+
+<!-- ─── страница 105 ─── -->
+
+```py
    35 |      copies to the existing record** instead of duplicating it.
    36 |   4. **Standalone** — with NO ``catalog`` handle, order / receipt / КСУ still work
    37 |      fully; ToCat is a graceful no-op (back-compat, mirrors the ``catalog=`` seam
    38 |      in circulation.py).
-```
-
-<!-- ─── страница 103 ─── -->
-
-```py
    39 | 
    40 | ToCat — реформат БО CMPL → IBIS (cluster 1, рёбра 1.1–1.5)
    41 | ---------------------------------------------------------
@@ -6221,15 +6345,15 @@
    87 | # Optional Catalog seam (INTEGRATION_MAP cluster 1, the ToCat edge). When a
    88 | # CatalogStore handle is wired, receipt reflects the batch into the catalog (bib
    89 | # record + 910 exemplars). Never a hard dependency — the import is best-effort so
+```
+
+<!-- ─── страница 106 ─── -->
+
+```py
    90 | # the module runs standalone (no catalog) exactly like circulation.py's seam.
    91 | try:  # pragma: no cover - depends on sibling module / wiring
    92 |     from access import catalog as _catalog  # type: ignore
    93 | except Exception:  # ImportError when run in isolation
-```
-
-<!-- ─── страница 104 ─── -->
-
-```py
    94 |     _catalog = None
    95 | 
    96 | 
@@ -6281,15 +6405,15 @@
   142 | NON_CATALOG_WORKLISTS = frozenset(
   143 |     ('ZK', 'SZ', 'KSU', 'KS2', 'KS3', 'KSI', 'IZD', 'OJK', 'AZP', 'KAT', 'POLZV'))
   144 | 
+```
+
+<!-- ─── страница 107 ─── -->
+
+```py
   145 | # --------------------------------------------------------------------------- #
   146 | # FST subfield-maps: построчный CMPL БО → IBIS маппинг подполей (STN.FST/MNOG.FST/
   147 | # UMARCIW.FST логика, источник — FIELD_DICTIONARY + DB_ACQUISITION A.3.1/A.8).
   148 | # Каждый кортеж — (src-подполе в CMPL, dst-подполе в IBIS). Регистр src терпим
-```
-
-<!-- ─── страница 105 ─── -->
-
-```py
   149 | # (probe upper+lower). CMPL и IBIS делят один формат RUSMARC-подобных полей, поэтому
   150 | # подполя в основном переносятся «как есть»; маппинг фиксирует ЗНАЧИМЫЕ подполя
   151 | # (по словарю полей), служебные/непереносимые — опускаются.
@@ -6341,1381 +6465,1831 @@
   197 | # «перенесён, помечен на удаление». :func:`is_source_deleted` её читает.
   198 | VD_DEL = 'DEL'
   199 | 
-  200 | 
-  201 | # --------------------------------------------------------------------------- #
-  202 | # ККО formulas (SPEC §2). Pure functions — no store, fully unit-testable.
-  203 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 106 ─── -->
-
-```py
-  204 | def kko(copies, students):
-  205 |     """ККО = copies / students with the SPEC §2.2 division-by-zero policy.
-  206 | 
-  207 |     The 4-cell table (§2.2):
-  208 | 
-  209 |       ===============  ===========  =======================================
-  210 |       copies/students  result       meaning
-  211 |       ===============  ===========  =======================================
-  212 |       students==0,>0   ``1.0``      provided (no consumers) — no дозаказ
-  213 |       students==0,==0  ``None``     no data — excluded from averages (NOT 0)
-  214 |       students>0,==0   ``0.0``      not provided — дозаказ candidate
-  215 |       students>0,>0    copies/stud  norm
-  216 |       ===============  ===========  =======================================
-  217 | 
-  218 |     ``None`` (no-data) is deliberately distinct from ``0.0`` (not-provided) so the
-  219 |     average ККО isn't dragged down by archival orphan contingents (SPEC R2/AC4).
-  220 |     """
-  221 |     copies = float(copies or 0)
-  222 |     students = float(students or 0)
-  223 |     if students == 0:
-  224 |         return 1.0 if copies > 0 else None   # provided vs no-data (NOT 0)
-  225 |     return copies / students
-  226 | 
-  227 | 
-  228 | def average_kko(kko_values, normalize=False):
-  229 |     """Average ККО over per-title values, EXCLUDING ``None`` (no-data) cells (§2.4).
-  230 | 
-  231 |     ``None`` items are dropped from both the sum and the count N. With
-  232 |     ``normalize=True`` each term is capped at 1 (``min(kko_i, 1)``) so one
-  233 |     over-provided book can't compensate another's deficit (SPEC §2.4). Returns
-  234 |     ``None`` when every value is no-data (N==0) — there is nothing to average.
-  235 |     """
-  236 |     present = [v for v in kko_values if v is not None]
-  237 |     if not present:
-  238 |         return None
-  239 |     if normalize:
-  240 |         present = [min(v, 1.0) for v in present]
-  241 |     return sum(present) / len(present)
-  242 | 
-  243 | 
-  244 | def reorder_need(students, copies, kko_norm=0.5):
-  245 |     """Deficit дозаказ amount (SPEC §2.6 / §3.3): ``ceil(students*kko_norm) - copies``.
-  246 | 
-  247 |     The number of copies to buy to reach the provision norm. Clamped at 0 (never
-  248 |     negative — an over-provided title needs no reorder). A title with no students
-  249 |     (students<=0) is never a reorder candidate (returns 0): the §2.2 policy treats
-  250 |     it as provided / no-data, not as a deficit.
-  251 |     """
-  252 |     if students <= 0:
-  253 |         return 0
-  254 |     need = math.ceil(students * kko_norm) - int(copies)
-  255 |     return max(0, need)
-  256 | 
-  257 | 
-  258 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 107 ─── -->
-
-```py
-  259 | # Store — own sqlite (order / receipt / ksu / inventory). create-on-init.
-  260 | # --------------------------------------------------------------------------- #
-  261 | SCHEMA_SQLITE = """
-  262 | CREATE TABLE IF NOT EXISTS acq_order (
-  263 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  264 |   title TEXT NOT NULL,
-  265 |   author TEXT,
-  266 |   supplier TEXT,                       -- организация-посредник (IZD)
-  267 |   copies_ordered INTEGER NOT NULL DEFAULT 0,
-  268 |   copies_received INTEGER NOT NULL DEFAULT 0,
-  269 |   price REAL,                          -- unit price (62^p plan)
-  270 |   funding_source TEXT,                 -- источник финанс. (88^L Istfin.mnu)
-  271 |   status TEXT NOT NULL DEFAULT 'ordered'
-  272 |        CHECK (status IN ('ordered','partially_received','received','cancelled')),
-  273 |   created REAL NOT NULL,
-  274 |   updated REAL NOT NULL
-  275 | );
-  276 | CREATE INDEX IF NOT EXISTS acq_order_status_idx ON acq_order(status);
-  277 | CREATE TABLE IF NOT EXISTS acq_ksu (
-  278 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  279 |   ksu_no TEXT NOT NULL UNIQUE,         -- 88^A год+№ (the KSU= key)
-  280 |   titles INTEGER NOT NULL DEFAULT 0,   -- 88^E наименований
-  281 |   copies INTEGER NOT NULL DEFAULT 0,   -- 88^F экземпляров
-  282 |   total_sum REAL NOT NULL DEFAULT 0,   -- 88^G сумма
-  283 |   act_ref TEXT,                        -- акт/счёт (88^B / 88^J invoice)
-  284 |   created REAL NOT NULL
-  285 | );
-  286 | CREATE TABLE IF NOT EXISTS acq_receipt (
-  287 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  288 |   order_id INTEGER NOT NULL REFERENCES acq_order(id),
-  289 |   ksu_id INTEGER NOT NULL REFERENCES acq_ksu(id),
-  290 |   copies INTEGER NOT NULL,
-  291 |   unit_price REAL,
-  292 |   sum REAL NOT NULL DEFAULT 0,
-  293 |   catalog_mfn INTEGER,                 -- the ToCat bib record (NULL if standalone)
-  294 |   created REAL NOT NULL
-  295 | );
-  296 | CREATE INDEX IF NOT EXISTS acq_receipt_order_idx ON acq_receipt(order_id);
-  297 | CREATE TABLE IF NOT EXISTS acq_inventory (
-  298 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  299 |   receipt_id INTEGER NOT NULL REFERENCES acq_receipt(id),
-  300 |   ksu_no TEXT NOT NULL,                -- 910^U back-link to КСУ
-  301 |   inv_no TEXT NOT NULL,               -- 910^b inventory number
-  302 |   UNIQUE(inv_no)
-  303 | );
-  304 | CREATE INDEX IF NOT EXISTS acq_inventory_receipt_idx ON acq_inventory(receipt_id);
-  305 | -- КСУ выбытия (книга суммарного учёта — часть «исключение»). Списание ставит
-  306 | -- №КСУ выбытия (910^V), кол-во (910^X) и статус «списан» 910^A=6 на экземпляр
-  307 | -- (INTEGRATION_MAP ребро 5.2 / кластер 1.5). Каждая строка — один выбывший экз.
-  308 | -- с причиной (reason: lost/worn/…) и обратной ссылкой на КСУ поступления, если
-  309 | -- инв.№ известен в acq_inventory (cross-link «партия поступления ↔ выбытие»).
-  310 | CREATE TABLE IF NOT EXISTS acq_disposal (
-  311 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  312 |   inv_no TEXT NOT NULL,                -- 910^b выбывшего экземпляра
-  313 |   ksu_disp_no TEXT NOT NULL,           -- 910^V № КСУ выбытия (акт списания)
 ```
 
 <!-- ─── страница 108 ─── -->
 
 ```py
-  314 |   reason TEXT NOT NULL DEFAULT 'lost', -- причина (lost/worn/transfer/…)
-  315 |   ksu_recv_no TEXT,                    -- КСУ поступления (если инв.№ известен)
-  316 |   amount REAL NOT NULL DEFAULT 1,      -- 910^X кол-во (1 экз. на строку)
-  317 |   ref TEXT,                            -- внешняя ссылка (loan_id / акт)
-  318 |   created REAL NOT NULL,
-  319 |   UNIQUE(inv_no, ksu_disp_no)          -- идемпотентность: один экз. на акт один раз
-  320 | );
-  321 | CREATE INDEX IF NOT EXISTS acq_disposal_ksu_idx ON acq_disposal(ksu_disp_no);
-  322 | """
-  323 | 
-  324 | 
-  325 | class AcquisitionStore:
-  326 |     """Own sqlite store for acquisition state (order / receipt / КСУ / inventory).
-  327 | 
-  328 |     ``db_path=':memory:'`` (default) or a temp file for tests; create-on-init.
-  329 |     Connection is thread-local (house style); rows are returned as plain dicts.
-  330 |     """
-  331 | 
-  332 |     def __init__(self, db_path=':memory:'):
-  333 |         self.db_path = db_path
-  334 |         self._local = threading.local()
-  335 |         self.ensure_schema()
-  336 | 
-  337 |     def _conn(self):
-  338 |         c = getattr(self._local, 'conn', None)
-  339 |         if c is None:
-  340 |             c = sqlite3.connect(self.db_path)
-  341 |             c.row_factory = sqlite3.Row
-  342 |             c.execute('PRAGMA foreign_keys=ON')
-  343 |             self._local.conn = c
-  344 |         return c
-  345 | 
-  346 |     def ensure_schema(self):
-  347 |         c = self._conn()
-  348 |         c.executescript(SCHEMA_SQLITE)
-  349 |         c.commit()
-  350 | 
-  351 |     # ---- orders ----------------------------------------------------------- #
-  352 |     def add_order(self, title, author, supplier, copies_ordered, price,
-  353 |                   funding_source):
-  354 |         now = time.time()
-  355 |         c = self._conn()
-  356 |         cur = c.execute(
-  357 |             'INSERT INTO acq_order(title,author,supplier,copies_ordered,'
-  358 |             'price,funding_source,status,created,updated) VALUES(?,?,?,?,?,?,?,?,?)',
-  359 |             (title, author, supplier, copies_ordered, price, funding_source,
-  360 |              ORDER_ORDERED, now, now))
-  361 |         c.commit()
-  362 |         return self.get_order(cur.lastrowid)
-  363 | 
-  364 |     def get_order(self, order_id):
-  365 |         r = self._conn().execute(
-  366 |             'SELECT * FROM acq_order WHERE id=?', (order_id,)).fetchone()
-  367 |         return dict(r) if r else None
-  368 | 
+  200 | # --------------------------------------------------------------------------- #
+  201 | # КСУ ↔ экземпляры (INTEGRATION_MAP кластер 5, рёбра 5.1/5.3).
+  202 | # --------------------------------------------------------------------------- #
+  203 | # Подполе экземпляра (910), несущее №КСУ поступления. DB_ACQUISITION A.3.1
+  204 | # (910^U «№КСУ», индекс `KSU=`). При приёме партии №КСУ проставляется в каждый
+  205 | # экземпляр; поиск экземпляров партии — по этому подполю (точка доступа 5/7
+  206 | # CMPL.INI: `KSU=` / `NKSUK=`).
+  207 | EXEMPLAR_KSU_SUB = 'u'
+  208 | 
+  209 | # Точка доступа CMPL.INI: «Запись КСУ поступления партии книг» (поиск 5, `KSU=`) и
+  210 | # «Книги партии с N КСУ поступления» (поиск 7, `NKSUK=`). Наш каталог-handle НЕ
+  211 | # инвертирует 910^U под `KSU=` (его INDEX_SPEC = T/A/K/IN/…, ребро его не правим),
+  212 | # поэтому поиск экземпляров по №КСУ в каталоге идёт сканированием записей через
+  213 | # handle (как find_exemplar), а основной — по собственному ledger'у поступлений.
+  214 | KSU_PREFIX = 'KSU='
+  215 | 
+  216 | # КСУ «Пополнение записи» — авто-распределение партии (ребро 5.3, DB_ACQUISITION
+  217 | # A.4/A.3.1 строка «КСУ-распределение»). Поля распределения, которые Мастер
+  218 | # «Пополнение записи КСУ» заполняет авточислами на записи КСУ (920=KSU). Здесь —
+  219 | # КАРТА полей (recon A.3.1/A.4), по которым раскладывается партия. Поля-СУММАТОРЫ
+  220 | # (наименования/экземпляры) считаем БАЗОВО (выводимо из recon); грани, чей точный
+  221 | # алгоритм во внешнем Мастере не транскрибирован, — TODO(recon #CMPL-05).
+  222 | KSU_DISTRIBUTION_FIELDS = {
+  223 |     '17': 'число наименований (поступило)',          # A.4 «17/18/19 числа наимен.»
+  224 |     '18': 'число наименований (в т.ч. ...)',         # точное членение — #CMPL-05
+  225 |     '19': 'число наименований (в т.ч. ...)',         # точное членение — #CMPL-05
+  226 |     '44': 'направления',                             # A.3.1 «44/744 направления»
+  227 |     '45': 'по типу/языку',                           # A.3.1 «45 по типу/языку»
+  228 |     '48': 'УДК',                                     # A.3.1 «48 УДК»
+  229 |     '49': 'ББК',                                     # A.3.1 «49 ББК»
+  230 |     '145': 'печатные/непечатные',                    # A.3.1 «145–150 ...»
+  231 |     '146': 'характер',
+  232 |     '147': 'отеч./иностранные',
+  233 |     '148': 'фонды',
+  234 |     '149': 'канал',
+  235 |     '150': 'прочее',
+  236 |     '151': 'разделы',                                # A.3.1 «151 разделы»
+  237 |     '155': 'периодика',                              # A.3.1 «155 периодика»
+  238 |     '158': 'ВУЗ',                                    # A.3.1 «158/248/249 ВУЗ»
+  239 | }
+  240 | 
+  241 | 
+  242 | # --------------------------------------------------------------------------- #
+  243 | # ККО formulas (SPEC §2). Pure functions — no store, fully unit-testable.
+  244 | # --------------------------------------------------------------------------- #
+  245 | def kko(copies, students):
+  246 |     """ККО = copies / students with the SPEC §2.2 division-by-zero policy.
+  247 | 
+  248 |     The 4-cell table (§2.2):
+  249 | 
+  250 |       ===============  ===========  =======================================
+  251 |       copies/students  result       meaning
+  252 |       ===============  ===========  =======================================
+  253 |       students==0,>0   ``1.0``      provided (no consumers) — no дозаказ
+  254 |       students==0,==0  ``None``     no data — excluded from averages (NOT 0)
 ```
 
 <!-- ─── страница 109 ─── -->
 
 ```py
-  369 |     def update_order(self, order_id, copies_received, status):
-  370 |         c = self._conn()
-  371 |         c.execute('UPDATE acq_order SET copies_received=?, status=?, updated=? '
-  372 |                   'WHERE id=?', (copies_received, status, time.time(), order_id))
-  373 |         c.commit()
-  374 |         return self.get_order(order_id)
-  375 | 
-  376 |     def list_orders(self, status=None):
-  377 |         if status is None:
-  378 |             rows = self._conn().execute(
-  379 |                 'SELECT * FROM acq_order ORDER BY id').fetchall()
-  380 |         else:
-  381 |             rows = self._conn().execute(
-  382 |                 'SELECT * FROM acq_order WHERE status=? ORDER BY id',
-  383 |                 (status,)).fetchall()
-  384 |         return [dict(r) for r in rows]
-  385 | 
-  386 |     # ---- КСУ -------------------------------------------------------------- #
-  387 |     def get_ksu(self, ksu_no):
-  388 |         r = self._conn().execute(
-  389 |             'SELECT * FROM acq_ksu WHERE ksu_no=?', (ksu_no,)).fetchone()
-  390 |         return dict(r) if r else None
-  391 | 
-  392 |     def upsert_ksu(self, ksu_no, add_titles, add_copies, add_sum, act_ref=None):
-  393 |         """Insert a КСУ row, or accumulate a further receipt into an existing one.
-  394 | 
-  395 |         КСУ is the *summary* book of accounting: a batch number (88^A) aggregates
-  396 |         наименований (88^E) / экземпляров (88^F) / сумма (88^G). Re-receiving
-  397 |         against the same КСУ number accumulates the totals (idempotent on the
-  398 |         number, additive on the totals)."""
-  399 |         c = self._conn()
-  400 |         existing = self.get_ksu(ksu_no)
-  401 |         if existing is None:
-  402 |             c.execute(
-  403 |                 'INSERT INTO acq_ksu(ksu_no,titles,copies,total_sum,act_ref,'
-  404 |                 'created) VALUES(?,?,?,?,?,?)',
-  405 |                 (ksu_no, add_titles, add_copies, add_sum, act_ref, time.time()))
-  406 |         else:
-  407 |             c.execute(
-  408 |                 'UPDATE acq_ksu SET titles=titles+?, copies=copies+?, '
-  409 |                 'total_sum=total_sum+?, act_ref=COALESCE(?,act_ref) WHERE ksu_no=?',
-  410 |                 (add_titles, add_copies, add_sum, act_ref, ksu_no))
-  411 |         c.commit()
-  412 |         return self.get_ksu(ksu_no)
-  413 | 
-  414 |     # ---- receipts + inventory --------------------------------------------- #
-  415 |     def add_receipt(self, order_id, ksu_id, copies, unit_price, sum_,
-  416 |                     catalog_mfn=None):
-  417 |         c = self._conn()
-  418 |         cur = c.execute(
-  419 |             'INSERT INTO acq_receipt(order_id,ksu_id,copies,unit_price,sum,'
-  420 |             'catalog_mfn,created) VALUES(?,?,?,?,?,?,?)',
-  421 |             (order_id, ksu_id, copies, unit_price, sum_, catalog_mfn, time.time()))
-  422 |         c.commit()
-  423 |         return self.get_receipt(cur.lastrowid)
+  255 |       students>0,==0   ``0.0``      not provided — дозаказ candidate
+  256 |       students>0,>0    copies/stud  norm
+  257 |       ===============  ===========  =======================================
+  258 | 
+  259 |     ``None`` (no-data) is deliberately distinct from ``0.0`` (not-provided) so the
+  260 |     average ККО isn't dragged down by archival orphan contingents (SPEC R2/AC4).
+  261 |     """
+  262 |     copies = float(copies or 0)
+  263 |     students = float(students or 0)
+  264 |     if students == 0:
+  265 |         return 1.0 if copies > 0 else None   # provided vs no-data (NOT 0)
+  266 |     return copies / students
+  267 | 
+  268 | 
+  269 | def average_kko(kko_values, normalize=False):
+  270 |     """Average ККО over per-title values, EXCLUDING ``None`` (no-data) cells (§2.4).
+  271 | 
+  272 |     ``None`` items are dropped from both the sum and the count N. With
+  273 |     ``normalize=True`` each term is capped at 1 (``min(kko_i, 1)``) so one
+  274 |     over-provided book can't compensate another's deficit (SPEC §2.4). Returns
+  275 |     ``None`` when every value is no-data (N==0) — there is nothing to average.
+  276 |     """
+  277 |     present = [v for v in kko_values if v is not None]
+  278 |     if not present:
+  279 |         return None
+  280 |     if normalize:
+  281 |         present = [min(v, 1.0) for v in present]
+  282 |     return sum(present) / len(present)
+  283 | 
+  284 | 
+  285 | def reorder_need(students, copies, kko_norm=0.5):
+  286 |     """Deficit дозаказ amount (SPEC §2.6 / §3.3): ``ceil(students*kko_norm) - copies``.
+  287 | 
+  288 |     The number of copies to buy to reach the provision norm. Clamped at 0 (never
+  289 |     negative — an over-provided title needs no reorder). A title with no students
+  290 |     (students<=0) is never a reorder candidate (returns 0): the §2.2 policy treats
+  291 |     it as provided / no-data, not as a deficit.
+  292 |     """
+  293 |     if students <= 0:
+  294 |         return 0
+  295 |     need = math.ceil(students * kko_norm) - int(copies)
+  296 |     return max(0, need)
+  297 | 
+  298 | 
+  299 | # --------------------------------------------------------------------------- #
+  300 | # Store — own sqlite (order / receipt / ksu / inventory). create-on-init.
+  301 | # --------------------------------------------------------------------------- #
+  302 | SCHEMA_SQLITE = """
+  303 | CREATE TABLE IF NOT EXISTS acq_order (
+  304 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  305 |   title TEXT NOT NULL,
+  306 |   author TEXT,
+  307 |   supplier TEXT,                       -- организация-посредник (IZD)
+  308 |   copies_ordered INTEGER NOT NULL DEFAULT 0,
+  309 |   copies_received INTEGER NOT NULL DEFAULT 0,
 ```
 
 <!-- ─── страница 110 ─── -->
 
 ```py
-  424 | 
-  425 |     def get_receipt(self, receipt_id):
-  426 |         r = self._conn().execute(
-  427 |             'SELECT * FROM acq_receipt WHERE id=?', (receipt_id,)).fetchone()
-  428 |         return dict(r) if r else None
-  429 | 
-  430 |     def set_receipt_catalog_mfn(self, receipt_id, catalog_mfn):
-  431 |         c = self._conn()
-  432 |         c.execute('UPDATE acq_receipt SET catalog_mfn=? WHERE id=?',
-  433 |                   (catalog_mfn, receipt_id))
-  434 |         c.commit()
-  435 | 
-  436 |     def add_inventory(self, receipt_id, ksu_no, inv_no):
-  437 |         c = self._conn()
-  438 |         c.execute('INSERT INTO acq_inventory(receipt_id,ksu_no,inv_no) '
-  439 |                   'VALUES(?,?,?)', (receipt_id, ksu_no, inv_no))
-  440 |         c.commit()
-  441 | 
-  442 |     def inventory_for_ksu(self, ksu_no):
-  443 |         return [r['inv_no'] for r in self._conn().execute(
-  444 |             'SELECT inv_no FROM acq_inventory WHERE ksu_no=? ORDER BY id',
-  445 |             (ksu_no,)).fetchall()]
-  446 | 
-  447 |     def inventory_exists(self, inv_no):
-  448 |         return self._conn().execute(
-  449 |             'SELECT 1 FROM acq_inventory WHERE inv_no=?',
-  450 |             (inv_no,)).fetchone() is not None
-  451 | 
-  452 |     def receipt_ksu_for_inv(self, inv_no):
-  453 |         """КСУ поступления (910^U) of the inventory number, or None if unknown.
-  454 | 
-  455 |         The cross-link a disposal uses to tie an выбытие back to the партия
-  456 |         поступления (acq_inventory.ksu_no)."""
-  457 |         r = self._conn().execute(
-  458 |             'SELECT ksu_no FROM acq_inventory WHERE inv_no=?',
-  459 |             (inv_no,)).fetchone()
-  460 |         return r['ksu_no'] if r else None
-  461 | 
-  462 |     # ---- disposals (КСУ выбытия / списание) ------------------------------- #
-  463 |     def add_disposal(self, inv_no, ksu_disp_no, reason='lost',
-  464 |                      ksu_recv_no=None, amount=1, ref=None):
-  465 |         """Record one выбывший экземпляр in the КСУ выбытия (idempotent per
-  466 |         ``(inv_no, ksu_disp_no)``). Returns the disposal row dict, or the existing
-  467 |         one if this exact (экз., акт) pair was already written."""
-  468 |         c = self._conn()
-  469 |         existing = c.execute(
-  470 |             'SELECT * FROM acq_disposal WHERE inv_no=? AND ksu_disp_no=?',
-  471 |             (inv_no, ksu_disp_no)).fetchone()
-  472 |         if existing is not None:
-  473 |             return dict(existing)
-  474 |         cur = c.execute(
-  475 |             'INSERT INTO acq_disposal(inv_no,ksu_disp_no,reason,ksu_recv_no,'
-  476 |             'amount,ref,created) VALUES(?,?,?,?,?,?,?)',
-  477 |             (inv_no, ksu_disp_no, reason, ksu_recv_no, amount, ref, time.time()))
-  478 |         c.commit()
+  310 |   price REAL,                          -- unit price (62^p plan)
+  311 |   funding_source TEXT,                 -- источник финанс. (88^L Istfin.mnu)
+  312 |   status TEXT NOT NULL DEFAULT 'ordered'
+  313 |        CHECK (status IN ('ordered','partially_received','received','cancelled')),
+  314 |   created REAL NOT NULL,
+  315 |   updated REAL NOT NULL
+  316 | );
+  317 | CREATE INDEX IF NOT EXISTS acq_order_status_idx ON acq_order(status);
+  318 | CREATE TABLE IF NOT EXISTS acq_ksu (
+  319 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  320 |   ksu_no TEXT NOT NULL UNIQUE,         -- 88^A год+№ (the KSU= key)
+  321 |   titles INTEGER NOT NULL DEFAULT 0,   -- 88^E наименований
+  322 |   copies INTEGER NOT NULL DEFAULT 0,   -- 88^F экземпляров
+  323 |   total_sum REAL NOT NULL DEFAULT 0,   -- 88^G сумма
+  324 |   act_ref TEXT,                        -- акт/счёт (88^B / 88^J invoice)
+  325 |   created REAL NOT NULL
+  326 | );
+  327 | CREATE TABLE IF NOT EXISTS acq_receipt (
+  328 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  329 |   order_id INTEGER NOT NULL REFERENCES acq_order(id),
+  330 |   ksu_id INTEGER NOT NULL REFERENCES acq_ksu(id),
+  331 |   copies INTEGER NOT NULL,
+  332 |   unit_price REAL,
+  333 |   sum REAL NOT NULL DEFAULT 0,
+  334 |   catalog_mfn INTEGER,                 -- the ToCat bib record (NULL if standalone)
+  335 |   created REAL NOT NULL
+  336 | );
+  337 | CREATE INDEX IF NOT EXISTS acq_receipt_order_idx ON acq_receipt(order_id);
+  338 | CREATE TABLE IF NOT EXISTS acq_inventory (
+  339 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  340 |   receipt_id INTEGER REFERENCES acq_receipt(id),  -- NULL: каталог-side КСУ-линк (5.1)
+  341 |   ksu_no TEXT NOT NULL,                -- 910^U back-link to КСУ
+  342 |   inv_no TEXT NOT NULL,               -- 910^b inventory number
+  343 |   UNIQUE(inv_no)
+  344 | );
+  345 | CREATE INDEX IF NOT EXISTS acq_inventory_receipt_idx ON acq_inventory(receipt_id);
+  346 | -- КСУ выбытия (книга суммарного учёта — часть «исключение»). Списание ставит
+  347 | -- №КСУ выбытия (910^V), кол-во (910^X) и статус «списан» 910^A=6 на экземпляр
+  348 | -- (INTEGRATION_MAP ребро 5.2 / кластер 1.5). Каждая строка — один выбывший экз.
+  349 | -- с причиной (reason: lost/worn/…) и обратной ссылкой на КСУ поступления, если
+  350 | -- инв.№ известен в acq_inventory (cross-link «партия поступления ↔ выбытие»).
+  351 | CREATE TABLE IF NOT EXISTS acq_disposal (
+  352 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  353 |   inv_no TEXT NOT NULL,                -- 910^b выбывшего экземпляра
+  354 |   ksu_disp_no TEXT NOT NULL,           -- 910^V № КСУ выбытия (акт списания)
+  355 |   reason TEXT NOT NULL DEFAULT 'lost', -- причина (lost/worn/transfer/…)
+  356 |   ksu_recv_no TEXT,                    -- КСУ поступления (если инв.№ известен)
+  357 |   amount REAL NOT NULL DEFAULT 1,      -- 910^X кол-во (1 экз. на строку)
+  358 |   ref TEXT,                            -- внешняя ссылка (loan_id / акт)
+  359 |   created REAL NOT NULL,
+  360 |   UNIQUE(inv_no, ksu_disp_no)          -- идемпотентность: один экз. на акт один раз
+  361 | );
+  362 | CREATE INDEX IF NOT EXISTS acq_disposal_ksu_idx ON acq_disposal(ksu_disp_no);
+  363 | """
+  364 | 
 ```
 
 <!-- ─── страница 111 ─── -->
 
 ```py
-  479 |         r = c.execute('SELECT * FROM acq_disposal WHERE id=?',
-  480 |                       (cur.lastrowid,)).fetchone()
-  481 |         return dict(r)
-  482 | 
-  483 |     def disposal_for_inv(self, inv_no):
-  484 |         """All КСУ-выбытия rows for an inventory number (creation order)."""
-  485 |         return [dict(r) for r in self._conn().execute(
-  486 |             'SELECT * FROM acq_disposal WHERE inv_no=? ORDER BY id',
-  487 |             (inv_no,)).fetchall()]
-  488 | 
-  489 |     def disposal_summary(self, ksu_disp_no):
-  490 |         """Aggregate of one акт списания: copies + total amount (88^F/^X rollup)."""
-  491 |         r = self._conn().execute(
-  492 |             'SELECT COUNT(*) AS copies, COALESCE(SUM(amount),0) AS amount '
-  493 |             'FROM acq_disposal WHERE ksu_disp_no=?', (ksu_disp_no,)).fetchone()
-  494 |         return {'ksu_disp_no': ksu_disp_no, 'copies': r['copies'],
-  495 |                 'amount': float(r['amount'])}
-  496 | 
-  497 | 
-  498 | # --------------------------------------------------------------------------- #
-  499 | # Title key — the new-vs-existing resolver (ToCat dedup).
-  500 | # --------------------------------------------------------------------------- #
-  501 | def title_key(title, author=None):
-  502 |     """Normalized (title, author) key for new-vs-existing-title resolution.
-  503 | 
-  504 |     Re-supply of an existing title must ADD copies to that record, not create a
-  505 |     duplicate. We match on a casefolded/trimmed (title, author) pair — the same
-  506 |     pragmatic key the desktop dedup (`!KDEX/!KDK.pft`) uses on заглавие+автор."""
-  507 |     t = (title or '').strip().casefold()
-  508 |     a = (author or '').strip().casefold()
-  509 |     return (t, a)
-  510 | 
-  511 | 
-  512 | def field66_set(cmpl_rec):
-  513 |     """True iff поле 66 (флаг переноса в ЭК) взведён на БО CMPL — the ToCat trigger.
-  514 | 
-  515 |     Поле 66 в CMPL — «флаг переноса в БД ЭК» (DB_ACQUISITION A.3.1 / A.8). We treat
-  516 |     the flag as set when field 66 is present and carries any non-empty value (a bare
-  517 |     string, a ``{subfield: value}`` dict, or a list of either) — and is NOT already
-  518 |     a pure ``VD=DEL`` mark left by a previous transfer. A record already marked
-  519 |     ``66^a == 'DEL'`` is considered transferred (flag consumed), not pending."""
-  520 |     raw = cmpl_rec.get(FIELD66_TAG) if cmpl_rec else None
-  521 |     if raw is None:
-  522 |         return False
-  523 |     insts = raw if isinstance(raw, list) else [raw]
-  524 |     saw_value = False
-  525 |     only_del = True
-  526 |     for inst in insts:
-  527 |         if isinstance(inst, dict):
-  528 |             vals = [str(v) for v in inst.values() if str(v or '').strip()]
-  529 |             if not vals:
-  530 |                 continue
-  531 |             saw_value = True
-  532 |             for v in vals:
-  533 |                 if v.strip().upper() != VD_DEL:
+  365 | 
+  366 | class AcquisitionStore:
+  367 |     """Own sqlite store for acquisition state (order / receipt / КСУ / inventory).
+  368 | 
+  369 |     ``db_path=':memory:'`` (default) or a temp file for tests; create-on-init.
+  370 |     Connection is thread-local (house style); rows are returned as plain dicts.
+  371 |     """
+  372 | 
+  373 |     def __init__(self, db_path=':memory:'):
+  374 |         self.db_path = db_path
+  375 |         self._local = threading.local()
+  376 |         self.ensure_schema()
+  377 | 
+  378 |     def _conn(self):
+  379 |         c = getattr(self._local, 'conn', None)
+  380 |         if c is None:
+  381 |             c = sqlite3.connect(self.db_path)
+  382 |             c.row_factory = sqlite3.Row
+  383 |             c.execute('PRAGMA foreign_keys=ON')
+  384 |             self._local.conn = c
+  385 |         return c
+  386 | 
+  387 |     def ensure_schema(self):
+  388 |         c = self._conn()
+  389 |         c.executescript(SCHEMA_SQLITE)
+  390 |         c.commit()
+  391 | 
+  392 |     # ---- orders ----------------------------------------------------------- #
+  393 |     def add_order(self, title, author, supplier, copies_ordered, price,
+  394 |                   funding_source):
+  395 |         now = time.time()
+  396 |         c = self._conn()
+  397 |         cur = c.execute(
+  398 |             'INSERT INTO acq_order(title,author,supplier,copies_ordered,'
+  399 |             'price,funding_source,status,created,updated) VALUES(?,?,?,?,?,?,?,?,?)',
+  400 |             (title, author, supplier, copies_ordered, price, funding_source,
+  401 |              ORDER_ORDERED, now, now))
+  402 |         c.commit()
+  403 |         return self.get_order(cur.lastrowid)
+  404 | 
+  405 |     def get_order(self, order_id):
+  406 |         r = self._conn().execute(
+  407 |             'SELECT * FROM acq_order WHERE id=?', (order_id,)).fetchone()
+  408 |         return dict(r) if r else None
+  409 | 
+  410 |     def update_order(self, order_id, copies_received, status):
+  411 |         c = self._conn()
+  412 |         c.execute('UPDATE acq_order SET copies_received=?, status=?, updated=? '
+  413 |                   'WHERE id=?', (copies_received, status, time.time(), order_id))
+  414 |         c.commit()
+  415 |         return self.get_order(order_id)
+  416 | 
+  417 |     def list_orders(self, status=None):
+  418 |         if status is None:
+  419 |             rows = self._conn().execute(
 ```
 
 <!-- ─── страница 112 ─── -->
 
 ```py
-  534 |                     only_del = False
-  535 |         else:
-  536 |             s = str(inst or '').strip()
-  537 |             if not s:
-  538 |                 continue
-  539 |             saw_value = True
-  540 |             if s.upper() != VD_DEL:
-  541 |                 only_del = False
-  542 |     if not saw_value:
-  543 |         return False
-  544 |     return not only_del
-  545 | 
-  546 | 
-  547 | def is_source_deleted(cmpl_rec):
-  548 |     """True iff поле 66 of the source CMPL record carries the ``VD=DEL`` mark.
-  549 | 
-  550 |     The anti-duplicate guarantee (ребро 1.5): after a successful ToCat transfer the
-  551 |     source БО gets ``66^a = 'DEL'``. This reads that mark so a re-run of ToCat over
-  552 |     the same record is a no-op (idempotency)."""
-  553 |     raw = cmpl_rec.get(FIELD66_TAG) if cmpl_rec else None
-  554 |     if raw is None:
-  555 |         return False
-  556 |     insts = raw if isinstance(raw, list) else [raw]
-  557 |     for inst in insts:
-  558 |         if isinstance(inst, dict):
-  559 |             for v in inst.values():
-  560 |                 if str(v or '').strip().upper() == VD_DEL:
-  561 |                     return True
-  562 |         elif str(inst or '').strip().upper() == VD_DEL:
-  563 |             return True
-  564 |     return False
-  565 | 
-  566 | 
-  567 | def _as_list(raw):
-  568 |     """Normalize a record field value to a list of instances (str|dict)."""
-  569 |     if raw is None:
-  570 |         return []
-  571 |     return raw if isinstance(raw, list) else [raw]
-  572 | 
-  573 | 
-  574 | def _has_subfield(inst, sub):
-  575 |     """True iff instance dict carries a non-empty subfield ``sub`` (case-tolerant)."""
-  576 |     if not isinstance(inst, dict):
-  577 |         return False
-  578 |     return bool(inst.get(sub) or inst.get(sub.upper()) or inst.get(sub.lower()))
-  579 | 
-  580 | 
-  581 | def _carry_heading(inst):
-  582 |     """Carry an already-structured 700/701 instance (^a/^b/^9) through as-is.
-  583 | 
-  584 |     When a CMPL БО already holds a proper author heading (``^a`` filled), ToCat
-  585 |     transfers it verbatim (the catalog needs no reconstruction). Returns a shallow
-  586 |     copy of the recognized subfields, or None for an empty instance."""
-  587 |     if not isinstance(inst, dict):
-  588 |         s = str(inst or '').strip()
+  420 |                 'SELECT * FROM acq_order ORDER BY id').fetchall()
+  421 |         else:
+  422 |             rows = self._conn().execute(
+  423 |                 'SELECT * FROM acq_order WHERE status=? ORDER BY id',
+  424 |                 (status,)).fetchall()
+  425 |         return [dict(r) for r in rows]
+  426 | 
+  427 |     # ---- КСУ -------------------------------------------------------------- #
+  428 |     def get_ksu(self, ksu_no):
+  429 |         r = self._conn().execute(
+  430 |             'SELECT * FROM acq_ksu WHERE ksu_no=?', (ksu_no,)).fetchone()
+  431 |         return dict(r) if r else None
+  432 | 
+  433 |     def upsert_ksu(self, ksu_no, add_titles, add_copies, add_sum, act_ref=None):
+  434 |         """Insert a КСУ row, or accumulate a further receipt into an existing one.
+  435 | 
+  436 |         КСУ is the *summary* book of accounting: a batch number (88^A) aggregates
+  437 |         наименований (88^E) / экземпляров (88^F) / сумма (88^G). Re-receiving
+  438 |         against the same КСУ number accumulates the totals (idempotent on the
+  439 |         number, additive on the totals)."""
+  440 |         c = self._conn()
+  441 |         existing = self.get_ksu(ksu_no)
+  442 |         if existing is None:
+  443 |             c.execute(
+  444 |                 'INSERT INTO acq_ksu(ksu_no,titles,copies,total_sum,act_ref,'
+  445 |                 'created) VALUES(?,?,?,?,?,?)',
+  446 |                 (ksu_no, add_titles, add_copies, add_sum, act_ref, time.time()))
+  447 |         else:
+  448 |             c.execute(
+  449 |                 'UPDATE acq_ksu SET titles=titles+?, copies=copies+?, '
+  450 |                 'total_sum=total_sum+?, act_ref=COALESCE(?,act_ref) WHERE ksu_no=?',
+  451 |                 (add_titles, add_copies, add_sum, act_ref, ksu_no))
+  452 |         c.commit()
+  453 |         return self.get_ksu(ksu_no)
+  454 | 
+  455 |     # ---- receipts + inventory --------------------------------------------- #
+  456 |     def add_receipt(self, order_id, ksu_id, copies, unit_price, sum_,
+  457 |                     catalog_mfn=None):
+  458 |         c = self._conn()
+  459 |         cur = c.execute(
+  460 |             'INSERT INTO acq_receipt(order_id,ksu_id,copies,unit_price,sum,'
+  461 |             'catalog_mfn,created) VALUES(?,?,?,?,?,?,?)',
+  462 |             (order_id, ksu_id, copies, unit_price, sum_, catalog_mfn, time.time()))
+  463 |         c.commit()
+  464 |         return self.get_receipt(cur.lastrowid)
+  465 | 
+  466 |     def get_receipt(self, receipt_id):
+  467 |         r = self._conn().execute(
+  468 |             'SELECT * FROM acq_receipt WHERE id=?', (receipt_id,)).fetchone()
+  469 |         return dict(r) if r else None
+  470 | 
+  471 |     def set_receipt_catalog_mfn(self, receipt_id, catalog_mfn):
+  472 |         c = self._conn()
+  473 |         c.execute('UPDATE acq_receipt SET catalog_mfn=? WHERE id=?',
+  474 |                   (catalog_mfn, receipt_id))
 ```
 
 <!-- ─── страница 113 ─── -->
 
 ```py
-  589 |         return {'a': s} if s else None
-  590 |     out = {}
-  591 |     for src, dst in (('a', 'a'), ('A', 'a'), ('b', 'b'), ('B', 'b'),
-  592 |                      ('g', 'g'), ('G', 'g'), ('9', '9'), ('3', '3')):
-  593 |         if inst.get(src) and dst not in out:
-  594 |             out[dst] = str(inst.get(src))
-  595 |     return out or None
-  596 | 
-  597 | 
-  598 | def _author_heading(inst):
-  599 |     """Build a 700/701-style author heading dict from a CMPL analytic author inst.
-  600 | 
-  601 |     CMPL аналитика (922/330) carries authors in ``^F`` (and ``^2``/``^3``/``^1``);
-  602 |     the catalog heading wants ``^a`` (фамилия) + optional ``^b`` (инициалы) + ``^9``
-  603 |     role. We split a "Фамилия И.О." string into ``^a``/``^b`` on the first space so
-  604 |     a search by ``A=`` lands on the surname (best-effort; full parse is a TODO)."""
-  605 |     if isinstance(inst, dict):
-  606 |         name = (inst.get('F') or inst.get('f') or inst.get('a') or
-  607 |                 inst.get('A') or inst.get('2') or inst.get('3') or '')
-  608 |         role = inst.get('X') or inst.get('x') or ''
-  609 |     else:
-  610 |         name = str(inst or '')
-  611 |         role = ''
-  612 |     name = str(name or '').strip()
-  613 |     if not name:
-  614 |         return None
-  615 |     heading = {}
-  616 |     # split "Surname Initials" -> ^a surname, ^b initials (first space only).
-  617 |     parts = name.split(' ', 1)
-  618 |     heading['a'] = parts[0]
-  619 |     if len(parts) > 1 and parts[1].strip():
-  620 |         heading['b'] = parts[1].strip()
-  621 |     if role:
-  622 |         heading['9'] = str(role)
-  623 |     # расширение заголовка ^g (полная форма имени, FIELD_DICTIONARY 700/701 ^G).
-  624 |     if isinstance(inst, dict):
-  625 |         ext = inst.get('g') or inst.get('G')
-  626 |         if ext:
-  627 |             heading['g'] = str(ext)
-  628 |     return heading
-  629 | 
-  630 | 
-  631 | def _carry_subfields(inst, sub_map):
-  632 |     """Carry recognized subfields of a CMPL instance into an IBIS instance dict.
-  633 | 
-  634 |     ``sub_map`` is an ordered iterable of ``(src, dst)`` pairs (case-tolerant on
-  635 |     ``src`` — both upper/lower are probed). The first non-empty source for a given
-  636 |     ``dst`` wins (so a CMPL БО that already carries the IBIS-cased subfield is
-  637 |     transferred verbatim). Returns a fresh dict (no mutation of ``inst``) or
-  638 |     ``None`` for an empty/scalar instance with nothing recognized."""
-  639 |     if not isinstance(inst, dict):
-  640 |         return None
-  641 |     out = {}
-  642 |     for src, dst in sub_map:
-  643 |         if dst in out:
+  475 |         c.commit()
+  476 | 
+  477 |     def add_inventory(self, receipt_id, ksu_no, inv_no):
+  478 |         c = self._conn()
+  479 |         c.execute('INSERT INTO acq_inventory(receipt_id,ksu_no,inv_no) '
+  480 |                   'VALUES(?,?,?)', (receipt_id, ksu_no, inv_no))
+  481 |         c.commit()
+  482 | 
+  483 |     def inventory_for_ksu(self, ksu_no):
+  484 |         return [r['inv_no'] for r in self._conn().execute(
+  485 |             'SELECT inv_no FROM acq_inventory WHERE ksu_no=? ORDER BY id',
+  486 |             (ksu_no,)).fetchall()]
+  487 | 
+  488 |     def inventory_exists(self, inv_no):
+  489 |         return self._conn().execute(
+  490 |             'SELECT 1 FROM acq_inventory WHERE inv_no=?',
+  491 |             (inv_no,)).fetchone() is not None
+  492 | 
+  493 |     def receipt_ksu_for_inv(self, inv_no):
+  494 |         """КСУ поступления (910^U) of the inventory number, or None if unknown.
+  495 | 
+  496 |         The cross-link a disposal uses to tie an выбытие back to the партия
+  497 |         поступления (acq_inventory.ksu_no)."""
+  498 |         r = self._conn().execute(
+  499 |             'SELECT ksu_no FROM acq_inventory WHERE inv_no=?',
+  500 |             (inv_no,)).fetchone()
+  501 |         return r['ksu_no'] if r else None
+  502 | 
+  503 |     def set_inventory_ksu(self, inv_no, ksu_no):
+  504 |         """Проставить №КСУ поступления (910^U / `KSU=`) на строку инв.№ ledger'а.
+  505 | 
+  506 |         Учётная связь партия↔экземпляр (INTEGRATION_MAP ребро 5.1): №КСУ
+  507 |         поступления записывается в учётную строку экземпляра. Возвращает ``True``,
+  508 |         если строка ``inv_no`` существовала и была обновлена, иначе ``False``
+  509 |         (экземпляр неизвестен ledger'у — caller решает, регистрировать ли его)."""
+  510 |         c = self._conn()
+  511 |         cur = c.execute('UPDATE acq_inventory SET ksu_no=? WHERE inv_no=?',
+  512 |                         (ksu_no, inv_no))
+  513 |         c.commit()
+  514 |         return cur.rowcount > 0
+  515 | 
+  516 |     def register_inventory_ksu(self, ksu_no, inv_no):
+  517 |         """Зарегистрировать инв.№ с №КСУ поступления без привязки к receipt.
+  518 | 
+  519 |         Idempotent на ``inv_no``: если строка уже есть — обновляет её №КСУ
+  520 |         (:meth:`set_inventory_ksu`); иначе вставляет «бесхозную» строку (без
+  521 |         ``receipt_id``) с указанным №КСУ. Используется, когда №КСУ проставляется
+  522 |         в каталоге на экземпляр, которого ещё нет в ledger'е поступлений."""
+  523 |         if self.set_inventory_ksu(inv_no, ksu_no):
+  524 |             return False                          # already known → re-linked
+  525 |         c = self._conn()
+  526 |         c.execute('INSERT INTO acq_inventory(receipt_id,ksu_no,inv_no) '
+  527 |                   'VALUES(NULL,?,?)', (ksu_no, inv_no))
+  528 |         c.commit()
+  529 |         return True                               # newly registered
 ```
 
 <!-- ─── страница 114 ─── -->
 
 ```py
-  644 |             continue
-  645 |         val = inst.get(src)
-  646 |         if val is None and src != src.upper():
-  647 |             val = inst.get(src.upper())
-  648 |         if val is None and src != src.lower():
-  649 |             val = inst.get(src.lower())
-  650 |         if val is not None and str(val).strip():
-  651 |             out[dst] = str(val)
-  652 |     return out or None
-  653 | 
-  654 | 
-  655 | def _carry_field(cmpl_rec, tag, sub_map):
-  656 |     """Реформат всех инстансов поля ``tag`` БО CMPL → IBIS по ``sub_map``.
-  657 | 
-  658 |     Структурный перенос поля «как есть» с нормализацией подполей: каждый инстанс
-  659 |     проходит через :func:`_carry_subfields`. Скалярный инстанс (строка) кладётся в
-  660 |     первый ``dst`` из ``sub_map`` (обычно ^a — основное значение поля). Returns a
-  661 |     list of IBIS instance dicts (возможно пустой)."""
-  662 |     out = []
-  663 |     default_dst = sub_map[0][1] if sub_map else 'a'
-  664 |     for inst in _as_list(cmpl_rec.get(tag)):
-  665 |         if isinstance(inst, dict):
-  666 |             carried = _carry_subfields(inst, sub_map)
-  667 |             if carried:
-  668 |                 out.append(carried)
-  669 |         else:
-  670 |             s = str(inst or '').strip()
-  671 |             if s:
-  672 |                 out.append({default_dst: s})
-  673 |     return out
-  674 | 
-  675 | 
-  676 | class AcquisitionError(Exception):
-  677 |     """An acquisition operation error (unknown order, over-receipt, …)."""
-  678 | 
-  679 | 
-  680 | # --------------------------------------------------------------------------- #
-  681 | # Engine — the order → receipt → КСУ → ToCat lifecycle.
-  682 | # --------------------------------------------------------------------------- #
-  683 | class AcquisitionEngine:
-  684 |     """Acquisition operations over an :class:`AcquisitionStore`.
-  685 | 
-  686 |     ``catalog`` (optional) is an :class:`access.catalog.CatalogStore` handle — the
-  687 |     cluster-1 ToCat seam. When wired, :meth:`receive` reflects each batch into the
-  688 |     catalog (creates/updates the bib record + 910 exemplars + the field-66 КСУ
-  689 |     link). With no handle the engine is fully standalone: order / receipt / КСУ
-  690 |     work, ToCat is a graceful no-op (back-compat, mirrors circulation's seam).
-  691 | 
-  692 |     ``catalog_db`` is the base (БД) whose ЭК ToCat writes into (default ``IBIS``).
-  693 |     ``inv_prefix`` seeds auto-generated inventory numbers when a receipt doesn't
-  694 |     supply explicit ones (910^b = MIN+1 auto-number, ACQUISITION_FUNCTIONS P-13).
-  695 | 
-  696 |     ``circulation`` (optional) is an :class:`access.circulation.CirculationEngine`
-  697 |     handle — the cluster-1 «поступление → выдаётся» seam (INTEGRATION_MAP, ребро
-  698 |     Комплектование↔Книговыдача). When wired, :meth:`receive` confirms each freshly
+  530 | 
+  531 |     # ---- disposals (КСУ выбытия / списание) ------------------------------- #
+  532 |     def add_disposal(self, inv_no, ksu_disp_no, reason='lost',
+  533 |                      ksu_recv_no=None, amount=1, ref=None):
+  534 |         """Record one выбывший экземпляр in the КСУ выбытия (idempotent per
+  535 |         ``(inv_no, ksu_disp_no)``). Returns the disposal row dict, or the existing
+  536 |         one if this exact (экз., акт) pair was already written."""
+  537 |         c = self._conn()
+  538 |         existing = c.execute(
+  539 |             'SELECT * FROM acq_disposal WHERE inv_no=? AND ksu_disp_no=?',
+  540 |             (inv_no, ksu_disp_no)).fetchone()
+  541 |         if existing is not None:
+  542 |             return dict(existing)
+  543 |         cur = c.execute(
+  544 |             'INSERT INTO acq_disposal(inv_no,ksu_disp_no,reason,ksu_recv_no,'
+  545 |             'amount,ref,created) VALUES(?,?,?,?,?,?,?)',
+  546 |             (inv_no, ksu_disp_no, reason, ksu_recv_no, amount, ref, time.time()))
+  547 |         c.commit()
+  548 |         r = c.execute('SELECT * FROM acq_disposal WHERE id=?',
+  549 |                       (cur.lastrowid,)).fetchone()
+  550 |         return dict(r)
+  551 | 
+  552 |     def disposal_for_inv(self, inv_no):
+  553 |         """All КСУ-выбытия rows for an inventory number (creation order)."""
+  554 |         return [dict(r) for r in self._conn().execute(
+  555 |             'SELECT * FROM acq_disposal WHERE inv_no=? ORDER BY id',
+  556 |             (inv_no,)).fetchall()]
+  557 | 
+  558 |     def disposal_summary(self, ksu_disp_no):
+  559 |         """Aggregate of one акт списания: copies + total amount (88^F/^X rollup)."""
+  560 |         r = self._conn().execute(
+  561 |             'SELECT COUNT(*) AS copies, COALESCE(SUM(amount),0) AS amount '
+  562 |             'FROM acq_disposal WHERE ksu_disp_no=?', (ksu_disp_no,)).fetchone()
+  563 |         return {'ksu_disp_no': ksu_disp_no, 'copies': r['copies'],
+  564 |                 'amount': float(r['amount'])}
+  565 | 
+  566 | 
+  567 | # --------------------------------------------------------------------------- #
+  568 | # Title key — the new-vs-existing resolver (ToCat dedup).
+  569 | # --------------------------------------------------------------------------- #
+  570 | def title_key(title, author=None):
+  571 |     """Normalized (title, author) key for new-vs-existing-title resolution.
+  572 | 
+  573 |     Re-supply of an existing title must ADD copies to that record, not create a
+  574 |     duplicate. We match on a casefolded/trimmed (title, author) pair — the same
+  575 |     pragmatic key the desktop dedup (`!KDEX/!KDK.pft`) uses on заглавие+автор."""
+  576 |     t = (title or '').strip().casefold()
+  577 |     a = (author or '').strip().casefold()
+  578 |     return (t, a)
+  579 | 
+  580 | 
+  581 | def field66_set(cmpl_rec):
+  582 |     """True iff поле 66 (флаг переноса в ЭК) взведён на БО CMPL — the ToCat trigger.
+  583 | 
+  584 |     Поле 66 в CMPL — «флаг переноса в БД ЭК» (DB_ACQUISITION A.3.1 / A.8). We treat
 ```
 
 <!-- ─── страница 115 ─── -->
 
 ```py
-  699 |     received inventory number is **lendable now** through circulation
-  700 |     (``circulation.register_acquired_item``): a copy that lands in the фонд is
-  701 |     immediately available for checkout, closing the gap between поступление and
-  702 |     книговыдача. The handle is used best-effort and only for the post-receipt
-  703 |     confirmation — with no handle the engine is fully standalone (back-compat,
-  704 |     mirrors the ``catalog=`` seam).
-  705 |     """
-  706 | 
-  707 |     def __init__(self, store=None, catalog=None, catalog_db=CATALOG_DB,
-  708 |                  worklist=DEFAULT_WORKLIST, inv_prefix='INV-', circulation=None):
-  709 |         self.store = store or AcquisitionStore(':memory:')
-  710 |         self.catalog = catalog
-  711 |         self.catalog_db = catalog_db
-  712 |         self.worklist = worklist
-  713 |         self.inv_prefix = inv_prefix
-  714 |         # Optional Circulation seam (INTEGRATION_MAP ребро Комплектование↔Книговыдача).
-  715 |         # When wired, a received copy is confirmed lendable through circulation so
-  716 |         # поступление → книговыдача is closed. Never a hard dependency.
-  717 |         self.circulation = circulation
-  718 | 
-  719 |     # ---- order (заказ) ---------------------------------------------------- #
-  720 |     def create_order(self, title, author=None, supplier=None, copies=1,
-  721 |                      price=None, funding_source=None):
-  722 |         """Open an order line (заказ). Returns the new order dict (status ``ordered``).
-  723 | 
-  724 |         ``copies`` is the number ordered; ``price`` the planned unit price (62^p);
-  725 |         ``funding_source`` the funding code (88^L Istfin.mnu)."""
-  726 |         if not title or not str(title).strip():
-  727 |             raise AcquisitionError('order requires a title')
-  728 |         if int(copies) <= 0:
-  729 |             raise AcquisitionError('order requires copies >= 1')
-  730 |         return self.store.add_order(
-  731 |             str(title).strip(), author, supplier, int(copies), price,
-  732 |             funding_source)
-  733 | 
-  734 |     def cancel_order(self, order_id):
-  735 |         """Cancel an order. Refuses if anything was already received (a partially-
-  736 |         or fully-received order can't be cancelled — those copies are in the fund).
-  737 |         Returns the updated order dict."""
-  738 |         order = self.store.get_order(order_id)
-  739 |         if order is None:
-  740 |             raise AcquisitionError('unknown order %r' % order_id)
-  741 |         if order['status'] == ORDER_CANCELLED:
-  742 |             return order
-  743 |         if order['copies_received'] > 0:
-  744 |             raise AcquisitionError(
-  745 |                 'cannot cancel order %r: %d copies already received'
-  746 |                 % (order_id, order['copies_received']))
-  747 |         return self.store.update_order(order_id, order['copies_received'],
-  748 |                                        ORDER_CANCELLED)
-  749 | 
-  750 |     def _next_status(self, order, copies_received):
-  751 |         """Derive the order status from copies received vs ordered."""
-  752 |         if copies_received <= 0:
-  753 |             return ORDER_ORDERED
+  585 |     the flag as set when field 66 is present and carries any non-empty value (a bare
+  586 |     string, a ``{subfield: value}`` dict, or a list of either) — and is NOT already
+  587 |     a pure ``VD=DEL`` mark left by a previous transfer. A record already marked
+  588 |     ``66^a == 'DEL'`` is considered transferred (flag consumed), not pending."""
+  589 |     raw = cmpl_rec.get(FIELD66_TAG) if cmpl_rec else None
+  590 |     if raw is None:
+  591 |         return False
+  592 |     insts = raw if isinstance(raw, list) else [raw]
+  593 |     saw_value = False
+  594 |     only_del = True
+  595 |     for inst in insts:
+  596 |         if isinstance(inst, dict):
+  597 |             vals = [str(v) for v in inst.values() if str(v or '').strip()]
+  598 |             if not vals:
+  599 |                 continue
+  600 |             saw_value = True
+  601 |             for v in vals:
+  602 |                 if v.strip().upper() != VD_DEL:
+  603 |                     only_del = False
+  604 |         else:
+  605 |             s = str(inst or '').strip()
+  606 |             if not s:
+  607 |                 continue
+  608 |             saw_value = True
+  609 |             if s.upper() != VD_DEL:
+  610 |                 only_del = False
+  611 |     if not saw_value:
+  612 |         return False
+  613 |     return not only_del
+  614 | 
+  615 | 
+  616 | def is_source_deleted(cmpl_rec):
+  617 |     """True iff поле 66 of the source CMPL record carries the ``VD=DEL`` mark.
+  618 | 
+  619 |     The anti-duplicate guarantee (ребро 1.5): after a successful ToCat transfer the
+  620 |     source БО gets ``66^a = 'DEL'``. This reads that mark so a re-run of ToCat over
+  621 |     the same record is a no-op (idempotency)."""
+  622 |     raw = cmpl_rec.get(FIELD66_TAG) if cmpl_rec else None
+  623 |     if raw is None:
+  624 |         return False
+  625 |     insts = raw if isinstance(raw, list) else [raw]
+  626 |     for inst in insts:
+  627 |         if isinstance(inst, dict):
+  628 |             for v in inst.values():
+  629 |                 if str(v or '').strip().upper() == VD_DEL:
+  630 |                     return True
+  631 |         elif str(inst or '').strip().upper() == VD_DEL:
+  632 |             return True
+  633 |     return False
+  634 | 
+  635 | 
+  636 | def _as_list(raw):
+  637 |     """Normalize a record field value to a list of instances (str|dict)."""
+  638 |     if raw is None:
+  639 |         return []
 ```
 
 <!-- ─── страница 116 ─── -->
 
 ```py
-  754 |         if copies_received >= order['copies_ordered']:
-  755 |             return ORDER_RECEIVED
-  756 |         return ORDER_PARTIAL
-  757 | 
-  758 |     # ---- receipt (поступление) + КСУ + ToCat ------------------------------ #
-  759 |     def receive(self, order_id, ksu_no, copies, unit_price=None,
-  760 |                 inv_numbers=None, act_ref=None):
-  761 |         """Register ``copies`` received against ``order_id`` into КСУ ``ksu_no``.
-  762 | 
-  763 |         Steps (the full поступление → КСУ → ToCat lifecycle):
-  764 | 
-  765 |           1. validate (known order, not cancelled, no over-receipt past ordered);
-  766 |           2. assign inventory numbers (explicit ``inv_numbers`` or auto MIN+1);
-  767 |           3. write/accumulate the КСУ summary entry (88^E/^F/^G + act ref);
-  768 |           4. record the receipt + inventory rows;
-  769 |           5. advance the order status (ordered→partially_received→received);
-  770 |           6. **ToCat** (when a ``catalog`` handle is wired): create or update the
-  771 |              bib record and register the copies as 910 exemplars (^A free, ^b inv#,
-  772 |              ^U КСУ) + the field-66 КСУ link. Re-supply of an existing title adds
-  773 |              copies to the existing record (resolved by :func:`title_key`).
-  774 | 
-  775 |         Returns a result dict::
-  776 | 
-  777 |             {
-  778 |               'receipt': <receipt row>,
-  779 |               'ksu': <КСУ row>,
-  780 |               'order': <updated order row>,
-  781 |               'inventory': [inv_no, ...],
-  782 |               'sum': <batch sum>,
-  783 |               'catalog_mfn': <bib mfn or None>,      # None when standalone
-  784 |               'catalog_action': 'created'|'updated'|None,
-  785 |               'lendable': [inv_no, ...],             # copies circ confirms lendable
-  786 |             }
-  787 |         """
-  788 |         order = self.store.get_order(order_id)
-  789 |         if order is None:
-  790 |             raise AcquisitionError('unknown order %r' % order_id)
-  791 |         if order['status'] == ORDER_CANCELLED:
-  792 |             raise AcquisitionError('order %r is cancelled' % order_id)
-  793 |         copies = int(copies)
-  794 |         if copies <= 0:
-  795 |             raise AcquisitionError('receipt requires copies >= 1')
-  796 |         already = order['copies_received']
-  797 |         if already + copies > order['copies_ordered']:
-  798 |             raise AcquisitionError(
-  799 |                 'over-receipt on order %r: %d received + %d > %d ordered'
-  800 |                 % (order_id, already, copies, order['copies_ordered']))
-  801 | 
-  802 |         # 2. inventory numbers — explicit, or auto MIN+1 (910^b auto-number).
-  803 |         inv_numbers = self._resolve_inventory(inv_numbers, copies)
-  804 | 
-  805 |         # 3. КСУ summary entry. This batch adds 1 title (this order is one
-  806 |         # наименование) and `copies` экземпляров; the sum is unit_price × copies.
-  807 |         price = unit_price if unit_price is not None else order['price']
-  808 |         batch_sum = round(float(price or 0) * copies, 2)
+  640 |     return raw if isinstance(raw, list) else [raw]
+  641 | 
+  642 | 
+  643 | def _has_subfield(inst, sub):
+  644 |     """True iff instance dict carries a non-empty subfield ``sub`` (case-tolerant)."""
+  645 |     if not isinstance(inst, dict):
+  646 |         return False
+  647 |     return bool(inst.get(sub) or inst.get(sub.upper()) or inst.get(sub.lower()))
+  648 | 
+  649 | 
+  650 | def _carry_heading(inst):
+  651 |     """Carry an already-structured 700/701 instance (^a/^b/^9) through as-is.
+  652 | 
+  653 |     When a CMPL БО already holds a proper author heading (``^a`` filled), ToCat
+  654 |     transfers it verbatim (the catalog needs no reconstruction). Returns a shallow
+  655 |     copy of the recognized subfields, or None for an empty instance."""
+  656 |     if not isinstance(inst, dict):
+  657 |         s = str(inst or '').strip()
+  658 |         return {'a': s} if s else None
+  659 |     out = {}
+  660 |     for src, dst in (('a', 'a'), ('A', 'a'), ('b', 'b'), ('B', 'b'),
+  661 |                      ('g', 'g'), ('G', 'g'), ('9', '9'), ('3', '3')):
+  662 |         if inst.get(src) and dst not in out:
+  663 |             out[dst] = str(inst.get(src))
+  664 |     return out or None
+  665 | 
+  666 | 
+  667 | def _author_heading(inst):
+  668 |     """Build a 700/701-style author heading dict from a CMPL analytic author inst.
+  669 | 
+  670 |     CMPL аналитика (922/330) carries authors in ``^F`` (and ``^2``/``^3``/``^1``);
+  671 |     the catalog heading wants ``^a`` (фамилия) + optional ``^b`` (инициалы) + ``^9``
+  672 |     role. We split a "Фамилия И.О." string into ``^a``/``^b`` on the first space so
+  673 |     a search by ``A=`` lands on the surname (best-effort; full parse is a TODO)."""
+  674 |     if isinstance(inst, dict):
+  675 |         name = (inst.get('F') or inst.get('f') or inst.get('a') or
+  676 |                 inst.get('A') or inst.get('2') or inst.get('3') or '')
+  677 |         role = inst.get('X') or inst.get('x') or ''
+  678 |     else:
+  679 |         name = str(inst or '')
+  680 |         role = ''
+  681 |     name = str(name or '').strip()
+  682 |     if not name:
+  683 |         return None
+  684 |     heading = {}
+  685 |     # split "Surname Initials" -> ^a surname, ^b initials (first space only).
+  686 |     parts = name.split(' ', 1)
+  687 |     heading['a'] = parts[0]
+  688 |     if len(parts) > 1 and parts[1].strip():
+  689 |         heading['b'] = parts[1].strip()
+  690 |     if role:
+  691 |         heading['9'] = str(role)
+  692 |     # расширение заголовка ^g (полная форма имени, FIELD_DICTIONARY 700/701 ^G).
+  693 |     if isinstance(inst, dict):
+  694 |         ext = inst.get('g') or inst.get('G')
 ```
 
 <!-- ─── страница 117 ─── -->
 
 ```py
-  809 |         ksu = self.store.upsert_ksu(ksu_no, add_titles=1, add_copies=copies,
-  810 |                                     add_sum=batch_sum, act_ref=act_ref)
-  811 | 
-  812 |         # 4. receipt + inventory rows.
-  813 |         receipt = self.store.add_receipt(order_id, ksu['id'], copies, price,
-  814 |                                          batch_sum)
-  815 |         for inv in inv_numbers:
-  816 |             self.store.add_inventory(receipt['id'], ksu_no, inv)
-  817 | 
-  818 |         # 5. advance order status.
-  819 |         new_received = already + copies
-  820 |         order = self.store.update_order(order_id, new_received,
-  821 |                                         self._next_status(order, new_received))
-  822 | 
-  823 |         # 6. ToCat — reflect into the catalog (best-effort, optional handle).
-  824 |         catalog_mfn, catalog_action = self._to_cat(order, ksu_no, inv_numbers)
-  825 |         if catalog_mfn is not None:
-  826 |             self.store.set_receipt_catalog_mfn(receipt['id'], catalog_mfn)
-  827 |             receipt = self.store.get_receipt(receipt['id'])
-  828 | 
-  829 |         # 7. Поступление → книговыдача: confirm each received copy is lendable now
-  830 |         # through circulation (cluster-1 seam). Best-effort, optional handle.
-  831 |         lendable = self._confirm_lendable(inv_numbers)
-  832 | 
-  833 |         return {
-  834 |             'receipt': receipt,
-  835 |             'ksu': ksu,
-  836 |             'order': order,
-  837 |             'inventory': inv_numbers,
-  838 |             'sum': batch_sum,
-  839 |             'catalog_mfn': catalog_mfn,
-  840 |             'catalog_action': catalog_action,
-  841 |             'lendable': lendable,
-  842 |         }
-  843 | 
-  844 |     def _confirm_lendable(self, inv_numbers):
-  845 |         """Confirm each received inventory number is lendable through circulation.
-  846 | 
-  847 |         The Комплектование↔Книговыдача seam: a copy that just landed in the фонд
-  848 |         must be checkout-ready immediately. When a ``circulation`` handle is wired,
-  849 |         ask it to register/confirm each ``inv_no`` (``register_acquired_item``);
-  850 |         the engine collects the inv-numbers circulation accepted as lendable.
-  851 |         Best-effort: with no handle (standalone) — or any circulation error — the
-  852 |         receipt still stands; we just report an empty (or partial) lendable list."""
-  853 |         if self.circulation is None:
-  854 |             return []
-  855 |         confirmed = []
-  856 |         reg = getattr(self.circulation, 'register_acquired_item', None)
-  857 |         if reg is None:
-  858 |             return []
-  859 |         for inv in inv_numbers:
-  860 |             try:
-  861 |                 if reg(inv, catalog_db=self.catalog_db):
-  862 |                     confirmed.append(inv)
-  863 |             except Exception:
+  695 |         if ext:
+  696 |             heading['g'] = str(ext)
+  697 |     return heading
+  698 | 
+  699 | 
+  700 | def _carry_subfields(inst, sub_map):
+  701 |     """Carry recognized subfields of a CMPL instance into an IBIS instance dict.
+  702 | 
+  703 |     ``sub_map`` is an ordered iterable of ``(src, dst)`` pairs (case-tolerant on
+  704 |     ``src`` — both upper/lower are probed). The first non-empty source for a given
+  705 |     ``dst`` wins (so a CMPL БО that already carries the IBIS-cased subfield is
+  706 |     transferred verbatim). Returns a fresh dict (no mutation of ``inst``) or
+  707 |     ``None`` for an empty/scalar instance with nothing recognized."""
+  708 |     if not isinstance(inst, dict):
+  709 |         return None
+  710 |     out = {}
+  711 |     for src, dst in sub_map:
+  712 |         if dst in out:
+  713 |             continue
+  714 |         val = inst.get(src)
+  715 |         if val is None and src != src.upper():
+  716 |             val = inst.get(src.upper())
+  717 |         if val is None and src != src.lower():
+  718 |             val = inst.get(src.lower())
+  719 |         if val is not None and str(val).strip():
+  720 |             out[dst] = str(val)
+  721 |     return out or None
+  722 | 
+  723 | 
+  724 | def _carry_field(cmpl_rec, tag, sub_map):
+  725 |     """Реформат всех инстансов поля ``tag`` БО CMPL → IBIS по ``sub_map``.
+  726 | 
+  727 |     Структурный перенос поля «как есть» с нормализацией подполей: каждый инстанс
+  728 |     проходит через :func:`_carry_subfields`. Скалярный инстанс (строка) кладётся в
+  729 |     первый ``dst`` из ``sub_map`` (обычно ^a — основное значение поля). Returns a
+  730 |     list of IBIS instance dicts (возможно пустой)."""
+  731 |     out = []
+  732 |     default_dst = sub_map[0][1] if sub_map else 'a'
+  733 |     for inst in _as_list(cmpl_rec.get(tag)):
+  734 |         if isinstance(inst, dict):
+  735 |             carried = _carry_subfields(inst, sub_map)
+  736 |             if carried:
+  737 |                 out.append(carried)
+  738 |         else:
+  739 |             s = str(inst or '').strip()
+  740 |             if s:
+  741 |                 out.append({default_dst: s})
+  742 |     return out
+  743 | 
+  744 | 
+  745 | class AcquisitionError(Exception):
+  746 |     """An acquisition operation error (unknown order, over-receipt, …)."""
+  747 | 
+  748 | 
+  749 | # --------------------------------------------------------------------------- #
 ```
 
 <!-- ─── страница 118 ─── -->
 
 ```py
-  864 |                 # one bad copy must not break the receipt or the rest of the batch
-  865 |                 continue
-  866 |         return confirmed
-  867 | 
-  868 |     def _resolve_inventory(self, inv_numbers, copies):
-  869 |         """Return ``copies`` inventory numbers — explicit ones, or auto MIN+1.
-  870 | 
-  871 |         Explicit numbers must be unique (not already in the inventory ledger) and
-  872 |         count exactly ``copies``. When omitted, generate sequential numbers from
-  873 |         the current ledger max + 1 (910^b auto-number, ACQUISITION_FUNCTIONS P-13).
-  874 |         """
-  875 |         if inv_numbers is not None:
-  876 |             inv_numbers = [str(x) for x in inv_numbers]
-  877 |             if len(inv_numbers) != copies:
-  878 |                 raise AcquisitionError(
-  879 |                     'inventory count %d != copies %d'
-  880 |                     % (len(inv_numbers), copies))
-  881 |             seen = set()
-  882 |             for inv in inv_numbers:
-  883 |                 if inv in seen or self.store.inventory_exists(inv):
-  884 |                     raise AcquisitionError('duplicate inventory number %r' % inv)
-  885 |                 seen.add(inv)
-  886 |             return inv_numbers
-  887 |         # auto MIN+1: continue from the ledger's numeric max under our prefix.
-  888 |         return self._auto_inventory(copies)
-  889 | 
-  890 |     def _auto_inventory(self, copies):
-  891 |         """Generate ``copies`` sequential inventory numbers (prefix + zero-padded)."""
-  892 |         existing = self.store._conn().execute(  # noqa: SLF001 (own store)
-  893 |             'SELECT inv_no FROM acq_inventory').fetchall()
-  894 |         max_n = 0
-  895 |         for r in existing:
-  896 |             s = r['inv_no']
-  897 |             if s.startswith(self.inv_prefix):
-  898 |                 tail = s[len(self.inv_prefix):]
-  899 |                 if tail.isdigit():
-  900 |                     max_n = max(max_n, int(tail))
-  901 |         return ['%s%06d' % (self.inv_prefix, max_n + i + 1)
-  902 |                 for i in range(copies)]
-  903 | 
-  904 |     # ---- ToCat (cluster 1: Комплектование → Каталог) ---------------------- #
-  905 |     def _to_cat(self, order, ksu_no, inv_numbers):
-  906 |         """Reflect a received batch into the catalog (the cluster-1 ToCat edge).
-  907 | 
-  908 |         Resolves new-vs-existing title by :func:`title_key`: an existing catalog
-  909 |         record for the same (title, author) gets the new copies APPENDED as 910
-  910 |         exemplars (re-supply → add copies, not duplicate); otherwise a fresh bib
-  911 |         record is created. Each copy becomes a ``910`` field with ``^b`` inventory,
-  912 |         ``^A`` = free (lendable now), and ``^U`` = КСУ number. The field-66 КСУ
-  913 |         link (``66^u``) marks the record as catalogued from this КСУ batch.
-  914 | 
-  915 |         Returns ``(catalog_mfn, action)`` where action ∈ {'created','updated'} —
-  916 |         or ``(None, None)`` when no catalog is wired / the write degrades (the
-  917 |         receipt + КСУ still stand; ToCat is best-effort, mirrors circulation).
-  918 |         """
+  750 | # Engine — the order → receipt → КСУ → ToCat lifecycle.
+  751 | # --------------------------------------------------------------------------- #
+  752 | class AcquisitionEngine:
+  753 |     """Acquisition operations over an :class:`AcquisitionStore`.
+  754 | 
+  755 |     ``catalog`` (optional) is an :class:`access.catalog.CatalogStore` handle — the
+  756 |     cluster-1 ToCat seam. When wired, :meth:`receive` reflects each batch into the
+  757 |     catalog (creates/updates the bib record + 910 exemplars + the field-66 КСУ
+  758 |     link). With no handle the engine is fully standalone: order / receipt / КСУ
+  759 |     work, ToCat is a graceful no-op (back-compat, mirrors circulation's seam).
+  760 | 
+  761 |     ``catalog_db`` is the base (БД) whose ЭК ToCat writes into (default ``IBIS``).
+  762 |     ``inv_prefix`` seeds auto-generated inventory numbers when a receipt doesn't
+  763 |     supply explicit ones (910^b = MIN+1 auto-number, ACQUISITION_FUNCTIONS P-13).
+  764 | 
+  765 |     ``circulation`` (optional) is an :class:`access.circulation.CirculationEngine`
+  766 |     handle — the cluster-1 «поступление → выдаётся» seam (INTEGRATION_MAP, ребро
+  767 |     Комплектование↔Книговыдача). When wired, :meth:`receive` confirms each freshly
+  768 |     received inventory number is **lendable now** through circulation
+  769 |     (``circulation.register_acquired_item``): a copy that lands in the фонд is
+  770 |     immediately available for checkout, closing the gap between поступление and
+  771 |     книговыдача. The handle is used best-effort and only for the post-receipt
+  772 |     confirmation — with no handle the engine is fully standalone (back-compat,
+  773 |     mirrors the ``catalog=`` seam).
+  774 |     """
+  775 | 
+  776 |     def __init__(self, store=None, catalog=None, catalog_db=CATALOG_DB,
+  777 |                  worklist=DEFAULT_WORKLIST, inv_prefix='INV-', circulation=None):
+  778 |         self.store = store or AcquisitionStore(':memory:')
+  779 |         self.catalog = catalog
+  780 |         self.catalog_db = catalog_db
+  781 |         self.worklist = worklist
+  782 |         self.inv_prefix = inv_prefix
+  783 |         # Optional Circulation seam (INTEGRATION_MAP ребро Комплектование↔Книговыдача).
+  784 |         # When wired, a received copy is confirmed lendable through circulation so
+  785 |         # поступление → книговыдача is closed. Never a hard dependency.
+  786 |         self.circulation = circulation
+  787 | 
+  788 |     # ---- order (заказ) ---------------------------------------------------- #
+  789 |     def create_order(self, title, author=None, supplier=None, copies=1,
+  790 |                      price=None, funding_source=None):
+  791 |         """Open an order line (заказ). Returns the new order dict (status ``ordered``).
+  792 | 
+  793 |         ``copies`` is the number ordered; ``price`` the planned unit price (62^p);
+  794 |         ``funding_source`` the funding code (88^L Istfin.mnu)."""
+  795 |         if not title or not str(title).strip():
+  796 |             raise AcquisitionError('order requires a title')
+  797 |         if int(copies) <= 0:
+  798 |             raise AcquisitionError('order requires copies >= 1')
+  799 |         return self.store.add_order(
+  800 |             str(title).strip(), author, supplier, int(copies), price,
+  801 |             funding_source)
+  802 | 
+  803 |     def cancel_order(self, order_id):
+  804 |         """Cancel an order. Refuses if anything was already received (a partially-
 ```
 
 <!-- ─── страница 119 ─── -->
 
 ```py
-  919 |         if self.catalog is None:
-  920 |             return (None, None)
-  921 |         try:
-  922 |             existing_mfn = self._find_catalog_record(order['title'],
-  923 |                                                      order['author'])
-  924 |             new_910 = [{'a': EXEMPLAR_FREE, 'b': inv, 'u': ksu_no}
-  925 |                        for inv in inv_numbers]
-  926 |             if existing_mfn is not None:
-  927 |                 # Re-supply: append the new exemplars to the existing record.
-  928 |                 record = self.catalog.get(self.catalog_db, existing_mfn)
-  929 |                 if record is None:                      # vanished — fall to create
-  930 |                     existing_mfn = None
-  931 |                 else:
-  932 |                     record.setdefault('910', [])
-  933 |                     if not isinstance(record['910'], list):
-  934 |                         record['910'] = [record['910']]
-  935 |                     record['910'].extend(new_910)
-  936 |                     self._merge_ksu_link(record, ksu_no)
-  937 |                     res = self.catalog.save(self.catalog_db, record,
-  938 |                                             mfn=existing_mfn)
-  939 |                     return (res['mfn'], 'updated') if res['saved'] else (None, None)
-  940 |             # New title — build a fresh bib record.
-  941 |             record = self._new_bib_record(order, ksu_no, new_910)
-  942 |             res = self.catalog.save(self.catalog_db, record)
-  943 |             return (res['mfn'], 'created') if res['saved'] else (None, None)
-  944 |         except Exception:
-  945 |             # ToCat is best-effort: a catalog/FLK failure must NOT break the
-  946 |             # receipt. The КСУ + inventory are already committed.
-  947 |             return (None, None)
-  948 | 
-  949 |     def _find_catalog_record(self, title, author):
-  950 |         """Find an existing catalog mfn for (title, author), or None.
-  951 | 
-  952 |         Searches the catalog by title (``T=``), then disambiguates by matching the
-  953 |         normalized (title, author) key so re-supply lands on the same record."""
-  954 |         want = title_key(title, author)
-  955 |         res = self.catalog.search(self.catalog_db, 'T=%s' % (title or ''),
-  956 |                                   limit=50)
-  957 |         for item in res.get('items', []):
-  958 |             rec = self.catalog.get(self.catalog_db, item['mfn'])
-  959 |             if rec is None:
-  960 |                 continue
-  961 |             rt = (_first_value(rec, '200', 'a') or '')
-  962 |             ra = (_first_value(rec, '700', 'a') or '')
-  963 |             if title_key(rt, ra) == want:
-  964 |                 return item['mfn']
-  965 |         return None
-  966 | 
-  967 |     def _new_bib_record(self, order, ksu_no, new_910):
-  968 |         """Build a fresh I1 bib record for a newly-catalogued title (ToCat create).
-  969 | 
-  970 |         Carries заглавие (200^a/^f), author (700^a), the FLK-required worklist
-  971 |         (920), language (101 rus default), the field-66 КСУ link, and the 910
-  972 |         exemplars."""
-  973 |         record = {
+  805 |         or fully-received order can't be cancelled — those copies are in the fund).
+  806 |         Returns the updated order dict."""
+  807 |         order = self.store.get_order(order_id)
+  808 |         if order is None:
+  809 |             raise AcquisitionError('unknown order %r' % order_id)
+  810 |         if order['status'] == ORDER_CANCELLED:
+  811 |             return order
+  812 |         if order['copies_received'] > 0:
+  813 |             raise AcquisitionError(
+  814 |                 'cannot cancel order %r: %d copies already received'
+  815 |                 % (order_id, order['copies_received']))
+  816 |         return self.store.update_order(order_id, order['copies_received'],
+  817 |                                        ORDER_CANCELLED)
+  818 | 
+  819 |     def _next_status(self, order, copies_received):
+  820 |         """Derive the order status from copies received vs ordered."""
+  821 |         if copies_received <= 0:
+  822 |             return ORDER_ORDERED
+  823 |         if copies_received >= order['copies_ordered']:
+  824 |             return ORDER_RECEIVED
+  825 |         return ORDER_PARTIAL
+  826 | 
+  827 |     # ---- receipt (поступление) + КСУ + ToCat ------------------------------ #
+  828 |     def receive(self, order_id, ksu_no, copies, unit_price=None,
+  829 |                 inv_numbers=None, act_ref=None):
+  830 |         """Register ``copies`` received against ``order_id`` into КСУ ``ksu_no``.
+  831 | 
+  832 |         Steps (the full поступление → КСУ → ToCat lifecycle):
+  833 | 
+  834 |           1. validate (known order, not cancelled, no over-receipt past ordered);
+  835 |           2. assign inventory numbers (explicit ``inv_numbers`` or auto MIN+1);
+  836 |           3. write/accumulate the КСУ summary entry (88^E/^F/^G + act ref);
+  837 |           4. record the receipt + inventory rows;
+  838 |           5. advance the order status (ordered→partially_received→received);
+  839 |           6. **ToCat** (when a ``catalog`` handle is wired): create or update the
+  840 |              bib record and register the copies as 910 exemplars (^A free, ^b inv#,
+  841 |              ^U КСУ) + the field-66 КСУ link. Re-supply of an existing title adds
+  842 |              copies to the existing record (resolved by :func:`title_key`).
+  843 | 
+  844 |         Returns a result dict::
+  845 | 
+  846 |             {
+  847 |               'receipt': <receipt row>,
+  848 |               'ksu': <КСУ row>,
+  849 |               'order': <updated order row>,
+  850 |               'inventory': [inv_no, ...],
+  851 |               'sum': <batch sum>,
+  852 |               'catalog_mfn': <bib mfn or None>,      # None when standalone
+  853 |               'catalog_action': 'created'|'updated'|None,
+  854 |               'lendable': [inv_no, ...],             # copies circ confirms lendable
+  855 |             }
+  856 |         """
+  857 |         order = self.store.get_order(order_id)
+  858 |         if order is None:
+  859 |             raise AcquisitionError('unknown order %r' % order_id)
 ```
 
 <!-- ─── страница 120 ─── -->
 
 ```py
-  974 |             '200': [{'a': order['title'],
-  975 |                      'f': order['author'] or ''}],
-  976 |             '920': self.worklist,
-  977 |             '101': 'rus',
-  978 |             '66': [{'u': ksu_no}],
-  979 |             '910': list(new_910),
-  980 |         }
-  981 |         if order['author']:
-  982 |             record['700'] = [{'a': order['author']}]
-  983 |         return record
-  984 | 
-  985 |     @staticmethod
-  986 |     def _merge_ksu_link(record, ksu_no):
-  987 |         """Ensure the record carries a field-66 КСУ link for ``ksu_no`` (idempotent)."""
-  988 |         insts = record.get('66')
-  989 |         if insts is None:
-  990 |             record['66'] = [{'u': ksu_no}]
-  991 |             return
-  992 |         if not isinstance(insts, list):
-  993 |             insts = [insts]
-  994 |             record['66'] = insts
-  995 |         for inst in insts:
-  996 |             if isinstance(inst, dict) and str(inst.get('u') or '') == str(ksu_no):
-  997 |                 return                                  # already linked
-  998 |         insts.append({'u': ksu_no})
-  999 | 
- 1000 |     # ---- read helpers (reporting / tests) --------------------------------- #
- 1001 |     def order_status(self, order_id):
- 1002 |         order = self.store.get_order(order_id)
- 1003 |         return order['status'] if order else None
- 1004 | 
- 1005 |     def ksu_summary(self, ksu_no):
- 1006 |         """The КСУ summary row (88^E titles / 88^F copies / 88^G sum + act)."""
- 1007 |         return self.store.get_ksu(ksu_no)
- 1008 | 
- 1009 |     # ---- ToCat: реформат БО CMPL → IBIS (кластер 1, рёбра 1.1–1.5) --------- #
- 1010 |     def reformat_to_ibis(self, cmpl_rec):
- 1011 |         """Реформат БО CMPL → структура записи IBIS (ребро 1.1). Pure, no store.
- 1012 | 
- 1013 |         Маппинг (DB_ACQUISITION A.8 / ws2 §8, FST `STN.FST`/`MNOG.FST`/`UMARCIW.FST`):
- 1014 | 
- 1015 |           * **920** (вид документа / РЛ): CMPL-код → IBIS-код через
- 1016 |             :data:`WORKLIST_MAP_TO_CAT` (PAZK/SPEC/PVK/J/NJ/ASP). 920 — FLK-mandatory.
- 1017 |           * **заглавие → 200**: 200^a (осн. загл.) + 200^f (1-е свед. об отв.),
- 1018 |             переносится как есть, если уже в формате 200; иначе из аналитики.
- 1019 |           * **922/330 → 700/701**: авторы аналитики. 922^F/^2/^3 (или 330^F/^1/^2)
- 1020 |             → 700 (1-й автор) + 701 (прочие); 922^C/330^C (заглавие статьи) → 200^a,
- 1021 |             если своего 200 нет.
- 1022 |           * **аналитика → 463**: ссылка на издание-хозяина (журнал/сборник). Из
- 1023 |             CMPL 463 (если есть) — нормализуем подполя (:data:`SUBMAP_463`); иначе
- 1024 |             строим заглушку 463^C из загл.
- 1025 |           * **210** (выходные данные): ^a место / ^c издатель / ^d год
- 1026 |             (:data:`SUBMAP_210`).
- 1027 |           * **215** (объём / кол-во характеристики): ^a объём, ^1 ед.изм., …
- 1028 |             (:data:`SUBMAP_215`).
+  860 |         if order['status'] == ORDER_CANCELLED:
+  861 |             raise AcquisitionError('order %r is cancelled' % order_id)
+  862 |         copies = int(copies)
+  863 |         if copies <= 0:
+  864 |             raise AcquisitionError('receipt requires copies >= 1')
+  865 |         already = order['copies_received']
+  866 |         if already + copies > order['copies_ordered']:
+  867 |             raise AcquisitionError(
+  868 |                 'over-receipt on order %r: %d received + %d > %d ordered'
+  869 |                 % (order_id, already, copies, order['copies_ordered']))
+  870 | 
+  871 |         # 2. inventory numbers — explicit, or auto MIN+1 (910^b auto-number).
+  872 |         inv_numbers = self._resolve_inventory(inv_numbers, copies)
+  873 | 
+  874 |         # 3. КСУ summary entry. This batch adds 1 title (this order is one
+  875 |         # наименование) and `copies` экземпляров; the sum is unit_price × copies.
+  876 |         price = unit_price if unit_price is not None else order['price']
+  877 |         batch_sum = round(float(price or 0) * copies, 2)
+  878 |         ksu = self.store.upsert_ksu(ksu_no, add_titles=1, add_copies=copies,
+  879 |                                     add_sum=batch_sum, act_ref=act_ref)
+  880 | 
+  881 |         # 4. receipt + inventory rows.
+  882 |         receipt = self.store.add_receipt(order_id, ksu['id'], copies, price,
+  883 |                                          batch_sum)
+  884 |         for inv in inv_numbers:
+  885 |             self.store.add_inventory(receipt['id'], ksu_no, inv)
+  886 | 
+  887 |         # 5. advance order status.
+  888 |         new_received = already + copies
+  889 |         order = self.store.update_order(order_id, new_received,
+  890 |                                         self._next_status(order, new_received))
+  891 | 
+  892 |         # 6. ToCat — reflect into the catalog (best-effort, optional handle).
+  893 |         catalog_mfn, catalog_action = self._to_cat(order, ksu_no, inv_numbers)
+  894 |         if catalog_mfn is not None:
+  895 |             self.store.set_receipt_catalog_mfn(receipt['id'], catalog_mfn)
+  896 |             receipt = self.store.get_receipt(receipt['id'])
+  897 | 
+  898 |         # 7. Поступление → книговыдача: confirm each received copy is lendable now
+  899 |         # through circulation (cluster-1 seam). Best-effort, optional handle.
+  900 |         lendable = self._confirm_lendable(inv_numbers)
+  901 | 
+  902 |         return {
+  903 |             'receipt': receipt,
+  904 |             'ksu': ksu,
+  905 |             'order': order,
+  906 |             'inventory': inv_numbers,
+  907 |             'sum': batch_sum,
+  908 |             'catalog_mfn': catalog_mfn,
+  909 |             'catalog_action': catalog_action,
+  910 |             'lendable': lendable,
+  911 |         }
+  912 | 
+  913 |     def _confirm_lendable(self, inv_numbers):
+  914 |         """Confirm each received inventory number is lendable through circulation.
 ```
 
 <!-- ─── страница 121 ─── -->
 
 ```py
- 1029 |           * **10** (ISBN/цена): ^a ISBN, ^d цена, ^c валюта (:data:`SUBMAP_10`).
- 1030 |           * **675/621** (УДК/ББК): индексы классификации (:data:`SUBMAP_INDEX`).
- 1031 |           * **906** (систематический/расстановочный шифр), **610** (ключ. слова).
- 1032 |           * существующие 700/701 БО CMPL переносятся как есть (приоритет над
- 1033 |             реконструкцией из аналитики); ^a/^b/^g подполя сохраняются.
- 1034 | 
- 1035 |         Returns a fresh IBIS-format record dict (the I1 field/subfield draft). The
- 1036 |         input ``cmpl_rec`` is NOT mutated. Все «значимые» библиографические поля БО
- 1037 |         переносятся структурно через :func:`_carry_field` (подполя — по FST submap'ам
- 1038 |         выше). Поля, чей построчный FST-маппинг recon НЕ транскрибировал (922/330
- 1039 |         ^5/^7→610, ^L/^M/^N/^O→690/463; 910 КСУ-распределение 44–49) — помечены
- 1040 |         явным TODO(recon #CMPL-04) и НЕ домысливаются: переносятся лишь если БО уже
- 1041 |         несёт их в IBIS-совместимом виде. Экземпляры (910), 938, 901 переносят
- 1042 |         отдельные шаги 1.2–1.4.
- 1043 |         """
- 1044 |         rec = {}
- 1045 | 
- 1046 |         # --- 920 (вид документа / рабочий лист) -> IBIS worklist ---
- 1047 |         raw920 = cmpl_rec.get('920')
- 1048 |         code = ''
- 1049 |         if isinstance(raw920, str):
- 1050 |             code = raw920.strip()
- 1051 |         elif isinstance(raw920, dict):
- 1052 |             code = str(raw920.get('') or raw920.get('a') or
- 1053 |                        raw920.get('A') or '').strip()
- 1054 |         elif isinstance(raw920, list) and raw920:
- 1055 |             first = raw920[0]
- 1056 |             code = (first.strip() if isinstance(first, str)
- 1057 |                     else str(first.get('') or first.get('a') or '').strip())
- 1058 |         rec['920'] = WORKLIST_MAP_TO_CAT.get(code.upper(), code.upper() or
- 1059 |                                              self.worklist)
- 1060 | 
- 1061 |         # --- 200 (заглавие) -> ^a осн. загл. + ^e свед. к загл. + ^f 1-е свед.
- 1062 |         # об отв. + ^v номер тома (FIELD_DICTIONARY 200). ---
- 1063 |         title_insts = _as_list(cmpl_rec.get('200'))
- 1064 |         title_dict = None
- 1065 |         for inst in title_insts:
- 1066 |             if isinstance(inst, dict) and (inst.get('a') or inst.get('A')):
- 1067 |                 title_dict = {'a': str(inst.get('a') or inst.get('A'))}
- 1068 |                 for src, dst in (('e', 'e'), ('E', 'e'), ('f', 'f'), ('F', 'f'),
- 1069 |                                  ('v', 'v'), ('V', 'v')):
- 1070 |                     val = inst.get(src)
- 1071 |                     if val and dst not in title_dict:
- 1072 |                         title_dict[dst] = str(val)
- 1073 |                 break
- 1074 |             if isinstance(inst, str) and inst.strip():
- 1075 |                 title_dict = {'a': inst.strip()}
- 1076 |                 break
- 1077 | 
- 1078 |         # --- 922/330 (аналитика) -> authors + (fallback) title ---
- 1079 |         analytic = _as_list(cmpl_rec.get('922')) + _as_list(cmpl_rec.get('330'))
- 1080 |         # заглавие статьи (^C) как fallback для 200, если своего 200 нет
- 1081 |         if title_dict is None:
- 1082 |             for inst in analytic:
- 1083 |                 if isinstance(inst, dict) and (inst.get('C') or inst.get('c')):
+  915 | 
+  916 |         The Комплектование↔Книговыдача seam: a copy that just landed in the фонд
+  917 |         must be checkout-ready immediately. When a ``circulation`` handle is wired,
+  918 |         ask it to register/confirm each ``inv_no`` (``register_acquired_item``);
+  919 |         the engine collects the inv-numbers circulation accepted as lendable.
+  920 |         Best-effort: with no handle (standalone) — or any circulation error — the
+  921 |         receipt still stands; we just report an empty (or partial) lendable list."""
+  922 |         if self.circulation is None:
+  923 |             return []
+  924 |         confirmed = []
+  925 |         reg = getattr(self.circulation, 'register_acquired_item', None)
+  926 |         if reg is None:
+  927 |             return []
+  928 |         for inv in inv_numbers:
+  929 |             try:
+  930 |                 if reg(inv, catalog_db=self.catalog_db):
+  931 |                     confirmed.append(inv)
+  932 |             except Exception:
+  933 |                 # one bad copy must not break the receipt or the rest of the batch
+  934 |                 continue
+  935 |         return confirmed
+  936 | 
+  937 |     def _resolve_inventory(self, inv_numbers, copies):
+  938 |         """Return ``copies`` inventory numbers — explicit ones, or auto MIN+1.
+  939 | 
+  940 |         Explicit numbers must be unique (not already in the inventory ledger) and
+  941 |         count exactly ``copies``. When omitted, generate sequential numbers from
+  942 |         the current ledger max + 1 (910^b auto-number, ACQUISITION_FUNCTIONS P-13).
+  943 |         """
+  944 |         if inv_numbers is not None:
+  945 |             inv_numbers = [str(x) for x in inv_numbers]
+  946 |             if len(inv_numbers) != copies:
+  947 |                 raise AcquisitionError(
+  948 |                     'inventory count %d != copies %d'
+  949 |                     % (len(inv_numbers), copies))
+  950 |             seen = set()
+  951 |             for inv in inv_numbers:
+  952 |                 if inv in seen or self.store.inventory_exists(inv):
+  953 |                     raise AcquisitionError('duplicate inventory number %r' % inv)
+  954 |                 seen.add(inv)
+  955 |             return inv_numbers
+  956 |         # auto MIN+1: continue from the ledger's numeric max under our prefix.
+  957 |         return self._auto_inventory(copies)
+  958 | 
+  959 |     def _auto_inventory(self, copies):
+  960 |         """Generate ``copies`` sequential inventory numbers (prefix + zero-padded)."""
+  961 |         existing = self.store._conn().execute(  # noqa: SLF001 (own store)
+  962 |             'SELECT inv_no FROM acq_inventory').fetchall()
+  963 |         max_n = 0
+  964 |         for r in existing:
+  965 |             s = r['inv_no']
+  966 |             if s.startswith(self.inv_prefix):
+  967 |                 tail = s[len(self.inv_prefix):]
+  968 |                 if tail.isdigit():
+  969 |                     max_n = max(max_n, int(tail))
 ```
 
 <!-- ─── страница 122 ─── -->
 
 ```py
- 1084 |                     title_dict = {'a': str(inst.get('C') or inst.get('c'))}
- 1085 |                     resp = inst.get('G') or inst.get('g')
- 1086 |                     if resp:
- 1087 |                         title_dict['f'] = str(resp)
- 1088 |                     break
- 1089 |         if title_dict is not None:
- 1090 |             rec['200'] = [title_dict]
- 1091 | 
- 1092 |         # авторы: сначала уже-готовые 700/701 БО CMPL, иначе из аналитики 922/330.
- 1093 |         existing_700 = _as_list(cmpl_rec.get('700'))
- 1094 |         existing_701 = _as_list(cmpl_rec.get('701'))
- 1095 |         headings = []
- 1096 |         if existing_700 or existing_701:
- 1097 |             for inst in existing_700:
- 1098 |                 h = _author_heading(inst) if not _has_subfield(inst, 'a') \
- 1099 |                     else _carry_heading(inst)
- 1100 |                 if h:
- 1101 |                     headings.append(h)
- 1102 |             for inst in existing_701:
- 1103 |                 h = _carry_heading(inst) if _has_subfield(inst, 'a') \
- 1104 |                     else _author_heading(inst)
- 1105 |                 if h:
- 1106 |                     headings.append(h)
- 1107 |         else:
- 1108 |             for inst in analytic:
- 1109 |                 h = _author_heading(inst)
- 1110 |                 if h:
- 1111 |                     headings.append(h)
- 1112 |         if headings:
- 1113 |             rec['700'] = [headings[0]]
- 1114 |             if len(headings) > 1:
- 1115 |                 rec['701'] = headings[1:]
- 1116 | 
- 1117 |         # --- 463 (связь с изданием-хозяином для аналитики) ---
- 1118 |         host = _carry_field(cmpl_rec, '463', SUBMAP_463)
- 1119 |         if host:
- 1120 |             rec['463'] = host
- 1121 |         elif rec.get('920') in ('ASP',) and rec.get('200'):
- 1122 |             # аналитика без явного 463 — строим заглушку host из заглавия (TODO:
- 1123 |             # полный маппинг host-сведений из 922/330 ^L/^M/^N/^O не транскрибирован).
- 1124 |             rec['463'] = [{'C': rec['200'][0]['a']}]  # TODO(recon #CMPL-04)
- 1125 | 
- 1126 |         # --- 210 (выходные данные): ^a место / ^c издатель / ^d год ---
- 1127 |         # (FIELD_DICTIONARY 210: ^A Город `MI=`, ^C Издательство `O=`, ^D Год `G=`).
- 1128 |         pub = _carry_field(cmpl_rec, '210', SUBMAP_210)
- 1129 |         if pub:
- 1130 |             rec['210'] = pub
- 1131 | 
- 1132 |         # --- 215 (количественные характеристики / объём) ---
- 1133 |         # (FIELD_DICTIONARY 215: ^A Объём, ^1 Ед.изм., ^C иллюстр., ^X тираж).
- 1134 |         extent = _carry_field(cmpl_rec, '215', SUBMAP_215)
- 1135 |         if extent:
- 1136 |             rec['215'] = extent
- 1137 | 
- 1138 |         # --- 10 (ISBN / цена): ^A ISBN, ^D Цена, ^C Валюта (FIELD_DICTIONARY 10) ---
+  970 |         return ['%s%06d' % (self.inv_prefix, max_n + i + 1)
+  971 |                 for i in range(copies)]
+  972 | 
+  973 |     # ---- ToCat (cluster 1: Комплектование → Каталог) ---------------------- #
+  974 |     def _to_cat(self, order, ksu_no, inv_numbers):
+  975 |         """Reflect a received batch into the catalog (the cluster-1 ToCat edge).
+  976 | 
+  977 |         Resolves new-vs-existing title by :func:`title_key`: an existing catalog
+  978 |         record for the same (title, author) gets the new copies APPENDED as 910
+  979 |         exemplars (re-supply → add copies, not duplicate); otherwise a fresh bib
+  980 |         record is created. Each copy becomes a ``910`` field with ``^b`` inventory,
+  981 |         ``^A`` = free (lendable now), and ``^U`` = КСУ number. The field-66 КСУ
+  982 |         link (``66^u``) marks the record as catalogued from this КСУ batch.
+  983 | 
+  984 |         Returns ``(catalog_mfn, action)`` where action ∈ {'created','updated'} —
+  985 |         or ``(None, None)`` when no catalog is wired / the write degrades (the
+  986 |         receipt + КСУ still stand; ToCat is best-effort, mirrors circulation).
+  987 |         """
+  988 |         if self.catalog is None:
+  989 |             return (None, None)
+  990 |         try:
+  991 |             existing_mfn = self._find_catalog_record(order['title'],
+  992 |                                                      order['author'])
+  993 |             new_910 = [{'a': EXEMPLAR_FREE, 'b': inv, 'u': ksu_no}
+  994 |                        for inv in inv_numbers]
+  995 |             if existing_mfn is not None:
+  996 |                 # Re-supply: append the new exemplars to the existing record.
+  997 |                 record = self.catalog.get(self.catalog_db, existing_mfn)
+  998 |                 if record is None:                      # vanished — fall to create
+  999 |                     existing_mfn = None
+ 1000 |                 else:
+ 1001 |                     record.setdefault('910', [])
+ 1002 |                     if not isinstance(record['910'], list):
+ 1003 |                         record['910'] = [record['910']]
+ 1004 |                     record['910'].extend(new_910)
+ 1005 |                     self._merge_ksu_link(record, ksu_no)
+ 1006 |                     res = self.catalog.save(self.catalog_db, record,
+ 1007 |                                             mfn=existing_mfn)
+ 1008 |                     return (res['mfn'], 'updated') if res['saved'] else (None, None)
+ 1009 |             # New title — build a fresh bib record.
+ 1010 |             record = self._new_bib_record(order, ksu_no, new_910)
+ 1011 |             res = self.catalog.save(self.catalog_db, record)
+ 1012 |             return (res['mfn'], 'created') if res['saved'] else (None, None)
+ 1013 |         except Exception:
+ 1014 |             # ToCat is best-effort: a catalog/FLK failure must NOT break the
+ 1015 |             # receipt. The КСУ + inventory are already committed.
+ 1016 |             return (None, None)
+ 1017 | 
+ 1018 |     def _find_catalog_record(self, title, author):
+ 1019 |         """Find an existing catalog mfn for (title, author), or None.
+ 1020 | 
+ 1021 |         Searches the catalog by title (``T=``), then disambiguates by matching the
+ 1022 |         normalized (title, author) key so re-supply lands on the same record."""
+ 1023 |         want = title_key(title, author)
+ 1024 |         res = self.catalog.search(self.catalog_db, 'T=%s' % (title or ''),
 ```
 
 <!-- ─── страница 123 ─── -->
 
 ```py
- 1139 |         isbn = _carry_field(cmpl_rec, '10', SUBMAP_10)
- 1140 |         if isbn:
- 1141 |             rec['10'] = isbn
- 1142 | 
- 1143 |         # --- 675 (УДК) / 621 (ББК): индексы классификации (`U=`) ---
- 1144 |         udk = _carry_field(cmpl_rec, '675', SUBMAP_INDEX)
- 1145 |         if udk:
- 1146 |             rec['675'] = udk
- 1147 |         bbk = _carry_field(cmpl_rec, '621', SUBMAP_INDEX)
- 1148 |         if bbk:
- 1149 |             rec['621'] = bbk
- 1150 | 
- 1151 |         # --- 906 (систематический/расстановочный шифр) ---
- 1152 |         shelf = _carry_field(cmpl_rec, '906', SUBMAP_906)
- 1153 |         if shelf:
- 1154 |             rec['906'] = shelf
- 1155 | 
- 1156 |         # --- 610 (ключевые слова) -> переносим как есть; для аналитики 922/330
- 1157 |         # ключ.слова лежат в ^5/^6/^7 — они описывают СТАТЬЮ, маппинг 610↔922^5..^7
- 1158 |         # в STN.FST recon не транскрибирован построчно — TODO(recon #CMPL-04). ---
- 1159 |         kw = _carry_field(cmpl_rec, '610', SUBMAP_610)
- 1160 |         if kw:
- 1161 |             rec['610'] = kw
- 1162 | 
- 1163 |         # TODO(recon #CMPL-04): построчный маппинг ряда полей в STN.FST/UMARCIW.FST
- 1164 |         # не транскрибирован и здесь НЕ домысливается:
- 1165 |         #   * 922/330 ^5/^6/^7 (ключ.слова статьи) -> 610 — порядок/склейка неясны;
- 1166 |         #   * 922/330 ^L/^M/^N/^O (издат. индекс / части-разделы) -> 463/690;
- 1167 |         #   * 690 (издат. индекс 4 уровня ^L/^M/^N/^O) — источник в CMPL не разведён;
- 1168 |         #   * 102 (страна) / 101 ^N/^G (наборы символов/графика) — нет в recon-БО;
- 1169 |         #   * 906 авторский знак vs расст. шифр (906 vs 908) — различие не уточнено.
- 1170 |         # Эти поля переносятся ТОЛЬКО если БО CMPL уже несёт их в IBIS-совместимом
- 1171 |         # виде (через структурный _carry_field выше), иначе опускаются (не выдумываем).
- 1172 | 
- 1173 |         # --- 101 язык (умолчание rus, как в _new_bib_record) ---
- 1174 |         lang = cmpl_rec.get('101')
- 1175 |         rec['101'] = (lang if isinstance(lang, str) and lang.strip() else 'rus')
- 1176 | 
- 1177 |         return rec
- 1178 | 
- 1179 |     def to_catalog(self, cmpl_rec, ksu_no=None):
- 1180 |         """Перенести БО CMPL в каталог ЭК (ToCat, рёбра 1.1–1.5). Триггер — поле 66.
- 1181 | 
- 1182 |         Полный цикл переноса фонд→каталог:
- 1183 | 
- 1184 |           1. **[1.1]** реформат БО CMPL → формат IBIS (:meth:`reformat_to_ibis`):
- 1185 |              920→РЛ, заглавие→200, 922/330→700/701, аналитика→463.
- 1186 |           2. **[1.2]** перенос экземпляров CMPL ``910`` → IBIS ``910`` (статус ^A,
- 1187 |              инв.№ ^b, КСУ ^U, цена ^E, штрих-код ^H, МХР ^d).
- 1188 |           3. **[1.3]** связь подписки CMPL ``938`` (период) → IBIS ``938``.
- 1189 |           4. **[1.4]** технологический путь ``901`` (^B №экз + пункты ТП ^1..^5).
- 1190 |           5. сохранение в каталог через handle (``catalog.save``); новый-vs-
- 1191 |              существующий резолвится по :func:`title_key` (re-supply дополняет
- 1192 |              запись экземплярами, не дублирует её).
- 1193 |           6. **[1.5]** ``VD=DEL`` на исходную запись CMPL (поле 66 ^a='DEL') —
+ 1025 |                                   limit=50)
+ 1026 |         for item in res.get('items', []):
+ 1027 |             rec = self.catalog.get(self.catalog_db, item['mfn'])
+ 1028 |             if rec is None:
+ 1029 |                 continue
+ 1030 |             rt = (_first_value(rec, '200', 'a') or '')
+ 1031 |             ra = (_first_value(rec, '700', 'a') or '')
+ 1032 |             if title_key(rt, ra) == want:
+ 1033 |                 return item['mfn']
+ 1034 |         return None
+ 1035 | 
+ 1036 |     def _new_bib_record(self, order, ksu_no, new_910):
+ 1037 |         """Build a fresh I1 bib record for a newly-catalogued title (ToCat create).
+ 1038 | 
+ 1039 |         Carries заглавие (200^a/^f), author (700^a), the FLK-required worklist
+ 1040 |         (920), language (101 rus default), the field-66 КСУ link, and the 910
+ 1041 |         exemplars."""
+ 1042 |         record = {
+ 1043 |             '200': [{'a': order['title'],
+ 1044 |                      'f': order['author'] or ''}],
+ 1045 |             '920': self.worklist,
+ 1046 |             '101': 'rus',
+ 1047 |             '66': [{'u': ksu_no}],
+ 1048 |             '910': list(new_910),
+ 1049 |         }
+ 1050 |         if order['author']:
+ 1051 |             record['700'] = [{'a': order['author']}]
+ 1052 |         return record
+ 1053 | 
+ 1054 |     @staticmethod
+ 1055 |     def _merge_ksu_link(record, ksu_no):
+ 1056 |         """Ensure the record carries a field-66 КСУ link for ``ksu_no`` (idempotent)."""
+ 1057 |         insts = record.get('66')
+ 1058 |         if insts is None:
+ 1059 |             record['66'] = [{'u': ksu_no}]
+ 1060 |             return
+ 1061 |         if not isinstance(insts, list):
+ 1062 |             insts = [insts]
+ 1063 |             record['66'] = insts
+ 1064 |         for inst in insts:
+ 1065 |             if isinstance(inst, dict) and str(inst.get('u') or '') == str(ksu_no):
+ 1066 |                 return                                  # already linked
+ 1067 |         insts.append({'u': ksu_no})
+ 1068 | 
+ 1069 |     # ---- read helpers (reporting / tests) --------------------------------- #
+ 1070 |     def order_status(self, order_id):
+ 1071 |         order = self.store.get_order(order_id)
+ 1072 |         return order['status'] if order else None
+ 1073 | 
+ 1074 |     def ksu_summary(self, ksu_no):
+ 1075 |         """The КСУ summary row (88^E titles / 88^F copies / 88^G sum + act)."""
+ 1076 |         return self.store.get_ksu(ksu_no)
+ 1077 | 
+ 1078 |     # ---- ToCat: реформат БО CMPL → IBIS (кластер 1, рёбра 1.1–1.5) --------- #
+ 1079 |     def reformat_to_ibis(self, cmpl_rec):
 ```
 
 <!-- ─── страница 124 ─── -->
 
 ```py
- 1194 |              анти-дубль. Мутирует ``cmpl_rec`` на месте.
- 1195 | 
- 1196 |         Идемпотентность: запись, уже помеченная ``VD=DEL`` (перенесена ранее), —
- 1197 |         no-op (``action='already_transferred'``). Триггер: если поле 66 НЕ взведено,
- 1198 |         перенос пропускается (``action='not_triggered'``). Back-compat: без
- 1199 |         catalog-handle модуль автономен — реформат всё равно выполняется и
- 1200 |         возвращается в результате, но запись никуда не пишется (``action='no_catalog'``).
- 1201 | 
- 1202 |         Returns::
- 1203 | 
- 1204 |             {
- 1205 |               'action': 'created'|'updated'|'already_transferred'
- 1206 |                         |'not_triggered'|'no_catalog'|'rejected',
- 1207 |               'catalog_mfn': <mfn or None>,
- 1208 |               'record': <реформатированная IBIS-запись или None>,
- 1209 |               'source_deleted': <bool — выставлен ли VD=DEL>,
- 1210 |               'exemplars': [<инв.№ перенесённых экз.>],
- 1211 |             }
- 1212 |         """
- 1213 |         result = {'action': None, 'catalog_mfn': None, 'record': None,
- 1214 |                   'source_deleted': False, 'exemplars': []}
- 1215 | 
- 1216 |         # [1.5/идемпотентность] уже перенесён?
- 1217 |         if is_source_deleted(cmpl_rec):
- 1218 |             result['action'] = 'already_transferred'
- 1219 |             result['source_deleted'] = True
- 1220 |             return result
- 1221 | 
- 1222 |         # [триггер] поле 66 должно быть взведено.
- 1223 |         if not field66_set(cmpl_rec):
- 1224 |             result['action'] = 'not_triggered'
- 1225 |             return result
- 1226 | 
- 1227 |         # [1.1] реформат БО -> IBIS.
- 1228 |         record = self.reformat_to_ibis(cmpl_rec)
- 1229 |         result['record'] = record
- 1230 | 
- 1231 |         # [1.2] перенос экземпляров 910 CMPL -> IBIS 910.
- 1232 |         exemplars = self._carry_exemplars(cmpl_rec, ksu_no)
- 1233 |         if exemplars:
- 1234 |             record['910'] = exemplars
- 1235 |             result['exemplars'] = [e.get('b') for e in exemplars if e.get('b')]
- 1236 | 
- 1237 |         # [1.3] связь подписки 938 (период).
- 1238 |         link938 = self._carry_938(cmpl_rec)
- 1239 |         if link938:
- 1240 |             record['938'] = link938
- 1241 | 
- 1242 |         # [1.4] технологический путь 901 (^B №экз + пункты ТП).
- 1243 |         path901 = self._carry_901(cmpl_rec, exemplars)
- 1244 |         if path901:
- 1245 |             record['901'] = path901
- 1246 | 
- 1247 |         # field-66 КСУ back-link (как в receive-driven ToCat) если known.
- 1248 |         if ksu_no:
+ 1080 |         """Реформат БО CMPL → структура записи IBIS (ребро 1.1). Pure, no store.
+ 1081 | 
+ 1082 |         Маппинг (DB_ACQUISITION A.8 / ws2 §8, FST `STN.FST`/`MNOG.FST`/`UMARCIW.FST`):
+ 1083 | 
+ 1084 |           * **920** (вид документа / РЛ): CMPL-код → IBIS-код через
+ 1085 |             :data:`WORKLIST_MAP_TO_CAT` (PAZK/SPEC/PVK/J/NJ/ASP). 920 — FLK-mandatory.
+ 1086 |           * **заглавие → 200**: 200^a (осн. загл.) + 200^f (1-е свед. об отв.),
+ 1087 |             переносится как есть, если уже в формате 200; иначе из аналитики.
+ 1088 |           * **922/330 → 700/701**: авторы аналитики. 922^F/^2/^3 (или 330^F/^1/^2)
+ 1089 |             → 700 (1-й автор) + 701 (прочие); 922^C/330^C (заглавие статьи) → 200^a,
+ 1090 |             если своего 200 нет.
+ 1091 |           * **аналитика → 463**: ссылка на издание-хозяина (журнал/сборник). Из
+ 1092 |             CMPL 463 (если есть) — нормализуем подполя (:data:`SUBMAP_463`); иначе
+ 1093 |             строим заглушку 463^C из загл.
+ 1094 |           * **210** (выходные данные): ^a место / ^c издатель / ^d год
+ 1095 |             (:data:`SUBMAP_210`).
+ 1096 |           * **215** (объём / кол-во характеристики): ^a объём, ^1 ед.изм., …
+ 1097 |             (:data:`SUBMAP_215`).
+ 1098 |           * **10** (ISBN/цена): ^a ISBN, ^d цена, ^c валюта (:data:`SUBMAP_10`).
+ 1099 |           * **675/621** (УДК/ББК): индексы классификации (:data:`SUBMAP_INDEX`).
+ 1100 |           * **906** (систематический/расстановочный шифр), **610** (ключ. слова).
+ 1101 |           * существующие 700/701 БО CMPL переносятся как есть (приоритет над
+ 1102 |             реконструкцией из аналитики); ^a/^b/^g подполя сохраняются.
+ 1103 | 
+ 1104 |         Returns a fresh IBIS-format record dict (the I1 field/subfield draft). The
+ 1105 |         input ``cmpl_rec`` is NOT mutated. Все «значимые» библиографические поля БО
+ 1106 |         переносятся структурно через :func:`_carry_field` (подполя — по FST submap'ам
+ 1107 |         выше). Поля, чей построчный FST-маппинг recon НЕ транскрибировал (922/330
+ 1108 |         ^5/^7→610, ^L/^M/^N/^O→690/463; 910 КСУ-распределение 44–49) — помечены
+ 1109 |         явным TODO(recon #CMPL-04) и НЕ домысливаются: переносятся лишь если БО уже
+ 1110 |         несёт их в IBIS-совместимом виде. Экземпляры (910), 938, 901 переносят
+ 1111 |         отдельные шаги 1.2–1.4.
+ 1112 |         """
+ 1113 |         rec = {}
+ 1114 | 
+ 1115 |         # --- 920 (вид документа / рабочий лист) -> IBIS worklist ---
+ 1116 |         raw920 = cmpl_rec.get('920')
+ 1117 |         code = ''
+ 1118 |         if isinstance(raw920, str):
+ 1119 |             code = raw920.strip()
+ 1120 |         elif isinstance(raw920, dict):
+ 1121 |             code = str(raw920.get('') or raw920.get('a') or
+ 1122 |                        raw920.get('A') or '').strip()
+ 1123 |         elif isinstance(raw920, list) and raw920:
+ 1124 |             first = raw920[0]
+ 1125 |             code = (first.strip() if isinstance(first, str)
+ 1126 |                     else str(first.get('') or first.get('a') or '').strip())
+ 1127 |         rec['920'] = WORKLIST_MAP_TO_CAT.get(code.upper(), code.upper() or
+ 1128 |                                              self.worklist)
+ 1129 | 
+ 1130 |         # --- 200 (заглавие) -> ^a осн. загл. + ^e свед. к загл. + ^f 1-е свед.
+ 1131 |         # об отв. + ^v номер тома (FIELD_DICTIONARY 200). ---
+ 1132 |         title_insts = _as_list(cmpl_rec.get('200'))
+ 1133 |         title_dict = None
+ 1134 |         for inst in title_insts:
 ```
 
 <!-- ─── страница 125 ─── -->
 
 ```py
- 1249 |             self._merge_ksu_link(record, ksu_no)
- 1250 | 
- 1251 |         # [back-compat] без каталога — реформат готов, но писать некуда.
- 1252 |         if self.catalog is None:
- 1253 |             result['action'] = 'no_catalog'
- 1254 |             return result
- 1255 | 
- 1256 |         # [5] сохранение: новый-vs-существующий по (title, author).
- 1257 |         try:
- 1258 |             mfn, action = self._save_to_catalog(record)
- 1259 |         except Exception:
- 1260 |             # ToCat best-effort: ошибка каталога/ФЛК не ставит VD=DEL (исходник
- 1261 |             # цел, перенос можно повторить).
- 1262 |             result['action'] = 'rejected'
- 1263 |             return result
- 1264 |         if mfn is None:
- 1265 |             result['action'] = 'rejected'
- 1266 |             return result
- 1267 |         result['catalog_mfn'] = mfn
- 1268 |         result['action'] = action
- 1269 | 
- 1270 |         # [1.5] VD=DEL на исходник (анти-дубль). Мутирует cmpl_rec на месте.
- 1271 |         self._mark_source_deleted(cmpl_rec, ksu_no)
- 1272 |         result['source_deleted'] = True
- 1273 |         return result
- 1274 | 
- 1275 |     def _carry_exemplars(self, cmpl_rec, ksu_no):
- 1276 |         """Перенос CMPL 910 → IBIS 910 (ребро 1.2). Returns a list of 910 instances.
- 1277 | 
- 1278 |         Подполя CMPL 910 (DB_ACQUISITION A.3.1, `910k.wss`): ^A статус(ste.mnu),
- 1279 |         ^B инв.№, ^H штрих-код, ^D МХР, ^C дата, ^E цена, ^U №КСУ, ^Q коллекция,
- 1280 |         ^F канал. В ЭК переносятся ключевые: ^A статус, ^b инв.№, ^U КСУ, ^E цена,
- 1281 |         ^H штрих-код, ^d МХР. Если у экз. нет статуса — ставим «свободен» (^A=0),
- 1282 |         чтобы поступивший экз. был сразу выдаваем. №КСУ берётся из экз. (^U) или из
- 1283 |         аргумента ``ksu_no``. Полный построчный маппинг — TODO(recon #CMPL-04)."""
- 1284 |         out = []
- 1285 |         for inst in _as_list(cmpl_rec.get('910')):
- 1286 |             if not isinstance(inst, dict):
- 1287 |                 continue
- 1288 |             inv = inst.get('b') or inst.get('B')
- 1289 |             if not inv:
- 1290 |                 continue
- 1291 |             status = inst.get('a') or inst.get('A') or EXEMPLAR_FREE
- 1292 |             ex = {'a': str(status), 'b': str(inv)}
- 1293 |             ksu = (inst.get('u') or inst.get('U') or ksu_no)
- 1294 |             if ksu:
- 1295 |                 ex['u'] = str(ksu)
- 1296 |             for src, dst in (('e', 'e'), ('E', 'e'), ('h', 'h'), ('H', 'h'),
- 1297 |                              ('d', 'd'), ('D', 'd')):
- 1298 |                 if inst.get(src) and dst not in ex:
- 1299 |                     ex[dst] = str(inst.get(src))
- 1300 |             out.append(ex)
- 1301 |         return out
- 1302 | 
- 1303 |     @staticmethod
+ 1135 |             if isinstance(inst, dict) and (inst.get('a') or inst.get('A')):
+ 1136 |                 title_dict = {'a': str(inst.get('a') or inst.get('A'))}
+ 1137 |                 for src, dst in (('e', 'e'), ('E', 'e'), ('f', 'f'), ('F', 'f'),
+ 1138 |                                  ('v', 'v'), ('V', 'v')):
+ 1139 |                     val = inst.get(src)
+ 1140 |                     if val and dst not in title_dict:
+ 1141 |                         title_dict[dst] = str(val)
+ 1142 |                 break
+ 1143 |             if isinstance(inst, str) and inst.strip():
+ 1144 |                 title_dict = {'a': inst.strip()}
+ 1145 |                 break
+ 1146 | 
+ 1147 |         # --- 922/330 (аналитика) -> authors + (fallback) title ---
+ 1148 |         analytic = _as_list(cmpl_rec.get('922')) + _as_list(cmpl_rec.get('330'))
+ 1149 |         # заглавие статьи (^C) как fallback для 200, если своего 200 нет
+ 1150 |         if title_dict is None:
+ 1151 |             for inst in analytic:
+ 1152 |                 if isinstance(inst, dict) and (inst.get('C') or inst.get('c')):
+ 1153 |                     title_dict = {'a': str(inst.get('C') or inst.get('c'))}
+ 1154 |                     resp = inst.get('G') or inst.get('g')
+ 1155 |                     if resp:
+ 1156 |                         title_dict['f'] = str(resp)
+ 1157 |                     break
+ 1158 |         if title_dict is not None:
+ 1159 |             rec['200'] = [title_dict]
+ 1160 | 
+ 1161 |         # авторы: сначала уже-готовые 700/701 БО CMPL, иначе из аналитики 922/330.
+ 1162 |         existing_700 = _as_list(cmpl_rec.get('700'))
+ 1163 |         existing_701 = _as_list(cmpl_rec.get('701'))
+ 1164 |         headings = []
+ 1165 |         if existing_700 or existing_701:
+ 1166 |             for inst in existing_700:
+ 1167 |                 h = _author_heading(inst) if not _has_subfield(inst, 'a') \
+ 1168 |                     else _carry_heading(inst)
+ 1169 |                 if h:
+ 1170 |                     headings.append(h)
+ 1171 |             for inst in existing_701:
+ 1172 |                 h = _carry_heading(inst) if _has_subfield(inst, 'a') \
+ 1173 |                     else _author_heading(inst)
+ 1174 |                 if h:
+ 1175 |                     headings.append(h)
+ 1176 |         else:
+ 1177 |             for inst in analytic:
+ 1178 |                 h = _author_heading(inst)
+ 1179 |                 if h:
+ 1180 |                     headings.append(h)
+ 1181 |         if headings:
+ 1182 |             rec['700'] = [headings[0]]
+ 1183 |             if len(headings) > 1:
+ 1184 |                 rec['701'] = headings[1:]
+ 1185 | 
+ 1186 |         # --- 463 (связь с изданием-хозяином для аналитики) ---
+ 1187 |         host = _carry_field(cmpl_rec, '463', SUBMAP_463)
+ 1188 |         if host:
+ 1189 |             rec['463'] = host
 ```
 
 <!-- ─── страница 126 ─── -->
 
 ```py
- 1304 |     def _carry_938(cmpl_rec):
- 1305 |         """Перенос CMPL 938 (заказ по периодам подписки) → IBIS 938 (ребро 1.3).
- 1306 | 
- 1307 |         938 связывает перенесённую запись с заказом подписки по периодам
- 1308 |         (FIELD_DICTIONARY: 938 «Заказанные экземпляры — по периодам подписки»,
- 1309 |         ^Q/^N/^A/^B/^Y/^E/^V/^D/^X). Переносится как есть (instance dicts)."""
- 1310 |         out = []
- 1311 |         for inst in _as_list(cmpl_rec.get('938')):
- 1312 |             if isinstance(inst, dict):
- 1313 |                 out.append(dict(inst))
- 1314 |             elif str(inst or '').strip():
- 1315 |                 out.append({'': str(inst).strip()})
- 1316 |         return out
- 1317 | 
- 1318 |     @staticmethod
- 1319 |     def _carry_901(cmpl_rec, exemplars):
- 1320 |         """Технологический путь 901 (ребро 1.4): ^B №экз + пункты ТП ^1..^5.
- 1321 | 
- 1322 |         Поле 901 (DB_ACQUISITION A.3.1, `901.WSS`): ^B №экз., ^1..^5 пункты ТП
- 1323 |         (tp.mnu). Если БО CMPL уже несёт 901 — переносим как есть. Иначе строим по
- 1324 |         одному 901 на экземпляр (^B = инв.№), помечая старт ТП — пункт ^1='1'
- 1325 |         (приёмка) как минимальный технологический путь (полные пункты ТП из tp.mnu
- 1326 |         — TODO, во внешнем Мастере)."""
- 1327 |         existing = _as_list(cmpl_rec.get('901'))
- 1328 |         if existing:
- 1329 |             out = []
- 1330 |             for inst in existing:
- 1331 |                 if isinstance(inst, dict):
- 1332 |                     out.append(dict(inst))
- 1333 |                 elif str(inst or '').strip():
- 1334 |                     out.append({'B': str(inst).strip()})
- 1335 |             return out
- 1336 |         # построить минимальный ТП по экземплярам.
- 1337 |         out = []
- 1338 |         for ex in (exemplars or []):
- 1339 |             inv = ex.get('b')
- 1340 |             if inv:
- 1341 |                 out.append({'B': str(inv), '1': '1'})  # TODO: полные пункты tp.mnu
- 1342 |         return out
- 1343 | 
- 1344 |     def _save_to_catalog(self, record):
- 1345 |         """Сохранить реформатированную запись в каталог (новый-vs-существующий).
- 1346 | 
- 1347 |         Резолвит существующую запись по (title, author) через :func:`title_key`
- 1348 |         (как receive-driven ToCat): re-supply дополняет существующую запись
- 1349 |         экземплярами/КСУ-связями, не дублируя. Returns ``(mfn, action)`` с
- 1350 |         action ∈ {'created','updated'}, или ``(None, None)`` при отказе ФЛК."""
- 1351 |         title = _first_value(record, '200', 'a')
- 1352 |         author = _first_value(record, '700', 'a')
- 1353 |         existing_mfn = self._find_catalog_record(title, author)
- 1354 |         if existing_mfn is not None:
- 1355 |             existing = self.catalog.get(self.catalog_db, existing_mfn)
- 1356 |             if existing is not None:
- 1357 |                 # дополнить экземплярами + КСУ-связями новые 910/66/938/901.
- 1358 |                 self._merge_records(existing, record)
+ 1190 |         elif rec.get('920') in ('ASP',) and rec.get('200'):
+ 1191 |             # аналитика без явного 463 — строим заглушку host из заглавия (TODO:
+ 1192 |             # полный маппинг host-сведений из 922/330 ^L/^M/^N/^O не транскрибирован).
+ 1193 |             rec['463'] = [{'C': rec['200'][0]['a']}]  # TODO(recon #CMPL-04)
+ 1194 | 
+ 1195 |         # --- 210 (выходные данные): ^a место / ^c издатель / ^d год ---
+ 1196 |         # (FIELD_DICTIONARY 210: ^A Город `MI=`, ^C Издательство `O=`, ^D Год `G=`).
+ 1197 |         pub = _carry_field(cmpl_rec, '210', SUBMAP_210)
+ 1198 |         if pub:
+ 1199 |             rec['210'] = pub
+ 1200 | 
+ 1201 |         # --- 215 (количественные характеристики / объём) ---
+ 1202 |         # (FIELD_DICTIONARY 215: ^A Объём, ^1 Ед.изм., ^C иллюстр., ^X тираж).
+ 1203 |         extent = _carry_field(cmpl_rec, '215', SUBMAP_215)
+ 1204 |         if extent:
+ 1205 |             rec['215'] = extent
+ 1206 | 
+ 1207 |         # --- 10 (ISBN / цена): ^A ISBN, ^D Цена, ^C Валюта (FIELD_DICTIONARY 10) ---
+ 1208 |         isbn = _carry_field(cmpl_rec, '10', SUBMAP_10)
+ 1209 |         if isbn:
+ 1210 |             rec['10'] = isbn
+ 1211 | 
+ 1212 |         # --- 675 (УДК) / 621 (ББК): индексы классификации (`U=`) ---
+ 1213 |         udk = _carry_field(cmpl_rec, '675', SUBMAP_INDEX)
+ 1214 |         if udk:
+ 1215 |             rec['675'] = udk
+ 1216 |         bbk = _carry_field(cmpl_rec, '621', SUBMAP_INDEX)
+ 1217 |         if bbk:
+ 1218 |             rec['621'] = bbk
+ 1219 | 
+ 1220 |         # --- 906 (систематический/расстановочный шифр) ---
+ 1221 |         shelf = _carry_field(cmpl_rec, '906', SUBMAP_906)
+ 1222 |         if shelf:
+ 1223 |             rec['906'] = shelf
+ 1224 | 
+ 1225 |         # --- 610 (ключевые слова) -> переносим как есть; для аналитики 922/330
+ 1226 |         # ключ.слова лежат в ^5/^6/^7 — они описывают СТАТЬЮ, маппинг 610↔922^5..^7
+ 1227 |         # в STN.FST recon не транскрибирован построчно — TODO(recon #CMPL-04). ---
+ 1228 |         kw = _carry_field(cmpl_rec, '610', SUBMAP_610)
+ 1229 |         if kw:
+ 1230 |             rec['610'] = kw
+ 1231 | 
+ 1232 |         # TODO(recon #CMPL-04): построчный маппинг ряда полей в STN.FST/UMARCIW.FST
+ 1233 |         # не транскрибирован и здесь НЕ домысливается:
+ 1234 |         #   * 922/330 ^5/^6/^7 (ключ.слова статьи) -> 610 — порядок/склейка неясны;
+ 1235 |         #   * 922/330 ^L/^M/^N/^O (издат. индекс / части-разделы) -> 463/690;
+ 1236 |         #   * 690 (издат. индекс 4 уровня ^L/^M/^N/^O) — источник в CMPL не разведён;
+ 1237 |         #   * 102 (страна) / 101 ^N/^G (наборы символов/графика) — нет в recon-БО;
+ 1238 |         #   * 906 авторский знак vs расст. шифр (906 vs 908) — различие не уточнено.
+ 1239 |         # Эти поля переносятся ТОЛЬКО если БО CMPL уже несёт их в IBIS-совместимом
+ 1240 |         # виде (через структурный _carry_field выше), иначе опускаются (не выдумываем).
+ 1241 | 
+ 1242 |         # --- 101 язык (умолчание rus, как в _new_bib_record) ---
+ 1243 |         lang = cmpl_rec.get('101')
+ 1244 |         rec['101'] = (lang if isinstance(lang, str) and lang.strip() else 'rus')
 ```
 
 <!-- ─── страница 127 ─── -->
 
 ```py
- 1359 |                 res = self.catalog.save(self.catalog_db, existing,
- 1360 |                                         mfn=existing_mfn)
- 1361 |                 return ((res['mfn'], 'updated') if res.get('saved')
- 1362 |                         else (None, None))
- 1363 |         res = self.catalog.save(self.catalog_db, record)
- 1364 |         return (res['mfn'], 'created') if res.get('saved') else (None, None)
- 1365 | 
- 1366 |     @staticmethod
- 1367 |     def _merge_records(target, incoming):
- 1368 |         """Дополнить существующую запись ``target`` данными ``incoming`` (re-supply).
- 1369 | 
- 1370 |         Экземпляры (910), КСУ-связи (66), периоды подписки (938), техн.путь (901)
- 1371 |         ДОПОЛНЯЮТСЯ (append); скалярные поля (200/700/920/101) НЕ переписываются
- 1372 |         (существующая запись — источник истины по библиографии)."""
- 1373 |         for tag in ('910', '938', '901', '463'):
- 1374 |             inc = _as_list(incoming.get(tag))
- 1375 |             if not inc:
- 1376 |                 continue
- 1377 |             cur = target.get(tag)
- 1378 |             if cur is None:
- 1379 |                 target[tag] = list(inc)
- 1380 |             else:
- 1381 |                 cur_list = cur if isinstance(cur, list) else [cur]
- 1382 |                 target[tag] = cur_list + list(inc)
- 1383 |         # КСУ-связи поля 66: дополняем уникальные ^u.
- 1384 |         for inst in _as_list(incoming.get('66')):
- 1385 |             if isinstance(inst, dict) and (inst.get('u') or inst.get('U')):
- 1386 |                 AcquisitionEngine._merge_ksu_link(
- 1387 |                     target, inst.get('u') or inst.get('U'))
- 1388 | 
- 1389 |     @staticmethod
- 1390 |     def _mark_source_deleted(cmpl_rec, ksu_no=None):
- 1391 |         """Поставить ``VD=DEL`` (66^a='DEL') на исходную запись CMPL (ребро 1.5).
- 1392 | 
- 1393 |         Анти-дубль: после успешного переноса исходный БО помечается на удаление.
- 1394 |         Мутирует ``cmpl_rec['66']`` на месте, сохраняя любые существующие
- 1395 |         инстансы поля 66 (например КСУ-связь ^u), добавляя один с ^a='DEL'."""
- 1396 |         insts = cmpl_rec.get('66')
- 1397 |         if insts is None:
- 1398 |             insts = []
- 1399 |         elif not isinstance(insts, list):
- 1400 |             insts = [insts]
- 1401 |         # не дублируем метку, если уже стоит.
- 1402 |         for inst in insts:
- 1403 |             if isinstance(inst, dict) and \
- 1404 |                     str(inst.get('a') or inst.get('A') or '').upper() == VD_DEL:
- 1405 |                 cmpl_rec['66'] = insts
- 1406 |                 return
- 1407 |         mark = {'a': VD_DEL}
- 1408 |         if ksu_no:
- 1409 |             mark['u'] = str(ksu_no)
- 1410 |         insts.append(mark)
- 1411 |         cmpl_rec['66'] = insts
- 1412 | 
- 1413 |     # ---- disposal / списание (cluster 5.2: Книговыдача → КСУ выбытия) ------ #
+ 1245 | 
+ 1246 |         return rec
+ 1247 | 
+ 1248 |     def to_catalog(self, cmpl_rec, ksu_no=None):
+ 1249 |         """Перенести БО CMPL в каталог ЭК (ToCat, рёбра 1.1–1.5). Триггер — поле 66.
+ 1250 | 
+ 1251 |         Полный цикл переноса фонд→каталог:
+ 1252 | 
+ 1253 |           1. **[1.1]** реформат БО CMPL → формат IBIS (:meth:`reformat_to_ibis`):
+ 1254 |              920→РЛ, заглавие→200, 922/330→700/701, аналитика→463.
+ 1255 |           2. **[1.2]** перенос экземпляров CMPL ``910`` → IBIS ``910`` (статус ^A,
+ 1256 |              инв.№ ^b, КСУ ^U, цена ^E, штрих-код ^H, МХР ^d).
+ 1257 |           3. **[1.3]** связь подписки CMPL ``938`` (период) → IBIS ``938``.
+ 1258 |           4. **[1.4]** технологический путь ``901`` (^B №экз + пункты ТП ^1..^5).
+ 1259 |           5. сохранение в каталог через handle (``catalog.save``); новый-vs-
+ 1260 |              существующий резолвится по :func:`title_key` (re-supply дополняет
+ 1261 |              запись экземплярами, не дублирует её).
+ 1262 |           6. **[1.5]** ``VD=DEL`` на исходную запись CMPL (поле 66 ^a='DEL') —
+ 1263 |              анти-дубль. Мутирует ``cmpl_rec`` на месте.
+ 1264 | 
+ 1265 |         Идемпотентность: запись, уже помеченная ``VD=DEL`` (перенесена ранее), —
+ 1266 |         no-op (``action='already_transferred'``). Триггер: если поле 66 НЕ взведено,
+ 1267 |         перенос пропускается (``action='not_triggered'``). Back-compat: без
+ 1268 |         catalog-handle модуль автономен — реформат всё равно выполняется и
+ 1269 |         возвращается в результате, но запись никуда не пишется (``action='no_catalog'``).
+ 1270 | 
+ 1271 |         Returns::
+ 1272 | 
+ 1273 |             {
+ 1274 |               'action': 'created'|'updated'|'already_transferred'
+ 1275 |                         |'not_triggered'|'no_catalog'|'rejected',
+ 1276 |               'catalog_mfn': <mfn or None>,
+ 1277 |               'record': <реформатированная IBIS-запись или None>,
+ 1278 |               'source_deleted': <bool — выставлен ли VD=DEL>,
+ 1279 |               'exemplars': [<инв.№ перенесённых экз.>],
+ 1280 |             }
+ 1281 |         """
+ 1282 |         result = {'action': None, 'catalog_mfn': None, 'record': None,
+ 1283 |                   'source_deleted': False, 'exemplars': []}
+ 1284 | 
+ 1285 |         # [1.5/идемпотентность] уже перенесён?
+ 1286 |         if is_source_deleted(cmpl_rec):
+ 1287 |             result['action'] = 'already_transferred'
+ 1288 |             result['source_deleted'] = True
+ 1289 |             return result
+ 1290 | 
+ 1291 |         # [триггер] поле 66 должно быть взведено.
+ 1292 |         if not field66_set(cmpl_rec):
+ 1293 |             result['action'] = 'not_triggered'
+ 1294 |             return result
+ 1295 | 
+ 1296 |         # [1.1] реформат БО -> IBIS.
+ 1297 |         record = self.reformat_to_ibis(cmpl_rec)
+ 1298 |         result['record'] = record
+ 1299 | 
 ```
 
 <!-- ─── страница 128 ─── -->
 
 ```py
- 1414 |     def record_disposal(self, inv_no, ksu_disp_no, reason='lost', ref=None,
- 1415 |                         amount=1):
- 1416 |         """Record a выбытие (списание) of one inventory number into the КСУ выбытия.
- 1417 | 
- 1418 |         The Книговыдача→Комплектование (КСУ) seam (INTEGRATION_MAP ребро 5.2):
- 1419 |         circulation, on a confirmed loss / write-off, calls this so the lost copy
- 1420 |         is reflected in the acquisition выбытие ledger (910^V № КСУ выбытия, 910^X
- 1421 |         кол-во, status «списан»). The original поступление КСУ (910^U) is
- 1422 |         cross-linked automatically when the inventory number is known to
- 1423 |         acquisition's inventory ledger (re-supply traceability партия↔выбытие).
- 1424 | 
- 1425 |         Idempotent per ``(inv_no, ksu_disp_no)``: re-recording the same copy on the
- 1426 |         same акт returns the existing row (no double count). Returns the disposal
- 1427 |         row dict."""
- 1428 |         if not inv_no or not str(inv_no).strip():
- 1429 |             raise AcquisitionError('disposal requires an inventory number')
- 1430 |         if not ksu_disp_no or not str(ksu_disp_no).strip():
- 1431 |             raise AcquisitionError('disposal requires a КСУ выбытия number')
- 1432 |         ksu_recv = self.store.receipt_ksu_for_inv(str(inv_no))
- 1433 |         return self.store.add_disposal(
- 1434 |             str(inv_no), str(ksu_disp_no), reason=reason, ksu_recv_no=ksu_recv,
- 1435 |             amount=amount, ref=ref)
- 1436 | 
- 1437 |     def disposal_summary(self, ksu_disp_no):
- 1438 |         """Rollup of one акт списания (copies + total amount). See store method."""
- 1439 |         return self.store.disposal_summary(ksu_disp_no)
- 1440 | 
- 1441 | 
- 1442 | # --------------------------------------------------------------------------- #
- 1443 | # Record-draft accessors (local copies so the module is self-contained — same
- 1444 | # semantics as catalog.py's _field_values, but we only need the first value).
- 1445 | # --------------------------------------------------------------------------- #
- 1446 | def _first_value(record, field, subfield):
- 1447 |     """First non-empty value of ``field``'s ``subfield`` in a record, or ''."""
- 1448 |     raw = record.get(field) if record else None
- 1449 |     if raw is None:
- 1450 |         return ''
- 1451 |     insts = raw if isinstance(raw, list) else [raw]
- 1452 |     for inst in insts:
- 1453 |         if isinstance(inst, dict):
- 1454 |             v = inst.get(subfield) or inst.get(subfield.upper()) or ''
- 1455 |         else:
- 1456 |             v = inst if subfield in ('', None) else ''
- 1457 |         if v:
- 1458 |             return str(v)
- 1459 |     return ''
+ 1300 |         # [1.2] перенос экземпляров 910 CMPL -> IBIS 910.
+ 1301 |         exemplars = self._carry_exemplars(cmpl_rec, ksu_no)
+ 1302 |         if exemplars:
+ 1303 |             record['910'] = exemplars
+ 1304 |             result['exemplars'] = [e.get('b') for e in exemplars if e.get('b')]
+ 1305 | 
+ 1306 |         # [1.3] связь подписки 938 (период).
+ 1307 |         link938 = self._carry_938(cmpl_rec)
+ 1308 |         if link938:
+ 1309 |             record['938'] = link938
+ 1310 | 
+ 1311 |         # [1.4] технологический путь 901 (^B №экз + пункты ТП).
+ 1312 |         path901 = self._carry_901(cmpl_rec, exemplars)
+ 1313 |         if path901:
+ 1314 |             record['901'] = path901
+ 1315 | 
+ 1316 |         # field-66 КСУ back-link (как в receive-driven ToCat) если known.
+ 1317 |         if ksu_no:
+ 1318 |             self._merge_ksu_link(record, ksu_no)
+ 1319 | 
+ 1320 |         # [back-compat] без каталога — реформат готов, но писать некуда.
+ 1321 |         if self.catalog is None:
+ 1322 |             result['action'] = 'no_catalog'
+ 1323 |             return result
+ 1324 | 
+ 1325 |         # [5] сохранение: новый-vs-существующий по (title, author).
+ 1326 |         try:
+ 1327 |             mfn, action = self._save_to_catalog(record)
+ 1328 |         except Exception:
+ 1329 |             # ToCat best-effort: ошибка каталога/ФЛК не ставит VD=DEL (исходник
+ 1330 |             # цел, перенос можно повторить).
+ 1331 |             result['action'] = 'rejected'
+ 1332 |             return result
+ 1333 |         if mfn is None:
+ 1334 |             result['action'] = 'rejected'
+ 1335 |             return result
+ 1336 |         result['catalog_mfn'] = mfn
+ 1337 |         result['action'] = action
+ 1338 | 
+ 1339 |         # [1.5] VD=DEL на исходник (анти-дубль). Мутирует cmpl_rec на месте.
+ 1340 |         self._mark_source_deleted(cmpl_rec, ksu_no)
+ 1341 |         result['source_deleted'] = True
+ 1342 |         return result
+ 1343 | 
+ 1344 |     def _carry_exemplars(self, cmpl_rec, ksu_no):
+ 1345 |         """Перенос CMPL 910 → IBIS 910 (ребро 1.2). Returns a list of 910 instances.
+ 1346 | 
+ 1347 |         Подполя CMPL 910 (DB_ACQUISITION A.3.1, `910k.wss`): ^A статус(ste.mnu),
+ 1348 |         ^B инв.№, ^H штрих-код, ^D МХР, ^C дата, ^E цена, ^U №КСУ, ^Q коллекция,
+ 1349 |         ^F канал. В ЭК переносятся ключевые: ^A статус, ^b инв.№, ^U КСУ, ^E цена,
+ 1350 |         ^H штрих-код, ^d МХР. Если у экз. нет статуса — ставим «свободен» (^A=0),
+ 1351 |         чтобы поступивший экз. был сразу выдаваем. №КСУ берётся из экз. (^U) или из
+ 1352 |         аргумента ``ksu_no``. Полный построчный маппинг — TODO(recon #CMPL-04)."""
+ 1353 |         out = []
+ 1354 |         for inst in _as_list(cmpl_rec.get('910')):
+```
+
+<!-- ─── страница 129 ─── -->
+
+```py
+ 1355 |             if not isinstance(inst, dict):
+ 1356 |                 continue
+ 1357 |             inv = inst.get('b') or inst.get('B')
+ 1358 |             if not inv:
+ 1359 |                 continue
+ 1360 |             status = inst.get('a') or inst.get('A') or EXEMPLAR_FREE
+ 1361 |             ex = {'a': str(status), 'b': str(inv)}
+ 1362 |             ksu = (inst.get('u') or inst.get('U') or ksu_no)
+ 1363 |             if ksu:
+ 1364 |                 ex['u'] = str(ksu)
+ 1365 |             for src, dst in (('e', 'e'), ('E', 'e'), ('h', 'h'), ('H', 'h'),
+ 1366 |                              ('d', 'd'), ('D', 'd')):
+ 1367 |                 if inst.get(src) and dst not in ex:
+ 1368 |                     ex[dst] = str(inst.get(src))
+ 1369 |             out.append(ex)
+ 1370 |         return out
+ 1371 | 
+ 1372 |     @staticmethod
+ 1373 |     def _carry_938(cmpl_rec):
+ 1374 |         """Перенос CMPL 938 (заказ по периодам подписки) → IBIS 938 (ребро 1.3).
+ 1375 | 
+ 1376 |         938 связывает перенесённую запись с заказом подписки по периодам
+ 1377 |         (FIELD_DICTIONARY: 938 «Заказанные экземпляры — по периодам подписки»,
+ 1378 |         ^Q/^N/^A/^B/^Y/^E/^V/^D/^X). Переносится как есть (instance dicts)."""
+ 1379 |         out = []
+ 1380 |         for inst in _as_list(cmpl_rec.get('938')):
+ 1381 |             if isinstance(inst, dict):
+ 1382 |                 out.append(dict(inst))
+ 1383 |             elif str(inst or '').strip():
+ 1384 |                 out.append({'': str(inst).strip()})
+ 1385 |         return out
+ 1386 | 
+ 1387 |     @staticmethod
+ 1388 |     def _carry_901(cmpl_rec, exemplars):
+ 1389 |         """Технологический путь 901 (ребро 1.4): ^B №экз + пункты ТП ^1..^5.
+ 1390 | 
+ 1391 |         Поле 901 (DB_ACQUISITION A.3.1, `901.WSS`): ^B №экз., ^1..^5 пункты ТП
+ 1392 |         (tp.mnu). Если БО CMPL уже несёт 901 — переносим как есть. Иначе строим по
+ 1393 |         одному 901 на экземпляр (^B = инв.№), помечая старт ТП — пункт ^1='1'
+ 1394 |         (приёмка) как минимальный технологический путь (полные пункты ТП из tp.mnu
+ 1395 |         — TODO, во внешнем Мастере)."""
+ 1396 |         existing = _as_list(cmpl_rec.get('901'))
+ 1397 |         if existing:
+ 1398 |             out = []
+ 1399 |             for inst in existing:
+ 1400 |                 if isinstance(inst, dict):
+ 1401 |                     out.append(dict(inst))
+ 1402 |                 elif str(inst or '').strip():
+ 1403 |                     out.append({'B': str(inst).strip()})
+ 1404 |             return out
+ 1405 |         # построить минимальный ТП по экземплярам.
+ 1406 |         out = []
+ 1407 |         for ex in (exemplars or []):
+ 1408 |             inv = ex.get('b')
+ 1409 |             if inv:
+```
+
+<!-- ─── страница 130 ─── -->
+
+```py
+ 1410 |                 out.append({'B': str(inv), '1': '1'})  # TODO: полные пункты tp.mnu
+ 1411 |         return out
+ 1412 | 
+ 1413 |     def _save_to_catalog(self, record):
+ 1414 |         """Сохранить реформатированную запись в каталог (новый-vs-существующий).
+ 1415 | 
+ 1416 |         Резолвит существующую запись по (title, author) через :func:`title_key`
+ 1417 |         (как receive-driven ToCat): re-supply дополняет существующую запись
+ 1418 |         экземплярами/КСУ-связями, не дублируя. Returns ``(mfn, action)`` с
+ 1419 |         action ∈ {'created','updated'}, или ``(None, None)`` при отказе ФЛК."""
+ 1420 |         title = _first_value(record, '200', 'a')
+ 1421 |         author = _first_value(record, '700', 'a')
+ 1422 |         existing_mfn = self._find_catalog_record(title, author)
+ 1423 |         if existing_mfn is not None:
+ 1424 |             existing = self.catalog.get(self.catalog_db, existing_mfn)
+ 1425 |             if existing is not None:
+ 1426 |                 # дополнить экземплярами + КСУ-связями новые 910/66/938/901.
+ 1427 |                 self._merge_records(existing, record)
+ 1428 |                 res = self.catalog.save(self.catalog_db, existing,
+ 1429 |                                         mfn=existing_mfn)
+ 1430 |                 return ((res['mfn'], 'updated') if res.get('saved')
+ 1431 |                         else (None, None))
+ 1432 |         res = self.catalog.save(self.catalog_db, record)
+ 1433 |         return (res['mfn'], 'created') if res.get('saved') else (None, None)
+ 1434 | 
+ 1435 |     @staticmethod
+ 1436 |     def _merge_records(target, incoming):
+ 1437 |         """Дополнить существующую запись ``target`` данными ``incoming`` (re-supply).
+ 1438 | 
+ 1439 |         Экземпляры (910), КСУ-связи (66), периоды подписки (938), техн.путь (901)
+ 1440 |         ДОПОЛНЯЮТСЯ (append); скалярные поля (200/700/920/101) НЕ переписываются
+ 1441 |         (существующая запись — источник истины по библиографии)."""
+ 1442 |         for tag in ('910', '938', '901', '463'):
+ 1443 |             inc = _as_list(incoming.get(tag))
+ 1444 |             if not inc:
+ 1445 |                 continue
+ 1446 |             cur = target.get(tag)
+ 1447 |             if cur is None:
+ 1448 |                 target[tag] = list(inc)
+ 1449 |             else:
+ 1450 |                 cur_list = cur if isinstance(cur, list) else [cur]
+ 1451 |                 target[tag] = cur_list + list(inc)
+ 1452 |         # КСУ-связи поля 66: дополняем уникальные ^u.
+ 1453 |         for inst in _as_list(incoming.get('66')):
+ 1454 |             if isinstance(inst, dict) and (inst.get('u') or inst.get('U')):
+ 1455 |                 AcquisitionEngine._merge_ksu_link(
+ 1456 |                     target, inst.get('u') or inst.get('U'))
+ 1457 | 
+ 1458 |     @staticmethod
+ 1459 |     def _mark_source_deleted(cmpl_rec, ksu_no=None):
+ 1460 |         """Поставить ``VD=DEL`` (66^a='DEL') на исходную запись CMPL (ребро 1.5).
+ 1461 | 
+ 1462 |         Анти-дубль: после успешного переноса исходный БО помечается на удаление.
+ 1463 |         Мутирует ``cmpl_rec['66']`` на месте, сохраняя любые существующие
+ 1464 |         инстансы поля 66 (например КСУ-связь ^u), добавляя один с ^a='DEL'."""
+```
+
+<!-- ─── страница 131 ─── -->
+
+```py
+ 1465 |         insts = cmpl_rec.get('66')
+ 1466 |         if insts is None:
+ 1467 |             insts = []
+ 1468 |         elif not isinstance(insts, list):
+ 1469 |             insts = [insts]
+ 1470 |         # не дублируем метку, если уже стоит.
+ 1471 |         for inst in insts:
+ 1472 |             if isinstance(inst, dict) and \
+ 1473 |                     str(inst.get('a') or inst.get('A') or '').upper() == VD_DEL:
+ 1474 |                 cmpl_rec['66'] = insts
+ 1475 |                 return
+ 1476 |         mark = {'a': VD_DEL}
+ 1477 |         if ksu_no:
+ 1478 |             mark['u'] = str(ksu_no)
+ 1479 |         insts.append(mark)
+ 1480 |         cmpl_rec['66'] = insts
+ 1481 | 
+ 1482 |     # ---- disposal / списание (cluster 5.2: Книговыдача → КСУ выбытия) ------ #
+ 1483 |     def record_disposal(self, inv_no, ksu_disp_no, reason='lost', ref=None,
+ 1484 |                         amount=1):
+ 1485 |         """Record a выбытие (списание) of one inventory number into the КСУ выбытия.
+ 1486 | 
+ 1487 |         The Книговыдача→Комплектование (КСУ) seam (INTEGRATION_MAP ребро 5.2):
+ 1488 |         circulation, on a confirmed loss / write-off, calls this so the lost copy
+ 1489 |         is reflected in the acquisition выбытие ledger (910^V № КСУ выбытия, 910^X
+ 1490 |         кол-во, status «списан»). The original поступление КСУ (910^U) is
+ 1491 |         cross-linked automatically when the inventory number is known to
+ 1492 |         acquisition's inventory ledger (re-supply traceability партия↔выбытие).
+ 1493 | 
+ 1494 |         Idempotent per ``(inv_no, ksu_disp_no)``: re-recording the same copy on the
+ 1495 |         same акт returns the existing row (no double count). Returns the disposal
+ 1496 |         row dict."""
+ 1497 |         if not inv_no or not str(inv_no).strip():
+ 1498 |             raise AcquisitionError('disposal requires an inventory number')
+ 1499 |         if not ksu_disp_no or not str(ksu_disp_no).strip():
+ 1500 |             raise AcquisitionError('disposal requires a КСУ выбытия number')
+ 1501 |         ksu_recv = self.store.receipt_ksu_for_inv(str(inv_no))
+ 1502 |         return self.store.add_disposal(
+ 1503 |             str(inv_no), str(ksu_disp_no), reason=reason, ksu_recv_no=ksu_recv,
+ 1504 |             amount=amount, ref=ref)
+ 1505 | 
+ 1506 |     def disposal_summary(self, ksu_disp_no):
+ 1507 |         """Rollup of one акт списания (copies + total amount). See store method."""
+ 1508 |         return self.store.disposal_summary(ksu_disp_no)
+ 1509 | 
+ 1510 |     # ---- 5.1 КСУ поступления (88^U) ↔ экземпляры (910^U) ------------------- #
+ 1511 |     def link_ksu_to_exemplars(self, ksu_no, inv_numbers, catalog_db=None):
+ 1512 |         """Проставить №КСУ поступления (88^U) в экземпляры (910^U). Ребро 5.1.
+ 1513 | 
+ 1514 |         Учётная связь «партия ↔ экземпляр» (INTEGRATION_MAP кластер 5, ребро 5.1,
+ 1515 |         DB_ACQUISITION A.3.1: 910^U «№КСУ», индекс ``KSU=``). При приёме партии
+ 1516 |         №КСУ поступления записывается в каждый указанный экземпляр — и в
+ 1517 |         собственный ledger поступлений (``acq_inventory.ksu_no``), и, если подключён
+ 1518 |         catalog-handle, в подполе ``910^U`` записи каталога (через ``find_exemplar``
+ 1519 |         / ``save`` — без правки самого ``catalog.py``).
+```
+
+<!-- ─── страница 132 ─── -->
+
+```py
+ 1520 | 
+ 1521 |         ``ksu_no`` — № записи КСУ поступления (88^A, ключ ``KSU=``).
+ 1522 |         ``inv_numbers`` — инв.№ экземпляров партии (910^b).
+ 1523 |         ``catalog_db`` — БД ЭК (по умолчанию :attr:`catalog_db`); используется лишь
+ 1524 |         при наличии catalog-handle.
+ 1525 | 
+ 1526 |         Back-compat: без catalog-handle связь проставляется ТОЛЬКО в ledger'е
+ 1527 |         поступлений (модуль автономен) — каталог-сторона тогда ``catalog=[]``.
+ 1528 | 
+ 1529 |         Returns::
+ 1530 | 
+ 1531 |             {
+ 1532 |               'ksu_no': <№КСУ>,
+ 1533 |               'ledger': [inv_no, ...],    # экз., у которых 910^U проставлен в ledger'е
+ 1534 |               'catalog': [inv_no, ...],   # экз., у которых 910^U проставлен в каталоге
+ 1535 |               'registered': [inv_no, ...],# экз., впервые зарегистрированные в ledger'е
+ 1536 |               'missing': [inv_no, ...],   # инв.№, не найденные в каталоге (handle есть)
+ 1537 |             }
+ 1538 |         """
+ 1539 |         if not ksu_no or not str(ksu_no).strip():
+ 1540 |             raise AcquisitionError('link_ksu requires a КСУ number')
+ 1541 |         ksu_no = str(ksu_no).strip()
+ 1542 |         invs = [str(x).strip() for x in (inv_numbers or []) if str(x).strip()]
+ 1543 |         result = {'ksu_no': ksu_no, 'ledger': [], 'catalog': [],
+ 1544 |                   'registered': [], 'missing': []}
+ 1545 | 
+ 1546 |         # --- ledger-сторона: 910^U в собственном учёте экземпляров ---
+ 1547 |         for inv in invs:
+ 1548 |             if self.store.register_inventory_ksu(ksu_no, inv):
+ 1549 |                 result['registered'].append(inv)
+ 1550 |             result['ledger'].append(inv)
+ 1551 | 
+ 1552 |         # --- каталог-сторона (опц. handle): 910^U в записи ЭК ---
+ 1553 |         if self.catalog is not None:
+ 1554 |             db = catalog_db or self.catalog_db
+ 1555 |             for inv in invs:
+ 1556 |                 if self._stamp_catalog_ksu(db, inv, ksu_no):
+ 1557 |                     result['catalog'].append(inv)
+ 1558 |                 else:
+ 1559 |                     result['missing'].append(inv)
+ 1560 |         return result
+ 1561 | 
+ 1562 |     def _stamp_catalog_ksu(self, db, inv_no, ksu_no):
+ 1563 |         """Проставить 910^U=№КСУ на экземпляр ``inv_no`` записи ЭК. Best-effort.
+ 1564 | 
+ 1565 |         Находит экземпляр по инв.№ (``catalog.find_exemplar`` → mfn/индекс), пишет
+ 1566 |         ``910^U`` в этот инстанс и пересохраняет запись через handle. Возвращает
+ 1567 |         ``True`` при успехе, ``False`` если экземпляр не найден в каталоге или запись
+ 1568 |         не сохранилась. Никогда не бросает наружу (как ToCat — best-effort шов)."""
+ 1569 |         try:
+ 1570 |             found = self.catalog.find_exemplar(db, inv_no)
+ 1571 |             if found is None:
+ 1572 |                 return False
+ 1573 |             mfn, idx, _inst = found
+ 1574 |             record = self.catalog.get(db, mfn)
+```
+
+<!-- ─── страница 133 ─── -->
+
+```py
+ 1575 |             if record is None:
+ 1576 |                 return False
+ 1577 |             insts = record.get('910')
+ 1578 |             if not isinstance(insts, list):
+ 1579 |                 insts = [insts] if insts is not None else []
+ 1580 |                 record['910'] = insts
+ 1581 |             if idx >= len(insts):
+ 1582 |                 return False
+ 1583 |             inst = insts[idx]
+ 1584 |             if not isinstance(inst, dict):
+ 1585 |                 inst = {'b': str(inv_no)}
+ 1586 |                 insts[idx] = inst
+ 1587 |             # уже та же связь — идемпотентно ничего не переписываем.
+ 1588 |             cur = inst.get('u') or inst.get('U')
+ 1589 |             if str(cur or '') == ksu_no:
+ 1590 |                 return True
+ 1591 |             inst.pop('U', None)
+ 1592 |             inst[EXEMPLAR_KSU_SUB] = ksu_no
+ 1593 |             res = self.catalog.save(db, record, mfn=mfn)
+ 1594 |             return bool(res and res.get('saved'))
+ 1595 |         except Exception:
+ 1596 |             return False
+ 1597 | 
+ 1598 |     def find_exemplars_by_ksu(self, ksu_no, catalog_db=None):
+ 1599 |         """Найти экземпляры партии по №КСУ поступления (точки доступа ``KSU=``/``NKSUK=``).
+ 1600 | 
+ 1601 |         Поиск экземпляров «Книги партии с N КСУ поступления» (CMPL.INI поиск 5/7).
+ 1602 |         Источник истины — собственный ledger поступлений (``acq_inventory`` по
+ 1603 |         ``ksu_no``). Если подключён catalog-handle — дополнительно сканирует записи
+ 1604 |         ЭК и собирает инв.№ экземпляров с ``910^U == ksu_no`` (handle не индексирует
+ 1605 |         ``KSU=``, поэтому скан, как ``find_exemplar`` — без правки ``catalog.py``).
+ 1606 | 
+ 1607 |         Returns::
+ 1608 | 
+ 1609 |             {
+ 1610 |               'ksu_no': <№КСУ>,
+ 1611 |               'inv_numbers': [inv_no, ...],   # объединение ledger + каталог (упоряд.)
+ 1612 |               'ledger': [inv_no, ...],
+ 1613 |               'catalog': [{'mfn': <mfn>, 'inv_no': <inv>}, ...],
+ 1614 |             }
+ 1615 |         """
+ 1616 |         if not ksu_no or not str(ksu_no).strip():
+ 1617 |             raise AcquisitionError('find_exemplars_by_ksu requires a КСУ number')
+ 1618 |         ksu_no = str(ksu_no).strip()
+ 1619 |         ledger = self.store.inventory_for_ksu(ksu_no)
+ 1620 |         catalog_hits = []
+ 1621 |         if self.catalog is not None:
+ 1622 |             db = catalog_db or self.catalog_db
+ 1623 |             catalog_hits = self._scan_catalog_ksu(db, ksu_no)
+ 1624 |         # объединение инв.№, порядок: ledger first, затем новые из каталога.
+ 1625 |         merged = list(ledger)
+ 1626 |         seen = set(merged)
+ 1627 |         for hit in catalog_hits:
+ 1628 |             if hit['inv_no'] not in seen:
+ 1629 |                 merged.append(hit['inv_no'])
+```
+
+<!-- ─── страница 134 ─── -->
+
+```py
+ 1630 |                 seen.add(hit['inv_no'])
+ 1631 |         return {'ksu_no': ksu_no, 'inv_numbers': merged, 'ledger': ledger,
+ 1632 |                 'catalog': catalog_hits}
+ 1633 | 
+ 1634 |     def _scan_catalog_ksu(self, db, ksu_no):
+ 1635 |         """Просканировать записи ЭК и собрать экз. с ``910^U == ksu_no``. Best-effort.
+ 1636 | 
+ 1637 |         Handle не инвертирует ``KSU=`` (ребро его INDEX_SPEC не правим), поэтому
+ 1638 |         ищем через ``search``-по-заглавию мы не можем — обходим записи. Контракт
+ 1639 |         catalog-handle не даёт «перечислить все записи» напрямую, но даёт
+ 1640 |         ``find_exemplar``/``get``; для скана используем (если есть) метод
+ 1641 |         ``iter_records``/``all_records``, иначе деградируем до пустого списка с
+ 1642 |         опорой на ledger. Никогда не бросает наружу."""
+ 1643 |         hits = []
+ 1644 |         try:
+ 1645 |             # 1) если handle умеет перечислять записи — пройдём по ним.
+ 1646 |             iterator = (getattr(self.catalog, 'iter_records', None) or
+ 1647 |                         getattr(self.catalog, 'all_records', None))
+ 1648 |             if iterator is not None:
+ 1649 |                 for mfn, record in self._iter_handle_records(iterator, db):
+ 1650 |                     for inst in _as_list(record.get('910')):
+ 1651 |                         if not isinstance(inst, dict):
+ 1652 |                             continue
+ 1653 |                         u = inst.get('u') or inst.get('U')
+ 1654 |                         b = inst.get('b') or inst.get('B')
+ 1655 |                         if u is not None and str(u) == ksu_no and b:
+ 1656 |                             hits.append({'mfn': mfn, 'inv_no': str(b)})
+ 1657 |                 return hits
+ 1658 |             # 2) фолбэк: подтверждаем ledger-инв.№ через find_exemplar (каталог как
+ 1659 |             # источник-сверка), собирая mfn для тех, что реально лежат в ЭК.
+ 1660 |             for inv in self.store.inventory_for_ksu(ksu_no):
+ 1661 |                 found = self.catalog.find_exemplar(db, inv)
+ 1662 |                 if found is not None:
+ 1663 |                     hits.append({'mfn': found[0], 'inv_no': str(inv)})
+ 1664 |         except Exception:
+ 1665 |             return hits
+ 1666 |         return hits
+ 1667 | 
+ 1668 |     @staticmethod
+ 1669 |     def _iter_handle_records(iterator, db):
+ 1670 |         """Нормализовать ответ ``iter_records``/``all_records`` → (mfn, record).
+ 1671 | 
+ 1672 |         Терпим к форме: handle может вернуть список ``(mfn, record)``, список
+ 1673 |         ``{'mfn':…, 'record':…}`` или список записей-dict'ов с ключом ``mfn``."""
+ 1674 |         for item in (iterator(db) or []):
+ 1675 |             if isinstance(item, tuple) and len(item) == 2:
+ 1676 |                 yield item[0], (item[1] or {})
+ 1677 |             elif isinstance(item, dict) and 'record' in item:
+ 1678 |                 yield item.get('mfn'), (item.get('record') or {})
+ 1679 |             elif isinstance(item, dict):
+ 1680 |                 yield item.get('mfn'), item
+ 1681 | 
+ 1682 |     # ---- 5.3 КСУ «Пополнение записи» — авто-распределение партии ----------- #
+ 1683 |     def distribute_ksu_batch(self, ksu_no, exemplars=None, catalog_db=None):
+ 1684 |         """Базовое авто-распределение партии КСУ по разделам/типам/языкам. Ребро 5.3.
+```
+
+<!-- ─── страница 135 ─── -->
+
+```py
+ 1685 | 
+ 1686 |         Эмулирует Мастер «Пополнение записи КСУ» в ЧАСТИ, выводимой из recon
+ 1687 |         (DB_ACQUISITION A.5 шаг 4, A.4): по экземплярам партии раскладывает СУММЫ —
+ 1688 |         число наименований (поле 17), число экземпляров — и группирует партию по
+ 1689 |         наблюдаемым граням (тип/язык 45, УДК 48, ББК 49, разделы 151, МХР/фонды),
+ 1690 |         НАСКОЛЬКО эти грани видны на экземплярах/записях. Поле 17 и сумматоры
+ 1691 |         экземпляров — базовая, точная логика; распределение по граням — НАБЛЮДАЕМОЕ
+ 1692 |         (считаем то, что реально размечено на экземплярах), без домысливания членения.
+ 1693 | 
+ 1694 |         ``exemplars`` — список dict'ов-экземпляров (контракт 910: ``b`` инв.№,
+ 1695 |         опц. ``45``/``type``/``lang``, ``48``/``udk``, ``49``/``bbk``, ``151``/
+ 1696 |         ``section``, ``d``/``mhr``). Если не передан И подключён catalog-handle —
+ 1697 |         грани собираются из записей ЭК по №КСУ (через :meth:`find_exemplars_by_ksu`
+ 1698 |         + сами записи). Если не передан и handle'а нет — раскладка по ledger'у
+ 1699 |         (только сумматоры; граней на ledger'е нет).
+ 1700 | 
+ 1701 |         Returns запись-распределения КСУ (поле 88 + поля A.4)::
+ 1702 | 
+ 1703 |             {
+ 1704 |               'ksu_no': <№КСУ>,
+ 1705 |               '17': <число наименований>,           # titles
+ 1706 |               'copies': <число экземпляров>,         # 88^F
+ 1707 |               'by_type': {<тип/язык>: n, ...},       # поле 45
+ 1708 |               'by_udk': {<индекс>: n, ...},          # поле 48
+ 1709 |               'by_bbk': {<индекс>: n, ...},          # поле 49
+ 1710 |               'by_section': {<раздел>: n, ...},      # поле 151
+ 1711 |               'by_mhr': {<МХР>: n, ...},             # фонды (поле 148)
+ 1712 |               'fields': {'45': {...}, '48': {...}, ...},  # тот же расклад под № полей
+ 1713 |               'todo': [<нераскрытые в recon грани>], # #CMPL-05
+ 1714 |             }
+ 1715 | 
+ 1716 |         TODO(recon #CMPL-05): точные алгоритмы заполнения авто-полей
+ 1717 |         17/18/19/44/744/45/48/49/145–158 (членение наименований 17→18/19, направления
+ 1718 |         44, печатные/непечатные 145–150, ВУЗ 158/248/249) — во ВНЕШНЕМ Мастере
+ 1719 |         «Пополнение записи КСУ», построчно НЕ транскрибированы. Здесь НЕ домысливаем:
+ 1720 |         считаем лишь сумматоры (наименования/экземпляры) и наблюдаемые на экземплярах
+ 1721 |         грани (тип/язык/УДК/ББК/раздел/МХР); нераскрытые членения помечаем в ``todo``.
+ 1722 |         """
+ 1723 |         if not ksu_no or not str(ksu_no).strip():
+ 1724 |             raise AcquisitionError('distribute_ksu_batch requires a КСУ number')
+ 1725 |         ksu_no = str(ksu_no).strip()
+ 1726 |         rows = list(exemplars) if exemplars is not None \
+ 1727 |             else self._collect_exemplars_for_distribution(ksu_no, catalog_db)
+ 1728 | 
+ 1729 |         def bucket(getter):
+ 1730 |             out = {}
+ 1731 |             for ex in rows:
+ 1732 |                 if not isinstance(ex, dict):
+ 1733 |                     continue
+ 1734 |                 key = getter(ex)
+ 1735 |                 if key is None or str(key).strip() == '':
+ 1736 |                     continue
+ 1737 |                 out[str(key)] = out.get(str(key), 0) + 1
+ 1738 |             return out
+ 1739 | 
+```
+
+<!-- ─── страница 136 ─── -->
+
+```py
+ 1740 |         def pick(ex, *keys):
+ 1741 |             for k in keys:
+ 1742 |                 v = ex.get(k) if isinstance(ex, dict) else None
+ 1743 |                 if v not in (None, ''):
+ 1744 |                     return v
+ 1745 |             return None
+ 1746 | 
+ 1747 |         by_type = bucket(lambda ex: pick(ex, '45', 'type', 'lang', 'language'))
+ 1748 |         by_udk = bucket(lambda ex: pick(ex, '48', 'udk', 'UDK', '675'))
+ 1749 |         by_bbk = bucket(lambda ex: pick(ex, '49', 'bbk', 'BBK', '621'))
+ 1750 |         by_section = bucket(lambda ex: pick(ex, '151', 'section', 'razdel'))
+ 1751 |         by_mhr = bucket(lambda ex: pick(ex, 'd', 'D', 'mhr', 'MHR'))
+ 1752 | 
+ 1753 |         copies = len([ex for ex in rows if isinstance(ex, dict)])
+ 1754 |         # «наименование» в партии — этот №КСУ относится к одной партии приёма, но
+ 1755 |         # партия может нести несколько наименований; считаем наименования по числу
+ 1756 |         # различных записей каталога, иначе (только ledger) — базово 1 на партию.
+ 1757 |         titles = self._count_titles(ksu_no, rows, catalog_db)
+ 1758 | 
+ 1759 |         result = {
+ 1760 |             'ksu_no': ksu_no,
+ 1761 |             '17': titles,
+ 1762 |             'copies': copies,
+ 1763 |             'by_type': by_type,
+ 1764 |             'by_udk': by_udk,
+ 1765 |             'by_bbk': by_bbk,
+ 1766 |             'by_section': by_section,
+ 1767 |             'by_mhr': by_mhr,
+ 1768 |             'fields': {'45': by_type, '48': by_udk, '49': by_bbk,
+ 1769 |                        '151': by_section, '148': by_mhr},
+ 1770 |             # нераскрытые в recon членения (#CMPL-05) — НЕ заполняем, лишь называем.
+ 1771 |             'todo': ['18', '19', '44', '744', '145', '146', '147', '149', '150',
+ 1772 |                      '155', '158', '248', '249'],
+ 1773 |         }
+ 1774 |         return result
+ 1775 | 
+ 1776 |     def _collect_exemplars_for_distribution(self, ksu_no, catalog_db):
+ 1777 |         """Собрать экземпляры партии для авто-распределения (5.3).
+ 1778 | 
+ 1779 |         Если подключён catalog-handle — берёт записи ЭК, несущие экз. с
+ 1780 |         ``910^U==ksu_no``, и собирает их грани (тип/язык/УДК/ББК/раздел) с самой
+ 1781 |         записи + МХР с экземпляра. Иначе — деградирует до ledger'а (только инв.№,
+ 1782 |         без граней). Best-effort, наружу не бросает."""
+ 1783 |         invs = self.store.inventory_for_ksu(ksu_no)
+ 1784 |         if self.catalog is None:
+ 1785 |             return [{'b': inv} for inv in invs]
+ 1786 |         db = catalog_db or self.catalog_db
+ 1787 |         rows = []
+ 1788 |         try:
+ 1789 |             scan = self._scan_catalog_ksu(db, ksu_no)
+ 1790 |             seen_mfn = {}
+ 1791 |             for hit in scan:
+ 1792 |                 mfn = hit['mfn']
+ 1793 |                 rec = seen_mfn.get(mfn)
+ 1794 |                 if rec is None:
+```
+
+<!-- ─── страница 137 ─── -->
+
+```py
+ 1795 |                     rec = self.catalog.get(db, mfn) or {}
+ 1796 |                     seen_mfn[mfn] = rec
+ 1797 |                 rows.append(self._exemplar_facets(rec, hit['inv_no'], ksu_no))
+ 1798 |             if rows:
+ 1799 |                 return rows
+ 1800 |         except Exception:
+ 1801 |             pass
+ 1802 |         return [{'b': inv} for inv in invs]
+ 1803 | 
+ 1804 |     @staticmethod
+ 1805 |     def _exemplar_facets(record, inv_no, ksu_no):
+ 1806 |         """Грани экземпляра для распределения: тип/язык (101), УДК (675), ББК (621),
+ 1807 |         раздел (621/906), МХР (910^d) — НАБЛЮДАЕМЫЕ на записи/экземпляре.
+ 1808 | 
+ 1809 |         Поле 45 «по типу/языку» в записи КСУ выводится из языка БО (101) — берём
+ 1810 |         язык записи; УДК/ББК — из 675/621; раздел — базово из ББК (621) как
+ 1811 |         наблюдаемая грань (точное членение разделов 151 — #CMPL-05); МХР — из
+ 1812 |         конкретного экземпляра 910^d."""
+ 1813 |         facet = {'b': str(inv_no)}
+ 1814 |         lang = _first_value(record, '101', '') or _first_value(record, '101', 'a')
+ 1815 |         if lang:
+ 1816 |             facet['45'] = str(lang)
+ 1817 |         udk = _first_value(record, '675', 'a') or _first_value(record, '675', '')
+ 1818 |         if udk:
+ 1819 |             facet['48'] = str(udk)
+ 1820 |         bbk = _first_value(record, '621', 'a') or _first_value(record, '621', '')
+ 1821 |         if bbk:
+ 1822 |             facet['49'] = str(bbk)
+ 1823 |             facet['151'] = str(bbk)            # раздел ≈ ББК (наблюдаемая грань)
+ 1824 |         # МХР конкретного экземпляра (910^d) по его инв.№.
+ 1825 |         for inst in _as_list(record.get('910')):
+ 1826 |             if isinstance(inst, dict) and \
+ 1827 |                     str(inst.get('b') or inst.get('B') or '') == str(inv_no):
+ 1828 |                 mhr = inst.get('d') or inst.get('D')
+ 1829 |                 if mhr:
+ 1830 |                     facet['d'] = str(mhr)
+ 1831 |                 break
+ 1832 |         return facet
+ 1833 | 
+ 1834 |     def _count_titles(self, ksu_no, rows, catalog_db):
+ 1835 |         """Число наименований партии (поле 17): различные записи ЭК с экз. этой КСУ.
+ 1836 | 
+ 1837 |         С catalog-handle — число различных mfn в скане по №КСУ. Без handle (или
+ 1838 |         нет каталога) — базово 1 наименование на запись КСУ (учётная единица КСУ —
+ 1839 |         запись поступления партии; членение наименований 17→18/19 — #CMPL-05)."""
+ 1840 |         if self.catalog is None:
+ 1841 |             return 1 if rows else 0
+ 1842 |         try:
+ 1843 |             db = catalog_db or self.catalog_db
+ 1844 |             mfns = {h['mfn'] for h in self._scan_catalog_ksu(db, ksu_no)}
+ 1845 |             if mfns:
+ 1846 |                 return len(mfns)
+ 1847 |         except Exception:
+ 1848 |             pass
+ 1849 |         return 1 if rows else 0
+```
+
+<!-- ─── страница 138 ─── -->
+
+```py
+ 1850 | 
+ 1851 | 
+ 1852 | # --------------------------------------------------------------------------- #
+ 1853 | # Record-draft accessors (local copies so the module is self-contained — same
+ 1854 | # semantics as catalog.py's _field_values, but we only need the first value).
+ 1855 | # --------------------------------------------------------------------------- #
+ 1856 | def _first_value(record, field, subfield):
+ 1857 |     """First non-empty value of ``field``'s ``subfield`` in a record, or ''."""
+ 1858 |     raw = record.get(field) if record else None
+ 1859 |     if raw is None:
+ 1860 |         return ''
+ 1861 |     insts = raw if isinstance(raw, list) else [raw]
+ 1862 |     for inst in insts:
+ 1863 |         if isinstance(inst, dict):
+ 1864 |             v = inst.get(subfield) or inst.get(subfield.upper()) or ''
+ 1865 |         else:
+ 1866 |             v = inst if subfield in ('', None) else ''
+ 1867 |         if v:
+ 1868 |             return str(v)
+ 1869 |     return ''
 ```
 
 ### Файл: `irbis-web/backend/access/bookprovision.py`  · строк: 935
@@ -7730,11 +8304,6 @@
     7 | slice: a *self-contained* engine over its own sqlite store that models the
     8 | curriculum linkage («связка») Факультет→Направление→Специальность→Дисциплина,
     9 | binds recommended literature (titles) to a discipline, and computes the
-```
-
-<!-- ─── страница 129 ─── -->
-
-```py
    10 | book-provision coefficient (Кко = exemplars ÷ contingent) with the exact 4-cell
    11 | division-by-zero policy of SPEC E1 §2.2.
    12 | 
@@ -7761,6 +8330,11 @@
    33 | A standalone domain engine: pure stdlib + ``sqlite3`` (dev parity, ADR-004), no
    34 | network I/O, no new pip deps, no edits to the landed modules. It is deliberately
    35 | self-contained — it carries its own «связка» store — but when a read-only
+```
+
+<!-- ─── страница 139 ─── -->
+
+```py
    36 | ``catalog`` handle (an :class:`access.catalog.CatalogStore`) is wired it reads
    37 | live exemplar counts (910 copies) from the catalog instead of the copy counts
    38 | recorded inline on the binding. The catalog is **read only**: this module never
@@ -7790,11 +8364,6 @@
    62 | 
    63 | The Кко coefficient + edge policy (SPEC E1 §2.1/§2.2, AC3/AC4)
    64 | -------------------------------------------------------------
-```
-
-<!-- ─── страница 130 ─── -->
-
-```py
    65 | For a discipline (its bound literature ``copies`` and its contingent of
    66 | ``students``)::
    67 | 
@@ -7821,6 +8390,11 @@
    88 | per-specialty summary rolls those up and lists the under-provisioned disciplines
    89 | with their shortfall = ``ceil(students * kko_norm) - exemplars`` (the §2.6
    90 | дозаказ добор).
+```
+
+<!-- ─── страница 140 ─── -->
+
+```py
    91 | """
    92 | import math
    93 | import sqlite3
@@ -7850,11 +8424,6 @@
   117 | 
   118 | 
   119 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 131 ─── -->
-
-```py
   120 | # Schema. Own tables — does NOT touch the catalog / AccessStore schema.
   121 | # Created on init. (PG DDL parity: access/schema_bookprovision.sql.)
   122 | # --------------------------------------------------------------------------- #
@@ -7881,6 +8450,11 @@
   143 |   specialty_id INTEGER NOT NULL REFERENCES bp_specialty(id) ON DELETE CASCADE,
   144 |   disc_id TEXT NOT NULL,                -- field 3^0 идентификатор дисциплины
   145 |   name TEXT NOT NULL DEFAULT '',        -- field 3^a наименование
+```
+
+<!-- ─── страница 141 ─── -->
+
+```py
   146 |   semester TEXT NOT NULL DEFAULT '',    -- 83/68 ^F семестр(ы)
   147 |   students INTEGER NOT NULL DEFAULT 0,  -- contingent (RDR count or 68^Z)
   148 |   students_source TEXT NOT NULL DEFAULT '68z',  -- 'rdr' | '68z' (audit, AC5)
@@ -7910,11 +8484,6 @@
   172 | # Pure Кко math — kept module-level so it is testable in complete isolation
   173 | # (no store, no catalog), exactly the SPEC E1 §2.2 4-cell policy.
   174 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 132 ─── -->
-
-```py
   175 | def kko(exemplars, students):
   176 |     """Book-provision coefficient Кко = exemplars / students (SPEC E1 §2.1/§2.2).
   177 | 
@@ -7941,6 +8510,11 @@
   198 |     NULL (``None``) values — «нет данных» — are dropped from both the sum and the
   199 |     count. With ``normalize`` each term is capped at 1 (``min(Кко_i, 1)``) so
   200 |     over-provision of one title cannot mask a deficit in another (SPEC E1 §2.4,
+```
+
+<!-- ─── страница 142 ─── -->
+
+```py
   201 |     AC6). Returns ``None`` when every value is NULL (nothing to average)."""
   202 |     present = [v for v in values if v is not None]
   203 |     if not present:
@@ -7970,11 +8544,6 @@
   227 |     db_path : str
   228 |         sqlite path. Use ``':memory:'`` or a temp file in tests.
   229 |     catalog : object | None
-```
-
-<!-- ─── страница 133 ─── -->
-
-```py
   230 |         Optional read-only :class:`access.catalog.CatalogStore` handle. When
   231 |         wired, exemplar counts are read live from the catalog (910 copies of the
   232 |         bound holding, by inventory key 910^b) instead of the binding's inline
@@ -8001,6 +8570,11 @@
   253 |         ``rdr.count_students(linkage)`` where ``linkage`` is the связка dict
   254 |         ``{A,L,N,C,V,O,F}`` (or a ``count_by_linkage``/``students`` alias). A
   255 |         ``None`` return (or any error / no handle) degrades to the recorded
+```
+
+<!-- ─── страница 143 ─── -->
+
+```py
   256 |         ``68^Z`` count — the ``ACCESSRDR=0`` fallback — so the engine never
   257 |         crashes on an out-of-sync RDR (back-compat).
   258 |     kko_norm : dict | None
@@ -8030,11 +8604,6 @@
   282 |         return c
   283 | 
   284 |     def ensure_schema(self):
-```
-
-<!-- ─── страница 134 ─── -->
-
-```py
   285 |         c = self._conn()
   286 |         c.executescript(SCHEMA_SQLITE)
   287 |         c.commit()
@@ -8061,6 +8630,11 @@
   308 |         conn.commit()
   309 |         return cur.lastrowid
   310 | 
+```
+
+<!-- ─── страница 144 ─── -->
+
+```py
   311 |     def add_specialty(self, faculty_id, napr='', spec='', vid='', form='',
   312 |                       name='', fili=''):
   313 |         """Bind a Направление/Специальность (the связка ``^N``/``^C`` + вид/форма
@@ -8090,11 +8664,6 @@
   337 |         conn.commit()
   338 |         return cur.lastrowid
   339 | 
-```
-
-<!-- ─── страница 135 ─── -->
-
-```py
   340 |     def add_discipline(self, specialty_id, disc_id, name='', semester='',
   341 |                        students=0, students_source='68z'):
   342 |         """Attach a учебная дисциплина (field 3^0 ``disc_id``) read by a specialty
@@ -8121,6 +8690,11 @@
   363 |             conn.execute(
   364 |                 '''UPDATE bp_discipline SET name=?, students=?, students_source=?
   365 |                    WHERE id=?''',
+```
+
+<!-- ─── страница 145 ─── -->
+
+```py
   366 |                 (name, students, students_source, row['id']))
   367 |             conn.commit()
   368 |             return row['id']
@@ -8150,11 +8724,6 @@
   392 | 
   393 |     # ------------------------------------------------------------------- #
   394 |     # Bind recommended literature to a discipline (field 691, kind 691^G).
-```
-
-<!-- ─── страница 136 ─── -->
-
-```py
   395 |     # ------------------------------------------------------------------- #
   396 |     def bind_literature(self, discipline_id, title, kind=KIND_MAIN,
   397 |                         copies=0, catalog_db=None, inv_key=None):
@@ -8181,6 +8750,11 @@
   418 |         return cur.lastrowid
   419 | 
   420 |     # ------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 146 ─── -->
+
+```py
   421 |     # Exemplar count — from the catalog (910) when wired, else recorded copies.
   422 |     # ------------------------------------------------------------------- #
   423 |     def _binding_exemplars(self, binding_row):
@@ -8210,11 +8784,6 @@
   447 |                     return 1
   448 |                 # Issued copy: still фонд if circulation has it on an on-hand loan.
   449 |                 # Кко must not drop a checked-out book to 0 — it IS provided, just
-```
-
-<!-- ─── страница 137 ─── -->
-
-```py
   450 |                 # currently in use (INTEGRATION_MAP ребро 4.4/4.7).
   451 |                 if self._on_hand_in_circulation(key):
   452 |                     return 1
@@ -8241,6 +8810,11 @@
   473 |             return False
   474 | 
   475 |     # ------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 147 ─── -->
+
+```py
   476 |     # Студенты (контингент) — the RDR side of the full ККО aggregate.
   477 |     #   RDR by связка (ACCESSRDR=1, &uf('JRDR,LN=<связка>')) when an rdr handle is
   478 |     #   wired, else the inline 68^Z count (ACCESSRDR=0). DB_VUZ §6.2.
@@ -8270,11 +8844,6 @@
   502 | 
   503 |     def _students_from_rdr(self, linkage):
   504 |         """Count students from the RDR handle by связка (None if no opinion).
-```
-
-<!-- ─── страница 138 ─── -->
-
-```py
   505 | 
   506 |         Read-only probe of the optional ``rdr`` handle (the ``ACCESSRDR=1`` path,
   507 |         ``&uf('JRDR,LN=<связка>')``). Duck-typed: tries ``count_students`` /
@@ -8301,6 +8870,11 @@
   528 | 
   529 |         RDR by связка when an ``rdr`` handle is wired and has an opinion
   530 |         (``source='rdr'``, ``ACCESSRDR=1``); otherwise the inline ``68^Z`` count
+```
+
+<!-- ─── страница 148 ─── -->
+
+```py
   531 |         recorded on the discipline (``source='68z'``, ``ACCESSRDR=0``). This is the
   532 |         students side of the full cross-БД ККО aggregate IBIS(экз)×RDR(студенты)."""
   533 |         n = self._students_from_rdr(self._linkage_for(discipline_row))
@@ -8330,11 +8904,6 @@
   557 |              bindings:[{binding_id, title, kind, exemplars, kko}],
   558 |              average_kko, kko_norm, under_provisioned, shortfall}
   559 |         """
-```
-
-<!-- ─── страница 139 ─── -->
-
-```py
   560 |         d = self._discipline_row(discipline_id)
   561 |         if d is None:
   562 |             raise BookProvisionError('unknown discipline_id %r' % (discipline_id,))
@@ -8361,6 +8930,11 @@
   583 |             bindings.append({
   584 |                 'binding_id': r['id'], 'title': r['title'], 'kind': r['kind'],
   585 |                 'exemplars': ex, 'kko': coeff,
+```
+
+<!-- ─── страница 149 ─── -->
+
+```py
   586 |             })
   587 |         avg = average_kko(kko_values, normalize=normalize)
   588 |         # Under-provisioned: has consumers, average is defined and below norm.
@@ -8390,11 +8964,6 @@
   612 |         (SPEC E1 §2.4: NULL disciplines excluded)."""
   613 |         if not self._specialty_exists(specialty_id):
   614 |             raise BookProvisionError('unknown specialty_id %r' % (specialty_id,))
-```
-
-<!-- ─── страница 140 ─── -->
-
-```py
   615 |         rows = self._conn().execute(
   616 |             'SELECT id FROM bp_discipline WHERE specialty_id=? ORDER BY id',
   617 |             (specialty_id,)).fetchall()
@@ -8421,6 +8990,11 @@
   638 |         }
   639 | 
   640 |     # ------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 150 ─── -->
+
+```py
   641 |     # Полный кросс-БД агрегат ККО IBIS(экз)×RDR(студенты) — ребро 4.4.
   642 |     # ------------------------------------------------------------------- #
   643 |     def provision_aggregate(self, faculty_id=None, specialty_id=None,
@@ -8450,11 +9024,6 @@
   667 |              total_exemplars, total_students, students_sources,
   668 |              aggregate_kko, average_kko,
   669 |              under_provisioned:[...], total_shortfall}
-```
-
-<!-- ─── страница 141 ─── -->
-
-```py
   670 |         """
   671 |         disc_ids = self._scope_discipline_ids(faculty_id, specialty_id)
   672 |         total_exemplars = 0
@@ -8481,6 +9050,11 @@
   693 |                 })
   694 |             total_shortfall += rep['shortfall']
   695 |         # Σэкз/Σстуд: undefined (None) when no students anywhere — NULL «нет данных»
+```
+
+<!-- ─── страница 151 ─── -->
+
+```py
   696 |         # rather than a misleading 0 (consistent with the per-binding policy).
   697 |         aggregate = (total_exemplars / total_students) if total_students > 0 \
   698 |             else None
@@ -8510,11 +9084,6 @@
   722 |         elif faculty_id is not None:
   723 |             if not self._faculty_exists(faculty_id):
   724 |                 raise BookProvisionError('unknown faculty_id %r' % (faculty_id,))
-```
-
-<!-- ─── страница 142 ─── -->
-
-```py
   725 |             rows = conn.execute(
   726 |                 '''SELECT d.id FROM bp_discipline d
   727 |                    JOIN bp_specialty s ON s.id=d.specialty_id
@@ -8541,6 +9110,11 @@
   748 |         from the holding's inventory key (``910^b`` → ``find_exemplar``)."""
   749 |         if mfn is not None:
   750 |             return mfn
+```
+
+<!-- ─── страница 152 ─── -->
+
+```py
   751 |         key = binding_row['inv_key'] if binding_row is not None else None
   752 |         if not key:
   753 |             return None
@@ -8570,11 +9144,6 @@
   777 |         return inst
   778 | 
   779 |     @staticmethod
-```
-
-<!-- ─── страница 143 ─── -->
-
-```py
   780 |     def _instances(record, tag):
   781 |         """Field ``tag`` of a record as a list of instance dicts (never None)."""
   782 |         insts = record.get(tag)
@@ -8601,6 +9170,11 @@
   803 |         an explicit ``mfn`` when given. **Idempotent on ``(mfn, disc_id)``**: an
   804 |         existing 691 for the same дисциплина on that record is refreshed in place,
   805 |         never duplicated.
+```
+
+<!-- ─── страница 153 ─── -->
+
+```py
   806 | 
   807 |         The catalog is reached ONLY through the wired handle (``catalog.get`` to
   808 |         read the record, ``catalog.save`` to write it back). Raises
@@ -8630,11 +9204,6 @@
   832 |                 db = catalog_db or b['catalog_db']
   833 |                 rmfn = self._resolve_mfn(db, b, None)
   834 |                 if db is None or rmfn is None:
-```
-
-<!-- ─── страница 144 ─── -->
-
-```py
   835 |                     continue
   836 |                 targets[(db, rmfn)] = b['kind']
   837 |         if not targets:
@@ -8661,6 +9230,11 @@
   858 |             record[FIELD_LINK] = insts
   859 |             cat.save(db, record, mfn=tmfn)
   860 |             results.append({'mfn': tmfn, 'disc_id': d['disc_id'],
+```
+
+<!-- ─── страница 154 ─── -->
+
+```py
   861 |                             'kind': use_kind, 'created': not replaced})
   862 |         return results
   863 | 
@@ -8690,11 +9264,6 @@
   887 |             else:
   888 |                 keep.append(inst)
   889 |         if not moved:
-```
-
-<!-- ─── страница 145 ─── -->
-
-```py
   890 |             return False
   891 |         record[FIELD_LINK] = keep
   892 |         archive = self._instances(record, FIELD_ARCHIVE)
@@ -8721,6 +9290,11 @@
   913 |             'SELECT 1 FROM bp_discipline WHERE id=?', (discipline_id,)) \
   914 |             .fetchone() is not None
   915 | 
+```
+
+<!-- ─── страница 155 ─── -->
+
+```py
   916 |     def _discipline_row(self, discipline_id):
   917 |         return self._conn().execute(
   918 |             'SELECT * FROM bp_discipline WHERE id=?', (discipline_id,)).fetchone()
@@ -8755,11 +9329,6 @@
     7 | 
     8 | What this module is
     9 | -------------------
-```
-
-<!-- ─── страница 146 ─── -->
-
-```py
    10 | A *declarative* validator: each rule is a plain dict (the schema of SPEC §1.1);
    11 | the engine evaluates a record draft (field/subfield dict) against the active
    12 | ruleset and returns a list of violations with ИРБИС result semantics 0/1/2
@@ -8786,6 +9355,11 @@
    33 | Predicate kinds implemented in THIS slice
    34 | -----------------------------------------
    35 |   * ``mandatory``   — field (and optional subfield) present & non-empty.
+```
+
+<!-- ─── страница 156 ─── -->
+
+```py
    36 |   * ``dictionary``  — value ∈ a seeded A5 vocabulary (calls the access store's
    37 |                       ``vocabulary_values`` — does NOT duplicate seeding).
    38 |   * ``isbn_checksum`` / ``issn_checksum`` — the real ISO check-digit algorithm.
@@ -8815,11 +9389,6 @@
    62 | SEV_HARD = 1   # непреодолимая — сохранение блокируется
    63 | SEV_SOFT = 2   # преодолимая — можно сохранить с подтверждением
    64 | 
-```
-
-<!-- ─── страница 147 ─── -->
-
-```py
    65 | 
    66 | # --------------------------------------------------------------------------- #
    67 | # Record-draft accessors. A field can be: a bare string, a {subfield:val} dict,
@@ -8846,6 +9415,11 @@
    88 |             or inst.get(subfield.upper()) or ''
    89 |     # bare string instance: only the whole-field value exists
    90 |     return inst if subfield is None else ''
+```
+
+<!-- ─── страница 157 ─── -->
+
+```py
    91 | 
    92 | 
    93 | def value(record, field, subfield=None):
@@ -8875,11 +9449,6 @@
   117 | 
   118 | 
   119 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 148 ─── -->
-
-```py
   120 | # Check digits (real algorithms — SPEC AC4). isbn implements both ISBN-10 (mod 11,
   121 | # 'X'=10) and ISBN-13 (EAN mod 10). issn is mod 11 with 'X'=10.
   122 | # --------------------------------------------------------------------------- #
@@ -8906,6 +9475,11 @@
   143 |         return total % 11 == 0
   144 |     if len(s) == 13:
   145 |         if not s.isdigit():
+```
+
+<!-- ─── страница 158 ─── -->
+
+```py
   146 |             return False
   147 |         total = sum((1 if i % 2 == 0 else 3) * (ord(c) - 48) for i, c in enumerate(s))
   148 |         return total % 10 == 0
@@ -8935,11 +9509,6 @@
   172 | # 920 branching (SPEC §2.2). Masks: exact value ('J') or prefix ('NJ*' ≡ v920:'NJ').
   173 | # --------------------------------------------------------------------------- #
   174 | def _mask_matches(record_type, mask):
-```
-
-<!-- ─── страница 149 ─── -->
-
-```py
   175 |     if mask.endswith('*'):
   176 |         return record_type.startswith(mask[:-1])
   177 |     return record_type == mask
@@ -8966,6 +9535,11 @@
   198 | 
   199 |     Case-insensitive on the code (ИРБИС dictionary codes are matched loosely). If
   200 |     the store can't answer (no vocab tables / missing dict), returns None so the
+```
+
+<!-- ─── страница 159 ─── -->
+
+```py
   201 |     caller can treat it as 'unknown' rather than a false violation."""
   202 |     if store is None or not code:
   203 |         return None
@@ -8995,11 +9569,6 @@
   227 |     if w == 'absent':
   228 |         return not present(record, rule['field'], rule.get('subfield'))
   229 |     # Anything richer is an A1 expression — be permissive (evaluate the rule).
-```
-
-<!-- ─── страница 150 ─── -->
-
-```py
   230 |     return True
   231 | 
   232 | 
@@ -9026,6 +9595,11 @@
   253 |     except Exception as e:                       # noqa: BLE001 (isolate per SPEC AC11)
   254 |         return _engine_error(rule, 'rule not evaluated: %s' % e)
   255 | 
+```
+
+<!-- ─── страница 160 ─── -->
+
+```py
   256 | 
   257 | _STUB = object()   # sentinel: predicate intentionally not wired (no backing store)
   258 | 
@@ -9055,11 +9629,6 @@
   282 | 
   283 | 
   284 | def _pred_regex(rule, record, ctx):
-```
-
-<!-- ─── страница 151 ─── -->
-
-```py
   285 |     v = value(record, rule['field'], rule.get('subfield'))
   286 |     if not v:
   287 |         return False
@@ -9086,6 +9655,11 @@
   308 | 
   309 | 
   310 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 161 ─── -->
+
+```py
   311 | # Authority-link (^3) integrity — INTEGRATION_MAP edge 6.3, SPEC_service_authority
   312 | # §0/§4.3. Each heading field (700/701/710/606/607/…) may carry ``^3`` = the
   313 | # authority record number; ФЛК checks the link resolves against the authority
@@ -9115,11 +9689,6 @@
   337 |     bound authority db; a None result == dangling link. A ``^3`` that isn't an
   338 |     integer-coercible id is also reported as broken (malformed reference)."""
   339 |     broken = []
-```
-
-<!-- ─── страница 152 ─── -->
-
-```py
   340 |     for tag, (db, _kind) in AUTHORITY_LINK_FIELDS.items():
   341 |         for i, inst in enumerate(_instances(record, tag)):
   342 |             ref = _inst_value(inst, '3')
@@ -9146,6 +9715,11 @@
   363 |     authority = ctx.get('authority')
   364 |     if authority is None:
   365 |         return _STUB
+```
+
+<!-- ─── страница 162 ─── -->
+
+```py
   366 |     broken = _authref_broken(record, authority)
   367 |     if not broken:
   368 |         return False
@@ -9175,11 +9749,6 @@
   392 |         'subfield': rule.get('subfield'),
   393 |     }
   394 | 
-```
-
-<!-- ─── страница 153 ─── -->
-
-```py
   395 | 
   396 | def _engine_error(rule, detail):
   397 |     return {
@@ -9206,6 +9775,11 @@
   418 |     msg = rule.get('message', '')
   419 | 
   420 |     def repl(m):
+```
+
+<!-- ─── страница 163 ─── -->
+
+```py
   421 |         return value(record, m.group(1), m.group(2)) or ''
   422 |     msg = _TEMPLATE.sub(repl, msg)
   423 |     if '{{authref}}' in msg:
@@ -9235,11 +9809,6 @@
   447 |         'id': 'rec.200a.mandatory', 'source': 'dbnflc.pft#6',
   448 |         'scope': 'record', 'field': '200', 'subfield': 'a',
   449 |         'branch': {'field': '920', 'match': ['NJ*', 'A*'], 'negate': True},
-```
-
-<!-- ─── страница 154 ─── -->
-
-```py
   450 |         'predicate': 'mandatory',
   451 |         'severity': SEV_HARD,
   452 |         'message': 'Ошибка : Отсутствует заглавие', 'path': '200/a',
@@ -9266,6 +9835,11 @@
   473 |     },
   474 |     # (4) doc-type dictionary 900^b — !900.PFT, vd.mnu, FLC §2.2. Преодолимо (2).
   475 |     {
+```
+
+<!-- ─── страница 164 ─── -->
+
+```py
   476 |         'id': 'fld.900.doctype.dict', 'source': '!900.PFT',
   477 |         'scope': 'subfield', 'field': '900', 'subfield': 'b',
   478 |         'predicate': 'dictionary', 'vocab': 'vd.mnu', 'when': 'present',
@@ -9295,11 +9869,6 @@
   502 |     },
   503 |     # (7) duplicate inv# 910^b — dbnflc.pft#7, IN= index, FLC §1. STUB: no catalog
   504 |     #     index store yet -> the predicate is wired but never fires without a
-```
-
-<!-- ─── страница 155 ─── -->
-
-```py
   505 |     #     ``dup_index`` in ctx (carried, not lost). Преодолимо (2).
   506 |     {
   507 |         'id': 'rec.910b.dup.inv', 'source': 'dbnflc.pft#7',
@@ -9326,6 +9895,11 @@
   528 |         'phase': 'save', 'enabled': True,
   529 |     },
   530 |     # (8b) ФИО исполнителя with TODAY's date — needs &unifor('3') (A1). Carried
+```
+
+<!-- ─── страница 165 ─── -->
+
+```py
   531 |     #      disabled so the full rule is registered and not lost.
   532 |     {
   533 |         'id': 'rec.907.fio.today', 'source': 'dbnflc.pft#1',
@@ -9355,11 +9929,6 @@
   557 | ]
   558 | 
   559 | 
-```
-
-<!-- ─── страница 156 ─── -->
-
-```py
   560 | # --------------------------------------------------------------------------- #
   561 | # Ruleset loading + per-tenant override overlay (SPEC §3).
   562 | # --------------------------------------------------------------------------- #
@@ -9386,6 +9955,11 @@
   583 |         ov = overrides.get(canon['id'])
   584 |         if ov:
   585 |             if ov.get('enabled') is not None:
+```
+
+<!-- ─── страница 166 ─── -->
+
+```py
   586 |                 eff['enabled'] = bool(ov['enabled'])
   587 |             if ov.get('severity') is not None:
   588 |                 new_sev = int(ov['severity'])
@@ -9415,11 +9989,6 @@
   612 |       6. aggregate: overallSeverity = worst, canSave = (overall != 1), sorted list.
   613 | 
   614 |     Returns ``{overallSeverity, canSave, violations:[...]}``."""
-```
-
-<!-- ─── страница 157 ─── -->
-
-```py
   615 |     if ruleset is None:
   616 |         ruleset = load_ruleset(tenant_overrides)
   617 |     record_type = value(record, '920') or ''
@@ -9446,6 +10015,11 @@
   638 |             fld = 0
   639 |         return (is_920, fld, r['id'])
   640 |     active.sort(key=_order_key)
+```
+
+<!-- ─── страница 167 ─── -->
+
+```py
   641 | 
   642 |     violations = []
   643 |     for rule in active:
@@ -9480,11 +10054,6 @@
 ```py
     1 | #!/usr/bin/env python3
     2 | """Authority-files service — first shippable slice (gap A4, epic #188).
-```
-
-<!-- ─── страница 158 ─── -->
-
-```py
     3 | 
     4 | Self-contained sqlite store + lookup + substitution pipeline for the six
     5 | ИРБИС authority bases (ATHRA/C/S/G/U/B), unified onto one polymorphic
@@ -9511,6 +10080,11 @@
    26 |     (SPEC §3.4, port of ``autoin.gbl``) for the REVERSE edge «catalog → ATHR*»
    27 |     (INTEGRATION_MAP 6.2): a catalog heading (700/710/606/…) saved WITHOUT ``^3``
    28 |     is folded to an alcode, linked to an existing authority record by that alcode
+```
+
+<!-- ─── страница 168 ─── -->
+
+```py
    29 |     or, failing that, materialised as a fresh ``needs_review`` record. Returns
    30 |     ``(authority_id, created)`` — the id to thread into ``^3``.
    31 | 
@@ -9540,11 +10114,6 @@
    55 | DB_TO_KIND = {
    56 |     'athra': 'personal',
    57 |     'athrc': 'corporate',
-```
-
-<!-- ─── страница 159 ─── -->
-
-```py
    58 |     'athrs': 'subject',
    59 |     'athrg': 'geographic',
    60 |     'athru': 'udc_index',
@@ -9571,6 +10140,11 @@
    81 |     '701': {'db': 'athra', 'kind': 'personal',
    82 |             'pairs': [('a', 'a'), ('b', 'b'), ('g', 'g'), ('f', 'f'), ('9', '9')]},
    83 |     # 702 — secondary responsibility.  Role ^4 left to the operator (not filled).
+```
+
+<!-- ─── страница 169 ─── -->
+
+```py
    84 |     '702': {'db': 'athra', 'kind': 'personal',
    85 |             'pairs': [('a', 'a'), ('b', 'b'), ('g', 'g')]},
    86 |     # 600 — persona (about whom).  Adds aspect ^9 + dates ^f.
@@ -9600,11 +10174,6 @@
   110 |     # 621 — BBK index.  ATHRB, prefix U=.  No ^3 link.
   111 |     '621': {'db': 'athrb', 'kind': 'bbk_index', 'link': False,
   112 |             'pairs': [('a', 'a')]},
-```
-
-<!-- ─── страница 160 ─── -->
-
-```py
   113 | }
   114 | 
   115 | 
@@ -9631,6 +10200,11 @@
   136 | );
   137 | CREATE INDEX IF NOT EXISTS authority_term_norm_idx ON authority_term(term_norm);
   138 | CREATE INDEX IF NOT EXISTS authority_term_rec_idx ON authority_term(authority_id);
+```
+
+<!-- ─── страница 170 ─── -->
+
+```py
   139 | """
   140 | 
   141 | 
@@ -9660,11 +10234,6 @@
   165 |     заполнено).  Порядок ключей фиксирован, поэтому ключ детерминирован."""
   166 |     parts = []
   167 |     for k in auth_keys:
-```
-
-<!-- ─── страница 161 ─── -->
-
-```py
   168 |         v = heading.get(k)
   169 |         if v:
   170 |             parts.append(_norm(v))
@@ -9691,6 +10260,11 @@
   191 |     """
   192 | 
   193 |     def __init__(self, db_path=':memory:'):
+```
+
+<!-- ─── страница 171 ─── -->
+
+```py
   194 |         self.db_path = db_path
   195 |         self._local = threading.local()
   196 |         self.ensure_schema()
@@ -9720,11 +10294,6 @@
   220 |         record is always findable by its own subfield text.  ``extra`` is merged
   221 |         into the stored record (e.g. worklist, see_410, classmarks).
   222 | 
-```
-
-<!-- ─── страница 162 ─── -->
-
-```py
   223 |         Returns the new record id, which is the ``^3`` link target.
   224 |         """
   225 |         db = db.lower()
@@ -9751,6 +10320,11 @@
   246 |         seen = set()
   247 |         for t in terms:
   248 |             if not t:
+```
+
+<!-- ─── страница 172 ─── -->
+
+```py
   249 |                 continue
   250 |             tn = _norm(t)
   251 |             if tn in seen:
@@ -9780,11 +10354,6 @@
   275 |         словарного поиска ``A=ТОЛС…``); ``mode='substring'`` matches anywhere.
   276 |         Empty store / no hit → ``[]`` (never an error — AC-L1).  Each hit is the
   277 |         full record dict with an added ``'matched'`` term for UI display, and a
-```
-
-<!-- ─── страница 163 ─── -->
-
-```py
   278 |         ready ``'fill_hint'`` echo of the heading (SPEC §2.1 ``fill`` block,
   279 |         AC-L4 — client doesn't reconstruct subfields).
   280 |         """
@@ -9811,6 +10380,11 @@
   301 |                 (row['aid'], pattern)).fetchone()
   302 |             rec['matched'] = mt['term'] if mt else None
   303 |             rec['fill_hint'] = dict(rec.get('heading_210', {}))
+```
+
+<!-- ─── страница 173 ─── -->
+
+```py
   304 |             hits.append(rec)
   305 |         return hits
   306 | 
@@ -9840,11 +10414,6 @@
   330 |     def autoin(self, catalog_field_tag, subfields, *, status='needs_review',
   331 |                worklist=None):
   332 |         """Авто-создать/привязать авторитетную запись по заголовку из БО.
-```
-
-<!-- ─── страница 164 ─── -->
-
-```py
   333 | 
   334 |         Порт `autoin.gbl` для **обратного** ребра «каталог → пополнение ATHR*»
   335 |         (INTEGRATION_MAP 6.2, SPEC §3.4): когда в БО сохраняется поле-заголовок
@@ -9871,6 +10440,11 @@
   356 |         # каталог-подполе -> авторитет-подполе по fill-map: собираем heading_210
   357 |         # авторитета из подполей каталог-поля.
   358 |         heading = {}
+```
+
+<!-- ─── страница 174 ─── -->
+
+```py
   359 |         for catalog_key, auth_key in spec['pairs']:
   360 |             v = subfields.get(catalog_key) if isinstance(subfields, dict) else None
   361 |             if not v and isinstance(subfields, dict):
@@ -9900,11 +10474,6 @@
   385 | def substitute(catalog_field_tag, authority_record):
   386 |     """Build the subfield patch to write into a catalog field from a chosen
   387 |     authority record (SPEC §3.1 steps map+link, §3.2 fill-map; AC-L4/AC-S1..S3).
-```
-
-<!-- ─── страница 165 ─── -->
-
-```py
   388 | 
   389 |     Returns a dict ``{catalog_subfield: value, …, '3': authority_id}`` —
   390 |     e.g. for a person in 700:
@@ -9931,6 +10500,11 @@
   411 |     if authority_record is None:
   412 |         raise AuthorityNotFound(
   413 |             'no authority record supplied for catalog field %s' % tag)
+```
+
+<!-- ─── страница 175 ─── -->
+
+```py
   414 | 
   415 |     # Cross-check the authority kind against the field binding (SPEC §3.3 MODATHR).
   416 |     rec_kind = authority_record.get('kind')
@@ -9965,11 +10539,6 @@
     5 | language that the ФЛК (A2, ``access/flk.py``) and глобальная корректировка (A3,
     6 | ``.gbl``) engines delegate to. It is the in-process module contract formalized in
     7 | SPEC_api_contracts §3.1 / mismatch M4:
-```
-
-<!-- ─── страница 166 ─── -->
-
-```py
     8 | 
     9 |     pft.eval(fmt, record, ctx)       -> str          # single-line result
    10 |     pft.eval_lines(fmt, record, ctx) -> list[str]    # multi-line (repeat groups)
@@ -9996,6 +10565,11 @@
    31 |   * Field refs: ``v200``, ``v200^a``, ``v200^*`` (first subfield), fragment
    32 |     ``v200^a*off.len`` / ``v1*3.3`` (SPEC §2).
    33 |   * ``mfn`` / ``mfn(d)`` — record number from ``ctx['mfn']`` (SPEC §2).
+```
+
+<!-- ─── страница 176 ─── -->
+
+```py
    34 |   * Literals: conditional ``"…"`` (once if the *adjacent* field is present),
    35 |     repeatable ``|…|`` (per instance, incl. ``|x|+`` prefix / ``+|x|`` suffix),
    36 |     unconditional ``'…'`` (always) (SPEC §5).
@@ -10025,11 +10599,6 @@
    60 | 
    61 | Graceful degradation
    62 | ---------------------
-```
-
-<!-- ─── страница 167 ─── -->
-
-```py
    63 | The engine NEVER raises on malformed/unsupported input: an unparsable construct
    64 | is skipped (emits ``''``), so a partially-understood real ``.pft`` still yields
    65 | the parts we understand rather than a 500. ``strict=True`` opts into raising
@@ -10056,6 +10625,11 @@
    86 | 
    87 |     def __init__(self, message, code=99):
    88 |         super().__init__(message)
+```
+
+<!-- ─── страница 177 ─── -->
+
+```py
    89 |         self.code = code
    90 | 
    91 | 
@@ -10085,11 +10659,6 @@
   115 |         return (inst.get(subfield) or inst.get(subfield.lower())
   116 |                 or inst.get(subfield.upper()) or '')
   117 |     # bare string instance: only the whole-field value exists
-```
-
-<!-- ─── страница 168 ─── -->
-
-```py
   118 |     return inst if (subfield is None or subfield == '') else ''
   119 | 
   120 | 
@@ -10116,6 +10685,11 @@
   141 | def field_values(record, tag, subfield=None):
   142 |     """All instances' subfield values (skipping empties)."""
   143 |     out = []
+```
+
+<!-- ─── страница 178 ─── -->
+
+```py
   144 |     for inst in _instances(record, tag):
   145 |         v = _inst_value(inst, subfield)
   146 |         if v:
@@ -10145,11 +10719,6 @@
   170 | # Self-contained: A1 owns the algorithm; A2 may delegate via &unifor('C'…).
   171 | # --------------------------------------------------------------------------- #
   172 | def _clean_ident(raw):
-```
-
-<!-- ─── страница 169 ─── -->
-
-```py
   173 |     s = (raw or '').upper().replace('-', '').replace(' ', '')
   174 |     return ''.join(c for c in s if c.isdigit() or c == 'X')
   175 | 
@@ -10176,6 +10745,11 @@
   196 |             return False
   197 |         total = sum((1 if i % 2 == 0 else 3) * (ord(c) - 48)
   198 |                     for i, c in enumerate(s))
+```
+
+<!-- ─── страница 179 ─── -->
+
+```py
   199 |         return total % 10 == 0
   200 |     if len(s) == 8:                      # ISSN
   201 |         total = 0
@@ -10205,11 +10779,6 @@
   225 |     """Register/override a UNIFOR handler keyed by its leading code char(s)."""
   226 |     UNIFOR[code] = fn
   227 | 
-```
-
-<!-- ─── страница 170 ─── -->
-
-```py
   228 | 
   229 | _MONTHS_NOM = ['', 'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
   230 |                'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
@@ -10236,6 +10805,11 @@
   251 |         return None
   252 |     try:
   253 |         return _dt.date(int(digits[0:4]), int(digits[4:6]), int(digits[6:8]))
+```
+
+<!-- ─── страница 180 ─── -->
+
+```py
   254 |     except ValueError:
   255 |         return None
   256 | 
@@ -10265,11 +10839,6 @@
   280 |     if sub == '1':
   281 |         return now.strftime('%m')
   282 |     if sub == '2':
-```
-
-<!-- ─── страница 171 ─── -->
-
-```py
   283 |         return now.strftime('%d')
   284 |     if sub == '3':
   285 |         return now.strftime('%y')
@@ -10296,6 +10865,11 @@
   306 |     # (&unifor('3C'v210^d)); prefer the in-spec tail, fall back to the value.
   307 |     payload = (sub[1:] + value) if len(sub) > 1 else (value or '')
   308 |     payload = payload.strip()
+```
+
+<!-- ─── страница 181 ─── -->
+
+```py
   309 |     today = now.date() if hasattr(now, 'date') else now
   310 |     # 3A — day of the year of the supplied YYYYMMDD (else today).
   311 |     if sub[0] == 'A':
@@ -10325,11 +10899,6 @@
   335 |     The value to check is the inline ``value`` (e.g. ``&unifor('C'v10^a)``)."""
   336 |     target = value if value else arg
   337 |     return '0' if isbn_issn_ok(target) else '1'
-```
-
-<!-- ─── страница 172 ─── -->
-
-```py
   338 | 
   339 | 
   340 | def _uf_occurrence(arg, value, ctx, record):
@@ -10356,6 +10925,11 @@
   361 | 
   362 | def _uf_lower(arg, value, ctx, record):
   363 |     """UNIFOR ``Q`` — lowercase the string (SPEC §9.1)."""
+```
+
+<!-- ─── страница 182 ─── -->
+
+```py
   364 |     return (value or arg or '').lower()
   365 | 
   366 | 
@@ -10385,11 +10959,6 @@
   390 |     whereas ``E`` re-joins on single spaces."""
   391 |     m = re.match(r'(\d+)(.*)$', arg, re.S)
   392 |     if not m:
-```
-
-<!-- ─── страница 173 ─── -->
-
-```py
   393 |         return value or ''
   394 |     n = int(m.group(1))
   395 |     src = value if value else m.group(2)
@@ -10416,6 +10985,11 @@
   416 | def _uf_substr_marker(arg, value, ctx, record):
   417 |     """UNIFOR ``G`` — substring relative to a marker char: ``GNA<string>``
   418 |     (PFT_LANGUAGE §9.1 / decompiled case ``0x33``-sibling).
+```
+
+<!-- ─── страница 183 ─── -->
+
+```py
   419 | 
   420 |     ``N`` = 0 → take the part *up to* (excluding) the marker; ``N`` = 1 → the
   421 |     part *from* (including) the marker. ``A`` is the marker character, with two
@@ -10445,11 +11019,6 @@
   445 |     'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
   446 |     'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm',
   447 |     'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
-```
-
-<!-- ─── страница 174 ─── -->
-
-```py
   448 |     'ф': 'f', 'х': 'x', 'ц': 'cz', 'ч': 'ch', 'ш': 'sh', 'щ': 'shh',
   449 |     'ъ': '"', 'ы': 'y', 'ь': "'", 'э': 'e', 'ю': 'yu', 'я': 'ya',
   450 | }
@@ -10476,6 +11045,11 @@
   471 |     """UNIFOR ``T`` — transliterate Cyrillic to Latin: ``TN<string>`` where
   472 |     ``N`` selects the table (``0`` default, ``1`` simplified) (PFT_LANGUAGE
   473 |     §9.1). Non-Cyrillic characters pass through unchanged."""
+```
+
+<!-- ─── страница 184 ─── -->
+
+```py
   474 |     m = re.match(r'(\d?)(.*)$', arg, re.S)
   475 |     tableno = m.group(1)
   476 |     src = value if value else (m.group(2) or '')
@@ -10505,11 +11079,6 @@
   500 | 
   501 |     A plain readable dump of the record; repeating instances are each emitted
   502 |     on their own line. Useful for debug/diagnostic templates."""
-```
-
-<!-- ─── страница 175 ─── -->
-
-```py
   503 |     if not record:
   504 |         return ''
   505 |     lines = []
@@ -10536,6 +11105,11 @@
   526 |     src = value if value else arg[1:]
   527 |     src = src or ''
   528 |     import urllib.parse as _url
+```
+
+<!-- ─── страница 185 ─── -->
+
+```py
   529 |     if direction == 'D':
   530 |         return _url.unquote(src)
   531 |     # default to encode (E); quote keeps unreserved chars, encodes the rest.
@@ -10565,11 +11139,6 @@
   555 |         params = raw.split(',')
   556 |     modules = (ctx or {}).get('modules') or {}
   557 |     body = modules.get(name)
-```
-
-<!-- ─── страница 176 ─── -->
-
-```py
   558 |     if body is None:
   559 |         return ''
   560 |     # %1..%9 parameter substitution (SPEC §9.2 template formats).
@@ -10596,6 +11165,11 @@
   581 | register_unifor('+F', _uf_postedit_rtf)
   582 | register_unifor('+6', _uf_record_status)
   583 | register_unifor('+3', _uf_urlcode)
+```
+
+<!-- ─── страница 186 ─── -->
+
+```py
   584 | register_unifor('6', _uf_module)
   585 | 
   586 | 
@@ -10625,11 +11199,6 @@
   610 | # builds the AST. Comments ``/* … EOL`` are stripped first.
   611 | # --------------------------------------------------------------------------- #
   612 | _COMMENT = re.compile(r'/\*[^\n]*')
-```
-
-<!-- ─── страница 177 ─── -->
-
-```py
   613 | 
   614 | # token kinds
   615 | T_FIELD, T_DUMMY, T_LIT, T_NUM, T_IDENT, T_PUNCT, T_UNIFOR = (
@@ -10656,6 +11225,11 @@
   636 |     toks = []
   637 |     i, n = 0, len(src)
   638 |     while i < n:
+```
+
+<!-- ─── страница 187 ─── -->
+
+```py
   639 |         c = src[i]
   640 |         if c in ' \t\r\n':
   641 |             i += 1
@@ -10685,11 +11259,6 @@
   665 |         # UNIFOR call: &name(arg) or &uf('...') — keep the raw call, parse later
   666 |         if c == '&':
   667 |             j, depth = i + 1, 0
-```
-
-<!-- ─── страница 178 ─── -->
-
-```py
   668 |             # read the name up to '('
   669 |             while j < n and src[j] != '(':
   670 |                 j += 1
@@ -10716,6 +11285,11 @@
   691 |                 i += m.end()
   692 |                 continue
   693 |         # dummy output d<tag> / n<tag>
+```
+
+<!-- ─── страница 188 ─── -->
+
+```py
   694 |         if c in 'dDnN':
   695 |             m = re.match(r'[dDnN](\d+)(\^[a-zA-Z0-9])?', src[i:])
   696 |             if m:
@@ -10745,11 +11319,6 @@
   720 |             toks.append(_Tok(T_PUNCT, c))
   721 |             i += 1
   722 |             continue
-```
-
-<!-- ─── страница 179 ─── -->
-
-```py
   723 |         # mode commands Mmc, placement Xn/Cn, '*' etc — skipped (no-op in text IR)
   724 |         i += 1
   725 |     return toks
@@ -10776,6 +11345,11 @@
   746 | 
   747 | class _Literal(_Node):
   748 |     def __init__(self, text, kind):
+```
+
+<!-- ─── страница 189 ─── -->
+
+```py
   749 |         self.text = text
   750 |         self.kind = kind            # 'cond' | 'rep' | 'uncond'
   751 | 
@@ -10805,11 +11379,6 @@
   775 |     def _one(self, inst, record, ctx, state):
   776 |         if self.first_sub:
   777 |             v = _first_subfield(inst)
-```
-
-<!-- ─── страница 180 ─── -->
-
-```py
   778 |         else:
   779 |             v = _inst_value(inst, self.subfield)
   780 |         if self.off is not None:
@@ -10836,6 +11405,11 @@
   801 |                     if k > 0:
   802 |                         piece += lit.text
   803 |                 elif lit.kind == 'cond':         # "x" prefix: once, with the field
+```
+
+<!-- ─── страница 190 ─── -->
+
+```py
   804 |                     if not cond_done:
   805 |                         piece += lit.text
   806 |                 else:                            # 'x' uncond / |x| rep
@@ -10865,11 +11439,6 @@
   830 |         self.negate = negate
   831 |         self.tag = tag
   832 |         self.subfield = subfield
-```
-
-<!-- ─── страница 181 ─── -->
-
-```py
   833 |         self.literals = literals     # the preceding conditional literals
   834 | 
   835 |     def render(self, record, ctx, state):
@@ -10896,6 +11465,11 @@
   856 |     def __init__(self, spec_node, value_node):
   857 |         self.spec_node = spec_node       # _Node producing the code+arg literal
   858 |         self.value_node = value_node     # _Node producing the inline value (opt)
+```
+
+<!-- ─── страница 191 ─── -->
+
+```py
   859 | 
   860 |     def render(self, record, ctx, state):
   861 |         spec = self.spec_node.render(record, ctx, state) if self.spec_node else ''
@@ -10925,11 +11499,6 @@
   885 |             else:
   886 |                 txt = self.args[0].render(record, ctx, state) if self.args else ''
   887 |             return _fmt_num(_to_num(txt))
-```
-
-<!-- ─── страница 182 ─── -->
-
-```py
   888 |         if name == 's':
   889 |             return ''.join(a.render(record, ctx, state) for a in self.args)
   890 |         if name == 'f':
@@ -10956,6 +11525,11 @@
   911 |                 return _fmt_num(max(nums))
   912 |             return _fmt_num(sum(nums) / len(nums))
   913 |         return ''
+```
+
+<!-- ─── страница 192 ─── -->
+
+```py
   914 | 
   915 | 
   916 | def _unwrap_field(node):
@@ -10985,11 +11559,6 @@
   940 | 
   941 | class _Pred(_Node):
   942 |     """p(...) / a(...) used only inside IF conditions — returns '1' or ''."""
-```
-
-<!-- ─── страница 183 ─── -->
-
-```py
   943 | 
   944 |     def __init__(self, negate, field_node):
   945 |         self.negate = negate
@@ -11016,6 +11585,11 @@
   966 |         lv = self.left.render(record, ctx, state)
   967 |         rv = self.right.render(record, ctx, state)
   968 |         op = self.op
+```
+
+<!-- ─── страница 193 ─── -->
+
+```py
   969 |         if op == '=':
   970 |             return lv == rv
   971 |         if op == '<>':
@@ -11045,11 +11619,6 @@
   995 | 
   996 |     def truth(self, record, ctx, state):
   997 |         vals = [_truth(p, record, ctx, state) for p in self.parts]
-```
-
-<!-- ─── страница 184 ─── -->
-
-```py
   998 |         return all(vals) if self.op == 'and' else any(vals)
   999 | 
  1000 |     def render(self, record, ctx, state):
@@ -11076,6 +11645,11 @@
  1021 | 
  1022 | class _If(_Node):
  1023 |     def __init__(self, cond, then_node, else_node):
+```
+
+<!-- ─── страница 194 ─── -->
+
+```py
  1024 |         self.cond = cond
  1025 |         self.then_node = then_node
  1026 |         self.else_node = else_node
@@ -11105,11 +11679,6 @@
  1050 |             state['group_index'] = None
  1051 |             out = self.body.render(record, ctx, state)
  1052 |             state['group_index'], state['group_tag'] = saved
-```
-
-<!-- ─── страница 185 ─── -->
-
-```py
  1053 |             return out
  1054 |         lead = self.tags[0] if self.tags else None
  1055 |         out = []
@@ -11136,6 +11705,11 @@
  1076 | 
  1077 | # --------------------------------------------------------------------------- #
  1078 | # numeric helpers
+```
+
+<!-- ─── страница 195 ─── -->
+
+```py
  1079 | # --------------------------------------------------------------------------- #
  1080 | _NUM_RE = re.compile(r'-?\d+(?:\.\d+)?')
  1081 | 
@@ -11165,11 +11739,6 @@
  1105 |         self.toks = toks
  1106 |         self.pos = 0
  1107 |         self.strict = strict
-```
-
-<!-- ─── страница 186 ─── -->
-
-```py
  1108 | 
  1109 |     def _peek(self, k=0):
  1110 |         j = self.pos + k
@@ -11196,6 +11765,11 @@
  1131 |                 break
  1132 |             if t.kind == T_PUNCT and t.value in (',', '+'):
  1133 |                 self._next()
+```
+
+<!-- ─── страница 196 ─── -->
+
+```py
  1134 |                 continue
  1135 |             if t.kind == T_PUNCT and t.value == ')':
  1136 |                 break
@@ -11225,11 +11799,6 @@
  1160 |         if t.kind == T_FIELD:
  1161 |             return self.parse_field(tags, prefix=None)
  1162 |         # leading conditional/repeat literal — may be a field prefix or dummy lit
-```
-
-<!-- ─── страница 187 ─── -->
-
-```py
  1163 |         if t.kind == T_LIT:
  1164 |             return self.parse_literal_led(tags)
  1165 |         if t.kind == T_DUMMY:
@@ -11256,6 +11825,11 @@
  1186 |             kind = lit.extra
  1187 |             nxt = self._peek()
  1188 |             if (kind == 'rep' and nxt and nxt.kind == T_PUNCT
+```
+
+<!-- ─── страница 197 ─── -->
+
+```py
  1189 |                     and nxt.value == '+'):
  1190 |                 self._next()
  1191 |                 lits.append(_Literal(lit.value, 'rep_plus'))
@@ -11285,11 +11859,6 @@
  1215 |         length = int(m.group(4)) if m.group(4) is not None else None
  1216 |         if tag not in tags:
  1217 |             tags.append(tag)
-```
-
-<!-- ─── страница 188 ─── -->
-
-```py
  1218 |         # gather trailing prefix/suffix literals. PFT separator idioms (SPEC §5):
  1219 |         #   |x|+  repeatable PREFIX before each instance except the FIRST
  1220 |         #   +|x|  repeatable SUFFIX after each instance except the LAST
@@ -11316,6 +11885,11 @@
  1241 |                     # |x|+ prefix-except-first separator -> applies to this field
  1242 |                     self._next()
  1243 |                     self._next()
+```
+
+<!-- ─── страница 198 ─── -->
+
+```py
  1244 |                     sep_prefix.append(_Literal(nxt.value, 'rep_plus'))
  1245 |                     continue
  1246 |                 if nxt.extra in ('cond', 'rep'):
@@ -11345,11 +11919,6 @@
  1270 | 
  1271 |         We peel the leading literal off the *raw* inner string directly so the
  1272 |         field-prefix folding (``parse_literal_led``) can't merge ``'C'`` into the
-```
-
-<!-- ─── страница 189 ─── -->
-
-```py
  1273 |         following ``v10^a`` (that merge is correct for normal output, wrong here).
  1274 |         """
  1275 |         inner = raw[raw.find('(') + 1:raw.rfind(')')]
@@ -11376,6 +11945,11 @@
  1296 |         return _Unifor(spec_node, value_node)
  1297 | 
  1298 |     def parse_ident(self, tags):
+```
+
+<!-- ─── страница 199 ─── -->
+
+```py
  1299 |         t = self._next()
  1300 |         word = t.value.lower()
  1301 |         if word == 'mfn':
@@ -11405,11 +11979,6 @@
  1325 |                 self._next()
  1326 |                 self._collect_until_close()
  1327 |             return _Seq([])
-```
-
-<!-- ─── страница 190 ─── -->
-
-```py
  1328 |         if word == 'not':
  1329 |             sub = self.parse_term(tags)
  1330 |             return _NotOp(sub if sub is not None else _Seq([]))
@@ -11436,6 +12005,11 @@
  1351 |                 cur.append(t)
  1352 |             elif t.kind == T_PUNCT and t.value == ')':
  1353 |                 depth -= 1
+```
+
+<!-- ─── страница 200 ─── -->
+
+```py
  1354 |                 if depth == 0:
  1355 |                     break
  1356 |                 cur.append(t)
@@ -11465,11 +12039,6 @@
  1380 |                     break
  1381 |             out.append(t)
  1382 |         return out
-```
-
-<!-- ─── страница 191 ─── -->
-
-```py
  1383 | 
  1384 |     def parse_group(self, tags):
  1385 |         self._next()                      # consume '('
@@ -11496,6 +12065,11 @@
  1406 |             if tg not in tags:
  1407 |                 tags.append(tg)
  1408 |         else_node = None
+```
+
+<!-- ─── страница 201 ─── -->
+
+```py
  1409 |         if self._at_keyword('else'):
  1410 |             self._next()
  1411 |             else_node = self.parse_sequence(stoppers=('fi',))
@@ -11525,11 +12099,6 @@
  1435 |             parts.append(self._parse_not(tags))
  1436 |         return parts[0] if len(parts) == 1 else _BoolOp('and', parts)
  1437 | 
-```
-
-<!-- ─── страница 192 ─── -->
-
-```py
  1438 |     def _parse_not(self, tags):
  1439 |         if self._at_keyword('not'):
  1440 |             self._next()
@@ -11556,6 +12125,11 @@
  1461 |                                                    '>', '>=', ':'):
  1462 |             op = self._next().value
  1463 |             right = self.parse_operand(tags)
+```
+
+<!-- ─── страница 202 ─── -->
+
+```py
  1464 |             return _Compare(left, op, right)
  1465 |         # bare operand as a truth value (e.g. p(...) or a field)
  1466 |         return left
@@ -11585,11 +12159,6 @@
  1490 |             return _Parser(inner, self.strict).parse_sequence()
  1491 |         self._next()
  1492 |         return _Seq([])
-```
-
-<!-- ─── страница 193 ─── -->
-
-```py
  1493 | 
  1494 | 
  1495 | def _render_inline(toks):
@@ -11616,6 +12185,11 @@
  1516 |     ----------
  1517 |     fmt : str
  1518 |         Inline PFT source (a format body or a reference resolved by the caller).
+```
+
+<!-- ─── страница 203 ─── -->
+
+```py
  1519 |     record : dict
  1520 |         Field/subfield draft (see module docstring). ``None`` → empty record.
  1521 |     ctx : dict | None
@@ -11645,11 +12219,6 @@
  1545 |             raise
  1546 |         return ''
  1547 |     state = {}
-```
-
-<!-- ─── страница 194 ─── -->
-
-```py
  1548 |     try:
  1549 |         return ast.render(record or {}, ctx, state)
  1550 |     except PftError:
@@ -11676,6 +12245,11 @@
  1571 |     ctx = ctx or {}
  1572 |     try:
  1573 |         ast = _compile(fmt, strict)
+```
+
+<!-- ─── страница 204 ─── -->
+
+```py
  1574 |     except PftError:
  1575 |         if strict:
  1576 |             raise
@@ -11710,11 +12284,6 @@
     6 | operators, with the PFT (ФОРМАТ) evaluation deliberately factored out behind a
     7 | ``format_eval`` hook so the module works *before* the A1 PFT engine
     8 | (``access.pft``) lands and transparently delegates to it once it does.
-```
-
-<!-- ─── страница 195 ─── -->
-
-```py
     9 | 
    10 | What this module is
    11 | -------------------
@@ -11741,6 +12310,11 @@
    32 | -----------------------------------------------------------
    33 |   * ``ADD``   — add a new field repetition (whole field) or a subfield.
    34 |   * ``REP``   — replace a field / subfield wholesale (empty ФОРМАТ 1 => delete).
+```
+
+<!-- ─── страница 205 ─── -->
+
+```py
    35 |   * ``CHA`` / ``CHAC`` — replace a substring (CHAC case-sensitive, CHA not).
    36 |   * ``DEL``   — delete a field repetition or a subfield (incl. F-mode '1'/'0').
    37 |   * ``DELR`` / ``UNDEL`` — logical record delete / undelete (status flag).
@@ -11770,11 +12344,6 @@
    61 |     *condition* format: result ``'1'`` ⇒ create a new record (in the current db),
    62 |     filled by the nested block; any other result ⇒ skip. (Best-effort: the
    63 |     ``autoin.gbl:2255`` `if … then '1'` flag reading; see comment at the parser.)
-```
-
-<!-- ─── страница 196 ─── -->
-
-```py
    64 |   * ``CORREC`` — apply a correction block to ANOTHER record/DB (cross-record edit):
    65 |     ФОРМАТ→db · ФОРМАТ→model-field-1001 key · ФОРМАТ→dictionary terms (``$``=trunc) ·
    66 |     [opt record count]. The target record is resolved via ``ctx['resolver']`` and
@@ -11801,6 +12370,11 @@
    87 | 
    88 | The format_eval boundary (SPEC §2)
    89 | ----------------------------------
+```
+
+<!-- ─── страница 206 ─── -->
+
+```py
    90 | ФОРМАТ 1/2 and every ``&uf(...)`` are ordinary PFT formats evaluated on the current
    91 | record — this module does NOT interpret PFT. It calls a single hook,
    92 | ``format_eval(fmt, record, ctx)`` (one string) / ``format_eval_lines`` (a list, for
@@ -11830,11 +12404,6 @@
   116 |     # a bare string instance is the whole-field value
   117 |     return {'': '' if inst is None else str(inst)}
   118 | 
-```
-
-<!-- ─── страница 197 ─── -->
-
-```py
   119 | 
   120 | def normalize_record(record):
   121 |     """Return a canonical ``tag -> [instance dict]`` copy of ``record``.
@@ -11861,6 +12430,11 @@
   142 |     """All values of ``tag`` (a given subfield, or whole-field when subfield is
   143 |     None), one per repetition that actually carries it."""
   144 |     out = []
+```
+
+<!-- ─── страница 207 ─── -->
+
+```py
   145 |     for inst in record.get(str(tag), []):
   146 |         v = _inst_get(inst, subfield)
   147 |         if v != '':
@@ -11890,11 +12464,6 @@
   171 |     """An AST operator node. A thin dict subclass so it pretty-prints and is
   172 |     trivially serialisable, with attribute access for readability."""
   173 |     def __getattr__(self, k):
-```
-
-<!-- ─── страница 198 ─── -->
-
-```py
   174 |         try:
   175 |             return self[k]
   176 |         except KeyError:
@@ -11921,6 +12490,11 @@
   197 | OCC_ALL, OCC_NTH, OCC_LAST, OCC_LAST_MINUS, OCC_BY_FORMAT = \
   198 |     'ALL', 'NTH', 'LAST', 'LAST_MINUS', 'BY_FORMAT'
   199 | 
+```
+
+<!-- ─── страница 208 ─── -->
+
+```py
   200 | _FIELD_OPS = ('ADD', 'REP', 'CHA', 'CHAC', 'DEL')
   201 | # Other-record / model-field operators: parsed for fidelity, not executed here.
   202 | _OTHER_RECORD = ('NEWMFN', 'NEWREC', 'CORREC')
@@ -11950,11 +12524,6 @@
   226 |         return (OCC_LAST, None)
   227 |     if up.startswith('L-'):
   228 |         try:
-```
-
-<!-- ─── страница 199 ─── -->
-
-```py
   229 |             return (OCC_LAST_MINUS, int(up[2:]))
   230 |         except ValueError:
   231 |             return (OCC_ALL, None)
@@ -11981,6 +12550,11 @@
   252 |     """Parse a ``.gbl`` job (str or CP1251 bytes) into a :class:`Program` AST.
   253 | 
   254 |     Line-significant grammar (GLOBAL_CORRECTION §2):
+```
+
+<!-- ─── страница 209 ─── -->
+
+```py
   255 |       * line 1 = parameter count (0..9);
   256 |       * then 2 lines per parameter (value-or-.MNU/.WSS, then caption);
   257 |       * then operator groups, each a name line plus its fixed extra lines.
@@ -12010,11 +12584,6 @@
   281 |             raise ParseError('parameter %d: truncated header' % (i + 1))
   282 |         value, caption = lines[pos], lines[pos + 1]
   283 |         source = 'prompt'
-```
-
-<!-- ─── страница 200 ─── -->
-
-```py
   284 |         if value.strip() == '':
   285 |             source = 'prompt'
   286 |         elif value.strip().lower().endswith('.mnu'):
@@ -12041,6 +12610,11 @@
   307 |     """Parse operators until EOF or one of the ``stop`` closing markers.
   308 | 
   309 |     ``stop`` is a set of upper-case marker names (e.g. ``{'FI'}``) or None for
+```
+
+<!-- ─── страница 210 ─── -->
+
+```py
   310 |     top level. Returns ``(body, pos_after_marker_or_eof)``."""
   311 |     body = []
   312 |     n = len(lines)
@@ -12070,11 +12644,6 @@
   336 |             continue
   337 | 
   338 |         # ---- IF … FI ------------------------------------------------------- #
-```
-
-<!-- ─── страница 201 ─── -->
-
-```py
   339 |         if up == 'IF':
   340 |             cond = _need(lines, pos + 1, 'IF: missing condition format')
   341 |             _check_params(cond, nparams)
@@ -12101,6 +12670,11 @@
   362 |         if up in ('PUTLOG', 'PUTFLD'):
   363 |             fmt = _need(lines, pos + 1, '%s: missing format line' % up)
   364 |             _check_params(fmt, nparams)
+```
+
+<!-- ─── страница 211 ─── -->
+
+```py
   365 |             if up == 'PUTFLD':
   366 |                 warnings.append('PUTFLD is deprecated; use PUTLOG (line %d)'
   367 |                                 % (pos + 1))
@@ -12130,11 +12704,6 @@
   391 |             continue
   392 |         if up == 'GETFLD':
   393 |             tag = _need(lines, pos + 1, 'GETFLD: missing tag')
-```
-
-<!-- ─── страница 202 ─── -->
-
-```py
   394 |             warnings.append('GETFLD experimental, not executed (line %d)' % (pos + 1))
   395 |             body.append(Op(kind='GETFLD', tag=tag.strip(), supported=False))
   396 |             pos += 2
@@ -12161,6 +12730,11 @@
   417 |     occ_line = lines[pos + 2]
   418 |     fmt1 = lines[pos + 3]
   419 |     fmt2 = lines[pos + 4]
+```
+
+<!-- ─── страница 212 ─── -->
+
+```py
   420 |     tag, sub = _parse_tag(tag_line)
   421 |     if not tag:
   422 |         raise ParseError('line %d: %s missing field tag' % (pos + 2, up))
@@ -12190,11 +12764,6 @@
   446 |     ``(op, pos_after_END)``.
   447 | 
   448 |     * NEWMFN — line 2 = ФОРМАТ → target db name (``'*'`` = current db).
-```
-
-<!-- ─── страница 203 ─── -->
-
-```py
   449 |     * NEWREC — line 2 = ФОРМАТ → *condition* (recon TODO #GBL-01). The only field
   450 |       example (``IBIS/autoin.gbl:2255`` `if v920='J' … then '1'…`) reads it as a
   451 |       create *flag*: result ``'1'`` ⇒ create in the current db. We implement that
@@ -12221,6 +12790,11 @@
   472 |             _need(lines, pos + off, 'CORREC: truncated header')
   473 |         _check_params(lines[pos + 1], nparams)
   474 |         _check_params(lines[pos + 2], nparams)
+```
+
+<!-- ─── страница 213 ─── -->
+
+```py
   475 |         _check_params(lines[pos + 3], nparams)
   476 |         header = {
   477 |             'kind': 'CORREC',
@@ -12250,11 +12824,6 @@
   501 |     """Reject a ``%n`` reference beyond the declared parameter count (SPEC §1.4).
   502 | 
   503 |     Only bare ``%1..%9`` digit references count; ``%`` followed by a non-digit
-```
-
-<!-- ─── страница 204 ─── -->
-
-```py
   504 |     (e.g. format directives) is ignored."""
   505 |     i = 0
   506 |     s = fmt or ''
@@ -12281,6 +12850,11 @@
   527 |       * a single quoted literal ``'…'`` -> its contents (``%n`` substituted);
   528 |       * a bare field reference ``vNNN`` / ``vNNN^x`` -> the first repetition's
   529 |         value;
+```
+
+<!-- ─── страница 214 ─── -->
+
+```py
   530 |       * a parameter reference ``%n`` on its own -> the parameter value.
   531 |     Anything richer (``if…then…``, ``&uf(...)``) is beyond the stub: it returns the
   532 |     raw string so a misconfigured job degrades visibly rather than crashing."""
@@ -12310,11 +12884,6 @@
   556 |     params = (ctx or {}).get('params') or {}
   557 |     out = []
   558 |     i = 0
-```
-
-<!-- ─── страница 205 ─── -->
-
-```py
   559 |     while i < len(s):
   560 |         if s[i] == '%' and i + 1 < len(s) and s[i + 1].isdigit():
   561 |             out.append(str(params.get(s[i + 1], params.get(int(s[i + 1]), ''))))
@@ -12341,6 +12910,11 @@
   582 |     ``access.pft.eval`` if importable > the built-in :func:`stub_format_eval`."""
   583 |     if ctx and ctx.get('format_eval'):
   584 |         return ctx['format_eval']
+```
+
+<!-- ─── страница 215 ─── -->
+
+```py
   585 |     pft_eval = _import_pft_eval()
   586 |     if pft_eval is not None:
   587 |         return pft_eval
@@ -12370,11 +12944,6 @@
   611 |     if ctx and ctx.get('format_eval_lines'):
   612 |         return list(ctx['format_eval_lines'](fmt, record, ctx))
   613 |     try:
-```
-
-<!-- ─── страница 206 ─── -->
-
-```py
   614 |         from access import pft
   615 |         if hasattr(pft, 'evalLines'):
   616 |             return list(pft.evalLines(fmt, record, ctx))
@@ -12401,6 +12970,11 @@
   637 |         return [count - 1]
   638 |     if kind == OCC_LAST_MINUS:
   639 |         idx = count - 1 - arg
+```
+
+<!-- ─── страница 216 ─── -->
+
+```py
   640 |         return [idx] if 0 <= idx < count else []
   641 |     # BY_FORMAT handled at the call site (needs the format lines)
   642 |     return []
@@ -12430,11 +13004,6 @@
   666 |     emptied, skipped, new_records, correc, history, db}``; the return value is the
   667 |     corrected source record. The host wires real stores via ``resolver``/``emit``;
   668 |     nothing here touches a database."""
-```
-
-<!-- ─── страница 207 ─── -->
-
-```py
   669 |     orig_ctx = ctx
   670 |     work_ctx = dict(ctx) if ctx else {}
   671 |     if resolver is not None:
@@ -12461,6 +13030,11 @@
   692 |     return rec
   693 | 
   694 | 
+```
+
+<!-- ─── страница 217 ─── -->
+
+```py
   695 | def _run_body(body, rec, ctx, state):
   696 |     for op in body:
   697 |         _apply_op(op, rec, ctx, state)
@@ -12490,11 +13064,6 @@
   721 |             if line == '' and op['fmt1'] == '':
   722 |                 continue
   723 |             field.append({'': line})
-```
-
-<!-- ─── страница 208 ─── -->
-
-```py
   724 |         return
   725 |     # subfield ADD: 1st ФОРМАТ 1 line -> subfield in the targeted repetition(s).
   726 |     val = _eval(op['fmt1'], fr, ctx)
@@ -12521,6 +13090,11 @@
   747 |     occ = op['occ']
   748 |     if occ[0] == OCC_BY_FORMAT:
   749 |         lines = _eval_lines(op['fmt1'], fr, ctx)
+```
+
+<!-- ─── страница 218 ─── -->
+
+```py
   750 |         for i in range(len(field)):
   751 |             if i < len(lines):
   752 |                 _rep_one(field, i, sub, lines[i])
@@ -12550,11 +13124,6 @@
   776 |     field[:] = [f for f in field if f is not None]
   777 | 
   778 | 
-```
-
-<!-- ─── страница 209 ─── -->
-
-```py
   779 | def _op_cha(op, rec, ctx, state):
   780 |     """CHA/CHAC: replace substring A (ФОРМАТ 1) with B (ФОРМАТ 2) in the field /
   781 |     subfield. CHAC is case-sensitive; CHA matches case-insensitively."""
@@ -12581,6 +13150,11 @@
   802 |     """Replace all occurrences of ``a`` with ``b`` in one instance's value.
   803 | 
   804 |     A empty => append B to the value; B empty => delete A (GC §1.3 CHA)."""
+```
+
+<!-- ─── страница 219 ─── -->
+
+```py
   805 |     if sub is None:
   806 |         keys = ['']
   807 |     else:
@@ -12610,11 +13184,6 @@
   831 |     while i < len(text):
   832 |         if lt.startswith(low_a, i):
   833 |             out.append(b)
-```
-
-<!-- ─── страница 210 ─── -->
-
-```py
   834 |             i += len(a)
   835 |         else:
   836 |             out.append(text[i])
@@ -12641,6 +13210,11 @@
   857 |         return
   858 |     idxs = set(_resolve_occ(occ, len(field)))
   859 |     if sub is None:
+```
+
+<!-- ─── страница 220 ─── -->
+
+```py
   860 |         field[:] = [inst for i, inst in enumerate(field) if i not in idxs]
   861 |     else:
   862 |         for i in idxs:
@@ -12670,11 +13244,6 @@
   886 |         _run_body(op['body'], rec, ctx, state)
   887 | 
   888 | 
-```
-
-<!-- ─── страница 211 ─── -->
-
-```py
   889 | def _op_repeat(op, rec, ctx, state):
   890 |     limit = (ctx or {}).get('max_iterations', 100000)
   891 |     iters = 0
@@ -12701,6 +13270,11 @@
   912 | def _store(ctx):
   913 |     """The in-memory default cross-DB store (db -> list of records)."""
   914 |     return ctx.setdefault('_stores', {})
+```
+
+<!-- ─── страница 221 ─── -->
+
+```py
   915 | 
   916 | 
   917 | def _default_resolver(ctx, db, mfn):
@@ -12730,11 +13304,6 @@
   941 |     nesting and the surrounding source-record context are preserved)."""
   942 |     prev = ctx.get('_fmt_record')
   943 |     ctx['_fmt_record'] = source_rec
-```
-
-<!-- ─── страница 212 ─── -->
-
-```py
   944 |     try:
   945 |         _run_body(body, target_rec, ctx, state)
   946 |     finally:
@@ -12761,6 +13330,11 @@
   967 |     construction (GC §1.3 ALL; used right after NEWMFN/CORREC). A no-op at top
   968 |     level (source == target), where it would just copy a record onto itself."""
   969 |     src = _fmt_rec(rec, ctx)
+```
+
+<!-- ─── страница 222 ─── -->
+
+```py
   970 |     if src is rec:                           # not inside a cross-DB block
   971 |         return
   972 |     for tag, insts in src.items():
@@ -12790,11 +13364,6 @@
   996 |     db = state.get('db', '*')
   997 |     new_rec = {}
   998 |     _run_crossdb_block(op['body'], new_rec, rec, ctx, state)
-```
-
-<!-- ─── страница 213 ─── -->
-
-```py
   999 |     state['new_records'].setdefault(db, []).append(new_rec)
  1000 |     mfn = _emit_record(ctx, db, new_rec)
  1001 |     state.setdefault('emitted', []).append({'op': 'NEWREC', 'db': db, 'mfn': mfn})
@@ -12821,6 +13390,11 @@
  1022 |         target = resolver(db, term)          # resolver maps a term → its record
  1023 |         if target is None:
  1024 |             state.setdefault('correc_misses', []).append({'db': db, 'term': term})
+```
+
+<!-- ─── страница 223 ─── -->
+
+```py
  1025 |             continue
  1026 |         target = normalize_record(target)
  1027 |         target['1001'] = [{'': key}]         # model field 1001 = passed key
@@ -12850,11 +13424,6 @@
  1051 |             return
  1052 |         if n <= 0:
  1053 |             return
-```
-
-<!-- ─── страница 214 ─── -->
-
-```py
  1054 |         idx = len(history) - n               # N copies back from the newest
  1055 |         if idx < 0:
  1056 |             return
@@ -12881,6 +13450,11 @@
  1077 | def preview(ast, records, ctx=None):
  1078 |     """Dry-run ``ast`` over each record in ``records`` and return a diff report.
  1079 | 
+```
+
+<!-- ─── страница 224 ─── -->
+
+```py
  1080 |     Returns a list of per-record dicts::
  1081 | 
  1082 |         { 'index': i, 'status': 'changed'|'unchanged'|'deleted'|'emptied'|'error',
@@ -12910,11 +13484,6 @@
  1106 |                         'created': [], 'correc': []})
  1107 |             continue
  1108 |         state = local_ctx.get('_state', {})
-```
-
-<!-- ─── страница 215 ─── -->
-
-```py
  1109 |         changes = diff_records(before, after)
  1110 |         created = [{'db': db, 'record': r}
  1111 |                    for db, recs in state.get('new_records', {}).items() for r in recs]
@@ -12941,6 +13510,11 @@
  1132 |     """Field/subfield-level before→after diff between two normalised records.
  1133 | 
  1134 |     Emits one change per added / removed / modified (tag, subfield) value,
+```
+
+<!-- ─── страница 225 ─── -->
+
+```py
  1135 |     comparing repetition-by-repetition so the UI can render «было → стало»."""
  1136 |     changes = []
  1137 |     tags = list(dict.fromkeys(list(before.keys()) + list(after.keys())))
@@ -12970,11 +13544,6 @@
  1161 | def _vals(insts, sub):
  1162 |     key = '' if sub is None else sub
  1163 |     out = []
-```
-
-<!-- ─── страница 216 ─── -->
-
-```py
  1164 |     for inst in insts:
  1165 |         if sub is None:
  1166 |             if '' in inst:
@@ -13001,6 +13570,11 @@
  1187 |         changes.append({'tag': tag, 'subfield': sub, 'op': op,
  1188 |                         'before': b, 'after': a})
  1189 | 
+```
+
+<!-- ─── страница 226 ─── -->
+
+```py
  1190 | 
  1191 | __all__ = [
  1192 |     'parse', 'apply', 'preview', 'diff_records', 'normalize_record',
@@ -13035,11 +13609,6 @@
    21 | Without a catalog handle there is no availability signal, so a first-in-line hold
    22 | is still surfaced as ``ready`` (position 1) — the portal can show it as ready to
    23 | pick up — while later holders queue behind it. Re-holding the same item is
-```
-
-<!-- ─── страница 217 ─── -->
-
-```py
    24 | idempotent: the reader's existing live hold (and its current position) is
    25 | returned unchanged.
    26 | 
@@ -13066,6 +13635,11 @@
    47 |     """Place / cancel / list reader holds over an access store.
    48 | 
    49 |     Parameters
+```
+
+<!-- ─── страница 227 ─── -->
+
+```py
    50 |     ----------
    51 |     store
    52 |         The access store (``AccessStore`` sqlite or ``PgAccessStore``) — provides
@@ -13095,11 +13669,6 @@
    76 | 
    77 |     # ---- availability seam (catalog 910^A) -------------------------------- #
    78 |     def _catalog_free(self, db, mfn):
-```
-
-<!-- ─── страница 218 ─── -->
-
-```py
    79 |         """Catalogue availability for (db,mfn): True/False, or None (no opinion).
    80 | 
    81 |         ``mfn`` is the catalogue address; the catalog keys exemplars by inventory
@@ -13126,6 +13695,11 @@
   102 |         except Exception:
   103 |             return ''
   104 | 
+```
+
+<!-- ─── страница 228 ─── -->
+
+```py
   105 |     def _position(self, ticket, db, mfn):
   106 |         """1-based FIFO rank of the reader's live hold in (db,mfn)'s queue (0=absent)."""
   107 |         for idx, h in enumerate(self.store.hold_queue(db, mfn)):
@@ -13155,11 +13729,6 @@
   131 | 
   132 |         status = READY if ready else QUEUED
   133 |         until = (now + self.shelf_days * _SECONDS_PER_DAY) if ready else None
-```
-
-<!-- ─── страница 219 ─── -->
-
-```py
   134 |         title = self._title(db, mfn)
   135 |         hold = self.store.hold_add(ticket, db, mfn, title, status, now, until)
   136 |         return {'holdId': hold['id'], 'status': hold['status'],
@@ -13191,6 +13760,11 @@
 
 ```py
     1 | #!/usr/bin/env python3
+```
+
+<!-- ─── страница 229 ─── -->
+
+```py
     2 | """Reader notification engine — event-driven, multi-channel, idempotent.
     3 | 
     4 | Gap A6, epic #188. Implements SPEC_engine_notifications.md, FIRST shippable slice.
@@ -13220,11 +13794,6 @@
    28 |      order overrides the catalog default.
    29 |   4. ``Channel`` interface + implementations — ``MemoryChannel`` (records sends,
    30 |      for tests), ``EmailChannel`` / ``SmsChannel`` stubs (NO real send; raise or
-```
-
-<!-- ─── страница 220 ─── -->
-
-```py
    31 |      record per their ``available`` flag so fallback can be exercised).
    32 | 
    33 | Template rendering
@@ -13251,6 +13820,11 @@
    54 | import time
    55 | 
    56 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 230 ─── -->
+
+```py
    57 | # Template rendering — prefer the real PFT engine (A1) when present, else a
    58 | # safe stdlib {placeholder} substitution. Resolved once at import.
    59 | # --------------------------------------------------------------------------- #
@@ -13280,11 +13854,6 @@
    83 |     for key, val in (payload or {}).items():
    84 |         out = out.replace('{%s}' % key, '' if val is None else str(val))
    85 |     return out
-```
-
-<!-- ─── страница 221 ─── -->
-
-```py
    86 | 
    87 | 
    88 | # --------------------------------------------------------------------------- #
@@ -13311,6 +13880,11 @@
   109 |         self.id = id
   110 |         self.event = event
   111 |         self.recipient = recipient
+```
+
+<!-- ─── страница 231 ─── -->
+
+```py
   112 |         self.subject = subject
   113 |         self.body = body
   114 |         self.payload = payload
@@ -13340,11 +13914,6 @@
   138 |         self.ok = ok
   139 |         self.provider_id = provider_id
   140 |         self.error = error
-```
-
-<!-- ─── страница 222 ─── -->
-
-```py
   141 | 
   142 |     @classmethod
   143 |     def sent(cls, provider_id=None):
@@ -13371,6 +13940,11 @@
   164 |         (SPEC §1.1): takes the whole :class:`Notification` and returns a
   165 |         :class:`DeliveryResult` instead of raising. The base class implements
   166 |         ``deliver`` on top of ``send`` so existing channels (which only define
+```
+
+<!-- ─── страница 232 ─── -->
+
+```py
   167 |         ``send``) work unchanged under the new dispatcher; a channel that needs the
   168 |         full notice (in-app inbox) overrides ``deliver`` directly.
   169 |     """
@@ -13400,11 +13974,6 @@
   193 | 
   194 |     ``fail`` -> always raises (exercise the fallback chain).
   195 |     ``fail_times`` -> raises for the first N attempts then succeeds (exercise the
-```
-
-<!-- ─── страница 223 ─── -->
-
-```py
   196 |     retry/attempts counter).
   197 |     """
   198 | 
@@ -13431,6 +14000,11 @@
   219 | class EmailChannel(Channel):
   220 |     """SMTP stub — NO real network send in this slice.
   221 | 
+```
+
+<!-- ─── страница 233 ─── -->
+
+```py
   222 |     ``available=False`` makes it raise (simulating an unconfigured gateway), which
   223 |     is how the fallback chain is exercised in prod-shaped wiring. When available it
   224 |     records to ``outbox`` exactly like a real adapter would hand off to a relay.
@@ -13460,11 +14034,6 @@
   248 |         if not self.available:
   249 |             raise SendError('sms: gateway not configured')
   250 |         self.outbox.append({'to': recipient, 'text': body})
-```
-
-<!-- ─── страница 224 ─── -->
-
-```py
   251 |         return 'sms-stub-%d' % len(self.outbox)
   252 | 
   253 | 
@@ -13491,6 +14060,11 @@
   274 |     def deliver(self, notification):
   275 |         # In-app is durable + local: accepting the notice is infallible. The row
   276 |         # itself is the inbox entry; the dispatcher marks it 'sent' via 'inapp' and
+```
+
+<!-- ─── страница 234 ─── -->
+
+```py
   277 |         # inbox()/unread_count() surface it to the reader or staff.
   278 |         self.delivered.append({'id': notification.id, 'recipient': notification.recipient,
   279 |                                'event': notification.event, 'subject': notification.subject,
@@ -13520,11 +14094,6 @@
   303 |     :class:`Channel` objects at send time.
   304 |     """
   305 | 
-```
-
-<!-- ─── страница 225 ─── -->
-
-```py
   306 |     DEFAULTS = {
   307 |         'hold_ready': {
   308 |             'template': {
@@ -13551,6 +14120,11 @@
   329 |             'default_channels': ['sms', 'email'],
   330 |         },
   331 |         'fine_charged': {
+```
+
+<!-- ─── страница 235 ─── -->
+
+```py
   332 |             'template': {
   333 |                 'subject': 'Начислен штраф: {amount} {currency}',
   334 |                 'body': ('На ваш счёт начислен штраф {amount} {currency} '
@@ -13580,11 +14154,6 @@
   358 |                          'документом «{title}» продлён до {due_date}.'),
   359 |             },
   360 |             'default_channels': ['email', 'sms'],
-```
-
-<!-- ─── страница 226 ─── -->
-
-```py
   361 |         },
   362 |         'fine_paid': {
   363 |             'template': {
@@ -13611,6 +14180,11 @@
   384 |                 'subject': 'Служебное: кандидат на списание — {title}',
   385 |                 'body': ('Служебное уведомление. Документ «{title}» (формуляр '
   386 |                          'читателя {reader_name}) числится в просрочке сверх '
+```
+
+<!-- ─── страница 236 ─── -->
+
+```py
   387 |                          'допустимого срока и помечен как кандидат на списание. '
   388 |                          'Требуется проверка формуляра.'),
   389 |             },
@@ -13640,11 +14214,6 @@
   413 |         return sorted(self._entries)
   414 | 
   415 | 
-```
-
-<!-- ─── страница 227 ─── -->
-
-```py
   416 | # --------------------------------------------------------------------------- #
   417 | # Reader preferences — channel order per event + opt-out.
   418 | # --------------------------------------------------------------------------- #
@@ -13671,6 +14240,11 @@
   439 |         return '*' in self.opted_out or event in self.opted_out
   440 | 
   441 |     def resolve(self, event, catalog):
+```
+
+<!-- ─── страница 237 ─── -->
+
+```py
   442 |         if event in self.channels:
   443 |             return list(self.channels[event])
   444 |         if self.default_channels:
@@ -13700,11 +14274,6 @@
   468 |   channels_json TEXT NOT NULL DEFAULT '[]',  -- resolved channel-name chain
   469 |   last_error TEXT,
   470 |   next_attempt_at REAL NOT NULL DEFAULT 0,
-```
-
-<!-- ─── страница 228 ─── -->
-
-```py
   471 |   read_at REAL,                 -- reader inbox: NULL=unread, epoch=when marked read (#222)
   472 |   created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
   473 |   updated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
@@ -13731,6 +14300,11 @@
   494 |   tries INTEGER NOT NULL DEFAULT 1,             -- how many times this channel was hit
   495 |   created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
   496 |   updated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+```
+
+<!-- ─── страница 238 ─── -->
+
+```py
   497 |   UNIQUE (notification_id, channel)
   498 | );
   499 | CREATE INDEX IF NOT EXISTS delivery_attempt_notif_idx
@@ -13760,11 +14334,6 @@
   523 |     if payload and payload.get('dedup_key'):
   524 |         return str(payload['dedup_key'])
   525 |     ref = '' if not payload else str(payload.get('ref', ''))
-```
-
-<!-- ─── страница 229 ─── -->
-
-```py
   526 |     return '|'.join([tenant, event, str(recipient), ref])
   527 | 
   528 | 
@@ -13791,6 +14360,11 @@
   549 |             c.row_factory = sqlite3.Row
   550 |             self._local.conn = c
   551 |         return c
+```
+
+<!-- ─── страница 239 ─── -->
+
+```py
   552 | 
   553 |     def ensure_schema(self):
   554 |         c = self._conn()
@@ -13820,11 +14394,6 @@
   578 |         tenant = tenant or self.tenant
   579 |         dedup_key = make_dedup_key(tenant, event, recipient, payload)
   580 |         c = self._conn()
-```
-
-<!-- ─── страница 230 ─── -->
-
-```py
   581 | 
   582 |         existing = c.execute(
   583 |             'SELECT id, status FROM notification WHERE dedup_key=?',
@@ -13851,6 +14420,11 @@
   604 | 
   605 |     # ---- claim + send ----------------------------------------------------- #
   606 |     def _claim_due(self, now, limit):
+```
+
+<!-- ─── страница 240 ─── -->
+
+```py
   607 |         c = self._conn()
   608 |         return c.execute(
   609 |             "SELECT * FROM notification WHERE status='pending' "
@@ -13880,11 +14454,6 @@
   633 |         c = self._conn()
   634 |         existing = c.execute(
   635 |             'SELECT id, tries FROM delivery_attempt WHERE notification_id=? '
-```
-
-<!-- ─── страница 231 ─── -->
-
-```py
   636 |             'AND channel=?', (notif_id, channel)).fetchone()
   637 |         if existing is None:
   638 |             c.execute(
@@ -13911,6 +14480,11 @@
   659 |         return Notification(
   660 |             id=row['id'], event=row['event'], recipient=row['recipient'],
   661 |             subject=render(tmpl.get('subject'), payload),
+```
+
+<!-- ─── страница 241 ─── -->
+
+```py
   662 |             body=render(tmpl.get('body'), payload),
   663 |             payload=payload, tenant=row['tenant'])
   664 | 
@@ -13940,11 +14514,6 @@
   688 |             for cname in chain:
   689 |                 ch = channels.get(cname)
   690 |                 if ch is None:
-```
-
-<!-- ─── страница 232 ─── -->
-
-```py
   691 |                     last_error = 'no channel %r wired' % cname
   692 |                     continue
   693 |                 # Channel-level idempotency: never re-send where we already did.
@@ -13971,6 +14540,11 @@
   714 |             elif attempts >= MAX_ATTEMPTS:
   715 |                 c.execute(
   716 |                     "UPDATE notification SET status='failed', attempts=?, "
+```
+
+<!-- ─── страница 242 ─── -->
+
+```py
   717 |                     'last_error=?, updated_at=? WHERE id=?',
   718 |                     (attempts, last_error, now, row['id']))
   719 |                 summary['failed'] += 1
@@ -14000,11 +14574,6 @@
   743 |         Idempotent: a second ``dispatch`` over an already-settled queue delivers
   744 |         nothing (no pending rows) and never re-sends (channel-journal guard).
   745 |         Returns an aggregate ``{passes, processed, sent, failed, retried}``.
-```
-
-<!-- ─── страница 233 ─── -->
-
-```py
   746 |         """
   747 |         clock = time.time() if now is None else now
   748 |         agg = {'passes': 0, 'processed': 0, 'sent': 0, 'failed': 0, 'retried': 0}
@@ -14031,6 +14600,11 @@
   769 |             'SELECT * FROM notification WHERE id=?', (notif_id,)).fetchone()
   770 |         return dict(r) if r else None
   771 | 
+```
+
+<!-- ─── страница 243 ─── -->
+
+```py
   772 |     def by_status(self, status):
   773 |         return [dict(r) for r in self._conn().execute(
   774 |             'SELECT * FROM notification WHERE status=? ORDER BY id',
@@ -14060,11 +14634,6 @@
   798 |         return {'id': row['id'], 'ts': row['created_at'], 'event': row['event'],
   799 |                 'subject': subject, 'body': body, 'read': row['read_at'] is not None}
   800 | 
-```
-
-<!-- ─── страница 234 ─── -->
-
-```py
   801 |     def inbox(self, recipient, unread_only=False, tenant=None):
   802 |         """Dispatched notices addressed to ``recipient`` (newest first), as cards."""
   803 |         tenant = tenant or self.tenant
@@ -14091,6 +14660,11 @@
   824 |         c = self._conn()
   825 |         now = time.time()
   826 |         if mark_all:
+```
+
+<!-- ─── страница 244 ─── -->
+
+```py
   827 |             c.execute(
   828 |                 'UPDATE notification SET read_at=? WHERE recipient=? AND tenant=? '
   829 |                 'AND read_at IS NULL', (now, recipient, tenant))
@@ -14125,11 +14699,6 @@
    17 | (``is_module_enabled`` returns True) so the guest flow and sqlite dev keep working
    18 | with zero config — licensing only bites once a tenant is provisioned on PG and a
    19 | module is explicitly disabled.
-```
-
-<!-- ─── страница 235 ─── -->
-
-```py
    20 | """
    21 | import os
    22 | 
@@ -14156,6 +14725,11 @@
    43 | 
    44 | def _admin_conn(dsn):
    45 |     """Short-lived autocommit connection for control-plane reads/writes.
+```
+
+<!-- ─── страница 245 ─── -->
+
+```py
    46 | 
    47 |     Lazy psycopg import so this module imports on a Python without psycopg
    48 |     (the sqlite dev path never calls anything that needs it).
@@ -14185,11 +14759,6 @@
    72 |         if tid is None:
    73 |             raise ValueError('unknown tenant %r (provision it first)' % tenant)
    74 |         for m in modules:
-```
-
-<!-- ─── страница 236 ─── -->
-
-```py
    75 |             conn.execute(
    76 |                 'INSERT INTO control.tenant_module(tenant_id, module, enabled) '
    77 |                 'VALUES(%s,%s,%s) ON CONFLICT(tenant_id, module) DO NOTHING',
@@ -14216,6 +14785,11 @@
    98 |     finally:
    99 |         conn.close()
   100 | 
+```
+
+<!-- ─── страница 246 ─── -->
+
+```py
   101 | 
   102 | def enabled_modules(tenant, dsn=None):
   103 |     """List the enabled module names for ``tenant`` (sorted).
@@ -14245,11 +14819,6 @@
   127 |         return list(DEFAULT_MODULES)
   128 |     finally:
   129 |         conn.close()
-```
-
-<!-- ─── страница 237 ─── -->
-
-```py
   130 | 
   131 | 
   132 | def is_module_enabled(tenant, module, dsn=None):
@@ -14276,6 +14845,11 @@
   153 |             'SELECT enabled FROM control.tenant_module WHERE tenant_id=%s AND module=%s',
   154 |             (tid, module)).fetchone()
   155 |         if r is None:
+```
+
+<!-- ─── страница 247 ─── -->
+
+```py
   156 |             return True                  # no explicit row -> not gated (default-enabled)
   157 |         return bool(r['enabled'])
   158 |     except Exception:
@@ -14310,11 +14884,6 @@
    16 | **Where the plan is stored.** The plan name is a control-plane fact, so it lives
    17 | next to the tenant in ``control.tenant.plan`` on PostgreSQL (added idempotently by
    18 | ``_ensure_plan_column`` — a plain ``ALTER TABLE … ADD COLUMN IF NOT EXISTS`` so an
-```
-
-<!-- ─── страница 238 ─── -->
-
-```py
    19 | already-provisioned DB upgrades with no migration step). Entitlements themselves
    20 | stay in ``control.tenant_module`` exactly as before — billing only *drives* them.
    21 | 
@@ -14341,6 +14910,11 @@
    42 | # --------------------------------------------------------------------------- #
    43 | # Plan catalogue. Each plan declares the modules it licenses and a few usage
    44 | # limits. ``limits`` keys are resources ``check_limit`` understands:
+```
+
+<!-- ─── страница 248 ─── -->
+
+```py
    45 | #   max_records   — bibliographic records the tenant may hold (catalog size)
    46 | #   max_readers   — registered readers
    47 | #   max_storage_mb— attached-file / cover storage budget, MB
@@ -14370,11 +14944,6 @@
    71 |     },
    72 | }
    73 | 
-```
-
-<!-- ─── страница 239 ─── -->
-
-```py
    74 | # The plan a freshly provisioned tenant gets, and the dev/``public`` answer.
    75 | DEFAULT_PLAN = os.environ.get('DEFAULT_PLAN', 'standard')
    76 | 
@@ -14401,6 +14970,11 @@
    97 | 
    98 | 
    99 | def plan_modules(plan):
+```
+
+<!-- ─── страница 249 ─── -->
+
+```py
   100 |     """The functional modules a plan licenses (sorted), or raise BillingError."""
   101 |     return sorted(PLANS[_require_plan(plan)]['modules'])
   102 | 
@@ -14430,11 +15004,6 @@
   126 | # has no control plane → these degrade to DEFAULT_PLAN / no-op.
   127 | # --------------------------------------------------------------------------- #
   128 | def _on_control_plane(store):
-```
-
-<!-- ─── страница 240 ─── -->
-
-```py
   129 |     """True iff billing should target a real PostgreSQL control plane.
   130 | 
   131 |     Real PG iff a ``PgAccessStore`` is in play OR the env selects the postgres
@@ -14461,6 +15030,11 @@
   152 |     """
   153 |     from .pgstore import _admin_conn, ensure_control_schema
   154 |     ensure_control_schema(dsn)
+```
+
+<!-- ─── страница 250 ─── -->
+
+```py
   155 |     default = DEFAULT_PLAN if DEFAULT_PLAN in PLANS else 'standard'
   156 |     conn = _admin_conn(dsn)
   157 |     try:
@@ -14490,11 +15064,6 @@
   181 |     try:
   182 |         r = conn.execute('SELECT plan FROM control.tenant WHERE slug=%s',
   183 |                          (tenant,)).fetchone()
-```
-
-<!-- ─── страница 241 ─── -->
-
-```py
   184 |         if not r or not r.get('plan'):
   185 |             return DEFAULT_PLAN
   186 |         plan = r['plan']
@@ -14521,6 +15090,11 @@
   207 |     writes go through the control plane by slug.
   208 |     """
   209 |     _require_plan(plan)
+```
+
+<!-- ─── страница 251 ─── -->
+
+```py
   210 |     if entitlements._is_public(tenant) or not _on_control_plane(store):
   211 |         # dev / single-tenant: validate + report, but nothing to persist or gate.
   212 |         return {'tenant': tenant, 'plan': plan, 'modules': plan_modules(plan),
@@ -14550,11 +15124,6 @@
   236 |     Counts what the Access store can see locally — registered staff accounts and
   237 |     the dictionary footprint — plus, when wired, catalog record / reader counts.
   238 |     A resource we can't count is simply omitted (callers treat absence as 0). Never
-```
-
-<!-- ─── страница 242 ─── -->
-
-```py
   239 |     raises: a store predating a table just yields a smaller dict.
   240 |     """
   241 |     usage = {}
@@ -14581,6 +15150,11 @@
   262 |     ``current`` is the count *if this operation proceeds* (so a record-create passes
   263 |     ``record_count + 1``). Resolves the tenant's plan (unless ``plan`` is given),
   264 |     looks up that resource's ceiling, and compares.
+```
+
+<!-- ─── страница 252 ─── -->
+
+```py
   265 | 
   266 |     Best-effort + off by default:
   267 |       * an UNLIMITED ceiling (pro plan, or a resource a plan doesn't cap) → True;
@@ -14615,11 +15189,6 @@
     6 | machinery already in ``access.pgstore`` (issue #100):
     7 | 
     8 |   1. **schema** — ``CREATE SCHEMA t_<slug>`` + the Access DDL into it (done by
-```
-
-<!-- ─── страница 243 ─── -->
-
-```py
     9 |      ``PgAccessStore(tenant_schema=…)`` construction; recorded in
    10 |      ``control.tenant``);
    11 |   2. **vocabularies** — ``seed_vocabularies()`` populates the system dictionaries
@@ -14646,6 +15215,11 @@
    32 |     python -m access.provision <slug> [--name NAME] [--admin LOGIN]
    33 |                                        [--password PW] [--plan PLAN] [--kind KIND]
    34 |     python -m access.provision --list
+```
+
+<!-- ─── страница 253 ─── -->
+
+```py
    35 |     python -m access.provision --deprovision <slug>
    36 | """
    37 | import os
@@ -14675,11 +15249,6 @@
    61 |     Real PG iff a ``PgAccessStore`` (or a DSN string) is in play, or the env
    62 |     selects the postgres backend. The sqlite dev ``AccessStore`` → single-tenant.
    63 |     """
-```
-
-<!-- ─── страница 244 ─── -->
-
-```py
    64 |     if _is_pg_dsn(store):
    65 |         return True
    66 |     try:
@@ -14706,6 +15275,11 @@
    87 | 
    88 | 
    89 | def provision_tenant(store, slug, name, admin_login,
+```
+
+<!-- ─── страница 254 ─── -->
+
+```py
    90 |                      admin_password=None, plan='standard', kind=DEFAULT_KIND,
    91 |                      dsn=None):
    92 |     """Stand up tenant ``<slug>`` end-to-end. Idempotent. Returns a report dict.
@@ -14735,11 +15309,6 @@
   116 |         # vocabularies (pgstore.provision_tenant does roles/seed/entitlements/vocab).
   117 |         tstore = pgstore.provision_tenant(slug, name, kind, dsn=dsn, do_seed=True)
   118 |         # 3: the tenant's named admin account (beyond the demo admin the seed makes).
-```
-
-<!-- ─── страница 245 ─── -->
-
-```py
   119 |         admin = _seed_admin_account(tstore, admin_login, admin_password, name)
   120 |         # 4: plan → record it + drive entitlements to exactly the plan's modules.
   121 |         plan_info = billing.set_tenant_plan(tstore, slug, plan, dsn=dsn)
@@ -14766,6 +15335,11 @@
   142 |         'postgres': on_pg,
   143 |         'store': tstore,
   144 |     }
+```
+
+<!-- ─── страница 255 ─── -->
+
+```py
   145 | 
   146 | 
   147 | def deprovision_tenant(slug, dsn=None):
@@ -14795,11 +15369,6 @@
   171 |     try:
   172 |         rows = pgstore.list_tenants(dsn=dsn)
   173 |     except Exception:
-```
-
-<!-- ─── страница 246 ─── -->
-
-```py
   174 |         return []
   175 |     out = []
   176 |     for r in rows:
@@ -14826,6 +15395,11 @@
   197 |     path = os.environ.get('ACCESS_DB', os.path.join(here, 'access.db'))
   198 |     return AccessStore(path)
   199 | 
+```
+
+<!-- ─── страница 256 ─── -->
+
+```py
   200 | 
   201 | def _print(report):
   202 |     print('provisioned tenant %r (%s)' % (report['slug'], report['name']))
@@ -14855,11 +15429,6 @@
   226 |     args = p.parse_args(argv)
   227 | 
   228 |     if args.list:
-```
-
-<!-- ─── страница 247 ─── -->
-
-```py
   229 |         rows = list_tenants(dsn=args.dsn)
   230 |         if not rows:
   231 |             print('(no tenants — sqlite dev or empty control plane)')
@@ -14886,6 +15455,11 @@
   252 | 
   253 | if __name__ == '__main__':
   254 |     sys.exit(main())
+```
+
+<!-- ─── страница 257 ─── -->
+
+```py
 ```
 
 ### Файл: `irbis-web/backend/access/store.py`  · строк: 652
@@ -14920,11 +15494,6 @@
    27 | CREATE TABLE IF NOT EXISTS grant_entry (
    28 |   id INTEGER PRIMARY KEY AUTOINCREMENT,
    29 |   account_id INTEGER NOT NULL REFERENCES staff_account(id) ON DELETE CASCADE,
-```
-
-<!-- ─── страница 248 ─── -->
-
-```py
    30 |   function TEXT NOT NULL,
    31 |   db TEXT NOT NULL,
    32 |   level TEXT NOT NULL CHECK (level IN ('read','write','admin')),
@@ -14951,6 +15520,11 @@
    53 |   function TEXT NOT NULL, db TEXT, mfn INTEGER,
    54 |   result TEXT NOT NULL, detail TEXT
    55 | );
+```
+
+<!-- ─── страница 258 ─── -->
+
+```py
    56 | -- Per-tenant vocabularies + classification trees (seeding engine, gap A5 #188).
    57 | -- Mirrors schema_postgres.sql. On sqlite dev there is one (single-tenant 'public')
    58 | -- store, so these tables hold that tenant's seeded dictionaries.
@@ -14980,11 +15554,6 @@
    82 |   code TEXT NOT NULL,
    83 |   label TEXT NOT NULL,
    84 |   parent TEXT,
-```
-
-<!-- ─── страница 249 ─── -->
-
-```py
    85 |   depth INTEGER NOT NULL DEFAULT 0,
    86 |   path TEXT,
    87 |   sort INTEGER NOT NULL DEFAULT 0,
@@ -15011,6 +15580,11 @@
   108 | CREATE INDEX IF NOT EXISTS reader_hold_queue_idx ON reader_hold(db, mfn, status, queued_at);
   109 | CREATE INDEX IF NOT EXISTS reader_hold_ticket_idx ON reader_hold(ticket, status);
   110 | CREATE TABLE IF NOT EXISTS reader_shelf (
+```
+
+<!-- ─── страница 259 ─── -->
+
+```py
   111 |   id TEXT NOT NULL,                 -- 'want' | 'fav' (system) | custom 's<n>'
   112 |   ticket TEXT NOT NULL,
   113 |   name TEXT NOT NULL,
@@ -15040,11 +15614,6 @@
   137 |   rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
   138 |   text TEXT,
   139 |   reader_name TEXT,
-```
-
-<!-- ─── страница 250 ─── -->
-
-```py
   140 |   ts REAL NOT NULL,
   141 |   UNIQUE(ticket, db, mfn)
   142 | );
@@ -15071,6 +15640,11 @@
   163 |   created_at REAL NOT NULL
   164 | );
   165 | CREATE INDEX IF NOT EXISTS saved_search_ticket_idx ON saved_search(ticket, id);
+```
+
+<!-- ─── страница 260 ─── -->
+
+```py
   166 | -- Consent (152-ФЗ ст.6/9, audit finding V9 / R9) — append-only: a new state is a
   167 | -- NEW row, never an UPDATE, so withdraw + re-consent is HISTORY not overwrite
   168 | -- (SPEC_compliance_152fz §2.5). The effective consent for a reader is the latest
@@ -15100,11 +15674,6 @@
   192 |             c.execute('PRAGMA foreign_keys=ON')
   193 |             self._local.conn = c
   194 |         return c
-```
-
-<!-- ─── страница 251 ─── -->
-
-```py
   195 | 
   196 |     def ensure_schema(self):
   197 |         c = self._conn()
@@ -15131,6 +15700,11 @@
   218 |     # ---- accounts ----
   219 |     def create_account(self, login, password, full_name=''):
   220 |         c = self._conn()
+```
+
+<!-- ─── страница 261 ─── -->
+
+```py
   221 |         c.execute('INSERT OR IGNORE INTO staff_account(login,pass_hash,full_name) VALUES(?,?,?)',
   222 |                   (login, self.hash_password(password), full_name))
   223 |         c.commit()
@@ -15160,11 +15734,6 @@
   247 |         return c.execute('SELECT id FROM role WHERE name=?', (name,)).fetchone()['id']
   248 | 
   249 |     def add_role_grant(self, role_id, function, db, level):
-```
-
-<!-- ─── страница 252 ─── -->
-
-```py
   250 |         c = self._conn()
   251 |         c.execute('INSERT OR REPLACE INTO role_grant(role_id,function,db,level) VALUES(?,?,?,?)',
   252 |                   (role_id, function, db, level))
@@ -15191,6 +15760,11 @@
   273 |     def get_account_by_id(self, account_id):
   274 |         r = self._conn().execute(
   275 |             'SELECT * FROM staff_account WHERE id=?', (account_id,)).fetchone()
+```
+
+<!-- ─── страница 262 ─── -->
+
+```py
   276 |         return dict(r) if r else None
   277 | 
   278 |     def list_accounts(self):
@@ -15220,11 +15794,6 @@
   302 |         c.commit()
   303 |         return self.account_roles(account_id)
   304 | 
-```
-
-<!-- ─── страница 253 ─── -->
-
-```py
   305 |     def set_account_active(self, account_id, active):
   306 |         """Enable/disable an account; returns the new is_active (0/1)."""
   307 |         c = self._conn()
@@ -15251,6 +15820,11 @@
   328 |         c.execute('INSERT INTO audit_log(ts,actor,function,db,mfn,result,detail) VALUES(?,?,?,?,?,?,?)',
   329 |                   (time.time(), actor, function, db, mfn, result,
   330 |                    json.dumps(detail or {}, ensure_ascii=False)))
+```
+
+<!-- ─── страница 263 ─── -->
+
+```py
   331 |         c.commit()
   332 | 
   333 |     def recent_audit(self, limit=50):
@@ -15280,11 +15854,6 @@
   357 |             'ON CONFLICT(vocab,code) DO UPDATE SET label=excluded.label, sort=excluded.sort',
   358 |             (vocab, code, label, sort, origin))
   359 |         c.commit()
-```
-
-<!-- ─── страница 254 ─── -->
-
-```py
   360 | 
   361 |     def get_vocabulary(self, name):
   362 |         r = self._conn().execute('SELECT * FROM vocabulary WHERE name=?', (name,)).fetchone()
@@ -15311,6 +15880,11 @@
   383 |         c.commit()
   384 | 
   385 |     def classification_nodes(self, name):
+```
+
+<!-- ─── страница 264 ─── -->
+
+```py
   386 |         return [dict(r) for r in self._conn().execute(
   387 |             'SELECT code,label,parent,depth,path,sort FROM classification_node '
   388 |             'WHERE name=? ORDER BY sort, code', (name,)).fetchall()]
@@ -15340,11 +15914,6 @@
   412 |         return self.hold_get(cur.lastrowid)
   413 | 
   414 |     def hold_get(self, hold_id):
-```
-
-<!-- ─── страница 255 ─── -->
-
-```py
   415 |         r = self._conn().execute(
   416 |             'SELECT * FROM reader_hold WHERE id=?', (hold_id,)).fetchone()
   417 |         return dict(r) if r else None
@@ -15371,6 +15940,11 @@
   438 |     def shelf_lists(self, ticket):
   439 |         return [dict(r) for r in self._conn().execute(
   440 |             'SELECT id,name,system,created_at FROM reader_shelf WHERE ticket=? '
+```
+
+<!-- ─── страница 265 ─── -->
+
+```py
   441 |             'ORDER BY system DESC, created_at, id', (ticket,)).fetchall()]
   442 | 
   443 |     def shelf_get(self, ticket, list_id):
@@ -15400,11 +15974,6 @@
   467 |     def shelf_items(self, ticket, list_id):
   468 |         return [dict(r) for r in self._conn().execute(
   469 |             'SELECT db,mfn,title FROM reader_shelf_item WHERE ticket=? AND list_id=? '
-```
-
-<!-- ─── страница 256 ─── -->
-
-```py
   470 |             'ORDER BY added_at, db, mfn', (ticket, list_id)).fetchall()]
   471 | 
   472 |     def shelf_add_item(self, ticket, list_id, db, mfn, title):
@@ -15431,6 +16000,11 @@
   493 |         transparent — a legacy plaintext row passes through unchanged."""
   494 |         if row is None:
   495 |             return None
+```
+
+<!-- ─── страница 266 ─── -->
+
+```py
   496 |         d = dict(row)
   497 |         if 'reader_name' in d:
   498 |             d['reader_name'] = crypto.decrypt(d['reader_name'])
@@ -15460,11 +16034,6 @@
   522 | 
   523 |         ``reader_name`` is decrypted in the handler (stored ciphertext, V1)."""
   524 |         return [self._decrypt_review(r) for r in self._conn().execute(
-```
-
-<!-- ─── страница 257 ─── -->
-
-```py
   525 |             'SELECT * FROM reader_review WHERE db=? AND mfn=? ORDER BY ts DESC, id DESC',
   526 |             (db, mfn)).fetchall()]
   527 | 
@@ -15491,6 +16060,11 @@
   548 |                         (review_id, ticket)).fetchone()
   549 |         if not row:
   550 |             return None
+```
+
+<!-- ─── страница 267 ─── -->
+
+```py
   551 |         c.execute('DELETE FROM reader_review WHERE id=?', (review_id,))
   552 |         c.commit()
   553 |         return dict(row)
@@ -15520,11 +16094,6 @@
   577 |     def saved_search_add(self, ticket, name, db, prefix, query, ts):
   578 |         c = self._conn()
   579 |         cur = c.execute(
-```
-
-<!-- ─── страница 258 ─── -->
-
-```py
   580 |             'INSERT INTO saved_search(ticket,name,db,prefix,query,created_at) '
   581 |             'VALUES(?,?,?,?,?,?)', (ticket, name, db, prefix, query, ts))
   582 |         c.commit()
@@ -15551,6 +16120,11 @@
   603 |         c = self._conn()
   604 |         c.execute('INSERT INTO reader_consent(ticket,given,version,ts) VALUES(?,?,?,?)',
   605 |                   (ticket, 1 if given else 0, int(version), ts))
+```
+
+<!-- ─── страница 268 ─── -->
+
+```py
   606 |         c.commit()
   607 |         return self.consent_current(ticket)
   608 | 
@@ -15580,11 +16154,6 @@
   632 |                 ('shelves', 'DELETE FROM reader_shelf WHERE ticket=?'),
   633 |                 ('shelfItems', 'DELETE FROM reader_shelf_item WHERE ticket=?'),
   634 |                 ('history', 'DELETE FROM reader_history WHERE ticket=?'),
-```
-
-<!-- ─── страница 259 ─── -->
-
-```py
   635 |                 ('savedSearches', 'DELETE FROM saved_search WHERE ticket=?'),
   636 |                 ('consent', 'DELETE FROM reader_consent WHERE ticket=?')):
   637 |             cur = c.execute(sql, (ticket,))
@@ -15616,6 +16185,11 @@
     6 | 
     7 | Holds staff accounts, grants, roles and the audit log (readers live in RDR, not
     8 | here). DDL is the shared ``schema_postgres.sql``. Password hashing (pbkdf2-sha256)
+```
+
+<!-- ─── страница 269 ─── -->
+
+```py
     9 | is reused verbatim from ``AccessStore`` so hashes are interchangeable across
    10 | backends.
    11 | 
@@ -15645,11 +16219,6 @@
    35 | def _validate_slug(slug):
    36 |     if not isinstance(slug, str) or not _SLUG_RE.match(slug):
    37 |         raise ValueError(
-```
-
-<!-- ─── страница 260 ─── -->
-
-```py
    38 |             'invalid tenant slug %r (need ^[a-z][a-z0-9_]{0,40}$)' % (slug,))
    39 |     return slug
    40 | 
@@ -15676,6 +16245,11 @@
    61 |     """
    62 | 
    63 |     def __init__(self, dsn, tenant_schema=None):
+```
+
+<!-- ─── страница 270 ─── -->
+
+```py
    64 |         self.dsn = dsn
    65 |         self.db_path = dsn          # parity with AccessStore.db_path (a few callers introspect it)
    66 |         self.tenant_schema = tenant_schema   # 't_<slug>' for a tenant, or None for public
@@ -15705,11 +16279,6 @@
    90 |         """
    91 |         if self.tenant_schema:
    92 |             from psycopg import sql
-```
-
-<!-- ─── страница 261 ─── -->
-
-```py
    93 |             conn.execute(
    94 |                 sql.SQL('SET search_path = {}, public').format(
    95 |                     sql.Identifier(self.tenant_schema)))
@@ -15736,6 +16305,11 @@
   116 |     @staticmethod
   117 |     def _ensure_pgcrypto(conn):
   118 |         """Best-effort ``CREATE EXTENSION pgcrypto`` + verify pgp_sym_* are callable.
+```
+
+<!-- ─── страница 271 ─── -->
+
+```py
   119 | 
   120 |         Returns True iff in-database encryption is available. On a role without the
   121 |         privilege (or pgcrypto absent) returns False so review writes fall back to
@@ -15765,11 +16339,6 @@
   145 |             'INSERT INTO staff_account(login,pass_hash,full_name) VALUES(%s,%s,%s)'
   146 |             ' ON CONFLICT(login) DO NOTHING',
   147 |             (login, self.hash_password(password), full_name))
-```
-
-<!-- ─── страница 262 ─── -->
-
-```py
   148 |         return self.get_account(login)
   149 | 
   150 |     def get_account(self, login):
@@ -15796,6 +16365,11 @@
   171 |         return c.execute('SELECT id FROM role WHERE name=%s', (name,)).fetchone()['id']
   172 | 
   173 |     def add_role_grant(self, role_id, function, db, level):
+```
+
+<!-- ─── страница 272 ─── -->
+
+```py
   174 |         self._conn().execute(
   175 |             'INSERT INTO role_grant(role_id,function,db,level) VALUES(%s,%s,%s,%s)'
   176 |             ' ON CONFLICT(role_id,function,db) DO UPDATE SET level=EXCLUDED.level',
@@ -15825,11 +16399,6 @@
   200 |             'SELECT * FROM staff_account WHERE id=%s', (account_id,)).fetchone()
   201 |         return dict(r) if r else None
   202 | 
-```
-
-<!-- ─── страница 263 ─── -->
-
-```py
   203 |     def list_accounts(self):
   204 |         return [dict(r) for r in self._conn().execute(
   205 |             'SELECT id,login,full_name,is_active FROM staff_account '
@@ -15856,6 +16425,11 @@
   226 |                   (bool(active), account_id))
   227 |         a = self.get_account_by_id(account_id)
   228 |         return a['is_active'] if a else None
+```
+
+<!-- ─── страница 273 ─── -->
+
+```py
   229 | 
   230 |     def list_roles(self):
   231 |         c = self._conn()
@@ -15885,11 +16459,6 @@
   255 |             'INSERT INTO vocabulary(name,title,kind,field_hint,seed_version) '
   256 |             'VALUES(%s,%s,%s,%s,%s) ON CONFLICT(name) DO UPDATE SET '
   257 |             'title=EXCLUDED.title, kind=EXCLUDED.kind, field_hint=EXCLUDED.field_hint',
-```
-
-<!-- ─── страница 264 ─── -->
-
-```py
   258 |             (name, title, kind, field_hint, seed_version))
   259 | 
   260 |     def upsert_vocabulary_value(self, vocab, code, label, sort, origin='seed'):
@@ -15916,6 +16485,11 @@
   281 |     def upsert_classification_node(self, name, code, label, parent, depth, path, sort=0):
   282 |         self._conn().execute(
   283 |             'INSERT INTO classification_node(name,code,label,parent,depth,path,sort) '
+```
+
+<!-- ─── страница 274 ─── -->
+
+```py
   284 |             'VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(name,code) DO UPDATE SET '
   285 |             'label=EXCLUDED.label, parent=EXCLUDED.parent, depth=EXCLUDED.depth, '
   286 |             'path=EXCLUDED.path, sort=EXCLUDED.sort',
@@ -15945,11 +16519,6 @@
   310 |             'INSERT INTO reader_hold(ticket,db,mfn,title,status,queued_at,until) '
   311 |             'VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING id',
   312 |             (ticket, db, mfn, title, status, queued_at, until)).fetchone()
-```
-
-<!-- ─── страница 265 ─── -->
-
-```py
   313 |         return self.hold_get(r['id'])
   314 | 
   315 |     def hold_get(self, hold_id):
@@ -15976,6 +16545,11 @@
   336 |     def shelf_lists(self, ticket):
   337 |         return [dict(r) for r in self._conn().execute(
   338 |             'SELECT id,name,system,created_at FROM reader_shelf WHERE ticket=%s '
+```
+
+<!-- ─── страница 275 ─── -->
+
+```py
   339 |             'ORDER BY system DESC, created_at, id', (ticket,)).fetchall()]
   340 | 
   341 |     def shelf_get(self, ticket, list_id):
@@ -16005,11 +16579,6 @@
   365 |         return [dict(r) for r in self._conn().execute(
   366 |             'SELECT db,mfn,title FROM reader_shelf_item WHERE ticket=%s AND list_id=%s '
   367 |             'ORDER BY added_at, db, mfn', (ticket, list_id)).fetchall()]
-```
-
-<!-- ─── страница 266 ─── -->
-
-```py
   368 | 
   369 |     def shelf_add_item(self, ticket, list_id, db, mfn, title):
   370 |         self._conn().execute(
@@ -16036,6 +16605,11 @@
   391 |         active backend. pgcrypto decrypts in-DB; the fallback returns raw bytes
   392 |         which _row_decrypt() turns back into the plaintext via the token cipher."""
   393 |         if getattr(self, '_pgcrypto', False):
+```
+
+<!-- ─── страница 276 ─── -->
+
+```py
   394 |             return ('id, ticket, db, mfn, rating, text, ts, '
   395 |                     'pgp_sym_decrypt(reader_name, %s) AS reader_name'), (crypto.pg_key(),)
   396 |         return 'id, ticket, db, mfn, rating, text, ts, reader_name', ()
@@ -16065,11 +16639,6 @@
   420 |             'VALUES(%s,%s,%s,%s,%s,' + name_sql + ',%s) '
   421 |             'ON CONFLICT(ticket,db,mfn) DO UPDATE SET '
   422 |             'rating=EXCLUDED.rating, text=EXCLUDED.text, '
-```
-
-<!-- ─── страница 267 ─── -->
-
-```py
   423 |             'reader_name=EXCLUDED.reader_name, ts=EXCLUDED.ts RETURNING id',
   424 |             (ticket, db, mfn, rating, text) + name_args + (ts,)).fetchone()
   425 |         cols, kargs = self._review_select_cols()
@@ -16096,6 +16665,11 @@
   446 |         """The RAW (encrypted BYTEA) reader_name — for tests/forensics asserting the
   447 |         at-rest value is ciphertext, not plaintext."""
   448 |         r = self._conn().execute(
+```
+
+<!-- ─── страница 277 ─── -->
+
+```py
   449 |             'SELECT reader_name FROM reader_review WHERE ticket=%s AND db=%s AND mfn=%s',
   450 |             (ticket, db, mfn)).fetchone()
   451 |         if not r:
@@ -16125,11 +16699,6 @@
   475 |         return [dict(r) for r in self._conn().execute(
   476 |             'SELECT db,mfn,title,ts FROM reader_history WHERE ticket=%s '
   477 |             'ORDER BY ts DESC, db, mfn LIMIT %s', (ticket, limit)).fetchall()]
-```
-
-<!-- ─── страница 268 ─── -->
-
-```py
   478 | 
   479 |     def saved_search_list(self, ticket):
   480 |         return [dict(r) for r in self._conn().execute(
@@ -16156,6 +16725,11 @@
   501 |     # ---- consent (V9) — append-only; latest row by ts is effective ----
   502 |     def consent_record(self, ticket, given, version, ts):
   503 |         self._conn().execute(
+```
+
+<!-- ─── страница 278 ─── -->
+
+```py
   504 |             'INSERT INTO reader_consent(ticket,given,version,ts) VALUES(%s,%s,%s,%s)',
   505 |             (ticket, bool(given), int(version), ts))
   506 |         return self.consent_current(ticket)
@@ -16185,11 +16759,6 @@
   530 |         return counts
   531 | 
   532 |     # ---- PDn-access journal read (V5) — entries written via audit() ----
-```
-
-<!-- ─── страница 269 ─── -->
-
-```py
   533 |     def pdn_access_log(self, limit=50):
   534 |         return [dict(r) for r in self._conn().execute(
   535 |             "SELECT * FROM audit_log WHERE function='pdn.read' "
@@ -16216,6 +16785,11 @@
   556 |         path = cfg.access_db
   557 |     else:
   558 |         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+```
+
+<!-- ─── страница 279 ─── -->
+
+```py
   559 |         path = os.environ.get('ACCESS_DB', os.path.join(here, 'access.db'))
   560 |     return AccessStore(path)
   561 | 
@@ -16245,11 +16819,6 @@
   585 |     dsn = dsn or default_pg_dsn()
   586 |     with open(_CONTROL_SQL_PATH, encoding='utf-8') as f:
   587 |         ddl = f.read()
-```
-
-<!-- ─── страница 270 ─── -->
-
-```py
   588 |     conn = _admin_conn(dsn)
   589 |     try:
   590 |         conn.execute(ddl)
@@ -16276,6 +16845,11 @@
   611 |         schema = schema_for(slug)
   612 |     except ValueError:
   613 |         return False
+```
+
+<!-- ─── страница 280 ─── -->
+
+```py
   614 |     try:
   615 |         conn = _admin_conn(dsn or default_pg_dsn())
   616 |     except Exception:
@@ -16305,11 +16879,6 @@
   640 | 
   641 | def provision_tenant(slug, name, kind, dsn=None, do_seed=True):
   642 |     """Create (or re-create idempotently) tenant ``<slug>`` and return its store.
-```
-
-<!-- ─── страница 271 ─── -->
-
-```py
   643 | 
   644 |     Steps (all idempotent — safe to re-run):
   645 |       1. ensure ``control`` schema + record the tenant row (upsert on slug);
@@ -16336,6 +16905,11 @@
   666 |     store = make_tenant_store(slug, dsn)
   667 |     if do_seed:
   668 |         from .seed import seed
+```
+
+<!-- ─── страница 281 ─── -->
+
+```py
   669 |         seed(store)
   670 |         # Licensing (#101): turn the default module set ON for the new tenant.
   671 |         # Idempotent; leaves any operator-disabled module untouched on re-provision.
@@ -16365,11 +16939,6 @@
   695 |             "SELECT 1 FROM information_schema.tables "
   696 |             "WHERE table_schema='control' AND table_name='tenant'").fetchone()
   697 |         if has_ctl:
-```
-
-<!-- ─── страница 272 ─── -->
-
-```py
   698 |             conn.execute('DELETE FROM control.tenant WHERE slug=%s', (slug,))
   699 |     finally:
   700 |         conn.close()
@@ -16401,6 +16970,11 @@
    21 | """
    22 | import base64
    23 | import hashlib
+```
+
+<!-- ─── страница 282 ─── -->
+
+```py
    24 | import hmac
    25 | import json
    26 | import time
@@ -16430,11 +17004,6 @@
    50 | 
    51 | def _secret_bytes(secret):
    52 |     return secret.encode('utf-8') if isinstance(secret, str) else secret
-```
-
-<!-- ─── страница 273 ─── -->
-
-```py
    53 | 
    54 | 
    55 | def encode(claims, secret, ttl_seconds=43200, now=None):
@@ -16461,6 +17030,11 @@
    76 |     - ``alg`` is pinned to HS256 on decode, so an attacker can't downgrade to
    77 |       ``alg: none`` or swap algorithms.
    78 |     - ``exp`` (if present) must be in the future.
+```
+
+<!-- ─── страница 283 ─── -->
+
+```py
    79 |     """
    80 |     if not token or not isinstance(token, str):
    81 |         raise JwtError('empty token')
@@ -16490,11 +17064,6 @@
   105 |     if exp is not None:
   106 |         now = int(now if now is not None else time.time())
   107 |         if now >= int(exp):
-```
-
-<!-- ─── страница 274 ─── -->
-
-```py
   108 |             raise JwtError('token expired')
   109 |     return claims
 ```
@@ -16526,6 +17095,11 @@
    22 |    this module supplies the Python-side counterpart + key for the sqlite dev store
    23 |    and as a fallback.
    24 | 2. **AES-256-GCM** (AEAD) via the ``cryptography`` lib when importable — the
+```
+
+<!-- ─── страница 284 ─── -->
+
+```py
    25 |    preferred Python-side cipher.  Key = HKDF-SHA256(PDN_KEY, info="pdn:<keyid>").
    26 | 3. **dev fallback** (stdlib only, when ``cryptography`` is absent) — a clearly
    27 |    marked, keyed HMAC-SHA256 keystream-XOR transform.  It makes the stored value
@@ -16555,11 +17129,6 @@
    51 | ------------
    52 | ``decrypt`` is tolerant: a value that is NOT a recognized ``pdn:`` token (e.g. a
    53 | legacy plaintext row written before this landed, or an empty string) is returned
-```
-
-<!-- ─── страница 275 ─── -->
-
-```py
    54 | unchanged.  ``encrypt('')`` / ``encrypt(None)`` return the input unchanged (no
    55 | point ciphering an empty PII slot).  So the cipher is transparent to callers and
    56 | safe to roll out over a store that already has plaintext rows.
@@ -16586,6 +17155,11 @@
    77 | # being public is fine for the dev fallback (it only protects a dev sqlite file).
    78 | _DEV_DEFAULT_SECRET = 'irbis-dev-pdn-key-not-for-production'
    79 | 
+```
+
+<!-- ─── страница 285 ─── -->
+
+```py
    80 | 
    81 | def active_key_id():
    82 |     """The key id NEW ciphertext is written under (env ``PDN_KEY_ID``, default '1')."""
@@ -16615,11 +17189,6 @@
   106 |     prk = hmac.new(salt, secret, hashlib.sha256).digest()
   107 |     okm = hmac.new(prk, info + b'\x01', hashlib.sha256).digest()
   108 |     return okm[:length]
-```
-
-<!-- ─── страница 276 ─── -->
-
-```py
   109 | 
   110 | 
   111 | def _has_cryptography():
@@ -16646,6 +17215,11 @@
   132 |     Tests use this to SKIP-WITH-NOTE the strong-cipher leg (and exercise the dev
   133 |     fallback instead) rather than fail CI when ``cryptography`` is not installed."""
   134 |     return _has_cryptography()
+```
+
+<!-- ─── страница 286 ─── -->
+
+```py
   135 | 
   136 | 
   137 | def is_token(value):
@@ -16675,11 +17249,6 @@
   161 | 
   162 | # --------------------------------------------------------------------------- #
   163 | # Dev fallback (stdlib only) — keyed HMAC-SHA256 keystream XOR. NOT an AEAD and
-```
-
-<!-- ─── страница 277 ─── -->
-
-```py
   164 | # NOT a certified СКЗИ; makes the stored value ciphertext-at-rest so a raw dump
   165 | # does not reveal the name, and keeps dev/CI green without `cryptography`.
   166 | # --------------------------------------------------------------------------- #
@@ -16706,6 +17275,11 @@
   187 |     payload = base64.b64encode(nonce + tag + ct).decode('ascii')
   188 |     return _join(_B_DEV, key_id, payload)
   189 | 
+```
+
+<!-- ─── страница 287 ─── -->
+
+```py
   190 | 
   191 | def _dev_decrypt(payload, key_id):
   192 |     key = _derive(_secret_for(key_id), key_id, 32)
@@ -16735,11 +17309,6 @@
   216 | 
   217 | def encrypt(plaintext):
   218 |     """Encrypt a PII string to a self-describing ciphertext token.
-```
-
-<!-- ─── страница 278 ─── -->
-
-```py
   219 | 
   220 |     Empty / None passes through unchanged (no point ciphering an empty slot, and
   221 |     it keeps NULL columns NULL). Uses AES-GCM when available, else the dev
@@ -16766,6 +17335,11 @@
   242 |     if not is_token(value):
   243 |         return value
   244 |     b, key_id, payload = _split(value)
+```
+
+<!-- ─── страница 288 ─── -->
+
+```py
   245 |     if b == _B_GCM:
   246 |         return _gcm_decrypt(payload, key_id)
   247 |     if b == _B_DEV:
@@ -16800,11 +17374,6 @@
     8 |   const { Button, Icon, SearchBar, ResultCard, StatusBadge, PftBlock, Pagination,
     9 |           EmptyState, ToastViewport } = NS;
    10 |   const DB = "IBIS";
-```
-
-<!-- ─── страница 279 ─── -->
-
-```jsx
    11 |   const PREFIXES = [
    12 |     { code: "K", label: "Ключевые слова" }, { code: "A", label: "Автор" },
    13 |     { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
@@ -16831,6 +17400,11 @@
    34 |     const [showRaw, setShowRaw] = React.useState(false);
    35 |     const [context, setContext] = React.useState("reader");
    36 |     const [staff, setStaff] = React.useState(null);          // {name, login, grants}
+```
+
+<!-- ─── страница 289 ─── -->
+
+```jsx
    37 |     const [staffRoute, setStaffRoute] = React.useState("desktop");
    38 |     const [staffLoginOpen, setStaffLoginOpen] = React.useState(false);
    39 |     const pageSize = 10;
@@ -16860,11 +17434,6 @@
    63 |       if (r.json && r.json.ok) { setItems(r.json.data.items); setTotal(r.json.data.total); }
    64 |       else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
    65 |       setLoading(false);
-```
-
-<!-- ─── страница 280 ─── -->
-
-```jsx
    66 |     }
    67 | 
    68 |     function onQuery(v) {
@@ -16891,6 +17460,11 @@
    89 |     async function order(mfn) {
    90 |       const r = await API.order(DB, mfn);
    91 |       if (r.status === 200) toast({ variant: "success", title: "Заказ принят", message: "Экземпляр поставлен в очередь выдачи." });
+```
+
+<!-- ─── страница 290 ─── -->
+
+```jsx
    92 |       else if (r.status === 401 || r.status === 403) { toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету, чтобы заказать." }); setLoginOpen(true); }
    93 |       else toast({ variant: "error", title: "Не удалось заказать", message: "Повторите попытку позже." });
    94 |     }
@@ -16920,11 +17494,6 @@
   118 |       const F1 = (tag) => F(tag)[0];
   119 | 
   120 |       // авторы 700/701/702 -> "Фамилия, Имя"
-```
-
-<!-- ─── страница 281 ─── -->
-
-```jsx
   121 |       const authors = ["700", "701", "702"].flatMap(F).map((f) => {
   122 |         const s = sub(f, "A"), g = sub(f, "G") || sub(f, "B");
   123 |         return (s + (g ? ", " + g : "")).trim();
@@ -16951,6 +17520,11 @@
   144 |       ].filter((r) => r.value);
   145 | 
   146 |       const subjects = F("606").map((f) => [sub(f, "A"), sub(f, "B"), sub(f, "C"), sub(f, "D")].filter(Boolean).join(" — ")).filter(Boolean);
+```
+
+<!-- ─── страница 291 ─── -->
+
+```jsx
   147 |       const holds = F("910").map((h) => ({ loc: sub(h, "D") || "Фонд", inv: sub(h, "B"), st: sub(h, "A") }));
   148 |       const files = ["951", "955"].flatMap(F).map((f) => sub(f, "A") || sub(f, "T")).filter(Boolean);
   149 |       const rawRows = d.fields.map((x) =>
@@ -16980,11 +17554,6 @@
   173 |             <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
   174 |             {context === "reader" && <button onClick={() => account.loggedIn ? setAccount({ loggedIn: false }) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
   175 |             {context === "staff" && staff && <button onClick={() => { setStaff(null); setContext("reader"); }} style={hbtn(false)}>Выйти ({staff.login})</button>}
-```
-
-<!-- ─── страница 282 ─── -->
-
-```jsx
   176 |           </div>
   177 |         </header>
   178 | 
@@ -17011,6 +17580,11 @@
   199 |                   <React.Fragment>
   200 |                     <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", margin: "4px 0 10px" }}>Найдено: {total} · страница {page} из {pageCount}</div>
   201 |                     {items.map((it) => <ResultCard key={it.mfn} item={it} dbTag="Книги" typeIcon="book" onOpen={() => openRecord(it.mfn)} />)}
+```
+
+<!-- ─── страница 292 ─── -->
+
+```jsx
   202 |                     <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={(p) => runSearch(prefix, q, p)} /></div>
   203 |                   </React.Fragment>}
   204 |             </React.Fragment>
@@ -17040,11 +17614,6 @@
   228 |                       </dl>
   229 |                     )}
   230 | 
-```
-
-<!-- ─── страница 283 ─── -->
-
-```jsx
   231 |                     {v.subjects.length > 0 && <>
   232 |                       <div style={lbl}>Темы и рубрики</div>
   233 |                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -17071,6 +17640,11 @@
   254 |                       </button>
   255 |                     </div>
   256 | 
+```
+
+<!-- ─── страница 293 ─── -->
+
+```jsx
   257 |                     {showRaw && <div style={{ marginTop: 12, borderTop: "1px solid var(--border-subtle)", paddingTop: 8 }} dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />}
   258 |                   </div>
   259 |                 </div>
@@ -17100,11 +17674,6 @@
   283 |         <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", borderRadius: 16, padding: 22, width: 320, boxShadow: "var(--shadow-lg, 0 20px 50px rgba(0,0,0,.25))" }}>
   284 |           <div style={{ fontWeight: 600, fontSize: "var(--text-lg)", marginBottom: 8 }}>Вход в личный кабинет</div>
   285 |           <p style={{ margin: "0 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Войдите по номеру читательского билета.</p>
-```
-
-<!-- ─── страница 284 ─── -->
-
-```jsx
   286 |           <input value={t} onChange={(e) => setT(e.target.value)} placeholder="Номер билета"
   287 |             onKeyDown={(e) => { if (e.key === "Enter") onSubmit(t); }}
   288 |             style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", marginBottom: 12 }} />
@@ -17131,6 +17700,11 @@
   309 |   function emptyValues(wl) {
   310 |     const v = {};
   311 |     (wl || []).forEach((fd) => { v[fd.code] = fd.repeatable ? [] : (fd.subfields ? {} : ""); });
+```
+
+<!-- ─── страница 294 ─── -->
+
+```jsx
   312 |     return v;
   313 |   }
   314 |   function valuesToFields(wl, values) {
@@ -17160,11 +17734,6 @@
   338 |         values[fd.code] = f ? (f.text || f.value || "") : "";
   339 |       }
   340 |     });
-```
-
-<!-- ─── страница 285 ─── -->
-
-```jsx
   341 |     return values;
   342 |   }
   343 | 
@@ -17191,6 +17760,11 @@
   364 |   }
   365 | 
   366 |   function StaffArea({ staff, route, setRoute, toast }) {
+```
+
+<!-- ─── страница 295 ─── -->
+
+```jsx
   367 |     if (route === "cataloging") return <CatalogingWorksheet staff={staff} onBack={() => setRoute("desktop")} toast={toast} />;
   368 |     if (route && route.name === "stub") return <StaffStub title={route.title} onBack={() => setRoute("desktop")} />;
   369 |     return <StaffDesktop staff={staff} onOpen={(d) => setRoute(d.route === "cataloging" ? "cataloging" : { name: "stub", title: d.label })} />;
@@ -17220,11 +17794,6 @@
   393 | 
   394 |   function StaffStub({ title, onBack }) {
   395 |     return (
-```
-
-<!-- ─── страница 286 ─── -->
-
-```jsx
   396 |       <div>
   397 |         <Button iconLeft="arrow-left" onClick={onBack}>К рабочему столу</Button>
   398 |         <EmptyState icon="clock" title={title} description="Экран спроектирован в дизайн-системе (прототип). На живые данные подключается следующим шагом — здесь доступна каталогизация." />
@@ -17251,6 +17820,11 @@
   419 |       const r = await API.record("IBIS", id);
   420 |       if (r.json && r.json.ok) { setValues(recordToValues(r.json.data.fields, wl)); setMfn(0); setSaved(null); toast({ variant: "info", title: "Запись загружена в форму", message: "IBIS MFN " + id + " → сохранится в песочницу " + SANDBOX }); }
   421 |       else toast({ variant: "warning", title: "Не найдено", message: "Нет записи MFN " + id + " в IBIS." });
+```
+
+<!-- ─── страница 296 ─── -->
+
+```jsx
   422 |     }
   423 |     async function save() {
   424 |       const errs = {};
@@ -17280,11 +17854,6 @@
   448 |           <button onClick={loadFromIbis} style={tbtn}>Загрузить из IBIS</button>
   449 |           <span style={{ marginLeft: "auto", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>{mfn ? "MFN " + mfn : "новая запись"}</span>
   450 |         </div>
-```
-
-<!-- ─── страница 287 ─── -->
-
-```jsx
   451 | 
   452 |         {!wl ? <div style={{ color: "var(--text-subtle)" }}>Загрузка рабочего листа…</div> : (
   453 |           <div style={{ background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 12, padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
@@ -17311,6 +17880,11 @@
   474 |     if (fd.subfields && !fd.repeatable) {
   475 |       const occ = value || {};
   476 |       return <div><div style={lab}>{fd.label}{fd.required ? " *" : ""}</div>
+```
+
+<!-- ─── страница 297 ─── -->
+
+```jsx
   477 |         <div style={{ display: "grid", gap: 6 }}>{fd.subfields.map((sf) => <input key={sf.code} placeholder={sf.label + " (^" + sf.code + ")"} value={occ[sf.code] || ""} onChange={(e) => onChange({ ...occ, [sf.code]: e.target.value })} style={inp} />)}</div>
   478 |         {error && <div style={{ color: "var(--status-issued,#c66)", fontSize: "var(--text-xs)" }}>{error}</div>}</div>;
   479 |     }
@@ -17350,11 +17924,6 @@
     8 | LEVEL_RANK = {'read': 1, 'write': 2, 'admin': 3}
     9 | 
    10 | # Implicit grant sets for non-staff sessions (not stored in DB).
-```
-
-<!-- ─── страница 288 ─── -->
-
-```py
    11 | GUEST_GRANTS = [
    12 |     {'function': 'search', 'db': '*', 'level': 'read'},
    13 |     {'function': 'record.read', 'db': '*', 'level': 'read'},
@@ -17381,6 +17950,11 @@
    34 |     if not g:
    35 |         return False
    36 |     return LEVEL_RANK.get(g['level'], 0) >= LEVEL_RANK.get(level_needed, 99)
+```
+
+<!-- ─── страница 298 ─── -->
+
+```py
 ```
 
 ### Файл: `irbis-web/backend/access/demo_requests.py`  · строк: 235
@@ -17415,11 +17989,6 @@
    27 | Один публичный класс ``DemoRequestStore`` с ``add`` / ``list`` / ``count`` / ``get``.
    28 | """
    29 | import json
-```
-
-<!-- ─── страница 289 ─── -->
-
-```py
    30 | import re
    31 | import threading
    32 | import time
@@ -17446,6 +18015,11 @@
    53 | CREATE INDEX IF NOT EXISTS demo_request_created_idx ON demo_request(created_at DESC);
    54 | """
    55 | 
+```
+
+<!-- ─── страница 299 ─── -->
+
+```py
    56 | _SCHEMA_PG = """
    57 | CREATE TABLE IF NOT EXISTS demo_request (
    58 |   id BIGSERIAL PRIMARY KEY,
@@ -17475,11 +18049,6 @@
    82 | 
    83 | def _clean(v):
    84 |     """Привести значение к обрезанной строке (None → '') и подрезать по MAX_LEN."""
-```
-
-<!-- ─── страница 290 ─── -->
-
-```py
    85 |     if v is None:
    86 |         return ''
    87 |     return str(v).strip()[:MAX_LEN]
@@ -17506,6 +18075,11 @@
   108 | 
   109 |     def __init__(self, db_path=':memory:', backend=None):
   110 |         self.db_path = db_path
+```
+
+<!-- ─── страница 300 ─── -->
+
+```py
   111 |         if backend is None:
   112 |             backend = 'postgres' if _is_pg(db_path) else 'sqlite'
   113 |         self.backend = backend
@@ -17535,11 +18109,6 @@
   137 | 
   138 |     def ensure_schema(self):
   139 |         c = self._conn()
-```
-
-<!-- ─── страница 291 ─── -->
-
-```py
   140 |         if self.backend == 'postgres':
   141 |             c.execute(_SCHEMA_PG)
   142 |         else:
@@ -17566,6 +18135,11 @@
   163 |         ``ConsentRequired`` и НИЧЕГО не пишем. ФИО и e-mail валидируются
   164 |         (``ValidationError``). Хранится ровно набор ``FORM_FIELDS`` + согласие +
   165 |         время — минимизация.
+```
+
+<!-- ─── страница 301 ─── -->
+
+```py
   166 |         """
   167 |         full_name = _clean(full_name)
   168 |         email = _clean(email)
@@ -17595,11 +18169,6 @@
   192 |                                   position, consent_val, ts))
   193 |             c.commit()
   194 |             new_id = cur.lastrowid
-```
-
-<!-- ─── страница 292 ─── -->
-
-```py
   195 |         return {'id': new_id, 'full_name': full_name, 'email': email,
   196 |                 'phone': phone, 'institution': institution, 'position': position,
   197 |                 'consent': True, 'created_at': ts}
@@ -17626,6 +18195,11 @@
   218 |         rows = self._conn().execute(
   219 |             'SELECT * FROM demo_request ORDER BY created_at DESC, id DESC '
   220 |             'LIMIT %s' % ph, (limit,)).fetchall()
+```
+
+<!-- ─── страница 302 ─── -->
+
+```py
   221 |         return [self._view(dict(r)) for r in rows]
   222 | 
   223 |     def get(self, request_id):
@@ -17660,11 +18234,6 @@
    12 | 
    13 | И производная величина для учёта квоты (ребро 7.5):
    14 |   * **остаток бюджета скачивания** ``download_budget = RIGHT.^F − LICH.v4`` —
-```
-
-<!-- ─── страница 293 ─── -->
-
-```py
    15 |     лимит страниц из шаблона прав минус уже скачанные страницы читателем.
    16 | 
    17 | Источники (только факты из конфигов):
@@ -17691,6 +18260,11 @@
    38 | """
    39 | import json
    40 | import threading
+```
+
+<!-- ─── страница 303 ─── -->
+
+```py
    41 | import time
    42 | 
    43 | # Границы личной оценки (рейтинга) ПТ. DB_SERVICE §2: пороги индексации v7 — 0..5
@@ -17720,11 +18294,6 @@
    67 |     try:
    68 |         n = int(page)
    69 |     except (TypeError, ValueError):
-```
-
-<!-- ─── страница 294 ─── -->
-
-```py
    70 |         raise ValueError('номер страницы должен быть целым числом')
    71 |     if n < 1:
    72 |         raise ValueError('номер страницы должен быть ≥ 1')
@@ -17751,6 +18320,11 @@
    93 | """
    94 | 
    95 | _SCHEMA_PG = """
+```
+
+<!-- ─── страница 304 ─── -->
+
+```py
    96 | CREATE TABLE IF NOT EXISTS lich_entry (
    97 |   id              BIGSERIAL PRIMARY KEY,
    98 |   reader          TEXT NOT NULL,
@@ -17780,11 +18354,6 @@
   122 |         ``':memory:'`` (дефолт) / путь к sqlite-файлу, ЛИБО PG DSN (``postgresql://…``).
   123 |     backend : str | None
   124 |         ``'sqlite'`` | ``'postgres'``; если не задан — по виду ``db_path``.
-```
-
-<!-- ─── страница 295 ─── -->
-
-```py
   125 |     """
   126 | 
   127 |     def __init__(self, db_path=':memory:', backend=None):
@@ -17811,6 +18380,11 @@
   148 |         return c
   149 | 
   150 |     @property
+```
+
+<!-- ─── страница 305 ─── -->
+
+```py
   151 |     def _ph(self):
   152 |         return '%s' if self.backend == 'postgres' else '?'
   153 | 
@@ -17840,11 +18414,6 @@
   177 |         r = self._conn().execute(
   178 |             'SELECT * FROM lich_entry WHERE reader=%s AND text=%s' % (ph, ph),
   179 |             (str(reader), str(text))).fetchone()
-```
-
-<!-- ─── страница 296 ─── -->
-
-```py
   180 |         return self._view(dict(r)) if r else None
   181 | 
   182 |     def ensure(self, reader, text, now=None):
@@ -17871,6 +18440,11 @@
   203 | 
   204 |     def _update(self, reader, text, sets, params, now):
   205 |         """Применить SET-фрагмент к строке (reader,text), обновив updated_at."""
+```
+
+<!-- ─── страница 306 ─── -->
+
+```py
   206 |         ts = float(now if now is not None else time.time())
   207 |         ph = self._ph
   208 |         c = self._conn()
@@ -17900,11 +18474,6 @@
   232 |         return self._update(reader, text, 'rating=%s' % self._ph, [val], now)
   233 | 
   234 |     def for_reader(self, reader, limit=500):
-```
-
-<!-- ─── страница 297 ─── -->
-
-```py
   235 |         """Все записи ПТ читателя (новейшие по обновлению первыми)."""
   236 |         limit = max(1, min(5000, int(limit)))
   237 |         ph = self._ph
@@ -17931,6 +18500,11 @@
   258 |     rights : object | None
   259 |         Объект с ``page_limit(reader_category, ...) -> int|None`` (обычно
   260 |         ``access.rights.RightService``). Нужен только для ``download_budget`` (7.5).
+```
+
+<!-- ─── страница 307 ─── -->
+
+```py
   261 |         ``None`` ⇒ без сведений о лимите (бюджет не ограничен).
   262 |     now : callable
   263 |         Часы (``time.time`` по умолчанию) — детерминизм тестов.
@@ -17960,11 +18534,6 @@
   287 |         ordered = sorted(current)
   288 |         self.store.set_bookmarks(reader, text, ordered, now=self._now())
   289 |         return ordered
-```
-
-<!-- ─── страница 298 ─── -->
-
-```py
   290 | 
   291 |     def remove_bookmark(self, reader, text, page):
   292 |         """Снять закладку со страницы (no-op, если её не было). Возвращает новый список."""
@@ -17991,6 +18560,11 @@
   313 |         entry = self.store.get(reader, text)
   314 |         return entry['downloaded'] if entry else 0
   315 | 
+```
+
+<!-- ─── страница 308 ─── -->
+
+```py
   316 |     def record_download(self, reader, text, pages=1):
   317 |         """Учесть факт скачивания ``pages`` страниц (инкремент поля 4).
   318 | 
@@ -18020,11 +18594,6 @@
   342 | 
   343 |         Возвращает:
   344 |           * ``None`` — лимит не задан (без ограничения: пустой шаблон / нет ^F /
-```
-
-<!-- ─── страница 299 ─── -->
-
-```py
   345 |             нет seam) — скачивание не лимитировано квотой;
   346 |           * целое ≥0 — остаток (никогда не отрицательный: ``max(0, ^F − v4)``).
   347 |         """
@@ -18051,6 +18620,11 @@
   368 |         used = self.downloaded(reader, text)
   369 |         return max(0, limit - used)
   370 | 
+```
+
+<!-- ─── страница 309 ─── -->
+
+```py
   371 |     def can_download(self, reader, text, pages=1, **kw):
   372 |         """Можно ли скачать ещё ``pages`` страниц, не превысив квоту (ребро 7.5).
   373 | 
@@ -18080,11 +18654,6 @@
   397 |     def for_reader(self, reader):
   398 |         """Все тексты читателя в кабинете ЭБ (новейшие первыми)."""
   399 |         return [{'text': e['text'], 'bookmarks': list(e['bookmarks']),
-```
-
-<!-- ─── страница 300 ─── -->
-
-```py
   400 |                  'downloaded': e['downloaded'], 'rating': e['rating']}
   401 |                 for e in self.store.for_reader(reader)]
 ```
@@ -18116,6 +18685,11 @@
    22 | 
    23 | def decode_irbis(data):
    24 |     """Decode ИРБИС file bytes (CP1251 on disk) to ``str``.
+```
+
+<!-- ─── страница 310 ─── -->
+
+```py
    25 | 
    26 |     Accepts ``str`` unchanged (already-decoded input). Bytes are tried as CP1251
    27 |     first (the ИРБИС on-disk encoding) and fall back to UTF-8 for files that were
@@ -18145,11 +18719,6 @@
    51 |         if ln.strip() == MNU_TERMINATOR:
    52 |             break
    53 |         lines.append(ln)
-```
-
-<!-- ─── страница 301 ─── -->
-
-```py
    54 |     # Drop a trailing wholly-empty line (artefact before the terminator).
    55 |     while lines and lines[-1].strip() == '':
    56 |         lines.pop()
@@ -18176,6 +18745,11 @@
    77 | 
    78 |     Blank lines and a ``*****`` terminator (if present) are ignored.
    79 |     """
+```
+
+<!-- ─── страница 311 ─── -->
+
+```py
    80 |     text = decode_irbis(data)
    81 |     nodes = []
    82 |     stack = []                              # stack[d] = index of last node at depth d
@@ -18205,11 +18779,6 @@
   106 | 
   107 |     The primary onboarding path (SPEC §2.3) auto-imports institution
   108 |     dictionaries from the ИРБИS the tenant is migrating off — by reading the
-```
-
-<!-- ─── страница 302 ─── -->
-
-```py
   109 |     ``.mnu`` file over the protocol (FILE command ``L`` / ``EXPORTMNU``) or from
   110 |     the server's data directory. Connection + credentials come from the onboarding
   111 |     env/config (``SOURCE_IRBIS_*``), NEVER from the repository.
@@ -18241,6 +18810,11 @@
    11 |   * ``docs/recon/deep/reference/databases/DB_SERVICE.md`` §1 (структура поля 3,
    12 |     меню 3A/3C/3G, алгоритм ``Deposit\\right_ft.pft``);
    13 |   * ``docs/design/INTEGRATION_MAP.md`` кластер 7 (рёбра 7.2/7.3/7.4/7.5);
+```
+
+<!-- ─── страница 312 ─── -->
+
+```py
    14 |   * ``docs/recon/deep/FINDINGS_09_web_reader.md`` (web-читатель, гейтинг ПТ).
    15 | 
    16 | Модель данных (зеркало серверной структуры RIGHT):
@@ -18270,11 +18844,6 @@
    40 | Резолв 955^B → id шаблона делает ``RightService`` через опциональный catalog-handle
    41 | (``get(db, mfn)``); без handle — back-compat: шаблон передаётся напрямую/по id из стора.
    42 | 
-```
-
-<!-- ─── страница 303 ─── -->
-
-```py
    43 | Бэкенд-портируемость (ADR-004: sqlite dev / PostgreSQL prod) — ``RightStore``
    44 | работает на ДВУХ бэкендах с одинаковой поверхностью (как ``demo_requests.py``):
    45 | sqlite по умолчанию (свой файл/``:memory:``), postgres по DSN; DDL зеркалит схему,
@@ -18301,6 +18870,11 @@
    66 | CAT_READER_ID = '01'   # идентификатор читателя (RDR v30)
    67 | CAT_READER_KAT = '02'  # категория читателя (50.mnu) ← основное измерение гейтинга
    68 | CAT_IP = '03'          # IP-адрес клиента
+```
+
+<!-- ─── страница 313 ─── -->
+
+```py
    69 | CAT_DOMAIN = '04'      # доменное имя клиента
    70 | CAT_FACULTY = '05'     # факультет (fak.mnu)
    71 | CAT_SEMESTER = '06'    # семестр
@@ -18330,11 +18904,6 @@
    95 | 
    96 | def access_level(reader_category, right_template, *, today=None):
    97 |     """Вычислить уровень доступа читателя к ПТ по шаблону прав RIGHT.
-```
-
-<!-- ─── страница 304 ─── -->
-
-```py
    98 | 
    99 |     Чистая функция (ребро 7.2/7.3): воспроизводит ``Deposit\\right_ft.pft``.
   100 | 
@@ -18361,6 +18930,11 @@
   121 |         return DOWNLOAD
   122 | 
   123 |     today = _today() if today is None else str(today)
+```
+
+<!-- ─── страница 314 ─── -->
+
+```py
   124 |     period = right_template.get('period') or {}
   125 |     g_start = _norm_date(period.get('start'), _PERIOD_MIN)
   126 |     g_end = _norm_date(period.get('end'), _PERIOD_MAX)
@@ -18390,11 +18964,6 @@
   150 | 
   151 |     # п.5: нет совпавших правил → deny; иначе — максимальный разрешённый уровень.
   152 |     return _LEVEL_BY_RANK[best] if best >= 0 else DENY
-```
-
-<!-- ─── страница 305 ─── -->
-
-```py
   153 | 
   154 | 
   155 | def page_limit(reader_category, right_template, *, today=None):
@@ -18421,6 +18990,11 @@
   176 | 
   177 |     limit = None
   178 |     for rule in rules:
+```
+
+<!-- ─── страница 315 ─── -->
+
+```py
   179 |         if (rule.get('category') or '').strip() != CAT_READER_KAT:
   180 |             continue
   181 |         rule_val = ('' if rule.get('value') is None else str(rule.get('value'))).strip()
@@ -18450,11 +19024,6 @@
   205 | 
   206 | # --------------------------------------------------------------------------- #
   207 | # Хранилище шаблонов RIGHT (sqlite dev / PostgreSQL prod), своя схема.
-```
-
-<!-- ─── страница 306 ─── -->
-
-```py
   208 | # --------------------------------------------------------------------------- #
   209 | SCHEMA_SQLITE = """
   210 | CREATE TABLE IF NOT EXISTS right_template (
@@ -18481,6 +19050,11 @@
   231 | 
   232 | 
   233 | def _is_pg(handle):
+```
+
+<!-- ─── страница 316 ─── -->
+
+```py
   234 |     """True, если ``handle`` — PG DSN-строка (а не путь к sqlite-файлу)."""
   235 |     return isinstance(handle, str) and handle.startswith(('postgres://', 'postgresql://'))
   236 | 
@@ -18510,11 +19084,6 @@
   260 |     Поверхность: ``upsert`` / ``get`` / ``list`` / ``delete`` / ``count``.
   261 |     Записи опознаются по строковому ``id`` (на него ссылается каталожное 955^B).
   262 | 
-```
-
-<!-- ─── страница 307 ─── -->
-
-```py
   263 |     Parameters
   264 |     ----------
   265 |     db_path : str
@@ -18541,6 +19110,11 @@
   286 |             c = psycopg.connect(self.db_path, row_factory=dict_row, autocommit=True)
   287 |         else:
   288 |             import sqlite3
+```
+
+<!-- ─── страница 317 ─── -->
+
+```py
   289 |             c = sqlite3.connect(self.db_path)
   290 |             c.row_factory = sqlite3.Row
   291 |         self._local.conn = c
@@ -18570,11 +19144,6 @@
   315 |             raise ValueError('template_id обязателен')
   316 |         period = period or {}
   317 |         period_norm = {'start': _norm_date(period.get('start'), ''),
-```
-
-<!-- ─── страница 308 ─── -->
-
-```py
   318 |                        'end': _norm_date(period.get('end'), '')}
   319 |         rules_norm = [_clean_rule(r) for r in (rules or [])]
   320 |         ts = float(now if now is not None else time.time())
@@ -18601,6 +19170,11 @@
   341 |                 'description': description or ''}
   342 | 
   343 |     # ---- чтение ----------------------------------------------------------- #
+```
+
+<!-- ─── страница 318 ─── -->
+
+```py
   344 |     @staticmethod
   345 |     def _view(r):
   346 |         return {
@@ -18630,11 +19204,6 @@
   370 |     def delete(self, template_id):
   371 |         """Удалить шаблон. True, если строка была удалена."""
   372 |         tid = str(template_id).strip()
-```
-
-<!-- ─── страница 309 ─── -->
-
-```py
   373 |         if not tid:
   374 |             return False
   375 |         ph = self._ph
@@ -18661,6 +19230,11 @@
   396 |     Parameters
   397 |     ----------
   398 |     store : RightStore | None
+```
+
+<!-- ─── страница 319 ─── -->
+
+```py
   399 |         Стор шаблонов прав. ``None`` допустимо, если шаблоны передаются вызовами
   400 |         напрямую (``access_for(..., template=...)``) — тогда стор не нужен.
   401 |     catalog : object | None
@@ -18690,11 +19264,6 @@
   425 | 
   426 |         Возвращает строку-id или ``None`` (нет handle / нет записи / 955^B пусто).
   427 |         Никогда не бросает наружу seam-ошибку (деградирует к None — полный доступ)."""
-```
-
-<!-- ─── страница 310 ─── -->
-
-```py
   428 |         if self.catalog is None:
   429 |             return None
   430 |         try:
@@ -18721,6 +19290,11 @@
   451 |                 if val is not None and str(val).strip():
   452 |                     return str(val).strip()
   453 |         return None
+```
+
+<!-- ─── страница 320 ─── -->
+
+```py
   454 | 
   455 |     # ---- разрешение шаблона ----------------------------------------------- #
   456 |     def template_for(self, *, db=None, mfn=None, template_id=None, template=None):
@@ -18750,11 +19324,6 @@
   480 |         Шаблон разрешается ``template_for`` (по записи/id/готовому dict). Пустой
   481 |         шаблон (955^B пусто или не найден) ⇒ ``download`` (полный доступ, п.1)."""
   482 |         tmpl = self.template_for(db=db, mfn=mfn, template_id=template_id,
-```
-
-<!-- ─── страница 311 ─── -->
-
-```py
   483 |                                  template=template)
   484 |         return access_level(reader_category, tmpl, today=self._today())
   485 | 
@@ -18786,6 +19355,11 @@
    15 |     ],
    16 |     'administrator': [
    17 |         ('search', '*', 'read'), ('record.read', '*', 'read'), ('record.write', '*', 'write'),
+```
+
+<!-- ─── страница 321 ─── -->
+
+```py
    18 |         ('record.delete', '*', 'admin'), ('terms', '*', 'read'), ('file', '*', 'read'),
    19 |         ('order', '*', 'write'), ('cabinet', '*', 'read'),
    20 |         ('circ.issue', '*', 'write'), ('circ.return', '*', 'write'),
@@ -18815,11 +19389,6 @@
    44 |         for rn in roles:
    45 |             store.assign_role(acc['id'], role_ids[rn])
    46 |     return {'roles': list(role_ids), 'accounts': list(ACCOUNTS)}
-```
-
-<!-- ─── страница 312 ─── -->
-
-```py
    47 | 
    48 | 
    49 | if __name__ == '__main__':
@@ -18851,6 +19420,11 @@
    14 |   * ``vd.mnu``           — document types (10, representative subset of 54)
    15 |   * ``ste.mnu``          — exemplar statuses (14, FULL — drives circulation ws3)
    16 |   * ``reservstatus.mnu`` — reservation statuses (5, FULL — drives the hold shelf)
+```
+
+<!-- ─── страница 322 ─── -->
+
+```py
    17 | 
    18 | Institution-specific dictionaries are listed with ``kind='institution'`` and NO
    19 | values: they are created EMPTY at provision time and populated by the library
@@ -18880,11 +19454,6 @@
    43 |             ('ita', 'Итальянский'),
    44 |             ('ukr', 'Украинский'),
    45 |             ('bel', 'Белорусский'),
-```
-
-<!-- ─── страница 313 ─── -->
-
-```py
    46 |             ('lat', 'Латинский'),
    47 |             ('ara', 'Арабский'),
    48 |         ],
@@ -18911,6 +19480,11 @@
    69 |         'values': [
    70 |             ('KN', 'Книги в целом'),
    71 |             ('05', 'Однотомное издание'),
+```
+
+<!-- ─── страница 323 ─── -->
+
+```py
    72 |             ('03', 'Многотомное издание'),
    73 |             ('04', 'Продолжающееся издание (ПРИ)'),
    74 |             ('07', 'Монографическая серия (МС)'),
@@ -18940,11 +19514,6 @@
    98 |             ('p', 'Номер журнала/газеты переплетен (входит в "подшивку")'),
    99 |             ('1', 'Выдан читателю'),
   100 |             ('9', 'На бронеполке'),
-```
-
-<!-- ─── страница 314 ─── -->
-
-```py
   101 |         ],
   102 |     },
   103 |     # FULL (5) — drives the hold shelf (ws3 бронеполка).
@@ -18971,6 +19540,11 @@
   124 |     'kv.mnu': {'title': 'Места обслуживания / выдачи (МВ)', 'field_hint': 'RQST'},
   125 |     'mhr.mnu': {'title': 'Места хранения (МХ)', 'field_hint': '910^D'},
   126 | }
+```
+
+<!-- ─── страница 324 ─── -->
+
+```py
   127 | 
   128 | # Institution-specific TREE dictionaries: created EMPTY (kind='institution').
   129 | INSTITUTION_TREES = {
@@ -19000,11 +19574,6 @@
   153 |     for name, spec in SYSTEM_VOCABS.items():
   154 |         yield (name, spec['title'], 'system', spec['field_hint'], SEED_VERSION)
   155 |     for name, spec in INSTITUTION_VOCABS.items():
-```
-
-<!-- ─── страница 315 ─── -->
-
-```py
   156 |         yield (name, spec['title'], 'institution', spec['field_hint'], None)
 ```
 
@@ -19036,6 +19605,11 @@
    23 | from . import seed_data
    24 | 
    25 | 
+```
+
+<!-- ─── страница 325 ─── -->
+
+```py
    26 | def ensure_seed_catalog(dsn=None):
    27 |     """Fill ``control.seed_catalog`` from ``seed_data.SYSTEM_VOCABS`` (idempotent).
    28 | 
@@ -19065,11 +19639,6 @@
    52 | def _seed_institution_empties(store):
    53 |     """Create EMPTY metadata rows for institution dictionaries + trees.
    54 | 
-```
-
-<!-- ─── страница 316 ─── -->
-
-```py
    55 |     The library fills the values later (import/manual). seed_version stays NULL —
    56 |     this is what makes ``kv.mnu`` exist-but-empty rather than missing, so the UI can
    57 |     prompt "fill me in" and reseed knows to leave it alone.
@@ -19096,6 +19665,11 @@
    78 |     sys_values = 0
    79 | 
    80 |     if from_catalog:
+```
+
+<!-- ─── страница 326 ─── -->
+
+```py
    81 |         from .pgstore import default_pg_dsn, _admin_conn
    82 |         dsn = dsn or default_pg_dsn()
    83 |         conn = _admin_conn(dsn)
@@ -19125,11 +19699,6 @@
   107 |                 store.upsert_vocabulary_value(name, code, label, sort, 'seed')
   108 |                 sys_values += 1
   109 | 
-```
-
-<!-- ─── страница 317 ─── -->
-
-```py
   110 |     _seed_institution_empties(store)
   111 | 
   112 |     return {
@@ -19156,6 +19725,11 @@
   133 |         store.upsert_classification_node(name, n['code'], n['label'],
   134 |                                          parent_code, n['depth'], path, i)
   135 |     return {'tree': name, 'nodes': len(nodes)}
+```
+
+<!-- ─── страница 327 ─── -->
+
+```py
 ```
 
 ### Файл: `irbis-web/backend/access/shelves.py`  · строк: 98
@@ -19190,11 +19764,6 @@
    27 |     """Create / list reading lists and add/remove items, over an access store.
    28 | 
    29 |     Parameters
-```
-
-<!-- ─── страница 318 ─── -->
-
-```py
    30 |     ----------
    31 |     store
    32 |         Access store (``AccessStore`` sqlite or ``PgAccessStore``) providing the
@@ -19221,6 +19790,11 @@
    53 |     def _ensure_system(self, ticket):
    54 |         """Seed the two system lists for a reader if not present (idempotent)."""
    55 |         have = {r['id'] for r in self.store.shelf_lists(ticket)}
+```
+
+<!-- ─── страница 328 ─── -->
+
+```py
    56 |         for list_id, name in SYSTEM_LISTS:
    57 |             if list_id not in have:
    58 |                 self.store.shelf_create(ticket, list_id, name, system=1)
@@ -19250,11 +19824,6 @@
    82 |         """Add (db,mfn) to ``list_id`` (deduped). Returns ``{'listId'}`` or None
    83 |         when the list doesn't exist for this reader."""
    84 |         self._ensure_system(ticket)
-```
-
-<!-- ─── страница 319 ─── -->
-
-```py
    85 |         if self.store.shelf_get(ticket, list_id) is None:
    86 |             return None
    87 |         title = self._title(db, mfn)
@@ -19286,6 +19855,11 @@
    10 | 
    11 | This module is pure domain logic over the store + three small injected seams,
    12 | mirroring the holds/shelves pattern:
+```
+
+<!-- ─── страница 329 ─── -->
+
+```py
    13 | 
    14 |   * ``read_terms(db, mfn) -> {'subjects': [...], 'authors': [...],
    15 |     'collectives': [...]}`` — the seed record's 606 / 700 / 610 values, used to
@@ -19315,11 +19889,6 @@
    39 | "Та же организация" for a shared collective.
    40 | 
    41 | "For you"
-```
-
-<!-- ─── страница 320 ─── -->
-
-```py
    42 | ---------
    43 | Union the subjects of the reader's recent history records (most-recent first,
    44 | capped), then run the SAME shared-term ranking against that union — excluding the
@@ -19346,6 +19915,11 @@
    65 |         r = int(rating)
    66 |     except (TypeError, ValueError):
    67 |         raise ValueError('rating must be an integer 1..5')
+```
+
+<!-- ─── страница 330 ─── -->
+
+```py
    68 |     if r < _RATING_MIN or r > _RATING_MAX:
    69 |         raise ValueError('rating out of range 1..5')
    70 |     return r
@@ -19375,11 +19949,6 @@
    94 |         Clock injection (``time.time`` by default) for deterministic tests.
    95 |     """
    96 | 
-```
-
-<!-- ─── страница 321 ─── -->
-
-```py
    97 |     # Which index prefix each seed-term kind searches under (IRBIS inverted files:
    98 |     # S= subject heading <-606, A= author <-700, K= keyword/collective <-610).
    99 |     _PREFIX = {'subjects': 'S', 'authors': 'A', 'collectives': 'K'}
@@ -19406,6 +19975,11 @@
   120 |             return {'title': '', 'author': ''}
   121 |         title = (it.get('title') or '').strip()
   122 |         if title == ('MFN %d' % mfn):
+```
+
+<!-- ─── страница 331 ─── -->
+
+```py
   123 |             title = ''
   124 |         return {'title': title, 'author': (it.get('author') or '').strip()}
   125 | 
@@ -19435,11 +20009,6 @@
   149 |     def reviews(self, db, mfn, ticket=None):
   150 |         """Aggregate reviews of (db, mfn): ``{avg, count, items, mine?}``.
   151 | 
-```
-
-<!-- ─── страница 322 ─── -->
-
-```py
   152 |         ``avg`` is the mean rating rounded to 1 dp (0 when none); ``count`` the
   153 |         number of reviews; ``items`` every review as a card (newest first). When a
   154 |         ``ticket`` is given and that reader has a review, ``mine`` carries it."""
@@ -19466,6 +20035,11 @@
   175 |         row = self.store.review_delete(ticket, review_id)
   176 |         if row is None:
   177 |             return None
+```
+
+<!-- ─── страница 332 ─── -->
+
+```py
   178 |         return {'id': review_id}
   179 | 
   180 |     # ===================================================================== #
@@ -19495,11 +20069,6 @@
   204 |     # ===================================================================== #
   205 |     def saved_searches(self, ticket):
   206 |         rows = self.store.saved_search_list(ticket)
-```
-
-<!-- ─── страница 323 ─── -->
-
-```py
   207 |         return {'items': [{'id': r['id'], 'name': r['name'], 'db': r['db'],
   208 |                            'prefix': r.get('prefix') or '', 'query': r['query']}
   209 |                           for r in rows]}
@@ -19526,6 +20095,11 @@
   230 |     # ===================================================================== #
   231 |     def _candidates_for_terms(self, db, terms_by_kind):
   232 |         """Run the per-term index search and tally, per candidate mfn, which seed
+```
+
+<!-- ─── страница 333 ─── -->
+
+```py
   233 |         terms it shares.
   234 | 
   235 |         ``terms_by_kind`` is ``{'subjects':[...], 'authors':[...],
@@ -19555,11 +20129,6 @@
   259 | 
   260 |     @staticmethod
   261 |     def _reason(info):
-```
-
-<!-- ─── страница 324 ─── -->
-
-```py
   262 |         """Human explanation for a recommended item, by the strongest shared kind:
   263 |         a shared subject first (most meaningful), then author, then collective."""
   264 |         if info['subjects']:
@@ -19586,6 +20155,11 @@
   285 |     def similar(self, db, mfn):
   286 |         """"Similar" recommendations for the seed record (db, mfn).
   287 | 
+```
+
+<!-- ─── страница 334 ─── -->
+
+```py
   288 |         Reads the seed's 606/700/610, finds records sharing those terms, ranks by
   289 |         overlap, excludes the seed, caps at ``RECO_CAP``. Empty list when the seed
   290 |         has no terms or no neighbours."""
@@ -19615,11 +20189,6 @@
   314 |         # record the reader has already seen.
   315 |         subjects = []
   316 |         seen = set()
-```
-
-<!-- ─── страница 325 ─── -->
-
-```py
   317 |         seed_db = rows[0]['db']
   318 |         history_keys = set()
   319 |         for r in rows:
@@ -19651,6 +20220,11 @@
     6 | is never blocked. Logic/authz/audit live entirely in core.Api — this file is transport."""
     7 | import asyncio
     8 | import json
+```
+
+<!-- ─── страница 335 ─── -->
+
+```py
     9 | from aiohttp import web
    10 | 
    11 | from core import Api, Raw
@@ -19680,11 +20254,6 @@
    35 | 
    36 | async def handle(request):
    37 |     if request.method == 'GET' and (request.path.rstrip('/') or '/') == '/':
-```
-
-<!-- ─── страница 326 ─── -->
-
-```py
    38 |         if static_files.has_dist():
    39 |             return web.Response(body=static_files.dist_index(), content_type='text/html', charset='utf-8', headers=CORS)
    40 |         return web.Response(text=READER_HTML, content_type='text/html', headers=CORS)
@@ -19711,6 +20280,11 @@
    61 |         except Exception:
    62 |             body = {}
    63 |     headers = {k.lower(): v for k, v in request.headers.items()}
+```
+
+<!-- ─── страница 336 ─── -->
+
+```py
    64 |     loop = asyncio.get_running_loop()
    65 |     status, payload = await loop.run_in_executor(
    66 |         None, API.route, request.method, request.path, _query(request), body, headers)
@@ -19745,11 +20319,6 @@
     6 |     sys.stdout.reconfigure(encoding='utf-8')
     7 | except Exception:
     8 |     pass
-```
-
-<!-- ─── страница 327 ─── -->
-
-```py
     9 | import pefile
    10 | from capstone import Cs, CS_ARCH_X86, CS_MODE_32
    11 | 
@@ -19776,6 +20345,11 @@
    32 |         return a.decode('latin-1')
    33 |     # utf-16le
    34 |     try:
+```
+
+<!-- ─── страница 337 ─── -->
+
+```py
    35 |         w = bytes(d)
    36 |         end = w.find(b'\x00\x00')
    37 |         s = w[:end].decode('utf-16le')
@@ -19805,11 +20379,6 @@
    61 |             if tgt in exp:
    62 |                 ann = '   ; -> %s()' % exp[tgt]
    63 |         for tok in ops.replace('[', ' ').replace(']', ' ').split():
-```
-
-<!-- ─── страница 328 ─── -->
-
-```py
    64 |             if tok.startswith('0x') and len(tok) >= 8:
    65 |                 s = read_str(int(tok, 16) - base)
    66 |                 if s:
@@ -19846,6 +20415,11 @@
     8 |   * Response frame: lines("\\r\\n"); return_code at index 10; data from index 11.
     9 |   * Encodings: bibliographic data = UTF-8; INI/resources = CP1251.
    10 | This module is transport-agnostic: an aiohttp/async port only swaps `_execute`.
+```
+
+<!-- ─── страница 338 ─── -->
+
+```py
    11 | """
    12 | import socket
    13 | import random
@@ -19875,11 +20449,6 @@
    37 |         return self.return_code is not None and self.return_code >= 0
    38 | 
    39 | 
-```
-
-<!-- ─── страница 329 ─── -->
-
-```py
    40 | class IrbisClient:
    41 |     def __init__(self, host='127.0.0.1', port=6666, workstation='A', timeout=8.0):
    42 |         self.host, self.port = host, port
@@ -19906,6 +20475,11 @@
    63 |         data = b''
    64 |         try:
    65 |             while True:
+```
+
+<!-- ─── страница 339 ─── -->
+
+```py
    66 |                 ch = s.recv(65536)
    67 |                 if not ch:
    68 |                     break          # server closed -> response complete
@@ -19935,11 +20509,6 @@
    92 |                 self._execute('B', [self.user])
    93 |             finally:
    94 |                 self.connected = False
-```
-
-<!-- ─── страница 330 ─── -->
-
-```py
    95 | 
    96 |     def nop(self):
    97 |         return self._execute('N')
@@ -19966,6 +20535,11 @@
   118 |         """Return a parsed record dict (mfn/status/version/guid/fields[])."""
   119 |         r = self._execute('C', [db, str(mfn), '0'])
   120 |         if r.return_code is not None and r.return_code < 0:
+```
+
+<!-- ─── страница 340 ─── -->
+
+```py
   121 |             raise IrbisError(r.return_code, 'read failed')
   122 |         return parse_record(r.data)
   123 | 
@@ -19995,11 +20569,6 @@
   147 |         """Read a text resource (command 'L'). spec = '<pathcode>.<db>.<file>'
   148 |         (e.g. '2.IBIS.brief.pft', '3.IBIS.kv.mnu'). Returns decoded text (CP1251), '' if absent.
   149 |         Server separates internal lines with \\x1F\\x1E; content follows the 10-line preamble."""
-```
-
-<!-- ─── страница 331 ─── -->
-
-```py
   150 |         r = self._execute('L', [spec])
   151 |         # round-trip via latin1 to recover exact bytes, then decode CP1251
   152 |         segs = r.raw.decode('latin1').split('\r\n')
@@ -20031,6 +20600,11 @@
    10 | Subfield delimiter is '^' (confirmed in Prohod B).
    11 | """
    12 | 
+```
+
+<!-- ─── страница 341 ─── -->
+
+```py
    13 | SYSTEM_GUID_TAG = '2147483647'
    14 | 
    15 | 
@@ -20060,11 +20634,6 @@
    39 |     for line in data_lines:
    40 |         if '#' not in line:
    41 |             continue
-```
-
-<!-- ─── страница 332 ─── -->
-
-```py
    42 |         tag, value = line.split('#', 1)
    43 |         if not seen_mfn:
    44 |             rec['mfn'] = int(tag) if tag.isdigit() else None
@@ -20091,6 +20660,11 @@
    65 |     return None
    66 | 
    67 | 
+```
+
+<!-- ─── страница 342 ─── -->
+
+```py
    68 | def fields(rec, tag):
    69 |     return [f for f in rec['fields'] if f['tag'] == tag]
 ```
@@ -20125,11 +20699,6 @@
    25 |         if r.return_code != 0:
    26 |             raise IrbisError(r.return_code, 'register failed (workstation/creds?)')
    27 |         self.connected = True
-```
-
-<!-- ─── страница 333 ─── -->
-
-```py
    28 | 
    29 |     def _call(self, fn):
    30 |         with self._lock:
@@ -20156,6 +20725,11 @@
    51 | 
    52 |     def read_record(self, db, mfn):
    53 |         return self._call(lambda c: c.read_record(db, mfn))
+```
+
+<!-- ─── страница 343 ─── -->
+
+```py
    54 | 
    55 |     def format_record(self, db, mfn, pft='@brief'):
    56 |         return self._call(lambda c: c.format_record(db, mfn, pft))
@@ -20190,11 +20764,6 @@
     8 |     pass
     9 | import pefile
    10 | 
-```
-
-<!-- ─── страница 334 ─── -->
-
-```py
    11 | DLLS = [r'C:\IRBIS64\irbis64_client.dll', r'C:\IRBIS64\IRBIS64.dll']
    12 | 
    13 | KEEP = re.compile(
@@ -20221,6 +20790,11 @@
    34 |         pe.FILE_HEADER.Machine, pe.OPTIONAL_HEADER.Subsystem,
    35 |         [s.Name.decode('latin-1').strip('\x00') for s in pe.sections]))
    36 |     exp = []
+```
+
+<!-- ─── страница 344 ─── -->
+
+```py
    37 |     if hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):
    38 |         for e in pe.DIRECTORY_ENTRY_EXPORT.symbols:
    39 |             if e.name:
@@ -20255,11 +20829,6 @@
     3 | Served by both transports at '/'. Talks to the API with a guest bearer token."""
     4 | 
     5 | READER_HTML = """<!doctype html><html lang=ru><head><meta charset=utf-8>
-```
-
-<!-- ─── страница 335 ─── -->
-
-```py
     6 | <meta name=viewport content="width=device-width,initial-scale=1">
     7 | <title>web-ИРБИС · читатель (P0)</title>
     8 | <style>
@@ -20286,6 +20855,11 @@
    29 |   <select id=prefix>
    30 |    <option value=K>Ключевые слова</option><option value=A>Автор</option>
    31 |    <option value=T>Заглавие</option><option value=V>Вид документа</option></select>
+```
+
+<!-- ─── страница 345 ─── -->
+
+```py
    32 |   <input id=q placeholder="Запрос" value="Android" autocomplete=off
    33 |      oninput=suggest() onkeydown="if(event.key==='Enter')doSearch()">
    34 |   <button onclick=doSearch()>Найти</button>
@@ -20315,11 +20889,6 @@
    58 | let sugTimer;
    59 | function suggest(){
    60 |  clearTimeout(sugTimer);
-```
-
-<!-- ─── страница 336 ─── -->
-
-```py
    61 |  const p=document.getElementById('prefix').value, q=document.getElementById('q').value.trim();
    62 |  if(q.length<2){hideSug();return;}
    63 |  sugTimer=setTimeout(async()=>{
@@ -20346,6 +20915,11 @@
    84 | }
    85 | function esc(s){return (s||'').replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
    86 | init();
+```
+
+<!-- ─── страница 346 ─── -->
+
+```py
    87 | </script></body></html>"""
 ```
 
@@ -20380,11 +20954,6 @@
    26 |     mfn = mfns[0] if mfns else 1
    27 |     rec = sm.read_record(db, mfn)
    28 |     p('\nREAD MFN %s: version=%s, guid=%s, fields=%d'
-```
-
-<!-- ─── страница 337 ─── -->
-
-```py
    29 |       % (rec['mfn'], rec['version'], rec['guid'], len(rec['fields'])))
    30 |     for f in rec['fields'][:12]:
    31 |         sub = (' subfields=' + str(f['subfields'])) if f['subfields'] else ''
@@ -20416,6 +20985,11 @@
     2 | """Serve the vendored frontend (irbis-web/frontend/) under /ui/. Transport-agnostic:
     3 | returns (status, bytes, content_type). Used by both server.py and app_aiohttp.py."""
     4 | import os
+```
+
+<!-- ─── страница 347 ─── -->
+
+```py
     5 | import posixpath
     6 | 
     7 | FRONTEND = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frontend'))
@@ -20445,11 +21019,6 @@
    31 | 
    32 | 
    33 | def serve_dist(url_path):
-```
-
-<!-- ─── страница 338 ─── -->
-
-```py
    34 |     """Serve a built asset, e.g. /assets/index-xxx.js. Returns (status, bytes, ctype)."""
    35 |     rel = posixpath.normpath('/' + url_path.lstrip('/')).lstrip('/')
    36 |     full = os.path.join(DIST, *rel.split('/'))
@@ -20481,6 +21050,11 @@
     2 | """End-to-end HTTP test against a running server (default :8080). Read-only + guarded write.
     3 | Run the server first, then: py irbis-web/backend/tests/e2e.py"""
     4 | import json
+```
+
+<!-- ─── страница 348 ─── -->
+
+```py
     5 | import os
     6 | import urllib.request
     7 | 
@@ -20510,11 +21084,6 @@
    31 |         return st, json.loads(raw.decode('utf-8'))
    32 |     except Exception:
    33 |         return st, {'_raw': raw[:80].decode('latin1')}
-```
-
-<!-- ─── страница 339 ─── -->
-
-```py
    34 | 
    35 | 
    36 | def p(*a):
@@ -20541,6 +21110,11 @@
    57 | 
    58 |     # cover image
    59 |     st, raw, ctype = call('GET', '/api/cover/IBIS/1', gtok)
+```
+
+<!-- ─── страница 349 ─── -->
+
+```py
    60 |     p('cover IBIS/1: %s ctype=%s bytes=%s magic=%s'
    61 |       % (st, ctype, len(raw), raw[:3].hex() if raw else ''))
    62 | 
@@ -20570,18 +21144,13 @@
    86 | 
    87 |     p('\nDONE')
    88 |     OUT.close()
-```
-
-<!-- ─── страница 340 ─── -->
-
-```py
    89 | 
    90 | 
    91 | if __name__ == '__main__':
    92 |     main()
 ```
 
-### Файл: `irbis-web/backend/tests/test_access.py`  · строк: 254
+### Файл: `irbis-web/backend/tests/test_access.py`  · строк: 256
 
 ```py
     1 | #!/usr/bin/env python3
@@ -20606,6 +21175,11 @@
    20 | from access.authz import authorize, best_grant, READER_GRANTS, GUEST_GRANTS
    21 | from access.seed import seed
    22 | 
+```
+
+<!-- ─── страница 350 ─── -->
+
+```py
    23 | PASS = [0]
    24 | FAIL = [0]
    25 | 
@@ -20635,11 +21209,6 @@
    49 |         {'function': 'search', 'db': '*', 'level': 'read'},
    50 |     ]
    51 |     check('exact db beats *', best_grant(grants, 'record.write', 'IBIS')['level'] == 'admin')
-```
-
-<!-- ─── страница 341 ─── -->
-
-```py
    52 |     check('falls back to *', best_grant(grants, 'record.write', 'RDR')['level'] == 'write')
    53 |     check('write allows on RDR', authorize(grants, 'record.write', 'RDR', 'write'))
    54 |     check('read<write denied', not authorize(grants, 'search', 'IBIS', 'write'))
@@ -20666,6 +21235,11 @@
    75 | 
    76 |     # seed is idempotent — second run must not duplicate/raise
    77 |     seed(st)
+```
+
+<!-- ─── страница 351 ─── -->
+
+```py
    78 |     check('[%s] seed idempotent' % label, st.authenticate('admin', 'admin') is not None)
    79 | 
    80 |     # audit
@@ -20695,11 +21269,6 @@
   104 |         st._conn().execute(
   105 |             'TRUNCATE staff_account, grant_entry, role, role_grant, account_role, audit_log '
   106 |             'RESTART IDENTITY CASCADE')
-```
-
-<!-- ─── страница 342 ─── -->
-
-```py
   107 |         return st
   108 |     except Exception as e:                       # PG down / psycopg missing -> skip cleanly
   109 |         print('-- backend: postgres SKIPPED (%s: %s)' % (type(e).__name__, str(e).splitlines()[0]))
@@ -20726,6 +21295,11 @@
   130 |     print('-- tenancy: postgres', dsn.rsplit('@', 1)[-1])
   131 |     test_tenancy.run(dsn)
   132 |     PASS[0] += test_tenancy.PASS[0]
+```
+
+<!-- ─── страница 352 ─── -->
+
+```py
   133 |     FAIL[0] += test_tenancy.FAIL[0]
   134 | 
   135 | 
@@ -20755,11 +21329,6 @@
   159 | def seeding_checks():
   160 |     """Run the vocabulary-seeding suite (issue #188, A5) and fold its tally in.
   161 | 
-```
-
-<!-- ─── страница 343 ─── -->
-
-```py
   162 |     The parser + sqlite-seed checks always run (no DB); the PG path (provision ->
   163 |     seeded vocabs, isolation, idempotency) runs when postgres is reachable and skips
   164 |     cleanly otherwise. Lives in its own module (test_seeding.py) but is invoked here
@@ -20786,6 +21355,11 @@
   185 |     All checks are pure (check digits, the engine against an in-memory seeded
   186 |     store, the constructed-Api endpoint) — they always run, no DB needed. Lives in
   187 |     its own module (test_flk.py) but is invoked here so the existing CI step that
+```
+
+<!-- ─── страница 353 ─── -->
+
+```py
   188 |     runs test_access.py also exercises the ФЛК engine with no workflow change.
   189 |     """
   190 |     try:
@@ -20815,11 +21389,6 @@
   214 |             # Isolate each check group: a raising group is a FAIL but must not
   215 |             # abort the runner, else one broken module hides every module after it
   216 |             # (and silently drops their coverage). The non-zero exit gate stands.
-```
-
-<!-- ─── страница 344 ─── -->
-
-```py
   217 |             try:
   218 |                 getattr(mod, fn)()
   219 |             except SystemExit:
@@ -20842,22 +21411,29 @@
   236 |     flk_checks()
   237 |     for _m in ('test_pft', 'test_authority', 'test_authority_seam', 'test_notifications',
   238 |                'test_notifications_dispatch', 'test_gbl',
-  239 |                'test_catalog', 'test_record_links', 'test_circulation', 'test_rdr40', 'test_circ_notify',
-  240 |                'test_discovery', 'test_integration', 'test_resilience',
-  241 |                'test_portal222', 'test_acquisition', 'test_tocat', 'test_bookprovision', 'test_ko',
-  242 |                'test_acq_bp_routes', 'test_circ_routes', 'test_social',
-  243 |                'test_admin_routes', 'test_platform', 'test_compliance',
-  244 |                'test_migrate', 'test_migrate_introspect', 'test_irbis_mst',
-  245 |                'test_stabilize', 'test_reader_auth', 'test_benchmark',
-  246 |                'test_demo_requests', 'test_rights_lich'):
-  247 |         module_checks(_m)
-  248 | 
-  249 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
-  250 |     sys.exit(1 if FAIL[0] else 0)
-  251 | 
-  252 | 
-  253 | if __name__ == '__main__':
-  254 |     main()
+  239 |                'test_catalog', 'test_record_links', 'test_circulation', 'test_circ_resolve',
+  240 |                'test_rdr40', 'test_circ_notify',
+  241 |                'test_discovery', 'test_integration', 'test_resilience',
+  242 |                'test_portal222', 'test_acquisition', 'test_tocat', 'test_ksu_exemplars',
+```
+
+<!-- ─── страница 354 ─── -->
+
+```py
+  243 |                'test_bookprovision', 'test_ko',
+  244 |                'test_acq_bp_routes', 'test_circ_routes', 'test_social',
+  245 |                'test_admin_routes', 'test_platform', 'test_compliance',
+  246 |                'test_migrate', 'test_migrate_introspect', 'test_irbis_mst',
+  247 |                'test_stabilize', 'test_reader_auth', 'test_benchmark',
+  248 |                'test_demo_requests', 'test_rights_lich'):
+  249 |         module_checks(_m)
+  250 | 
+  251 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
+  252 |     sys.exit(1 if FAIL[0] else 0)
+  253 | 
+  254 | 
+  255 | if __name__ == '__main__':
+  256 |     main()
 ```
 
 ### Файл: `irbis-web/backend/tests/test_acq_bp_routes.py`  · строк: 317
@@ -20880,11 +21456,6 @@
    15 |   * GUEST and READER sessions get 403 on EVERY acq/bp route (these are АРМ
    16 |     Комплектатор / Книгообеспеченность functions — staff-only, not public);
    17 |   * the ENTITLEMENT gate refuses the module when disabled (a valid grant on a
-```
-
-<!-- ─── страница 345 ─── -->
-
-```py
    18 |     disabled 'acquisition' / 'bookprovision' module is still 403).
    19 | 
    20 | Wired into the test_access.py runner (module list) so the CI sqlite + postgres
@@ -20909,6 +21480,11 @@
    39 |         PASS[0] += 1
    40 |         print('  ok  ', name)
    41 |     else:
+```
+
+<!-- ─── страница 355 ─── -->
+
+```py
    42 |         FAIL[0] += 1
    43 |         print('  FAIL', name)
    44 | 
@@ -20940,11 +21516,6 @@
    70 |     api.catalog = CatalogStore(':memory:', access_store=api.access)
    71 |     api.acquisition = _acq.AcquisitionEngine(
    72 |         store=_acq.AcquisitionStore(':memory:'), catalog=api.catalog,
-```
-
-<!-- ─── страница 346 ─── -->
-
-```py
    73 |         catalog_db=api.cfg.db_default)
    74 |     api.bookprovision = _bp.BookProvisionEngine(':memory:', catalog=api.catalog)
    75 |     return api, _core
@@ -20969,6 +21540,11 @@
    94 | # --------------------------------------------------------------------------- #
    95 | # 1. Acquisition through route(): order → receive (КСУ + ToCat) → reads.
    96 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 356 ─── -->
+
+```py
    97 | def acquisition_route_checks():
    98 |     print('-- acq routes: order / receive / КСУ / order-status (staff via route())')
    99 |     api, _core = _api()
@@ -21000,11 +21576,6 @@
   125 |     st, p = api.route('GET', '/api/acq/order', {'id': [str(oid)]}, None, H)
   126 |     check('GET /api/acq/order?id= -> 200', st == 200)
   127 |     check('order-status reports partially_received',
-```
-
-<!-- ─── страница 347 ─── -->
-
-```py
   128 |           p['data']['status'] == 'partially_received')
   129 | 
   130 |     # GET /api/acq/ksu?no= — the КСУ summary row.
@@ -21029,6 +21600,11 @@
   149 |     # Unknown order / КСУ reads -> 404 (not 500).
   150 |     st, _ = api.route('GET', '/api/acq/order', {'id': ['999999']}, None, H)
   151 |     check('unknown order -> 404', st == 404)
+```
+
+<!-- ─── страница 357 ─── -->
+
+```py
   152 |     st, _ = api.route('GET', '/api/acq/ksu', {'no': ['nope']}, None, H)
   153 |     check('unknown КСУ -> 404', st == 404)
   154 | 
@@ -21060,11 +21636,6 @@
   180 |     # Bind основная literature with 40 copies → Кко = 40/100 = 0.4 (under 0.5 norm).
   181 |     st, p = api.route('POST', '/api/bp/bind', {},
   182 |                       {'disciplineId': did, 'title': 'Учебник', 'kind': 'main',
-```
-
-<!-- ─── страница 348 ─── -->
-
-```py
   183 |                        'copies': 40}, H)
   184 |     check('POST /api/bp/bind -> 200', st == 200)
   185 | 
@@ -21089,6 +21660,11 @@
   204 |                       {'id': [str(did)], 'normalize': ['1']}, None, H)
   205 |     check('normalize=1 honoured (Кко still 0.8 here)',
   206 |           abs(p['data']['average_kko'] - 0.8) < 1e-9)
+```
+
+<!-- ─── страница 358 ─── -->
+
+```py
   207 | 
   208 |     # GET /api/bp/specialty?id= — per-specialty rollup.
   209 |     st, p = api.route('GET', '/api/bp/specialty', {'id': [str(sid)]}, None, H)
@@ -21120,11 +21696,6 @@
   235 |     ('POST', '/api/bp/contingent', {'disciplineId': 1, 'students': 1}),
   236 |     ('POST', '/api/bp/bind', {'disciplineId': 1, 'title': 't'}),
   237 |     ('GET', '/api/bp/discipline', None),
-```
-
-<!-- ─── страница 349 ─── -->
-
-```py
   238 |     ('GET', '/api/bp/specialty', None),
   239 | ]
   240 | 
@@ -21149,6 +21720,11 @@
   259 |     H = _staff(api)
   260 |     st, _ = api.route('POST', '/api/acq/order', {},
   261 |                       {'title': 'OK', 'copies': 1}, H)
+```
+
+<!-- ─── страница 359 ─── -->
+
+```py
   262 |     check('staff admitted to /api/acq/order (200)', st == 200)
   263 | 
   264 | 
@@ -21180,11 +21756,6 @@
   290 |         st, p = api.route('GET', '/api/acq/ksu', {'no': ['x']}, None, H)
   291 |         check('acq КСУ read refused when module disabled (403)', st == 403)
   292 | 
-```
-
-<!-- ─── страница 350 ─── -->
-
-```py
   293 |         st, p = api.route('POST', '/api/bp/faculty', {}, {'code': 'F'}, H)
   294 |         check('bp faculty refused when bookprovision disabled (403)', st == 403)
   295 | 
@@ -21209,6 +21780,11 @@
   314 | 
   315 | 
   316 | if __name__ == '__main__':
+```
+
+<!-- ─── страница 360 ─── -->
+
+```py
   317 |     main()
 ```
 
@@ -21245,11 +21821,6 @@
    28 | from access import acquisition as acq
    29 | from access.acquisition import (
    30 |     AcquisitionStore, AcquisitionEngine, AcquisitionError,
-```
-
-<!-- ─── страница 351 ─── -->
-
-```py
    31 |     kko, average_kko, reorder_need, title_key,
    32 |     ORDER_ORDERED, ORDER_PARTIAL, ORDER_RECEIVED, ORDER_CANCELLED,
    33 |     EXEMPLAR_FREE,
@@ -21274,6 +21845,11 @@
    52 |         FAIL[0] += 1
    53 |         print('  FAIL', name)
    54 | 
+```
+
+<!-- ─── страница 361 ─── -->
+
+```py
    55 | 
    56 | def fresh(catalog=None):
    57 |     """A fresh engine over an in-memory store (optionally with a catalog handle)."""
@@ -21305,11 +21881,6 @@
    83 |           r1['order']['status'] == ORDER_PARTIAL)
    84 |     check('order tracks 2 received', r1['order']['copies_received'] == 2)
    85 | 
-```
-
-<!-- ─── страница 352 ─── -->
-
-```py
    86 |     # remaining receipt → received
    87 |     r2 = eng.receive(o['id'], '2026/1', copies=3, inv_numbers=['102', '103', '104'])
    88 |     check('full receipt -> received', r2['order']['status'] == ORDER_RECEIVED)
@@ -21334,6 +21905,11 @@
   107 |         eng.create_order('', copies=1)
   108 |         check('empty title rejected', False)
   109 |     except AcquisitionError:
+```
+
+<!-- ─── страница 362 ─── -->
+
+```py
   110 |         check('empty title rejected', True)
   111 |     try:
   112 |         eng.create_order('X', copies=0)
@@ -21365,11 +21941,6 @@
   138 |         check('cannot cancel after receipt', True)
   139 | 
   140 | 
-```
-
-<!-- ─── страница 353 ─── -->
-
-```py
   141 | # --------------------------------------------------------------------------- #
   142 | # 2. Receipt → КСУ (summary book of accounting).
   143 | # --------------------------------------------------------------------------- #
@@ -21394,6 +21965,11 @@
   162 |     ksu2 = r2['ksu']
   163 |     check('КСУ accumulates titles 1+1=2', ksu2['titles'] == 2)
   164 |     check('КСУ accumulates copies 4+5=9', ksu2['copies'] == 9)
+```
+
+<!-- ─── страница 363 ─── -->
+
+```py
   165 |     check('КСУ accumulates sum 1200+1000=2200', ksu2['total_sum'] == 2200.0)
   166 | 
   167 |     # auto inventory (MIN+1) when not supplied
@@ -21425,11 +22001,6 @@
   193 | 
   194 | 
   195 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 354 ─── -->
-
-```py
   196 | # 3. ККО ratio + division-by-zero policy (SPEC §2.2, all 4 cells).
   197 | # --------------------------------------------------------------------------- #
   198 | def kko_checks():
@@ -21454,6 +22025,11 @@
   217 |     check('None excluded from average -> still 0.25', avg2 == 0.25)
   218 | 
   219 |     # all-None -> None (nothing to average)
+```
+
+<!-- ─── страница 364 ─── -->
+
+```py
   220 |     check('all-None average -> None', average_kko([None, None]) is None)
   221 | 
   222 |     # normalize to 1: a 2.0 over-provision capped to 1.0
@@ -21485,11 +22061,6 @@
   248 |     eng = fresh(catalog=cat)
   249 | 
   250 |     # receipt creates a catalog record + a 910 exemplar with ^A=free
-```
-
-<!-- ─── страница 355 ─── -->
-
-```py
   251 |     o = eng.create_order('Машинное обучение', author='Бишоп', copies=3,
   252 |                          price=400.0)
   253 |     r = eng.receive(o['id'], '2026/30', copies=1, inv_numbers=['INV-AAA'])
@@ -21514,6 +22085,11 @@
   272 |     check('exemplar is_available true', cat.is_available('IBIS', 'INV-AAA') is True)
   273 |     inst = ex[2] if ex else {}
   274 |     check('exemplar carries КСУ back-link ^U',
+```
+
+<!-- ─── страница 365 ─── -->
+
+```py
   275 |           str(inst.get('u') or '') == '2026/30')
   276 | 
   277 |     # re-supply of the SAME title adds a copy to the EXISTING record (not a dup)
@@ -21545,11 +22121,6 @@
   303 | 
   304 | def tocat_standalone_checks():
   305 |     print('-- ToCat graceful no-op when no catalog wired')
-```
-
-<!-- ─── страница 356 ─── -->
-
-```py
   306 |     eng = fresh(catalog=None)   # standalone
   307 |     o = eng.create_order('Без каталога', copies=2, price=100.0)
   308 |     r = eng.receive(o['id'], '2026/40', copies=2, inv_numbers=['S1', 'S2'])
@@ -21574,6 +22145,11 @@
   327 | 
   328 | # --------------------------------------------------------------------------- #
   329 | # Small local accessors for the test assertions.
+```
+
+<!-- ─── страница 366 ─── -->
+
+```py
   330 | # --------------------------------------------------------------------------- #
   331 | def _instances(record, field):
   332 |     raw = record.get(field)
@@ -21610,11 +22186,6 @@
 ```py
     1 | #!/usr/bin/env python3
     2 | """HTTP-route tests for the АРМ Администратор (#187, epic #223).
-```
-
-<!-- ─── страница 357 ─── -->
-
-```py
     3 | 
     4 | The administration workstation over the EXISTING access store (staff accounts,
     5 | roles/grants, audit log, DB list). THIS suite proves that surface is reachable
@@ -21639,6 +22210,11 @@
    24 |   * GUEST/READER get 403, and no session gets 401/403 — never 200.
    25 | 
    26 | Wired into the test_access.py runner (module list) so the CI sqlite + postgres
+```
+
+<!-- ─── страница 367 ─── -->
+
+```py
    27 | legs both run it. Standalone-runnable in the house style:
    28 |   py tests/test_admin_routes.py  -> ok ... + "N passed, M failed" + exit code.
    29 | """
@@ -21670,11 +22246,6 @@
    55 |     {'function': 'admin.db', 'db': '*', 'level': 'admin'},
    56 |     # plus the everyday read grants an admin role also carries (not needed by the
    57 |     # admin routes, but realistic — proves the guard keys on admin.* specifically).
-```
-
-<!-- ─── страница 358 ─── -->
-
-```py
    58 |     {'function': 'search', 'db': '*', 'level': 'read'},
    59 | ]
    60 | 
@@ -21699,6 +22270,11 @@
    79 |     fake DB menu (no live server) and ``max_mfn`` to 0 so /api/admin/databases is
    80 |     deterministic without a server."""
    81 |     os.environ['JWT_SECRET'] = 'admin-routes-test-secret'
+```
+
+<!-- ─── страница 368 ─── -->
+
+```py
    82 |     os.environ['ACCESS_BACKEND'] = 'sqlite'
    83 |     os.environ['ACCESS_DB'] = ':memory:'
    84 |     import importlib
@@ -21730,11 +22306,6 @@
   110 |                               tenant='public', rdr_mfn=1)
   111 |     return {'authorization': 'Bearer ' + tok}
   112 | 
-```
-
-<!-- ─── страница 359 ─── -->
-
-```py
   113 | 
   114 | # --------------------------------------------------------------------------- #
   115 | # 1. Users: list, create (with roles), authenticate the created user.
@@ -21759,6 +22330,11 @@
   134 |     check('seeded admin shows the administrator role',
   135 |           'administrator' in admin_row['roles'])
   136 |     check('seeded admin grants include admin.users',
+```
+
+<!-- ─── страница 369 ─── -->
+
+```py
   137 |           any(g['function'] == 'admin.users' for g in admin_row['grants']))
   138 | 
   139 |     # CREATE a new user with a role + an explicit password.
@@ -21790,11 +22366,6 @@
   165 |     check('password is hashed, never plaintext',
   166 |           acc['pass_hash'] != 'pw-newcat' and acc['pass_hash'].startswith('pbkdf2$'))
   167 | 
-```
-
-<!-- ─── страница 360 ─── -->
-
-```py
   168 |     # Wrong password still fails for the created user.
   169 |     st, _ = api.route('POST', '/api/auth/staff', {},
   170 |                       {'login': 'newcat', 'password': 'WRONG'}, {})
@@ -21819,6 +22390,11 @@
   189 |     H = _admin(api)
   190 | 
   191 |     # Make a user with one role.
+```
+
+<!-- ─── страница 370 ─── -->
+
+```py
   192 |     st, p = api.route('POST', '/api/admin/users', {},
   193 |                       {'login': 'multi', 'password': 'pw', 'roles': ['cataloger']}, H)
   194 |     uid = p['data']['id']
@@ -21850,11 +22426,6 @@
   220 |     check('roles without userId -> 400', st == 400)
   221 | 
   222 |     # ACTIVE toggle: disable blocks authentication, re-enable restores it.
-```
-
-<!-- ─── страница 361 ─── -->
-
-```py
   223 |     api.route('POST', '/api/admin/users/roles', {},
   224 |               {'userId': uid, 'roles': ['cataloger']}, H)   # give it a role again
   225 |     st, _ = api.route('POST', '/api/auth/staff', {},
@@ -21879,6 +22450,11 @@
   244 |     check('re-enabled user authenticates again', st == 200)
   245 | 
   246 |     # active on unknown user -> 404; without userId -> 400.
+```
+
+<!-- ─── страница 371 ─── -->
+
+```py
   247 |     st, _ = api.route('POST', '/api/admin/users/active', {},
   248 |                       {'userId': 999999, 'active': True}, H)
   249 |     check('active on unknown user -> 404', st == 404)
@@ -21910,11 +22486,6 @@
   275 | # 4. Audit log — issue an action first, then see it logged (newest-first, capped).
   276 | # --------------------------------------------------------------------------- #
   277 | def audit_route_checks():
-```
-
-<!-- ─── страница 362 ─── -->
-
-```py
   278 |     print('-- admin routes: GET /api/admin/audit (recent, newest-first, capped)')
   279 |     api, _core = _api()
   280 |     H = _admin(api)
@@ -21939,6 +22510,11 @@
   299 |               {'login': 'aud-first', 'password': 'pw'}, H)
   300 |     api.route('POST', '/api/admin/users', {},
   301 |               {'login': 'aud-second', 'password': 'pw'}, H)
+```
+
+<!-- ─── страница 372 ─── -->
+
+```py
   302 |     st, p = api.route('GET', '/api/admin/audit', {}, None, H)
   303 |     creates = [i for i in p['data']['items']
   304 |                if (i.get('detail') or {}).get('op') == 'create']
@@ -21970,11 +22546,6 @@
   330 |           'code' in item and 'name' in item and 'public' in item)
   331 |     check('IBIS flagged public, RDR not',
   332 |           item['public'] is True
-```
-
-<!-- ─── страница 363 ─── -->
-
-```py
   333 |           and next(i for i in items if i['code'] == 'RDR')['public'] is False)
   334 | 
   335 | 
@@ -21999,6 +22570,11 @@
   354 |     # Non-admin STAFF: a real staff session that lacks admin.* -> 403 everywhere.
   355 |     HS = _nonadmin_staff(api)
   356 |     for m, path, b in ADMIN_ROUTES:
+```
+
+<!-- ─── страница 373 ─── -->
+
+```py
   357 |         st, _ = api.route(m, path, {}, b, HS)
   358 |         check('non-admin staff denied on %s %s (403)' % (m, path), st == 403)
   359 | 
@@ -22030,11 +22606,6 @@
   385 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   386 |     sys.exit(1 if FAIL[0] else 0)
   387 | 
-```
-
-<!-- ─── страница 364 ─── -->
-
-```py
   388 | 
   389 | if __name__ == '__main__':
   390 |     main()
@@ -22064,6 +22635,11 @@
    19 | tests/test_seeding.py: ``ok …`` lines + ``N passed, M failed`` + exit code.
    20 | """
    21 | import os
+```
+
+<!-- ─── страница 374 ─── -->
+
+```py
    22 | import sys
    23 | 
    24 | sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22095,11 +22671,6 @@
    50 |         'athra',
    51 |         {'a': 'Толстой', 'b': 'Л. Н.', 'g': 'Лев Николаевич',
    52 |          'f': '1828-1910', '9': '1'},
-```
-
-<!-- ─── страница 365 ─── -->
-
-```py
    53 |         terms=['Толстой, Л. Н.', 'Толстой Лев Николаевич'],
    54 |         worklist='ATHRA')
    55 |     # ATHRA — a second person, to prove search discriminates.
@@ -22124,6 +22695,11 @@
    74 |         'athru',
    75 |         {'a': '821.161.1', 'c': 'Русская литература'},
    76 |         terms=['821.161.1', 'Русская литература'])
+```
+
+<!-- ─── страница 375 ─── -->
+
+```py
    77 |     return st, ids
    78 | 
    79 | 
@@ -22155,11 +22731,6 @@
   105 |     check('substring mode matches mid-string',
   106 |           len(sub) == 1 and sub[0]['id'] == ids['tolstoy'])
   107 | 
-```
-
-<!-- ─── страница 366 ─── -->
-
-```py
   108 |     # search discriminates between the two persons.
   109 |     chk = st.search('athra', 'Чех')
   110 |     check('search discriminates persons',
@@ -22184,6 +22755,11 @@
   129 |     # get returns the full record within the right base.
   130 |     rec = st.get('athra', ids['tolstoy'])
   131 |     check('get returns full record', rec is not None and
+```
+
+<!-- ─── страница 376 ─── -->
+
+```py
   132 |           rec['heading_210']['a'] == 'Толстой' and
   133 |           rec['heading_210']['f'] == '1828-1910')
   134 |     check('get echoes record id', rec['id'] == ids['tolstoy'])
@@ -22215,11 +22791,6 @@
   160 |           '3' not in person['heading_210'] and patch700['3'] == str(person['id']))
   161 | 
   162 |     # 701 uses the same person fill-map.
-```
-
-<!-- ─── страница 367 ─── -->
-
-```py
   163 |     check('701 fills like 700', substitute('701', person)['a'] == 'Толстой')
   164 | 
   165 |     # --- absent subfield omitted: Чехов has no ^9 -> patch has no '9'. ---
@@ -22244,6 +22815,11 @@
   184 |     patch606 = substitute('606', lit)
   185 |     check('606 fills ^a (заголовок)', patch606['a'] == 'Литература')
   186 |     check('606 fills ^b (темат. подзагол.)', patch606['b'] == 'История и критика')
+```
+
+<!-- ─── страница 377 ─── -->
+
+```py
   187 |     check('606 fills ^g (геогр. подзагол.)', patch606['g'] == 'Россия')
   188 |     check('606 fills ^h (хронол. подзагол.)', patch606['h'] == '19 в.')
   189 |     check('606 writes ^3', patch606['3'] == str(ids['lit']))
@@ -22275,11 +22851,6 @@
   215 |     check('missing authority raises AuthorityNotFound', raised)
   216 | 
   217 |     # unknown catalog field -> UnknownCatalogField.
-```
-
-<!-- ─── страница 368 ─── -->
-
-```py
   218 |     raised = False
   219 |     try:
   220 |         substitute('999', st.get('athra', ids['tolstoy']))
@@ -22304,6 +22875,11 @@
   239 |     check('add_record rejects unknown db', raised)
   240 | 
   241 |     # integer tag also works (str-coerced).
+```
+
+<!-- ─── страница 378 ─── -->
+
+```py
   242 |     p = substitute(700, st.get('athra', ids['tolstoy']))
   243 |     check('integer catalog tag accepted', p['a'] == 'Толстой')
   244 | 
@@ -22340,11 +22916,6 @@
    15 | 
    16 | Запуск в доме-стиле: ``py -3.12 tests/test_authority_seam.py``.
    17 | """
-```
-
-<!-- ─── страница 369 ─── -->
-
-```py
    18 | import os
    19 | import sys
    20 | 
@@ -22369,6 +22940,11 @@
    39 | # --------------------------------------------------------------------------- #
    40 | # 6.2 — autoin: авто-создание/привязка авторитетной записи из заголовка БО.
    41 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 379 ─── -->
+
+```py
    42 | def autoin_checks():
    43 |     print('-- 6.2 autoin: создание/привязка авторитета из БО без ^3')
    44 |     st = AuthorityStore(':memory:')
@@ -22400,11 +22976,6 @@
    70 |     try:
    71 |         st.autoin('700', {})
    72 |         check('пустой заголовок -> ошибка', False)
-```
-
-<!-- ─── страница 370 ─── -->
-
-```py
    73 |     except ValueError:
    74 |         check('пустой заголовок -> ValueError', True)
    75 | 
@@ -22429,6 +23000,11 @@
    94 | def flk_checks():
    95 |     print('-- 6.3 ФЛК ^3: поля со ссылкой на авторитет + предикат битой ссылки')
    96 |     check('AUTHORITY_LINK_FIELDS — словарь полей со ссылкой ^3',
+```
+
+<!-- ─── страница 380 ─── -->
+
+```py
    97 |           isinstance(F.AUTHORITY_LINK_FIELDS, dict))
    98 |     check('AUTHORITY_LINK_FIELDS включает 700/606',
    99 |           '700' in F.AUTHORITY_LINK_FIELDS and '606' in F.AUTHORITY_LINK_FIELDS)
@@ -22465,11 +23041,6 @@
     8 |     ts:<iso>, notes:{...} }
     9 |   GET  /api/admin/benchmark     -> последний кэш (или 404, если не запускали).
    10 | 
-```
-
-<!-- ─── страница 371 ─── -->
-
-```py
    11 | Без живого сервера: ``self.irbis`` подменяется на FakeIrbis (детерминированный
    12 | in-memory стенд), own-store каталог сидируется одной записью. Проверяем:
    13 |   * super-admin gate — не-админ (staff без admin.*, guest, reader) -> 403; нет
@@ -22494,6 +23065,11 @@
    32 | import importlib
    33 | import os
    34 | import sys
+```
+
+<!-- ─── страница 381 ─── -->
+
+```py
    35 | 
    36 | sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
    37 | 
@@ -22525,11 +23101,6 @@
    63 |     {'function': 'search', 'db': '*', 'level': 'read'},
    64 | ]
    65 | 
-```
-
-<!-- ─── страница 372 ─── -->
-
-```py
    66 | 
    67 | def _record(mfn):
    68 |     return {'mfn': mfn, 'status': '0', 'version': '1', 'guid': None,
@@ -22554,6 +23125,11 @@
    87 |         self._maybe_raise('max_mfn')
    88 |         return self._maxmfn
    89 | 
+```
+
+<!-- ─── страница 382 ─── -->
+
+```py
    90 |     def search(self, db, expr):
    91 |         self._maybe_raise('search')
    92 |         return 1, [1]
@@ -22585,11 +23161,6 @@
   118 |             api.catalog.save('IBIS', {'200': [{'a': 'Библиотека и книга'}],
   119 |                                       '610': [{'': 'библиотека'}]})
   120 |         except Exception:
-```
-
-<!-- ─── страница 373 ─── -->
-
-```py
   121 |             pass
   122 |     return api, _core
   123 | 
@@ -22614,6 +23185,11 @@
   142 |                               tenant='public', rdr_mfn=1)
   143 |     return {'authorization': 'Bearer ' + tok}
   144 | 
+```
+
+<!-- ─── страница 383 ─── -->
+
+```py
   145 | 
   146 | # --------------------------------------------------------------------------- #
   147 | # 1. Контракт ответа run + GET-кэш после запуска.
@@ -22645,11 +23221,6 @@
   173 |     check('notes помечает circ-ИРБИС как ПРОКСИ',
   174 |           d['notes'].get('circulation', {}).get('irbis_method') == 'proxy')
   175 |     check('notes помечает circ-Biblio как real',
-```
-
-<!-- ─── страница 374 ─── -->
-
-```py
   176 |           d['notes'].get('circulation', {}).get('biblio_method') == 'real')
   177 |     # migration: records_per_sec число|null, total int|null
   178 |     m = d['migration']
@@ -22674,6 +23245,11 @@
   197 | def empty_cache_checks():
   198 |     print('-- benchmark: GET до запуска -> 404')
   199 |     api, _core = _api(FakeIrbis())
+```
+
+<!-- ─── страница 384 ─── -->
+
+```py
   200 |     H = _super(api)
   201 |     st, p = api.route('GET', '/api/admin/benchmark', {}, None, H)
   202 |     check('GET до run -> 404', st == 404)
@@ -22705,11 +23281,6 @@
   228 |     for label, H in (('guest', _guest(api)), ('reader', _reader(api))):
   229 |         for m, path in BENCH_ROUTES:
   230 |             st, _ = api.route(m, path, {}, None, H)
-```
-
-<!-- ─── страница 375 ─── -->
-
-```py
   231 |             check('%s -> 403 на %s %s' % (label, m, path), st == 403)
   232 | 
   233 |     # нет сессии -> 401/403, не 200
@@ -22734,6 +23305,11 @@
   252 |     H = _super(api)
   253 |     st, p = api.route('POST', '/api/admin/benchmark/run', {}, None, H)
   254 |     check('run при мёртвом ИРБИС -> 200 (НЕ 500)', st == 200)
+```
+
+<!-- ─── страница 385 ─── -->
+
+```py
   255 |     d = p['data']
   256 |     check('query.irbis_ms = null при сбое', d['query']['irbis_ms'] is None)
   257 |     check('notes.query помечает irbis_error',
@@ -22765,11 +23341,6 @@
   283 | def median_checks():
   284 |     print('-- benchmark: медиана + отброс max-выброса (чистая логика)')
   285 |     import core as _core
-```
-
-<!-- ─── страница 376 ─── -->
-
-```py
   286 | 
   287 |     # Детерминированная последовательность задержек: контролируем «время» прогона
   288 |     # через счётчик, отдавая известные длительности. Замеряем РЕАЛЬНОЕ perf_counter,
@@ -22794,6 +23365,11 @@
   307 |     check('median: сбой fn -> None', med2 is None)
   308 |     check('median: сбой fn -> текст ошибки', isinstance(err2, str) and 'boom' in err2)
   309 | 
+```
+
+<!-- ─── страница 386 ─── -->
+
+```py
   310 |     # Отброс выброса: с >=3 прогонами один максимум отбрасывается -> медиана берётся
   311 |     # из оставшихся. Проверяем инвариант на синтетических длительностях напрямую
   312 |     # (повторяем алгоритм отброса, чтобы зафиксировать поведение независимо от часов).
@@ -22825,11 +23401,6 @@
   338 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   339 |     sys.exit(1 if FAIL[0] else 0)
   340 | 
-```
-
-<!-- ─── страница 377 ─── -->
-
-```py
   341 | 
   342 | if __name__ == '__main__':
   343 |     main()
@@ -22859,6 +23430,11 @@
    19 |     exemplars=0 ⇒ NULL) and the zero-exemplar edge (students>0 ∧ exemplars=0 ⇒ 0);
    20 |   * average Кко excluding NULLs + normalize-to-1;
    21 |   * exemplar count read live from a wired catalog (910^A availability) and the
+```
+
+<!-- ─── страница 387 ─── -->
+
+```py
    22 |     standalone fallback to recorded copies;
    23 |   * per-discipline + per-specialty under-provision reports with shortfall.
    24 | """
@@ -22890,11 +23466,6 @@
    50 |     return BookProvisionEngine(':memory:', catalog=catalog, kko_norm=kko_norm)
    51 | 
    52 | 
-```
-
-<!-- ─── страница 378 ─── -->
-
-```py
    53 | def linkage(eng, students=100, source='68z'):
    54 |     """Build a one-discipline связка and return its ids."""
    55 |     fac = eng.add_faculty('ФВТ', name='Факультет вычислительной техники')
@@ -22919,6 +23490,11 @@
    74 |     check('students=0, exemplars>0 -> 1.0 (обеспечено)',
    75 |           kko(50, 0) == 1.0)
    76 |     check('students=0, exemplars=0 -> None (NULL, нет данных)',
+```
+
+<!-- ─── страница 388 ─── -->
+
+```py
    77 |           kko(0, 0) is None)
    78 |     # NULL is distinct from 0.0 — the crux of SPEC E1 §2.2 / AC4.
    79 |     check('NULL is not 0.0', kko(0, 0) is None and kko(0, 1) == 0.0)
@@ -22950,11 +23526,6 @@
   105 | # 2. Building the связка (Факультет→Направление→Специальность→Дисциплина).
   106 | # --------------------------------------------------------------------------- #
   107 | def linkage_build_checks():
-```
-
-<!-- ─── страница 379 ─── -->
-
-```py
   108 |     print('-- build связка + idempotency + validation')
   109 |     eng = fresh()
   110 |     fac, sp, disc = linkage(eng, students=100)
@@ -22979,6 +23550,11 @@
   129 |     check('different semester -> different row', disc_s4 != disc)
   130 |     check('two disciplines under specialty',
   131 |           len(eng.list_disciplines(sp)) == 2)
+```
+
+<!-- ─── страница 389 ─── -->
+
+```py
   132 | 
   133 |     # validation: unknown parents / missing keys are rejected
   134 |     try:
@@ -23010,11 +23586,6 @@
   160 |           {x['kind'] for x in binds} == {KIND_MAIN, KIND_EXTRA})
   161 |     check('binding records copies (standalone)',
   162 |           {x['copies'] for x in binds} == {40, 10})
-```
-
-<!-- ─── страница 380 ─── -->
-
-```py
   163 | 
   164 |     # validation: unknown discipline / bad kind
   165 |     try:
@@ -23039,6 +23610,11 @@
   184 |     eng.bind_literature(disc, 'Книга 1', kind=KIND_MAIN, copies=40)   # Кко 0.40
   185 |     eng.bind_literature(disc, 'Книга 2', kind=KIND_EXTRA, copies=10)  # Кко 0.10
   186 |     rep = eng.discipline_provision(disc)
+```
+
+<!-- ─── страница 390 ─── -->
+
+```py
   187 |     kkos = sorted(b['kko'] for b in rep['bindings'])
   188 |     check('per-binding Кко = [0.10, 0.40]', kkos == [0.10, 0.40])
   189 |     check('average Кко = 0.25', abs(rep['average_kko'] - 0.25) < 1e-9)
@@ -23070,11 +23646,6 @@
   215 |     rep = eng.discipline_provision(arch)
   216 |     check('zero-contingent + exemplars -> Кко 1.0',
   217 |           rep['bindings'][0]['kko'] == 1.0)
-```
-
-<!-- ─── страница 381 ─── -->
-
-```py
   218 |     check('zero-contingent not under-provisioned (no consumers)',
   219 |           rep['under_provisioned'] is False)
   220 |     check('zero-contingent shortfall 0', rep['shortfall'] == 0)
@@ -23099,6 +23670,11 @@
   239 |     check('students>0 zero-exemplar under-provisioned', rep3['under_provisioned'])
   240 |     check('shortfall ceil(50*0.5)-0 = 25', rep3['shortfall'] == 25)
   241 | 
+```
+
+<!-- ─── страница 391 ─── -->
+
+```py
   242 | 
   243 | # --------------------------------------------------------------------------- #
   244 | # 5. Catalog read-through — exemplars from 910 when a handle is wired.
@@ -23130,11 +23706,6 @@
   270 |     check('issued holding -> 0 exemplars (ignores inline copies)',
   271 |           by_title['Выданный']['exemplars'] == 0)
   272 | 
-```
-
-<!-- ─── страница 382 ─── -->
-
-```py
   273 |     # standalone (no catalog) uses the recorded copies even with an inv_key
   274 |     eng_s = fresh(catalog=None)
   275 |     _, _, d_s = linkage(eng_s, students=1)
@@ -23159,6 +23730,11 @@
   294 |         '200': [{'a': 'Учебник по БД'}],
   295 |         '101': 'rus',
   296 |         '920': 'PAZK',
+```
+
+<!-- ─── страница 392 ─── -->
+
+```py
   297 |         '910': [{'a': EXEMPLAR_FREE, 'b': 'INV-A'},
   298 |                 {'a': EXEMPLAR_ISSUED, 'b': 'INV-B'}],
   299 |     })
@@ -23190,11 +23766,6 @@
   325 |                             students=100)
   326 |     eng.bind_literature(d1, 'Мало книг', kind=KIND_MAIN, copies=10)
   327 |     # D2 well-provisioned: 80 copies / 100 students = 0.80 >= 0.5
-```
-
-<!-- ─── страница 383 ─── -->
-
-```py
   328 |     d2 = eng.add_discipline(sp, disc_id='D2', name='Сильная', semester='1',
   329 |                             students=100)
   330 |     eng.bind_literature(d2, 'Много книг', kind=KIND_MAIN, copies=80)
@@ -23219,6 +23790,11 @@
   349 |         eng.specialty_provision(99999)
   350 |         check('unknown specialty rejected', False)
   351 |     except BookProvisionError:
+```
+
+<!-- ─── страница 393 ─── -->
+
+```py
   352 |         check('unknown specialty rejected', True)
   353 | 
   354 | 
@@ -23250,11 +23826,6 @@
   380 |     linkage_build_checks()
   381 |     binding_checks()
   382 |     discipline_report_checks()
-```
-
-<!-- ─── страница 384 ─── -->
-
-```py
   383 |     edge_cell_report_checks()
   384 |     catalog_read_checks()
   385 |     real_catalog_read_checks()
@@ -23284,6 +23855,11 @@
    11 |     py -3.12 tests/test_catalog.py   ->  'ok …' lines + 'N passed, M failed', exit!=0
    12 | 
    13 | What is exercised
+```
+
+<!-- ─── страница 394 ─── -->
+
+```py
    14 |   1. Schema / store init: tables created on a fresh :memory: store.
    15 |   2. save valid record -> get returns it byte-for-byte; mfn assigned sequentially.
    16 |   3. save with missing mandatory 200^a (non-аналитика) -> rejected with a
@@ -23315,11 +23891,6 @@
    42 |     else:
    43 |         FAIL[0] += 1
    44 |         print('  FAIL', name)
-```
-
-<!-- ─── страница 385 ─── -->
-
-```py
    45 | 
    46 | 
    47 | # --------------------------------------------------------------------------- #
@@ -23344,6 +23915,11 @@
    66 |     return {
    67 |         '920': 'PAZK',
    68 |         '200': [{'a': 'Основы каталогизации', 'f': 'Иванова И.И.'}],
+```
+
+<!-- ─── страница 395 ─── -->
+
+```py
    69 |         '700': [{'a': 'Петров П.П.'}],
    70 |         '610': [{'': 'каталогизация'}, {'': 'библиография'}],
    71 |         '101': 'rus',
@@ -23375,11 +23951,6 @@
    97 |     res = st.save('IBIS', rec)
    98 |     check('valid record saved (saved True)', res['saved'] is True)
    99 |     check('valid record canSave', res['canSave'] is True)
-```
-
-<!-- ─── страница 386 ─── -->
-
-```py
   100 |     check('valid record assigned mfn 1', res['mfn'] == 1)
   101 |     check('valid record has a row id', isinstance(res['id'], int) and res['id'] > 0)
   102 |     check('valid record overallSeverity is PASS', res['overallSeverity'] == flk.SEV_PASS)
@@ -23404,6 +23975,11 @@
   121 | # --------------------------------------------------------------------------- #
   122 | def flk_reject_checks():
   123 |     print('-- save rejected by ФЛК (severity-1)')
+```
+
+<!-- ─── страница 396 ─── -->
+
+```py
   124 |     st = _store()
   125 |     # A non-аналитика record (920=PAZK) without 200^a -> rec.200a.mandatory (HARD).
   126 |     no_title = {'920': 'PAZK', '101': 'rus', '907': [{'a': 'X'}]}
@@ -23435,11 +24011,6 @@
   152 |     warn_rec = {
   153 |         '920': 'PAZK',
   154 |         '200': [{'a': 'Книга с предупреждением'}],
-```
-
-<!-- ─── страница 387 ─── -->
-
-```py
   155 |         '101': 'rus',
   156 |         '10': [{'a': '5-7654-0001-0'}],          # flipped ISBN check digit
   157 |     }
@@ -23464,6 +24035,11 @@
   176 | def search_checks():
   177 |     print('-- search (T= / A= / K= / IN=)')
   178 |     st = _store()
+```
+
+<!-- ─── страница 397 ─── -->
+
+```py
   179 |     res = st.save('IBIS', _good_book())
   180 |     mfn = res['mfn']
   181 | 
@@ -23495,11 +24071,6 @@
   207 |     # a bare term (no prefix) searches titles
   208 |     bare = st.search('IBIS', 'Основы каталогизации')
   209 |     check('bare expression searches titles', bare['total'] == 1)
-```
-
-<!-- ─── страница 388 ─── -->
-
-```py
   210 | 
   211 |     # a miss returns empty
   212 |     miss = st.search('IBIS', 'T=Не существует')
@@ -23524,6 +24095,11 @@
   231 |     print('-- logical delete / undelete')
   232 |     st = _store()
   233 |     mfn = st.save('IBIS', _good_book())['mfn']
+```
+
+<!-- ─── страница 398 ─── -->
+
+```py
   234 |     check('pre-delete search finds it', st.search('IBIS', 'T=Основы каталогизации')['total'] == 1)
   235 | 
   236 |     ok = st.delete('IBIS', mfn)
@@ -23555,11 +24131,6 @@
   262 |     check('mfn not reused after delete (next is 2)', new['mfn'] == mfn + 1)
   263 | 
   264 | 
-```
-
-<!-- ─── страница 389 ─── -->
-
-```py
   265 | # --------------------------------------------------------------------------- #
   266 | # 7. brief / full PFT (A1) render + units (parse_expr, index_terms).
   267 | # --------------------------------------------------------------------------- #
@@ -23584,6 +24155,11 @@
   286 | 
   287 |     # brief never empty for a record (projection fallback if PFT yields nothing).
   288 |     minimal_mfn = st.save('IBIS', {'920': 'PAZK', '200': [{'a': 'Только заглавие'}],
+```
+
+<!-- ─── страница 399 ─── -->
+
+```py
   289 |                                    '101': 'rus', '907': [{'a': 'X'}]})['mfn']
   290 |     mbrief = st.brief('IBIS', minimal_mfn)
   291 |     check('minimal record brief non-empty', bool(mbrief) and 'Только заглавие' in mbrief)
@@ -23615,11 +24191,6 @@
   317 |     multi = _good_book()
   318 |     multi['701'] = [{'a': 'Соавтор А.А.'}]
   319 |     a_terms = {t for p, t in st.index_terms(multi) if p == 'A'}
-```
-
-<!-- ─── страница 390 ─── -->
-
-```py
   320 |     check('index_terms indexes 700 and 701 authors',
   321 |           'Петров П.П.' in a_terms and 'Соавтор А.А.' in a_terms)
   322 | 
@@ -23644,6 +24215,11 @@
   341 |         '606': [{'a': 'каталогизация'}],                  # S=
   342 |         '605': [{'a': 'библиотечное дело'}],              # S=
   343 |         '607': [{'a': 'Россия'}],                         # GEO=
+```
+
+<!-- ─── страница 400 ─── -->
+
+```py
   344 |         '675': '004.65',                                  # U= (целое поле, УДК)
   345 |         '621': '32.973',                                  # U= (целое поле, ББК)
   346 |         '900': [{'b': '05'}],                             # V= (вид документа)
@@ -23675,11 +24251,6 @@
   372 | 
   373 |     # точные значения по сверенным полям.
   374 |     check('TS= <- 225^a', 'Библиотечная серия' in by_prefix.get('TS', set()))
-```
-
-<!-- ─── страница 391 ─── -->
-
-```py
   375 |     check('M= <- 710^a + 711^a',
   376 |           {'Институт информации', 'Конференция ИРБИС'} <= by_prefix.get('M', set()))
   377 |     check('S= <- 606^a + 605^a',
@@ -23704,6 +24275,11 @@
   396 |     check('SEARCH_PREFIXES adds the §3.2 high-freq set',
   397 |           {'TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR'} <= set(SEARCH_PREFIXES))
   398 | 
+```
+
+<!-- ─── страница 401 ─── -->
+
+```py
   399 | 
   400 | def extra_prefix_search_checks():
   401 |     print('-- расширенный словарный поиск (§3.2): найти по каждому новому префиксу')
@@ -23735,11 +24311,6 @@
   427 | 
   428 |     # parse_expr корректно разбирает многосимвольные/новые префиксы.
   429 |     check('parse_expr GEO=', parse_expr('GEO=Россия') == ('GEO', 'Россия'))
-```
-
-<!-- ─── страница 392 ─── -->
-
-```py
   430 |     check('parse_expr MHR= (multichar)', parse_expr('MHR=ЧЗ') == ('MHR', 'ЧЗ'))
   431 |     check('parse_expr lowercase mhr=', parse_expr('mhr=чз') == ('MHR', 'чз'))
   432 | 
@@ -23764,6 +24335,11 @@
   451 |     check('extended prefix hidden after delete',
   452 |           st.search('IBIS', 'U=004.65')['total'] == 0)
   453 |     st.undelete('IBIS', mfn)
+```
+
+<!-- ─── страница 402 ─── -->
+
+```py
   454 |     check('extended prefix findable after undelete',
   455 |           st.search('IBIS', 'U=004.65')['total'] == 1)
   456 | 
@@ -23800,11 +24376,6 @@
     8 | failure-isolation guarantees the rule layer depends on.
     9 | 
    10 | Covered:
-```
-
-<!-- ─── страница 393 ─── -->
-
-```py
    11 |   * a checkout→return that charges a fine enqueues a correctly-rendered,
    12 |     correctly-channelled ``fine_charged`` notice through the engine;
    13 |   * a return that frees a queued item enqueues ``hold_ready`` to the *reader* at
@@ -23829,6 +24400,11 @@
    32 | import sys
    33 | 
    34 | sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+```
+
+<!-- ─── страница 403 ─── -->
+
+```py
    35 | from access import circulation as circ
    36 | from access import notifications as nt
    37 | from access.circulation import (
@@ -23860,11 +24436,6 @@
    63 |     store = CirculationStore(':memory:')
    64 |     queue = nt.NotificationQueue(':memory:')
    65 |     eng = CirculationEngine(store=store, policy=policy or default_policy(),
-```
-
-<!-- ─── страница 394 ─── -->
-
-```py
    66 |                             notifications=queue, tenant=tenant)
    67 |     store.add_reader(reader, category=category)
    68 |     channels = {'email': nt.MemoryChannel('email'), 'sms': nt.MemoryChannel('sms')}
@@ -23889,6 +24460,11 @@
    87 |     # Events CirculationEngine._emit raises (kept in lock-step with circulation.py).
    88 |     emitted = ('renewal_confirmed', 'fine_charged', 'hold_ready', 'fine_paid',
    89 |                'staff_alert', 'lost_confirmed', 'hold_cancelled')
+```
+
+<!-- ─── страница 404 ─── -->
+
+```py
    90 |     for ev in emitted:
    91 |         check('catalog covers emitted event %s' % ev, cat.has(ev))
    92 | 
@@ -23920,11 +24496,6 @@
   118 |     # render context: amount + currency interpolated (no literal placeholder).
   119 |     body = fc_sent[0]['body'] if fc_sent else ''
   120 |     check('rendered amount present', '45' in body)
-```
-
-<!-- ─── страница 395 ─── -->
-
-```py
   121 |     check('rendered currency present (default RUB)', 'RUB' in body)
   122 |     check('no unrendered {amount} placeholder', '{amount}' not in body)
   123 |     # fine_charged default channel chain is [email, sms] → delivered via email.
@@ -23949,6 +24520,11 @@
   142 | 
   143 |     hr = [r for r in queue.all() if r['event'] == 'hold_ready']
   144 |     check('exactly one hold_ready enqueued', len(hr) == 1)
+```
+
+<!-- ─── страница 405 ─── -->
+
+```py
   145 |     check('hold_ready addressed to head reader R2 (not R3)',
   146 |           hr and hr[0]['recipient'] == 'R2')
   147 | 
@@ -23980,11 +24556,6 @@
   173 |     fp = [r for r in queue2.all() if r['event'] == 'fine_paid']
   174 |     check('fine_paid enqueued to reader', len(fp) == 1 and fp[0]['recipient'] == 'RP')
   175 |     delivered = _drain(queue2, channels2)
-```
-
-<!-- ─── страница 396 ─── -->
-
-```py
   176 |     check('fine_paid delivered', any('Оплата принята' in m['subject'] for m in delivered))
   177 | 
   178 | 
@@ -24009,6 +24580,11 @@
   197 |     import json as _json
   198 |     chain = _json.loads(sa[0]['channels_json']) if sa else []
   199 |     check('staff_alert routed to the email-only staff channel', chain == ['email'])
+```
+
+<!-- ─── страница 406 ─── -->
+
+```py
   200 | 
   201 |     delivered = _drain(queue, channels)
   202 |     check('staff_alert delivered via email only', len(channels['email'].sent) == 1
@@ -24040,11 +24616,6 @@
   228 |     store = CirculationStore(':memory:')
   229 |     eng = CirculationEngine(store=store, policy=default_policy())  # no handle
   230 |     store.add_reader('R1', category='В01')
-```
-
-<!-- ─── страница 397 ─── -->
-
-```py
   231 |     loan = eng.checkout('R1', 'BK-BC', T0).computed['loan']
   232 | 
   233 |     # an event-producing op still returns its intents and records state.
@@ -24069,6 +24640,11 @@
   252 | 
   253 |     # notifier= back-compat alias still wires dispatch (same role as notifications=).
   254 |     store3 = CirculationStore(':memory:')
+```
+
+<!-- ─── страница 407 ─── -->
+
+```py
   255 |     queue3 = nt.NotificationQueue(':memory:')
   256 |     eng3 = CirculationEngine(store=store3, policy=default_policy(), notifier=queue3)
   257 |     store3.add_reader('R3', category='В01')
@@ -24100,11 +24676,6 @@
   283 |     raised = False
   284 |     try:
   285 |         d = eng.renew(loan['id'], T0 + 5 * DAY)
-```
-
-<!-- ─── страница 398 ─── -->
-
-```py
   286 |     except Exception:
   287 |         raised = True
   288 |     check('throwing dispatcher does not raise out of renew', not raised)
@@ -24129,6 +24700,11 @@
   307 |     store2, eng2, queue2, _ = _wired(category='В01', reader='RX')
   308 |     raised3 = False
   309 |     try:
+```
+
+<!-- ─── страница 408 ─── -->
+
+```py
   310 |         eng2._emit('not_a_real_event', 'RX', {'item': 'BK', 'ref': 'x1'})
   311 |     except Exception:
   312 |         raised3 = True
@@ -24160,11 +24736,6 @@
   338 | def main():
   339 |     coverage_checks()
   340 |     fine_charged_dispatch_checks()
-```
-
-<!-- ─── страница 399 ─── -->
-
-```py
   341 |     hold_ready_dispatch_checks()
   342 |     renewal_and_payment_dispatch_checks()
   343 |     staff_routing_checks()
@@ -24177,6 +24748,276 @@
   350 | 
   351 | if __name__ == '__main__':
   352 |     main()
+```
+
+### Файл: `irbis-web/backend/tests/test_circ_resolve.py`  · строк: 240
+
+```py
+    1 | #!/usr/bin/env python3
+    2 | """Замыкание двух хвостов книговыдачи — рёбра 2.3 и 2.6 INTEGRATION_MAP.
+    3 | 
+    4 | Грунтовано на DB_CIRCULATION §3/§5/§6/§8 и INTEGRATION_MAP кластер 2.
+    5 | 
+    6 | Покрывает:
+    7 |   * **2.3 RQST 903 (шифр заказа) → запись каталога.**
+    8 |     ``CirculationEngine.resolve_order_record(item_or_shifr, catalog_db=None)``
+    9 |     резолвит mfn записи ЭК по шифру ``903`` = ``I=`` (основной путь заказа,
+   10 |     ``DBNPREFSHIFR=I=``) И по инв.№ ``910^b`` как fallback (существующий путь не
+   11 |     ломаем). Без каталога-хендла — ``None`` (back-compat). Найдено / не найдено /
+   12 |     приоритет шифра / автономность.
+```
+
+<!-- ─── страница 409 ─── -->
+
+```py
+   13 |   * **2.6 reservstatus (RQST 910^A 0–4) ↔ hold.status.** Двусторонний словарь
+   14 |     кодов ``reservstatus.mnu`` (0–4) ↔ наш enum брони
+   15 |     (queued|ready|fulfilled|cancelled|expired) — «одно подполе, разные кодировки»
+   16 |     (recon #CIRC-06). Обе стороны, round-trip, краевые коды.
+   17 |   * **back-compat:** существующий checkout/return_item/place_hold цел; резолв по
+   18 |     инв.№ (910^b, ребро 2.1) не сломан.
+   19 | 
+   20 | Запуск автономно (стиль tests/test_circulation.py)::
+   21 | 
+   22 |     py -3.12 tests/test_circ_resolve.py  ->  'ok …' + 'N passed, M failed' + код
+   23 | 
+   24 | Подключён в раннер tests/test_access.py рядом с test_circulation (module_checks
+   25 | гоняет каждый *_checks()). sqlite зелёный; PG-паритет — резолв читает каталог
+   26 | через тот же опц. handle, бэкенд-агностичен (in-memory sqlite-каталог в тестах).
+   27 | """
+   28 | import os
+   29 | import sys
+   30 | 
+   31 | sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+   32 | 
+   33 | from access import seed_vocab
+   34 | from access.catalog import CatalogStore, EXEMPLAR_FREE, EXEMPLAR_ISSUED
+   35 | from access.store import AccessStore
+   36 | from access.circulation import (
+   37 |     CirculationStore, CirculationEngine, default_policy,
+   38 |     RESERVSTATUS_TO_HOLD, HOLD_TO_RESERVSTATUS,
+   39 |     ALLOW, SECONDS_PER_DAY,
+   40 | )
+   41 | 
+   42 | PASS = [0]
+   43 | FAIL = [0]
+   44 | 
+   45 | DAY = SECONDS_PER_DAY
+   46 | T0 = 1_700_000_000
+   47 | 
+   48 | 
+   49 | def check(name, cond):
+   50 |     if cond:
+   51 |         PASS[0] += 1
+   52 |         print('  ok  ', name)
+   53 |     else:
+   54 |         FAIL[0] += 1
+   55 |         print('  FAIL', name)
+   56 | 
+   57 | 
+   58 | # --------------------------------------------------------------------------- #
+   59 | # Fixtures — реальный каталог (in-memory) с записью, несущей 903 шифр + 910 экз.
+   60 | # --------------------------------------------------------------------------- #
+   61 | def _seeded_access_store():
+   62 |     st = AccessStore(':memory:')
+   63 |     seed_vocab.seed_vocabularies(st, from_catalog=False)
+   64 |     return st
+   65 | 
+   66 | 
+   67 | def _book(shifr='AB/Ч-15', inv='INV-777', status=EXEMPLAR_FREE):
+```
+
+<!-- ─── страница 410 ─── -->
+
+```py
+   68 |     """Валидная книга: поле 903 (шифр документа) + один экз. 910 по инв.№ ``inv``."""
+   69 |     return {
+   70 |         '920': 'PAZK',
+   71 |         '200': [{'a': 'Основы каталогизации', 'f': 'Иванова И.И.'}],
+   72 |         '700': [{'a': 'Петров П.П.'}],
+   73 |         '101': 'rus',
+   74 |         '903': shifr,
+   75 |         '910': [{'a': status, 'b': inv}],
+   76 |         '907': [{'a': 'Сидорова С.С.'}],
+   77 |     }
+   78 | 
+   79 | 
+   80 | def _engine_with_catalog(shifr='AB/Ч-15', inv='INV-777', status=EXEMPLAR_FREE):
+   81 |     """Движок книговыдачи с подключённым каталогом и одной записью в ЭК."""
+   82 |     cat = CatalogStore(':memory:', access_store=_seeded_access_store())
+   83 |     cat.save('IBIS', _book(shifr, inv, status))
+   84 |     eng = CirculationEngine(store=CirculationStore(':memory:'),
+   85 |                             policy=default_policy(), catalog=cat, catalog_db='IBIS')
+   86 |     return cat, eng
+   87 | 
+   88 | 
+   89 | # --------------------------------------------------------------------------- #
+   90 | # 2.3 — RQST 903 (шифр заказа) → запись каталога (резолв по I= и 910^b).
+   91 | # --------------------------------------------------------------------------- #
+   92 | def resolve_order_record_checks():
+   93 |     print('-- ребро 2.3: resolve_order_record (903 ↔ I=) + fallback 910^b')
+   94 |     cat, eng = _engine_with_catalog(shifr='AB/Ч-15', inv='INV-777')
+   95 | 
+   96 |     # mfn записи в каталоге (для сверки, что резолв нашёл именно её).
+   97 |     found = cat.find_exemplar('IBIS', 'INV-777')
+   98 |     check('фикстура: экз. по 910^b есть в каталоге', found is not None)
+   99 |     rec_mfn = found[0]
+  100 | 
+  101 |     # (а) основной путь — по шифру 903 = I= (DBNPREFSHIFR=I=).
+  102 |     check('903→запись каталога: найдено по шифру (I=)',
+  103 |           eng.resolve_order_record('AB/Ч-15') == rec_mfn)
+  104 |     # пробел/регистр шифра нормализуется поиском (casefold+trim, как I=).
+  105 |     check('903 резолв терпим к пробелам',
+  106 |           eng.resolve_order_record('  AB/Ч-15 ') == rec_mfn)
+  107 | 
+  108 |     # (б) fallback — по инв.№ 910^b (существующий путь резолва не ломаем).
+  109 |     check('910^b→запись каталога: найдено по инв.№ (fallback)',
+  110 |           eng.resolve_order_record('INV-777') == rec_mfn)
+  111 | 
+  112 |     # (в) не найдено — ни шифр, ни инв.№ не совпали → None.
+  113 |     check('903→запись: не найдено → None', eng.resolve_order_record('НЕТ-ТАКОГО') is None)
+  114 |     check('пустой/None ключ → None',
+  115 |           eng.resolve_order_record('') is None and eng.resolve_order_record(None) is None)
+  116 | 
+  117 |     # (г) приоритет: при наличии шифра берётся запись по 903, даже если такая же
+  118 |     # строка не является инв.№ (резолв шифра идёт первым).
+  119 |     cat2 = CatalogStore(':memory:', access_store=_seeded_access_store())
+  120 |     cat2.save('IBIS', _book(shifr='SH-1', inv='INV-A'))
+  121 |     cat2.save('IBIS', _book(shifr='SH-2', inv='INV-B'))
+  122 |     eng2 = CirculationEngine(store=CirculationStore(':memory:'),
+```
+
+<!-- ─── страница 411 ─── -->
+
+```py
+  123 |                              policy=default_policy(), catalog=cat2, catalog_db='IBIS')
+  124 |     mfn_sh1 = cat2.search('IBIS', 'I=SH-1')['items'][0]['mfn']
+  125 |     mfn_invb = cat2.find_exemplar('IBIS', 'INV-B')[0]
+  126 |     check('шифр-резолв выбирает запись по 903', eng2.resolve_order_record('SH-1') == mfn_sh1)
+  127 |     check('инв.№-резолв выбирает запись по 910^b', eng2.resolve_order_record('INV-B') == mfn_invb)
+  128 | 
+  129 |     # (д) явный catalog_db: пустая/иная БД → None (нет записей под этим именем).
+  130 |     check('иная catalog_db без записей → None',
+  131 |           eng.resolve_order_record('AB/Ч-15', catalog_db='RQST') is None)
+  132 | 
+  133 |     # (е) back-compat: без каталога-хендла движок автономен — резолв даёт None.
+  134 |     eng_solo = CirculationEngine(store=CirculationStore(':memory:'),
+  135 |                                  policy=default_policy())  # catalog=None
+  136 |     check('без каталога resolve_order_record → None (standalone)',
+  137 |           eng_solo.resolve_order_record('AB/Ч-15') is None)
+  138 | 
+  139 | 
+  140 | # --------------------------------------------------------------------------- #
+  141 | # 2.6 — reservstatus (RQST 910^A 0–4) ↔ hold.status (в обе стороны).
+  142 | # --------------------------------------------------------------------------- #
+  143 | def reservstatus_mapping_checks():
+  144 |     print('-- ребро 2.6: reservstatus.mnu (0–4) ↔ hold.status enum')
+  145 |     eng = CirculationEngine(store=CirculationStore(':memory:'), policy=default_policy())
+  146 | 
+  147 |     # прямое: код брони → наш enum (DB_CIRCULATION §5 «БРОНИРОВАНИЕ»).
+  148 |     expected_in = {'0': 'queued', '1': 'ready', '2': 'fulfilled',
+  149 |                    '3': 'expired', '4': 'expired'}
+  150 |     for code, st in expected_in.items():
+  151 |         check('reservstatus %s → %s' % (code, st),
+  152 |               eng.resolve_hold_status_in(code) == st)
+  153 |     # принимает и число, не только строку.
+  154 |     check('reservstatus 1 (int) → ready', eng.resolve_hold_status_in(1) == 'ready')
+  155 |     check('таблица RESERVSTATUS_TO_HOLD совпадает', RESERVSTATUS_TO_HOLD == expected_in)
+  156 | 
+  157 |     # неизвестный/пустой код → None (нечего отображать).
+  158 |     check('неизвестный код брони → None', eng.resolve_hold_status_in('9') is None)
+  159 |     check('None код → None', eng.resolve_hold_status_in(None) is None)
+  160 | 
+  161 |     # обратное: наш enum → код брони.
+  162 |     expected_out = {'queued': '0', 'ready': '1', 'fulfilled': '2',
+  163 |                     'expired': '3', 'cancelled': None}
+  164 |     for st, code in expected_out.items():
+  165 |         check('hold.status %s → reservstatus %r' % (st, code),
+  166 |               eng.hold_status_to_reservstatus(st) == code)
+  167 |     check('таблица HOLD_TO_RESERVSTATUS совпадает', HOLD_TO_RESERVSTATUS == expected_out)
+  168 |     check('неизвестный enum → None', eng.hold_status_to_reservstatus('frobnicate') is None)
+  169 | 
+  170 |     # round-trip enum→код→enum для кодируемых статусов (cancelled не имеет кода).
+  171 |     for st in ('queued', 'ready', 'fulfilled'):
+  172 |         code = eng.hold_status_to_reservstatus(st)
+  173 |         check('round-trip %s' % st, eng.resolve_hold_status_in(code) == st)
+  174 |     # expired кодируется в '3'; обратно '3'→expired (3 и 4 оба → expired).
+  175 |     check('expired→3→expired (3/4 схлопнуты в expired)',
+  176 |           eng.resolve_hold_status_in(eng.hold_status_to_reservstatus('expired')) == 'expired')
+  177 |     # cancelled — чисто наш статус, кода брони нет → None (бронь исчезает из RQST).
+```
+
+<!-- ─── страница 412 ─── -->
+
+```py
+  178 |     check('cancelled→reservstatus None (нет кода в reservstatus.mnu)',
+  179 |           eng.hold_status_to_reservstatus('cancelled') is None)
+  180 | 
+  181 |     # «развести одно подполя — разные кодировки»: код брони '1' (получен на МВ)
+  182 |     # — это НЕ статус экземпляра ЭК ste.mnu '1' (выдан читателю). Наш резолв
+  183 |     # брони даёт 'ready', а не экземплярный EXEMPLAR_ISSUED.
+  184 |     check('reservstatus 1 ≠ ste.mnu 1 (разные кодировки)',
+  185 |           eng.resolve_hold_status_in('1') == 'ready' and EXEMPLAR_ISSUED == '1')
+  186 | 
+  187 | 
+  188 | # --------------------------------------------------------------------------- #
+  189 | # back-compat: существующий checkout/return/hold цел; резолв по 910^b (2.1) жив.
+  190 | # --------------------------------------------------------------------------- #
+  191 | def back_compat_checks():
+  192 |     print('-- back-compat: checkout/return/hold + 910^b flip целы')
+  193 |     cat, eng = _engine_with_catalog(shifr='BC/1', inv='BC-INV-1', status=EXEMPLAR_FREE)
+  194 |     eng.store.add_reader('R1', category='В01')
+  195 | 
+  196 |     # checkout по-прежнему флипает 910^A 0→1 по инв.№ (ребро 2.1 — не сломали).
+  197 |     d = eng.checkout('R1', 'BC-INV-1', T0)
+  198 |     check('checkout всё ещё ALLOW', d.decision == ALLOW)
+  199 |     check('910^A 0→1 при выдаче (резолв по 910^b цел)',
+  200 |           cat.exemplar_status('IBIS', 'BC-INV-1') == EXEMPLAR_ISSUED)
+  201 |     loan = d.computed['loan']
+  202 |     check('выдача записана в loan-стор', eng.store.count_on_hand('R1') == 1)
+  203 | 
+  204 |     # резолв заказа этой выдачи к записи каталога — по инв.№ И по шифру дают ту же.
+  205 |     rec_mfn = cat.find_exemplar('IBIS', 'BC-INV-1')[0]
+  206 |     check('resolve_order_record(инв.№ выдачи) → запись', eng.resolve_order_record('BC-INV-1') == rec_mfn)
+  207 |     check('resolve_order_record(шифр 903) → та же запись', eng.resolve_order_record('BC/1') == rec_mfn)
+  208 | 
+  209 |     # return по-прежнему флипает 910^A 1→0.
+  210 |     dr = eng.return_item(loan['id'], T0 + 5 * DAY)
+  211 |     check('return всё ещё ALLOW', dr.decision == ALLOW)
+  212 |     check('910^A 1→0 при возврате', cat.exemplar_status('IBIS', 'BC-INV-1') == EXEMPLAR_FREE)
+  213 | 
+  214 |     # place_hold всё ещё считает FIFO-позицию (hold.status enum не тронут).
+  215 |     eng.store.add_reader('R2', category='В01')
+  216 |     eng.checkout('R1', 'BC-INV-1', T0 + 6 * DAY)            # снова на руках
+  217 |     dh = eng.place_hold('R2', 'BC-INV-1', T0 + 7 * DAY)
+  218 |     check('place_hold всё ещё ALLOW', dh.decision == ALLOW)
+  219 |     check('hold.status остаётся нашим enum (queued)',
+  220 |           eng.store.get_hold(dh.computed['hold']['id'])['status'] == 'queued')
+  221 | 
+  222 |     # автономность: без каталога checkout/return работают (резолв-методы — opt-in).
+  223 |     solo = CirculationEngine(store=CirculationStore(':memory:'), policy=default_policy())
+  224 |     solo.store.add_reader('S1', category='В01')
+  225 |     ds = solo.checkout('S1', 'NO-CAT', T0)
+  226 |     check('checkout без каталога ALLOW (standalone)', ds.decision == ALLOW)
+  227 |     check('resolve без каталога → None (standalone)',
+  228 |           solo.resolve_order_record('NO-CAT') is None)
+  229 | 
+  230 | 
+  231 | def main():
+  232 |     resolve_order_record_checks()
+```
+
+<!-- ─── страница 413 ─── -->
+
+```py
+  233 |     reservstatus_mapping_checks()
+  234 |     back_compat_checks()
+  235 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
+  236 |     sys.exit(1 if FAIL[0] else 0)
+  237 | 
+  238 | 
+  239 | if __name__ == '__main__':
+  240 |     main()
 ```
 
 ### Файл: `irbis-web/backend/tests/test_circ_routes.py`  · строк: 377
@@ -24225,15 +25066,15 @@
    41 | def check(name, cond):
    42 |     if cond:
    43 |         PASS[0] += 1
-```
-
-<!-- ─── страница 400 ─── -->
-
-```py
    44 |         print('  ok  ', name)
    45 |     else:
    46 |         FAIL[0] += 1
    47 |         print('  FAIL', name)
+```
+
+<!-- ─── страница 414 ─── -->
+
+```py
    48 | 
    49 | 
    50 | # Staff grants for the circ desk + cataloging editor wired in core.py: circ.issue
@@ -24285,15 +25126,15 @@
    96 |         store=_circ.CirculationStore(':memory:'),
    97 |         notifications=api.notifications,
    98 |         catalog=api.catalog, catalog_db=api.cfg.db_default)
-```
-
-<!-- ─── страница 401 ─── -->
-
-```py
    99 |     if fixed_now is not None:
   100 |         api._CIRC_NOW = lambda: fixed_now
   101 |     return api, _core
   102 | 
+```
+
+<!-- ─── страница 415 ─── -->
+
+```py
   103 | 
   104 | def _staff(api, login='circ'):
   105 |     tok, _sess = api._new_session('staff', login, STAFF_GRANTS, tenant='public')
@@ -24345,15 +25186,15 @@
   151 |     check('generic worklist omits the curated-only 920',
   152 |           not any(f['code'] == '920' for f in p['data']['fields']))
   153 | 
-```
-
-<!-- ─── страница 402 ─── -->
-
-```py
   154 | 
   155 | # --------------------------------------------------------------------------- #
   156 | # 2. Circulation desk (#185) — issue → formulary → return → renew → fines.
   157 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 416 ─── -->
+
+```py
   158 | def circulation_route_checks():
   159 |     print('-- circ routes: issue / reader formulary / return / renew / fines')
   160 |     api, _core = _api(fixed_now=T0)
@@ -24405,15 +25246,15 @@
   206 |     new_due = p['data']['due']
   207 |     check('renew pushes the due date out', new_due > due)
   208 |     st, p = api.route('GET', '/api/circ/reader', {'ticket': [ticket]}, None, H)
-```
-
-<!-- ─── страница 403 ─── -->
-
-```py
   209 |     check('formulary reflects the renewed due',
   210 |           p['data']['loans'][0]['due'] == new_due)
   211 |     check('formulary shows 1 renewal', p['data']['loans'][0]['renewals'] == 1)
   212 | 
+```
+
+<!-- ─── страница 417 ─── -->
+
+```py
   213 |     # RETURN clears the loan and frees the catalog copy.
   214 |     api._CIRC_NOW = lambda: T0 + 6 * DAY
   215 |     st, p = api.route('POST', '/api/circ/return', {},
@@ -24465,15 +25306,15 @@
   261 |     check('overdue return charges a fine', p['data'].get('fineCharged', 0) > 0)
   262 | 
   263 |     st, p = api.route('GET', '/api/circ/fines', {'ticket': [ticket]}, None, H)
-```
-
-<!-- ─── страница 404 ─── -->
-
-```py
   264 |     check('fines now reports a positive total', p['data']['total'] > 0)
   265 |     check('fines lists the charged item',
   266 |           len(p['data']['items']) == 1
   267 |           and p['data']['items'][0]['kind'] == 'fine_overdue')
+```
+
+<!-- ─── страница 418 ─── -->
+
+```py
   268 |     # frontend CircFine contract aliases (id/reason/paid) present alongside canon.
   269 |     fine = p['data']['items'][0]
   270 |     check('fine carries id + reason + paid (frontend contract)',
@@ -24525,15 +25366,15 @@
   316 |     for m, path, b in STAFF_ROUTES:
   317 |         st, _ = api.route(m, path, {'ticket': ['111']}, b, {})
   318 |         check('no session on %s %s -> 401/403' % (m, path), st in (401, 403))
-```
-
-<!-- ─── страница 405 ─── -->
-
-```py
   319 | 
   320 |     # Sanity: a staff session IS admitted (the guard isn't blanket-denying).
   321 |     H = _staff(api)
   322 |     st, _ = api.route('GET', '/api/worklist/IBIS', {}, None, H)
+```
+
+<!-- ─── страница 419 ─── -->
+
+```py
   323 |     check('staff admitted to /api/worklist/IBIS (200)', st == 200)
   324 |     st, _ = api.route('GET', '/api/circ/reader', {'ticket': ['111']}, None, H)
   325 |     check('staff admitted to /api/circ/reader (200)', st == 200)
@@ -24585,15 +25426,15 @@
   371 |     entitlement_gate_checks()
   372 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   373 |     sys.exit(1 if FAIL[0] else 0)
-```
-
-<!-- ─── страница 406 ─── -->
-
-```py
   374 | 
   375 | 
   376 | if __name__ == '__main__':
   377 |     main()
+```
+
+<!-- ─── страница 420 ─── -->
+
+```py
 ```
 
 ### Файл: `irbis-web/backend/tests/test_circulation.py`  · строк: 444
@@ -24650,15 +25491,15 @@
    49 |         FAIL[0] += 1
    50 |         print('  FAIL', name)
    51 | 
-```
-
-<!-- ─── страница 407 ─── -->
-
-```py
    52 | 
    53 | def fresh(policy=None, category='В01', reader='R1'):
    54 |     """A fresh engine over an in-memory store with one seeded reader."""
    55 |     store = CirculationStore(':memory:')
+```
+
+<!-- ─── страница 421 ─── -->
+
+```py
    56 |     eng = CirculationEngine(store=store, policy=policy or default_policy())
    57 |     store.add_reader(reader, category=category)
    58 |     return store, eng
@@ -24710,15 +25551,15 @@
   104 |     d6o = eng.checkout('R1', 'BK-6', T0, staff_override=True, override_grant=True)
   105 |     check('staff override lends over limit', d6o.decision == ALLOW)
   106 |     check('override unauthorised is denied',
-```
-
-<!-- ─── страница 408 ─── -->
-
-```py
   107 |           eng.checkout('R1', 'BK-7', T0, staff_override=True,
   108 |                        override_grant=False).decision == DENY)
   109 | 
   110 | 
+```
+
+<!-- ─── страница 422 ─── -->
+
+```py
   111 | def checkout_debtor_checks():
   112 |     print('-- checkout: debtor gate vs staff override')
   113 |     store, eng = fresh(category='В01')
@@ -24770,15 +25611,15 @@
   159 |           any(e['event'] == 'renewal_confirmed' for e in d.events))
   160 | 
   161 |     # another reader queues a hold on the same item → renew now blocked
-```
-
-<!-- ─── страница 409 ─── -->
-
-```py
   162 |     store.add_reader('R2', category='В01')
   163 |     eng.place_hold('R2', 'BK', T0 + 6 * DAY)
   164 |     d2 = eng.renew(loan['id'], T0 + 7 * DAY)
   165 |     check('renew blocked when hold exists (require_override)',
+```
+
+<!-- ─── страница 423 ─── -->
+
+```py
   166 |           d2.decision == REQUIRE_OVERRIDE and 'hold_exists' in d2.reasons)
   167 | 
   168 |     # authorised override renews past the hold
@@ -24830,15 +25671,15 @@
   214 |         d = eng.renew(loan['id'], today)
   215 |         if i == 0:
   216 |             check('renew #1 allowed', d.decision == ALLOW)
-```
-
-<!-- ─── страница 410 ─── -->
-
-```py
   217 |     check('5 renewals done', store.get_loan(loan['id'])['renewals'] == 5)
   218 |     d6 = eng.renew(loan['id'], today + 1 * DAY)
   219 |     check('6th renew denied by cap (hard, not override-able)',
   220 |           d6.decision == DENY and 'max_prolong_reached' in d6.reasons)
+```
+
+<!-- ─── страница 424 ─── -->
+
+```py
   221 |     # even an authorised override cannot beat the cap
   222 |     d6o = eng.renew(loan['id'], today + 1 * DAY, staff_override=True, override_grant=True)
   223 |     check('cap is not override-able', d6o.decision == DENY)
@@ -24890,15 +25731,15 @@
   269 | def fine_lifecycle_checks():
   270 |     print('-- fines: charge on return, waive, pay')
   271 |     store, eng = fresh(category='В01')
-```
-
-<!-- ─── страница 411 ─── -->
-
-```py
   272 |     due = T0 - 10 * DAY
   273 |     loan = store.add_loan('R1', 'BK', due, due - 20 * DAY)
   274 |     d = eng.return_item(loan['id'], T0)
   275 |     check('return marks loan returned', store.get_loan(loan['id'])['returned'] == 1)
+```
+
+<!-- ─── страница 425 ─── -->
+
+```py
   276 |     check('return charges accrued fine (45)', d.computed.get('fine_charged') == 45.0)
   277 |     check('return emits fine_charged event',
   278 |           any(e['event'] == 'fine_charged' for e in d.events))
@@ -24950,15 +25791,15 @@
   324 |     dh = eng5.place_hold('R5', 'FREE', T0)
   325 |     check('hold on free item is position 1', dh.computed['position'] == 1)
   326 |     check('hold on free item is ready',
-```
-
-<!-- ─── страница 412 ─── -->
-
-```py
   327 |           store5.get_hold(dh.computed['hold']['id'])['status'] == 'ready')
   328 | 
   329 | 
   330 | def return_triggers_hold_checks():
+```
+
+<!-- ─── страница 426 ─── -->
+
+```py
   331 |     print('-- return triggers hold-ready')
   332 |     store, eng = fresh(category='В01')
   333 |     loan = eng.checkout('R1', 'BK', T0).computed['loan']
@@ -25010,15 +25851,15 @@
   379 |     store2, eng2 = fresh(category='В01', reader='R2')
   380 |     due2 = T0 - 90 * DAY
   381 |     loan2 = store2.add_loan('R2', 'BK2', due2, due2 - 20 * DAY, item_price=0)
-```
-
-<!-- ─── страница 413 ─── -->
-
-```py
   382 |     d2 = eng2.mark_lost(loan2['id'], T0, confirm=True, override_grant=True)
   383 |     check('empty price falls back to default replacement (100)',
   384 |           d2.computed['replacement_value'] == 100.0)
   385 | 
+```
+
+<!-- ─── страница 427 ─── -->
+
+```py
   386 |     # lost supersedes accrued overdue fine (not billed twice)
   387 |     store3, eng3 = fresh(category='В01', reader='R3')
   388 |     due3 = T0 - 90 * DAY
@@ -25070,15 +25911,15 @@
   434 |     fine_lifecycle_checks()
   435 |     hold_queue_checks()
   436 |     return_triggers_hold_checks()
-```
-
-<!-- ─── страница 414 ─── -->
-
-```py
   437 |     lost_checks()
   438 |     isolation_checks()
   439 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   440 |     sys.exit(1 if FAIL[0] else 0)
+```
+
+<!-- ─── страница 428 ─── -->
+
+```py
   441 | 
   442 | 
   443 | if __name__ == '__main__':
@@ -25135,15 +25976,15 @@
    45 | 
    46 | def check(name, cond):
    47 |     if cond:
-```
-
-<!-- ─── страница 415 ─── -->
-
-```py
    48 |         PASS[0] += 1
    49 |         print('  ok  ', name)
    50 |     else:
    51 |         FAIL[0] += 1
+```
+
+<!-- ─── страница 429 ─── -->
+
+```py
    52 |         print('  FAIL', name)
    53 | 
    54 | 
@@ -25195,15 +26036,15 @@
   100 |     from access.social import SocialService
   101 |     from access.holds import HoldService
   102 |     from access.shelves import ShelfService
-```
-
-<!-- ─── страница 416 ─── -->
-
-```py
   103 |     api.social = SocialService(
   104 |         api.access, read_terms=api._social_terms, search=api._social_search,
   105 |         brief_read=api._hold_brief, reader_name=api._social_reader_name)
   106 |     api.holds = HoldService(api.access, catalog=None, brief_read=api._hold_brief)
+```
+
+<!-- ─── страница 430 ─── -->
+
+```py
   107 |     api.shelves = ShelfService(api.access, brief_read=api._hold_brief)
   108 |     # In-memory circulation so GET /api/circ/reader (the formulary read) runs.
   109 |     api.circulation = _circ.CirculationEngine(
@@ -25255,15 +26096,15 @@
   155 |     # Key ROTATION: a token written under one key id still reads after the active
   156 |     # id changes; new writes use the new id.
   157 |     old_id, old_k = os.environ.get('PDN_KEY_ID'), os.environ.get('PDN_KEY')
-```
-
-<!-- ─── страница 417 ─── -->
-
-```py
   158 |     try:
   159 |         os.environ['PDN_KEY_ID'] = 'a'
   160 |         os.environ['PDN_KEY_a'] = 'secret-a'
   161 |         ta = crypto.encrypt('РотацияA')
+```
+
+<!-- ─── страница 431 ─── -->
+
+```py
   162 |         os.environ['PDN_KEY_ID'] = 'b'
   163 |         os.environ['PDN_KEY_b'] = 'secret-b'
   164 |         tb = crypto.encrypt('РотацияB')
@@ -25315,15 +26156,15 @@
   210 |           not crypto.is_token(st.review_name_ciphertext('222', 'IBIS', 1) or ''))
   211 | 
   212 | 
-```
-
-<!-- ─── страница 418 ─── -->
-
-```py
   213 | # --------------------------------------------------------------------------- #
   214 | # V5 — ПДн-access journal (staff read journals; reader-own does not; route guard).
   215 | # --------------------------------------------------------------------------- #
   216 | def pdn_journal_checks():
+```
+
+<!-- ─── страница 432 ─── -->
+
+```py
   217 |     print('-- V5: staff formulary read journals pdn.read; /api/admin/pdn-access')
   218 |     api, _core = _api()
   219 | 
@@ -25375,15 +26216,15 @@
   265 |     rsess = api._session(H['authorization'][7:])
   266 |     api._audit_pdn_read(rsess, '111', ['name'], 'self')      # own ticket → skip
   267 |     check('helper skips reader-own access', len(api.access.pdn_access_log(50)) == 0)
-```
-
-<!-- ─── страница 419 ─── -->
-
-```py
   268 |     api._audit_pdn_read(rsess, '999', ['name'], 'other')     # different ticket → journal
   269 |     check('helper journals reader access to ANOTHER subject',
   270 |           len(api.access.pdn_access_log(50)) == 1)
   271 | 
+```
+
+<!-- ─── страница 433 ─── -->
+
+```py
   272 | 
   273 | # --------------------------------------------------------------------------- #
   274 | # V9 — consent + right-to-erasure.
@@ -25435,15 +26276,15 @@
   320 |         api.social.log_open(t, 'IBIS', 9)
   321 |         api.route('POST', '/api/savedsearch', {}, {'name': 'q', 'db': 'IBIS',
   322 |                                                    'prefix': 'K', 'query': 'базы'}, H)
-```
-
-<!-- ─── страница 420 ─── -->
-
-```py
   323 |         api.route('POST', '/api/reader/consent', {}, {'given': True}, H)
   324 | 
   325 |     def counts(ticket):
   326 |         c = api.access._conn()
+```
+
+<!-- ─── страница 434 ─── -->
+
+```py
   327 |         return {
   328 |             'reviews': c.execute('SELECT COUNT(*) n FROM reader_review WHERE ticket=?', (ticket,)).fetchone()['n'],
   329 |             'holds': c.execute('SELECT COUNT(*) n FROM reader_hold WHERE ticket=?', (ticket,)).fetchone()['n'],
@@ -25495,15 +26336,15 @@
   375 |     want = os.environ.get('ACCESS_BACKEND', '').lower() in ('postgres', 'pg') \
   376 |         or os.environ.get('ACCESS_TEST_PG') == '1' \
   377 |         or bool(os.environ.get('ACCESS_PG_DSN'))
-```
-
-<!-- ─── страница 421 ─── -->
-
-```py
   378 |     if not want:
   379 |         return
   380 |     try:
   381 |         from access.pgstore import PgAccessStore, default_pg_dsn
+```
+
+<!-- ─── страница 435 ─── -->
+
+```py
   382 |         st = PgAccessStore(os.environ.get('ACCESS_PG_DSN', default_pg_dsn()))
   383 |         # Truncate audit_log too so the pdn.read journal assertion is isolation-safe
   384 |         # (this suite's own pdn.read entries go to an in-memory store, not PG).
@@ -25555,15 +26396,15 @@
   430 |     store_crypto_checks()
   431 |     pdn_journal_checks()
   432 |     pdn_self_access_checks()
-```
-
-<!-- ─── страница 422 ─── -->
-
-```py
   433 |     consent_checks()
   434 |     erasure_checks()
   435 |     pg_parity_checks()
   436 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
+```
+
+<!-- ─── страница 436 ─── -->
+
+```py
   437 |     sys.exit(1 if FAIL[0] else 0)
   438 | 
   439 | 
@@ -25620,15 +26461,15 @@
    44 | 
    45 | 
    46 | # A valid applicant (synthetic ПДн — example.org per RFC 2606).
-```
-
-<!-- ─── страница 423 ─── -->
-
-```py
    47 | VALID = dict(full_name='Иванова Мария Петровна', email='m.ivanova@example.org',
    48 |              phone='+7 900 000-00-00', institution='ЦГБ им. Пушкина',
    49 |              position='Заведующая отделом')
    50 | 
+```
+
+<!-- ─── страница 437 ─── -->
+
+```py
    51 | 
    52 | # --------------------------------------------------------------------------- #
    53 | # 1. STORE — sqlite (always). Save / consent / validation / minimization / list.
@@ -25680,15 +26521,15 @@
    99 |     def _expect_validation(**kw):
   100 |         try:
   101 |             st.add(consent=True, **kw)
-```
-
-<!-- ─── страница 424 ─── -->
-
-```py
   102 |             return False
   103 |         except ValidationError:
   104 |             return True
   105 |     check('missing fullName rejected',
+```
+
+<!-- ─── страница 438 ─── -->
+
+```py
   106 |           _expect_validation(full_name='', email='a@example.org'))
   107 |     check('missing email rejected',
   108 |           _expect_validation(full_name='Имя', email=''))
@@ -25740,15 +26581,15 @@
   154 | def _nonadmin(api, login='cat'):
   155 |     tok, _ = api._new_session('staff', login, NONADMIN_STAFF_GRANTS, tenant='public')
   156 |     return {'authorization': 'Bearer ' + tok}
-```
-
-<!-- ─── страница 425 ─── -->
-
-```py
   157 | 
   158 | 
   159 | def _reader(api, ticket='111'):
   160 |     tok, _ = api._new_session('reader', 'RI=%s' % ticket, READER_GRANTS,
+```
+
+<!-- ─── страница 439 ─── -->
+
+```py
   161 |                               tenant='public', rdr_mfn=1)
   162 |     return {'authorization': 'Bearer ' + tok}
   163 | 
@@ -25800,15 +26641,15 @@
   209 |     check('GET demo-requests (non-admin staff) -> 403', st == 403)
   210 |     st, _ = api.route('GET', '/api/admin/demo-requests', {}, None, _reader(api))
   211 |     check('GET demo-requests (reader) -> 403', st == 403)
-```
-
-<!-- ─── страница 426 ─── -->
-
-```py
   212 |     st, _ = api.route('GET', '/api/admin/demo-requests', {}, None, {})
   213 |     check('GET demo-requests (anonymous) -> 401/403', st in (401, 403))
   214 | 
   215 | 
+```
+
+<!-- ─── страница 440 ─── -->
+
+```py
   216 | # --------------------------------------------------------------------------- #
   217 | # 3. PG-ПАРИТЕТ — when postgres reachable; else skip cleanly.
   218 | # --------------------------------------------------------------------------- #
@@ -25860,15 +26701,15 @@
   264 |         bad = True
   265 |     check('[pg] validation enforced', bad)
   266 |     # listing newest-first.
-```
-
-<!-- ─── страница 427 ─── -->
-
-```py
   267 |     rec2 = st.add(full_name='Второй', email='v@example.org', consent=True)
   268 |     items = st.list()
   269 |     check('[pg] list newest-first', items and items[0]['id'] == rec2['id'])
   270 |     # cleanup
+```
+
+<!-- ─── страница 441 ─── -->
+
+```py
   271 |     try:
   272 |         from access import pgstore
   273 |         conn = pgstore._admin_conn(dsn)
@@ -25925,15 +26766,15 @@
    30 | 
    31 | sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
    32 | 
-```
-
-<!-- ─── страница 428 ─── -->
-
-```py
    33 | import importlib
    34 | 
    35 | PASS = [0]
    36 | FAIL = [0]
+```
+
+<!-- ─── страница 442 ─── -->
+
+```py
    37 | 
    38 | 
    39 | def check(name, cond):
@@ -25985,15 +26826,15 @@
    85 |     def max_mfn(self, db):
    86 |         self._maybe_raise('max_mfn')
    87 |         return self._maxmfn.get(db, 1)
-```
-
-<!-- ─── страница 429 ─── -->
-
-```py
    88 | 
    89 |     def read_record(self, db, mfn):
    90 |         self._maybe_raise('read_record')
    91 |         return _record(mfn, 'Заглавие %d' % mfn, author='Автор %d' % mfn,
+```
+
+<!-- ─── страница 443 ─── -->
+
+```py
    92 |                        year='20%02d' % (mfn % 100), cover=(mfn % 2 == 0))
    93 | 
    94 |     def read_terms(self, db, start, count=20):
@@ -26045,15 +26886,15 @@
   140 |     print('-- /api/showcase')
   141 |     # 6 -> 5 real records (mfn 1..5); newest first.
   142 |     api, _core = _api(FakeIrbis(maxmfn={'IBIS': 6}))
-```
-
-<!-- ─── страница 430 ─── -->
-
-```py
   143 |     _tok, guest = _guest(api)
   144 | 
   145 |     status, payload = api.showcase(guest, 'IBIS', 'new', 12)
   146 |     check('showcase returns 200', status == 200)
+```
+
+<!-- ─── страница 444 ─── -->
+
+```py
   147 |     check('showcase ok envelope', payload.get('ok') is True)
   148 |     data = payload['data']
   149 |     check('showcase kind echoed', data['kind'] == 'new')
@@ -26105,15 +26946,15 @@
   195 |         (3, 'G=50 Информатика'),
   196 |         (1, 'H=другое'),                     # different prefix -> must be excluded
   197 |     ]}
-```
-
-<!-- ─── страница 431 ─── -->
-
-```py
   198 |     api, _core = _api(FakeIrbis(terms=terms))
   199 |     _tok, guest = _guest(api)
   200 | 
   201 |     status, payload = api.rubricator(guest, 'IBIS', 'G=', '', 30)
+```
+
+<!-- ─── страница 445 ─── -->
+
+```py
   202 |     check('rubricator returns 200', status == 200)
   203 |     data = payload['data']
   204 |     check('rubricator prefix echoed', data['prefix'] == 'G=')
@@ -26165,15 +27006,15 @@
   250 |     check('databases IBIS count = maxmfn-1 (100)', by['IBIS']['count'] == 100)
   251 |     check('databases RDR count = maxmfn-1 (50)', by['RDR']['count'] == 50)
   252 | 
-```
-
-<!-- ─── страница 432 ─── -->
-
-```py
   253 |     # counts=0 opt-out omits the field entirely (back-compat shape)
   254 |     status, payload = api.databases(staff, with_counts=False)
   255 |     by2 = {i['code']: i for i in payload['data']['items']}
   256 |     check('databases counts opt-out omits count field', 'count' not in by2['IBIS'])
+```
+
+<!-- ─── страница 446 ─── -->
+
+```py
   257 | 
   258 |     # count unavailable (max_mfn raises) -> field omitted gracefully, list still returned
   259 |     api2, _ = _api(FakeIrbis(maxmfn={}, dbmenu=menu, raise_on=('max_mfn',)))
@@ -26225,15 +27066,15 @@
   305 | 
   306 | # --------------------------------------------------------------------------- #
   307 | # 5. Routing + access control through Api.route() (the real dispatch path).
-```
-
-<!-- ─── страница 433 ─── -->
-
-```py
   308 | # --------------------------------------------------------------------------- #
   309 | def routing_checks():
   310 |     print('-- route() dispatch + access control')
   311 |     menu = 'IBIS\nКнига\n'
+```
+
+<!-- ─── страница 447 ─── -->
+
+```py
   312 |     fake = FakeIrbis(maxmfn={'IBIS': 6}, dbmenu=menu, terms={'IBIS': [
   313 |         (5, 'G=20 Физика'), (2, 'G=27 Математика')]})
   314 |     api, _core = _api(fake)
@@ -26285,11 +27126,6 @@
   360 | 
   361 | 
   362 | if __name__ == '__main__':
-```
-
-<!-- ─── страница 434 ─── -->
-
-```py
   363 |     main()
 ```
 
@@ -26299,6 +27135,11 @@
     1 | #!/usr/bin/env python3
     2 | """Declarative ФЛК validation-engine tests (gap A2, epic #188).
     3 | 
+```
+
+<!-- ─── страница 448 ─── -->
+
+```py
     4 | Covers the first shippable slice of the engine layered on the merged A5 seeding
     5 | (seed_vocab / vocabulary tables), tenancy (#100) and Identity (#101):
     6 | 
@@ -26350,15 +27191,15 @@
    52 | def checksum_checks():
    53 |     print('-- checksums (isbn/issn)')
    54 |     # ISBN-10: valid (5-7654-0001-9 has the correct mod-11 check digit).
-```
-
-<!-- ─── страница 435 ─── -->
-
-```py
    55 |     check('isbn-10 valid', flk.isbn_checksum_ok('5-7654-0001-9'))
    56 |     # Flip the check digit -> invalid.
    57 |     check('isbn-10 bad check digit rejected', not flk.isbn_checksum_ok('5-7654-0001-0'))
    58 |     # 'X' as the check digit is the literal value 10 — valid where it balances mod 11.
+```
+
+<!-- ─── страница 449 ─── -->
+
+```py
    59 |     check('isbn-10 X check digit valid', flk.isbn_checksum_ok('0-8044-2957-X'))
    60 |     # A well-known valid ISBN-10 and ISBN-13.
    61 |     check('isbn-10 0306406152 valid', flk.isbn_checksum_ok('0-306-40615-2'))
@@ -26410,15 +27251,15 @@
   107 |     lang_v = [v for v in res['violations'] if v['ruleId'] == 'fld.101.lang.dict'][0]
   108 |     check('bad lang code is severity 1', lang_v['severity'] == flk.SEV_HARD)
   109 |     check('bad lang message interpolates the value', 'zzz' in lang_v['message'])
-```
-
-<!-- ─── страница 436 ─── -->
-
-```py
   110 |     # A valid seeded code (rus) must NOT trip the dictionary rule.
   111 |     res_ok = flk.validate(good, phase='save', store=store)
   112 |     check('valid lang code passes dictionary',
   113 |           'fld.101.lang.dict' not in [v['ruleId'] for v in res_ok['violations']])
+```
+
+<!-- ─── страница 450 ─── -->
+
+```py
   114 | 
   115 |     # Bad ISBN checksum is caught (fieldExit phase for the ISBN rule).
   116 |     bad_isbn = dict(good, **{'10': {'a': '5-7654-0001-0'}})
@@ -26470,15 +27311,15 @@
   162 |           'rec.920.mandatory' in [v['ruleId'] for v in res['violations']])
   163 | 
   164 |     # 907 ФИО: a non-журнал record without 907^a -> soft.
-```
-
-<!-- ─── страница 437 ─── -->
-
-```py
   165 |     no_fio = {'920': 'PAZK', '200': {'a': 'T'}, '101': 'rus'}
   166 |     res = flk.validate(no_fio, phase='save', store=store)
   167 |     check('missing 907^a -> rec.907.fio fires (soft)',
   168 |           'rec.907.fio' in [v['ruleId'] for v in res['violations']])
+```
+
+<!-- ─── страница 451 ─── -->
+
+```py
   169 | 
   170 |     # 907 ФИО branch: on a журнал (920=J) the 907 rule is excluded.
   171 |     jrnl = {'920': 'J', '200': {'a': 'T'}, '101': 'rus'}
@@ -26530,15 +27371,15 @@
   217 |     title_v = [v for v in custom['violations'] if v['ruleId'] == 'rec.200a.mandatory'][0]
   218 |     check('custom message override returned', title_v['message'] == 'НЕТ ЗАГЛАВИЯ!')
   219 | 
-```
-
-<!-- ─── страница 438 ─── -->
-
-```py
   220 |     # A1-blocked rules are carried (registered) but disabled by default.
   221 |     full = flk.load_ruleset()
   222 |     blocked = [r for r in full if r.get('blocked_on') == 'A1']
   223 |     check('A1-blocked rules are registered', len(blocked) >= 1)
+```
+
+<!-- ─── страница 452 ─── -->
+
+```py
   224 |     check('A1-blocked rules are disabled', all(not r['enabled'] for r in blocked))
   225 |     check('rule count is 8+ (seeded canon)', len(flk.SYSTEM_RULES) >= 8)
   226 | 
@@ -26590,15 +27431,15 @@
   272 | 
   273 |     # Route dispatch reaches the handler (status 200 via route()).
   274 |     headers = {'authorization': 'Bearer ' + _tok}
-```
-
-<!-- ─── страница 439 ─── -->
-
-```py
   275 |     status, payload = api.route('POST', '/api/validate', {}, good_body, headers)
   276 |     check('route POST /api/validate dispatches (200)', status == 200)
   277 | 
   278 | 
+```
+
+<!-- ─── страница 453 ─── -->
+
+```py
   279 | def main():
   280 |     checksum_checks()
   281 |     engine_checks()
@@ -26655,15 +27496,15 @@
    38 |         print('  ok  ', name)
    39 |     else:
    40 |         FAIL[0] += 1
-```
-
-<!-- ─── страница 440 ─── -->
-
-```py
    41 |         print('  FAIL', name)
    42 | 
    43 | 
    44 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 454 ─── -->
+
+```py
    45 | # Literal/field format_eval stub for the tests — so they never depend on a full
    46 | # PFT engine. Understands: '' / '#' -> ∅; quoted literal 'x' -> x (with %n);
    47 | # bare vNNN[^s] -> first repetition value; '1'/'0' flags pass through. This is
@@ -26715,15 +27556,15 @@
    93 | 
    94 |     # Tag with subfield: 200^a.
    95 |     job_s = "0\nREP\n200^a\n1\n'T'\n\n"
-```
-
-<!-- ─── страница 441 ─── -->
-
-```py
    96 |     op_s = gbl.parse(job_s)['body'][0]
    97 |     check('parse subfield tag', op_s['tag'] == '200' and op_s['subfield'] == 'a')
    98 |     check('parse NTH occ', op_s['occ'] == (gbl.OCC_NTH, 1))
    99 | 
+```
+
+<!-- ─── страница 455 ─── -->
+
+```py
   100 |     # F-mode occurrence.
   101 |     job_f = "0\nDEL\n910\nF\n(flag/)\n\n"
   102 |     op_f = gbl.parse(job_f)['body'][0]
@@ -26775,15 +27616,15 @@
   148 |     job_cr = "0\nCORREC\n'CMPL'\n'KEY'\n'BORZ=42'\n3\nADD\n910\n\n'x'\n\nEND\n"
   149 |     cr = gbl.parse(job_cr)['body'][0]
   150 |     check('parse CORREC block', cr['kind'] == 'CORREC'
-```
-
-<!-- ─── страница 442 ─── -->
-
-```py
   151 |           and cr['dbFmt'] == "'CMPL'" and cr['keyFmt'] == "'KEY'"
   152 |           and cr['termsFmt'] == "'BORZ=42'")
   153 |     check('parse CORREC optional limit', cr['limit'] == 3 and len(cr['body']) == 1)
   154 | 
+```
+
+<!-- ─── страница 456 ─── -->
+
+```py
   155 |     # CORREC without the optional 5th line: body starts at line 4.
   156 |     job_cr2 = "0\nCORREC\n'CMPL'\n'KEY'\n'T=x'\nADD\n910\n\n'x'\n\nEND\n"
   157 |     cr2 = gbl.parse(job_cr2)['body'][0]
@@ -26835,15 +27676,15 @@
   203 |     r = gbl.apply(prog, {'920': [{'': 'PAZK'}]}, ctx)
   204 |     check('REP whole field', gbl.field_values(r, '920') == ['PVK'])
   205 | 
-```
-
-<!-- ─── страница 443 ─── -->
-
-```py
   206 |     # REP replaces a subfield (1st repetition).
   207 |     prog = gbl.parse("0\nREP\n200^a\n1\n'Новое'\n\n")
   208 |     r = gbl.apply(prog, {'200': [{'a': 'Старое', 'f': 'Автор'}]}, ctx)
   209 |     check('REP subfield', gbl.field_values(r, '200', 'a') == ['Новое'])
+```
+
+<!-- ─── страница 457 ─── -->
+
+```py
   210 |     check('REP subfield keeps sibling', gbl.field_values(r, '200', 'f') == ['Автор'])
   211 | 
   212 |     # REP with empty ФОРМАТ 1 deletes the field (GC §1.3).
@@ -26895,15 +27736,15 @@
   258 | 
   259 |     # input record is NOT mutated.
   260 |     src = {'910': [{'': 'a'}]}
-```
-
-<!-- ─── страница 444 ─── -->
-
-```py
   261 |     prog = gbl.parse("0\nDEL\n910\n*\n\n\n")
   262 |     gbl.apply(prog, src, ctx)
   263 |     check('apply does not mutate input', src == {'910': [{'': 'a'}]})
   264 | 
+```
+
+<!-- ─── страница 458 ─── -->
+
+```py
   265 | 
   266 | # --------------------------------------------------------------------------- #
   267 | # 2b. IF gating + multi-operator job.
@@ -26955,15 +27796,15 @@
   313 |     # (access.pft does not exist in this slice -> falls through to the stub.)
   314 |     picked2 = gbl.resolve_format_eval({})
   315 |     has_pft = _pft_importable()
-```
-
-<!-- ─── страница 445 ─── -->
-
-```py
   316 |     if has_pft:
   317 |         check('A1 pft.eval delegated when present', picked2 is not gbl.stub_format_eval)
   318 |     else:
   319 |         check('stub selected without A1', picked2 is gbl.stub_format_eval)
+```
+
+<!-- ─── страница 459 ─── -->
+
+```py
   320 | 
   321 |     # The stub itself: literal, field ref, param, empty.
   322 |     check('stub literal', gbl.stub_format_eval("'hi'", rec({}), {}) == 'hi')
@@ -27015,15 +27856,15 @@
   368 |           records[0] == snapshot[0] and records[1] == snapshot[1])
   369 | 
   370 |     # A record with no applicable change reports 'unchanged'.
-```
-
-<!-- ─── страница 446 ─── -->
-
-```py
   371 |     prog_noop = gbl.parse("0\nREP\n920\n*\n'PVK'\n\n")
   372 |     rep2 = gbl.preview(prog_noop, [{'920': [{'': 'PVK'}]}], ctx)
   373 |     check('preview unchanged when no diff', rep2[0]['status'] == 'unchanged'
   374 |           and rep2[0]['changes'] == [])
+```
+
+<!-- ─── страница 460 ─── -->
+
+```py
   375 | 
   376 |     # before/after snapshots are carried for UI rendering.
   377 |     check('preview carries before/after',
@@ -27075,15 +27916,15 @@
   423 |     gbl.apply(prog_all, {'200': [{'a': 'T'}], '910': [{'': 'e1'}]}, ctx_all)
   424 |     made = ctx_all['_state']['new_records']['CMPL'][0]
   425 |     check('ALL copies source fields into new record',
-```
-
-<!-- ─── страница 447 ─── -->
-
-```py
   426 |           gbl.field_values(made, '200', 'a') == ['T']
   427 |           and gbl.field_values(made, '910') == ['e1']
   428 |           and gbl.field_values(made, '920') == ['SZ'])
   429 | 
+```
+
+<!-- ─── страница 461 ─── -->
+
+```py
   430 |     # NEWREC (experimental): condition '1' creates; non-'1' skips.
   431 |     def cond_eval(fmt, record, ctx):
   432 |         if fmt.startswith('if v920'):
@@ -27135,15 +27976,15 @@
   478 |     prog_ud = gbl.parse("0\nADD\n907\n\n'v2'\n\nUNDOR\n'1'\n")
   479 |     ctx_ud = {'format_eval': lit_eval, 'history': history}
   480 |     r_ud = gbl.apply(prog_ud, {'907': [{'': 'cur'}]}, ctx_ud)
-```
-
-<!-- ─── страница 448 ─── -->
-
-```py
   481 |     check('UNDOR N=1 restores previous copy', gbl.field_values(r_ud, '907') == ['v1'])
   482 |     prog_ud0 = gbl.parse("0\nUNDOR\n'*'\n")
   483 |     r_ud0 = gbl.apply(prog_ud0, {'907': [{'': 'cur'}]},
   484 |                       {'format_eval': lit_eval, 'history': history})
+```
+
+<!-- ─── страница 462 ─── -->
+
+```py
   485 |     check('UNDOR * restores original copy', gbl.field_values(r_ud0, '907') == ['v0'])
   486 |     prog_udn = gbl.parse("0\nUNDOR\n#\n")     # empty steps -> no-op
   487 |     r_udn = gbl.apply(prog_udn, {'907': [{'': 'cur'}]},
@@ -27195,15 +28036,15 @@
   533 | 
   534 |     draft = {
   535 |         '920': [{'': 'OJK'}],                # acquisition kind (subscription)
-```
-
-<!-- ─── страница 449 ─── -->
-
-```py
   536 |         '200': [{'a': 'Вестник науки'}],
   537 |         '910': [{'': 'inv-1001'}],
   538 |         '938': [{'': 'CMPL/2026/Q2'}],
   539 |     }
+```
+
+<!-- ─── страница 463 ─── -->
+
+```py
   540 |     ctx = {'format_eval': lit_eval}
   541 |     src_after = gbl.apply(prog, draft, ctx, emit=emit)
   542 |     st = ctx['_state']
@@ -27257,11 +28098,6 @@
   590 |     main()
 ```
 
-<!-- ─── страница 450 ─── -->
-
-```py
-```
-
 ### Файл: `irbis-web/backend/tests/test_identity.py`  · строк: 324
 
 ```py
@@ -27269,6 +28105,11 @@
     2 | """Identity / Tenancy / Licensing tests (issue #101, I1).
     3 | 
     4 | Covers the three new mechanisms layered on the merged Access store:
+```
+
+<!-- ─── страница 464 ─── -->
+
+```py
     5 | 
     6 |   1. JWT sessions — dependency-free HS256 issue->verify round-trip, and that a
     7 |      TAMPERED or EXPIRED token is rejected (-> no session -> 401 at the edge).
@@ -27320,15 +28161,15 @@
    53 |     print('-- jwt (HS256, dep-free)')
    54 |     claims = {'sub': 'admin', 'tenant': 'acme', 'kind': 'staff',
    55 |               'grants': [{'function': 'search', 'db': '*', 'level': 'read'}]}
-```
-
-<!-- ─── страница 451 ─── -->
-
-```py
    56 |     tok = _jwt.encode(claims, SECRET)
    57 |     check('token is a plain string (bearer)', isinstance(tok, str) and tok.count('.') == 2)
    58 | 
    59 |     out = _jwt.decode(tok, SECRET)
+```
+
+<!-- ─── страница 465 ─── -->
+
+```py
    60 |     check('round-trip preserves sub', out['sub'] == 'admin')
    61 |     check('round-trip preserves tenant', out['tenant'] == 'acme')
    62 |     check('round-trip preserves kind', out['kind'] == 'staff')
@@ -27380,15 +28221,15 @@
   108 |     except _jwt.JwtError:
   109 |         rejected = True
   110 |     check('expired by injected clock rejected', rejected)
-```
-
-<!-- ─── страница 452 ─── -->
-
-```py
   111 | 
   112 |     # alg downgrade ("alg":"none") must not be accepted — pinned to HS256 on decode
   113 |     import base64 as _b64
   114 |     import json as _json
+```
+
+<!-- ─── страница 466 ─── -->
+
+```py
   115 |     none_header = _b64.urlsafe_b64encode(
   116 |         _json.dumps({'alg': 'none', 'typ': 'JWT'}).encode()).rstrip(b'=').decode()
   117 |     none_payload = _b64.urlsafe_b64encode(
@@ -27440,15 +28281,15 @@
   163 | 
   164 |     # _guard: a guest can search on the public path (entitlements fail open)
   165 |     guard_ok = True
-```
-
-<!-- ─── страница 453 ─── -->
-
-```py
   166 |     try:
   167 |         api._guard(sess, 'search', 'IBIS', 'read')
   168 |     except _core.Denied:
   169 |         guard_ok = False
+```
+
+<!-- ─── страница 467 ─── -->
+
+```py
   170 |     check('guest search allowed on public (grant + open entitlement)', guard_ok)
   171 | 
   172 |     # _guard: grant gate still bites (guest cannot order/write)
@@ -27500,15 +28341,15 @@
   218 | # --------------------------------------------------------------------------- #
   219 | # 4. PostgreSQL: tenant-claim data scoping + real tenant_module gating.
   220 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 454 ─── -->
-
-```py
   221 | A_SLUG, B_SLUG = 'idn_a', 'idn_b'
   222 | 
   223 | 
   224 | def pg_reachable(dsn):
+```
+
+<!-- ─── страница 468 ─── -->
+
+```py
   225 |     want = os.environ.get('ACCESS_BACKEND', '').lower() in ('postgres', 'pg') \
   226 |         or os.environ.get('ACCESS_TEST_PG') == '1'
   227 |     if not want:
@@ -27560,15 +28401,15 @@
   273 |           entitlements.is_module_enabled(B_SLUG, 'cataloging', dsn) is True)
   274 | 
   275 |     # --- GATING THROUGH _guard: a valid grant on a DISABLED module is refused ---
-```
-
-<!-- ─── страница 455 ─── -->
-
-```py
   276 |     os.environ['JWT_SECRET'] = SECRET
   277 |     import importlib
   278 |     import core as _core
   279 |     importlib.reload(_core)
+```
+
+<!-- ─── страница 469 ─── -->
+
+```py
   280 |     api = _core.Api()
   281 |     # session for tenant A with a real record.write grant (cataloging module)
   282 |     grants = [{'function': 'record.write', 'db': 'IBIS', 'level': 'write'}]
@@ -27625,15 +28466,15 @@
     4 | Wires the two highest-value межмодульные рёбра that the integration map flagged
     5 | as designed-but-not-wired, and proves them end-to-end over the existing in-memory
     6 | stores (no core.py, no network):
-```
-
-<!-- ─── страница 456 ─── -->
-
-```py
     7 | 
     8 |   * Edges 2.1/2.2 — Catalog↔Circulation 910^A flip. ``CirculationEngine`` is given
     9 |     a ``catalog`` handle; ``checkout`` flips the linked catalog exemplar's
    10 |     ``910^A`` 0→1 (issued), ``return_item`` flips it 1→0 (free), and ``place_hold``
+```
+
+<!-- ─── страница 470 ─── -->
+
+```py
    11 |     /availability reads honour the catalog ``910^A``. The item↔record link is
    12 |     resolved by inventory number (``910^b``), as the spec describes.
    13 | 
@@ -27685,15 +28526,15 @@
    59 |     else:
    60 |         FAIL[0] += 1
    61 |         print('  FAIL', name)
-```
-
-<!-- ─── страница 457 ─── -->
-
-```py
    62 | 
    63 | 
    64 | # --------------------------------------------------------------------------- #
    65 | # Fixtures.
+```
+
+<!-- ─── страница 471 ─── -->
+
+```py
    66 | # --------------------------------------------------------------------------- #
    67 | def _seeded_access_store():
    68 |     st = AccessStore(':memory:')
@@ -27745,15 +28586,15 @@
   114 |           d.computed.get('catalog_mfn') == 1
   115 |           and d.computed.get('exemplar_status') == EXEMPLAR_ISSUED)
   116 |     # the loan itself still recorded in circulation's own store
-```
-
-<!-- ─── страница 458 ─── -->
-
-```py
   117 |     check('loan recorded on hand', store.count_on_hand('R1') == 1)
   118 | 
   119 |     # RETURN: 910^A flips 1 -> 0 (free).
   120 |     loan_id = d.computed['loan']['id']
+```
+
+<!-- ─── страница 472 ─── -->
+
+```py
   121 |     dr = eng.return_item(loan_id, T0 + 5 * DAY)
   122 |     check('return allowed', dr.decision == ALLOW)
   123 |     check('return flips catalog 910^A 1->0',
@@ -27805,15 +28646,15 @@
   169 |     d = eng.checkout('R1', 'SHELF-1', T0)
   170 |     check('standalone checkout allowed', d.decision == ALLOW)
   171 |     check('standalone checkout reports no catalog_mfn',
-```
-
-<!-- ─── страница 459 ─── -->
-
-```py
   172 |           'catalog_mfn' not in d.computed)
   173 |     check('standalone catalog_available is None (no opinion)',
   174 |           eng.catalog_available('SHELF-1') is None)
   175 |     dr = eng.return_item(d.computed['loan']['id'], T0 + 1 * DAY)
+```
+
+<!-- ─── страница 473 ─── -->
+
+```py
   176 |     check('standalone return allowed', dr.decision == ALLOW)
   177 |     check('standalone return reports no catalog_mfn',
   178 |           'catalog_mfn' not in dr.computed)
@@ -27865,15 +28706,15 @@
   224 |     check('save with authority ref succeeds', res['saved'] is True)
   225 |     saved = cat.get('IBIS', res['mfn'])
   226 |     inst = saved['700'][0]
-```
-
-<!-- ─── страница 460 ─── -->
-
-```py
   227 |     check('authority filled 700^a (фамилия)', inst.get('a') == 'Толстой')
   228 |     check('authority filled 700^b (инициалы)', inst.get('b') == 'Л. Н.')
   229 |     check('authority filled 700^g (расширение)', inst.get('g') == 'Лев Николаевич')
   230 |     check('authority filled 700^f (даты)', inst.get('f') == '1828-1910')
+```
+
+<!-- ─── страница 474 ─── -->
+
+```py
   231 |     check('^3 link == authority id', inst.get('3') == str(pid))
   232 |     check('_authority_ref marker dropped', '_authority_ref' not in inst)
   233 | 
@@ -27925,15 +28766,15 @@
   279 |     print('-- edge 6.1 back-compat: save without an authority handle')
   280 |     cat = CatalogStore(':memory:', access_store=_seeded_access_store())  # no authority
   281 | 
-```
-
-<!-- ─── страница 461 ─── -->
-
-```py
   282 |     # A record that already carries ^3 (client supplied) saves untouched.
   283 |     rec = {
   284 |         '920': 'PAZK',
   285 |         '200': [{'a': 'Книга'}],
+```
+
+<!-- ─── страница 475 ─── -->
+
+```py
   286 |         '700': [{'a': 'Иванов И.', '3': '7'}],
   287 |         '101': 'rus',
   288 |         '907': [{'a': 'X'}],
@@ -27985,15 +28826,15 @@
   334 |     check('return flips it back 1->0', cat.exemplar_status('IBIS', inv) == EXEMPLAR_FREE)
   335 | 
   336 | 
-```
-
-<!-- ─── страница 462 ─── -->
-
-```py
   337 | # --------------------------------------------------------------------------- #
   338 | # Edge A — Комплектование → Книговыдача (поступление → экземпляр выдаётся).
   339 | #
   340 | # AcquisitionEngine получает опциональный ``circulation`` handle. После receive()
+```
+
+<!-- ─── страница 476 ─── -->
+
+```py
   341 | # (ToCat создаёт 910-экземпляр со статусом «свободен») комплектование
   342 | # подтверждает через circulation, что поступивший инв.№ доступен к выдаче, и сам
   343 | # экземпляр реально выдаётся.
@@ -28045,15 +28886,15 @@
   389 |           acq.ksu_summary('KSU-BC-1')['copies'] == 1)
   390 | 
   391 |     # Circulation wired but with NO catalog → register defaults to lendable=True
-```
-
-<!-- ─── страница 463 ─── -->
-
-```py
   392 |     # (circulation lends against the shifr, keeps no inventory of its own).
   393 |     circ = CirculationEngine(store=CirculationStore(':memory:'),
   394 |                              policy=default_policy())  # no catalog
   395 |     acq2 = AcquisitionEngine(circulation=circ)         # no catalog either
+```
+
+<!-- ─── страница 477 ─── -->
+
+```py
   396 |     o2 = acq2.create_order('Шифр', copies=1, price=5.0)
   397 |     r2 = acq2.receive(o2['id'], 'KSU-BC-2', 1, inv_numbers=['ACQ-BC-2'])
   398 |     check('circ-without-catalog accepts copy as lendable',
@@ -28105,15 +28946,15 @@
   444 |     # Invariant (ребро 4.4/4.7): the copy is on a reader's hands but STILL фонд —
   445 |     # Кко must keep counting it as 1 provisioned copy, not drop to 0.
   446 |     rep2 = bp.discipline_provision(disc)
-```
-
-<!-- ─── страница 464 ─── -->
-
-```py
   447 |     check('issued-but-on-hand copy still counts as provisioned',
   448 |           rep2['bindings'][0]['exemplars'] == 1)
   449 |     check('Кко unchanged at 1.0 while copy on loan',
   450 |           rep2['average_kko'] == 1.0)
+```
+
+<!-- ─── страница 478 ─── -->
+
+```py
   451 |     check('discipline NOT under-provisioned while copy on loan',
   452 |           rep2['under_provisioned'] is False)
   453 | 
@@ -28165,15 +29006,15 @@
   499 |           bp.discipline_provision(disc)['bindings'][0]['exemplars'] == 1)
   500 |     cat.set_exemplar_status('IBIS', inv, EXEMPLAR_ISSUED)
   501 |     check('issued copy NOT counted without circulation handle',
-```
-
-<!-- ─── страница 465 ─── -->
-
-```py
   502 |           bp.discipline_provision(disc)['bindings'][0]['exemplars'] == 0)
   503 | 
   504 | 
   505 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 479 ─── -->
+
+```py
   506 | # Edge C — Книговыдача → Комплектование (списание/утрата → КСУ выбытия).
   507 | #
   508 | # CirculationEngine получает опциональный ``acquisition`` handle. Подтверждённая
@@ -28225,15 +29066,15 @@
   554 | 
   555 | def circ_lost_default_act_checks():
   556 |     print('-- edge C: default акт списания when none supplied')
-```
-
-<!-- ─── страница 466 ─── -->
-
-```py
   557 |     acq = AcquisitionEngine()  # standalone acquisition store
   558 |     circ = CirculationEngine(store=CirculationStore(':memory:'),
   559 |                              policy=default_policy(), acquisition=acq)
   560 |     circ.store.add_reader('R1', category='В01')
+```
+
+<!-- ─── страница 480 ─── -->
+
+```py
   561 |     inv = 'DISP-DEF'
   562 |     d = circ.checkout('R1', inv, T0)
   563 |     res = circ.mark_lost(d.computed['loan']['id'], T0 + 100 * DAY, confirm=True,
@@ -28285,15 +29126,15 @@
   609 |     # Edge A — Комплектование → Книговыдача.
   610 |     acq_to_circulation_checks()
   611 |     acq_to_circulation_backcompat_checks()
-```
-
-<!-- ─── страница 467 ─── -->
-
-```py
   612 |     # Edge B — Книгообеспеченность → Книговыдача.
   613 |     bp_counts_issued_copies_checks()
   614 |     bp_lost_copy_not_counted_checks()
   615 |     bp_backcompat_checks()
+```
+
+<!-- ─── страница 481 ─── -->
+
+```py
   616 |     # Edge C — Книговыдача → Комплектование (КСУ выбытия).
   617 |     circ_lost_to_acq_disposal_checks()
   618 |     circ_lost_default_act_checks()
@@ -28350,15 +29191,15 @@
    39 | 
    40 | PASS = [0]
    41 | FAIL = [0]
-```
-
-<!-- ─── страница 468 ─── -->
-
-```py
    42 | 
    43 | 
    44 | def check(name, cond):
    45 |     if cond:
+```
+
+<!-- ─── страница 482 ─── -->
+
+```py
    46 |         PASS[0] += 1
    47 |         print('  ok  ', name)
    48 |     else:
@@ -28410,15 +29251,15 @@
    94 | 
    95 | 
    96 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 469 ─── -->
-
-```py
    97 | # 1+2+3. Форма записи, подполя, голые поля, CP1251.
    98 | # --------------------------------------------------------------------------- #
    99 | def shape_checks():
   100 |     with tempfile.TemporaryDirectory() as tmp:
+```
+
+<!-- ─── страница 483 ─── -->
+
+```py
   101 |         _write_db(tmp, 'TEST', _sample_records())
   102 |         rec = read_record(tmp, 'TEST', 1)
   103 |         check('read_record возвращает dict', isinstance(rec, dict))
@@ -28470,15 +29311,15 @@
   149 |         check('read_records: записи — каноничные dict',
   150 |               all(isinstance(r, dict) and 'a' in r['200'][0] for (_m, r) in live))
   151 | 
-```
-
-<!-- ─── страница 470 ─── -->
-
-```py
   152 | 
   153 | # --------------------------------------------------------------------------- #
   154 | # Раздельная проверка флага удаления в .xrf (без STATUS-бита тоже срабатывает).
   155 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 484 ─── -->
+
+```py
   156 | def xrf_deleted_flag_checks():
   157 |     with tempfile.TemporaryDirectory() as tmp:
   158 |         # 1 живая запись; вручную выставим старший бит её XRF-слова.
@@ -28530,15 +29371,15 @@
   204 |         check('MFN 999 (вне .xrf) -> None', read_record(tmp, 'TEST', 999) is None)
   205 | 
   206 |         # Битая запись: испортим лидер MFN 2 (укажем гигантский NVF) — должна
-```
-
-<!-- ─── страница 471 ─── -->
-
-```py
   207 |         # пропуститься со счётчиком предупреждений, остальные читаются.
   208 |         warnings = []
   209 |         db_dir = os.path.join(tmp, 'BAD')
   210 |         os.makedirs(db_dir)
+```
+
+<!-- ─── страница 485 ─── -->
+
+```py
   211 |         mst, xrf = build_mst_xrf([
   212 |             {'200': [{'a': 'Хорошая'}]},
   213 |             {'200': [{'a': 'Плохая'}]},
@@ -28590,15 +29431,15 @@
   259 |         mst, xrf = build_mst_xrf([rec_fields])
   260 |         with open(os.path.join(db_dir, 'G.mst'), 'wb') as f:
   261 |             f.write(mst)
-```
-
-<!-- ─── страница 472 ─── -->
-
-```py
   262 |         with open(os.path.join(db_dir, 'G.xrf'), 'wb') as f:
   263 |             f.write(xrf)
   264 |         rec = read_record(tmp, 'G', 1)
   265 |         check('GUID-поле (MaxInt32) исключено из записи',
+```
+
+<!-- ─── страница 486 ─── -->
+
+```py
   266 |               str(SYSTEM_GUID_TAG) not in rec)
   267 |         check('обычное поле 200 сохранено', rec['200'][0]['a'] == 'С GUID')
   268 | 
@@ -28655,15 +29496,15 @@
 ```py
     1 | #!/usr/bin/env python3
     2 | """ККО aggregate + Move691/архив-692 tests (книгообеспеченность, ВУЗ — cluster 4).
-```
-
-<!-- ─── страница 473 ─── -->
-
-```py
     3 | 
     4 | Covers the cluster-4 seams landed on top of the standalone book-provision engine
     5 | (``access/bookprovision.py``), per ``docs/design/INTEGRATION_MAP.md`` cluster 4
     6 | (рёбра 4.1/4.4/4.5) and ``docs/recon/deep/reference/databases/DB_VUZ.md`` §6.2/§6.3
+```
+
+<!-- ─── страница 487 ─── -->
+
+```py
     7 | (формула ККО, поле 691) / §6.4 (архив 692):
     8 | 
     9 |   * **ребро 4.4 (полный агрегат ККО).** ``Кко = экземпляры/студенты``; the full
@@ -28715,15 +29556,15 @@
    55 |     return BookProvisionEngine(':memory:', catalog=catalog, rdr=rdr,
    56 |                                circulation=circulation, kko_norm=kko_norm)
    57 | 
-```
-
-<!-- ─── страница 474 ─── -->
-
-```py
    58 | 
    59 | def linkage(eng, students=100, source='68z', fili=''):
    60 |     """Build a one-discipline связка (Фак-Напр-Спец-ВО-ФО-Сем) and return its ids."""
    61 |     fac = eng.add_faculty('ФВТ', name='Факультет вычислительной техники')
+```
+
+<!-- ─── страница 488 ─── -->
+
+```py
    62 |     sp = eng.add_specialty(fac, napr='09.03.01', spec='АСОИУ',
    63 |                            vid='бакалавр', form='очная', fili=fili,
    64 |                            name='Информатика и ВТ')
@@ -28775,15 +29616,15 @@
   110 |     920 (worklist) is ФЛК-mandatory; 101 keeps the brief format happy."""
   111 |     from access.catalog import EXEMPLAR_FREE
   112 |     res = cat.save(db, {
-```
-
-<!-- ─── страница 475 ─── -->
-
-```py
   113 |         '200': [{'a': title}],
   114 |         '101': 'rus',
   115 |         '920': 'PAZK',
   116 |         '910': [{'a': status, 'b': key} for key, status in exemplars]
+```
+
+<!-- ─── страница 489 ─── -->
+
+```py
   117 |         or [{'a': EXEMPLAR_FREE, 'b': 'X'}],
   118 |     })
   119 |     assert res['saved'], 'fixture book must save (ФЛК): %r' % res
@@ -28835,15 +29676,15 @@
   165 |     check('RDR error -> 68^Z fallback (no crash)',
   166 |           rep4['students'] == 100 and rep4['students_source'] == '68z')
   167 | 
-```
-
-<!-- ─── страница 476 ─── -->
-
-```py
   168 | 
   169 | def aggregate_checks():
   170 |     print('-- ККО: полный кросс-БД агрегат Sumэкз/Sumстуд + average + границы')
   171 |     # Two disciplines under one specialty/faculty, each one binding (so the
+```
+
+<!-- ─── страница 490 ─── -->
+
+```py
   172 |     # per-discipline average_kko == that binding's Кко — clean to assert). The
   173 |     # фонд-weighted aggregate_kko (Sumэкз/Sumстуд) is DISTINCT from the
   174 |     # discipline-mean average_kko, which is the whole point of reporting both.
@@ -28895,15 +29736,15 @@
   220 |     facr = eng_r.add_faculty('ФВТ')
   221 |     spr = eng_r.add_specialty(facr, napr='09.03.01', spec='АСОИУ',
   222 |                               vid='бакалавр', form='очная')
-```
-
-<!-- ─── страница 477 ─── -->
-
-```py
   223 |     dr = eng_r.add_discipline(spr, disc_id='D1', semester='1', students=999)
   224 |     eng_r.bind_literature(dr, 'кн', kind=KIND_MAIN, copies=25)  # 25/50 = 0.5
   225 |     agg_r = eng_r.provision_aggregate(specialty_id=spr)
   226 |     check('RDR aggregate uses RDR students (50, not 68^Z 999)',
+```
+
+<!-- ─── страница 491 ─── -->
+
+```py
   227 |           agg_r['total_students'] == 50)
   228 |     check('RDR aggregate_kko = 25/50 = 0.5',
   229 |           abs(agg_r['aggregate_kko'] - 0.5) < 1e-9)
@@ -28955,15 +29796,15 @@
   275 |     db = 'IBIS'
   276 |     # One issued copy; circulation says it is on an on-hand loan -> still фонд.
   277 |     _save_book(cat, db, 'Выданная', [('INV-OUT', EXEMPLAR_ISSUED)])
-```
-
-<!-- ─── страница 478 ─── -->
-
-```py
   278 |     circ = _FakeCirc(on_hand={'INV-OUT'})
   279 |     eng = fresh(catalog=cat, circulation=circ)
   280 |     _, _, disc = linkage(eng, students=1)
   281 |     eng.bind_literature(disc, 'Выданная', kind=KIND_MAIN,
+```
+
+<!-- ─── страница 492 ─── -->
+
+```py
   282 |                         catalog_db=db, inv_key='INV-OUT')
   283 |     rep = eng.discipline_provision(disc)
   284 |     check('issued-but-on-hand counts as 1 provisioned exemplar',
@@ -29015,15 +29856,15 @@
   330 |     # ^I = id дисциплины (3^0).
   331 |     check('691^I = disc_id (3^0)', f691.get('I') == 'D-БД')
   332 |     # связка ^A^L^N^C^V^O^F all present and correct.
-```
-
-<!-- ─── страница 479 ─── -->
-
-```py
   333 |     check('691^A = факультет', f691.get('A') == 'ФВТ')
   334 |     check('691^L = филиал', f691.get('L') == 'СПб')
   335 |     check('691^N = направление', f691.get('N') == '09.03.01')
   336 |     check('691^C = специальность', f691.get('C') == 'АСОИУ')
+```
+
+<!-- ─── страница 493 ─── -->
+
+```py
   337 |     check('691^V = вид', f691.get('V') == 'бакалавр')
   338 |     check('691^O = форма', f691.get('O') == 'очная')
   339 |     check('691^F = семестр', f691.get('F') == '3')
@@ -29075,15 +29916,15 @@
   385 |     try:
   386 |         eng.move691(disc)
   387 |         check('move691 without catalog handle raises', False)
-```
-
-<!-- ─── страница 480 ─── -->
-
-```py
   388 |     except BookProvisionError:
   389 |         check('move691 without catalog handle raises', True)
   390 |     try:
   391 |         eng.archive691(disc, 'IBIS', 1)
+```
+
+<!-- ─── страница 494 ─── -->
+
+```py
   392 |         check('archive691 without catalog handle raises', False)
   393 |     except BookProvisionError:
   394 |         check('archive691 without catalog handle raises', True)
@@ -29135,15 +29976,15 @@
   440 |     check('691 binding removed (none left for this disc)',
   441 |           all(x.get('I') != 'D-БД' for x in rem))
   442 |     arch = rec2.get('692')
-```
-
-<!-- ─── страница 481 ─── -->
-
-```py
   443 |     arch = arch if isinstance(arch, list) else ([arch] if arch else [])
   444 |     check('692 archive now carries the binding', len(arch) == 1)
   445 |     check('archived 692 keeps ^I + связка',
   446 |           arch[0].get('I') == 'D-БД' and arch[0].get('A') == 'ФВТ'
+```
+
+<!-- ─── страница 495 ─── -->
+
+```py
   447 |           and arch[0].get('N') == '09.03.01')
   448 | 
   449 |     # archiving again is a no-op (nothing matches now).
@@ -29195,15 +30036,15 @@
   495 |     eng.archive691(dA, db, mfn)
   496 |     rec2 = cat.get(db, mfn)
   497 |     rem = rec2.get('691')
-```
-
-<!-- ─── страница 482 ─── -->
-
-```py
   498 |     rem = rem if isinstance(rem, list) else [rem]
   499 |     check('DB still in 691 after archiving DA',
   500 |           [x.get('I') for x in rem] == ['DB'])
   501 |     arch = rec2.get('692')
+```
+
+<!-- ─── страница 496 ─── -->
+
+```py
   502 |     arch = arch if isinstance(arch, list) else [arch]
   503 |     check('DA in 692 archive', arch[0].get('I') == 'DA')
   504 | 
@@ -29244,6 +30085,439 @@
   539 |     main()
 ```
 
+### Файл: `irbis-web/backend/tests/test_ksu_exemplars.py`  · строк: 393
+
+```py
+    1 | #!/usr/bin/env python3
+    2 | """КСУ ↔ экземпляры — тесты рёбер 5.1 / 5.3 (INTEGRATION_MAP кластер 5).
+    3 | 
+    4 | Сценарные тесты учётной связи «партия поступления ↔ экземпляр» в
+    5 | :mod:`access.acquisition`:
+    6 | 
+    7 |   * [5.1] №КСУ поступления (88^U) проставляется в экземпляры (910^U, индекс
+    8 |     ``KSU=``): :meth:`AcquisitionEngine.link_ksu_to_exemplars` — через опц.
+    9 |     catalog-handle (без правки ``catalog.py``); поиск экз. партии по №КСУ —
+   10 |     :meth:`find_exemplars_by_ksu` (точки доступа ``KSU=``/``NKSUK=``);
+   11 |   * [5.3] базовое авто-распределение партии (Мастер «Пополнение записи КСУ»):
+   12 |     :meth:`distribute_ksu_batch` — сумматоры (наименования/экземпляры) +
+   13 |     наблюдаемые грани (тип/язык 45, УДК 48, ББК 49, раздел 151, МХР 148);
+   14 |     нераскрытые членения (#CMPL-05) — в ``todo``, не домысливаются;
+   15 |   * back-compat: без catalog-handle модуль автономен (связь только в ledger'е);
+   16 |   * PG-паритет: связь/поиск/распределение опираются на собственный sqlite-ledger
+   17 |     (``acq_inventory``) + чистую логику над dict'ами — backend-независимы.
+```
+
+<!-- ─── страница 497 ─── -->
+
+```py
+   18 | 
+   19 | Запуск в стиле дома (как ``test_tocat.py``)::
+   20 | 
+   21 |     py -3.12 tests/test_ksu_exemplars.py  -> ok ... + "N passed, M failed" + код
+   22 | 
+   23 | FakeCatalog: самодостаточный каталог-handle (контракт 5.1 — find_exemplar / get /
+   24 | save / iter_records). DB-сервер не нужен.
+   25 | """
+   26 | import copy
+   27 | import os
+   28 | import sys
+   29 | 
+   30 | sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+   31 | from access.acquisition import (  # noqa: E402
+   32 |     AcquisitionStore, AcquisitionEngine, AcquisitionError,
+   33 |     EXEMPLAR_FREE, EXEMPLAR_KSU_SUB, KSU_DISTRIBUTION_FIELDS,
+   34 | )
+   35 | 
+   36 | PASS = [0]
+   37 | FAIL = [0]
+   38 | 
+   39 | 
+   40 | def check(name, cond):
+   41 |     if cond:
+   42 |         PASS[0] += 1
+   43 |         print('  ok  ', name)
+   44 |     else:
+   45 |         FAIL[0] += 1
+   46 |         print('  FAIL', name)
+   47 | 
+   48 | 
+   49 | # --------------------------------------------------------------------------- #
+   50 | # FakeCatalog — каталог-handle, реализующий контракт, который дёргают 5.1/5.3:
+   51 | # find_exemplar / get / save / iter_records. Хранит записи в dict, выдаёт
+   52 | # последовательный mfn. Это ровно поверхность handle (без зависимости от
+   53 | # access/catalog.py — его держит сиблинг, INTEGRATION_MAP).
+   54 | # --------------------------------------------------------------------------- #
+   55 | class FakeCatalog:
+   56 |     def __init__(self):
+   57 |         self._db = {}        # db -> {mfn -> record}
+   58 |         self._next = {}      # db -> next mfn
+   59 | 
+   60 |     def _store(self, db):
+   61 |         return self._db.setdefault(db, {})
+   62 | 
+   63 |     def save(self, db, record, mfn=None):
+   64 |         store = self._store(db)
+   65 |         if mfn is None:
+   66 |             mfn = self._next.get(db, 1)
+   67 |             self._next[db] = mfn + 1
+   68 |         if not record.get('920'):                 # 920 FLK-mandatory (как реальный)
+   69 |             return {'saved': False, 'mfn': None, 'violations': ['no 920']}
+   70 |         store[mfn] = copy.deepcopy(record)
+   71 |         return {'saved': True, 'mfn': mfn, 'violations': []}
+   72 | 
+```
+
+<!-- ─── страница 498 ─── -->
+
+```py
+   73 |     def get(self, db, mfn):
+   74 |         rec = self._store(db).get(mfn)
+   75 |         return copy.deepcopy(rec) if rec is not None else None
+   76 | 
+   77 |     def search(self, db, expr, limit=20):
+   78 |         # понимаем только T=<term>; matched по 200^a (для receive-driven ToCat
+   79 |         # new-vs-existing резолва).
+   80 |         term = expr.split('=', 1)[1].strip().casefold() if '=' in expr \
+   81 |             else expr.strip().casefold()
+   82 |         items = []
+   83 |         for mfn, rec in sorted(self._store(db).items()):
+   84 |             insts = rec.get('200')
+   85 |             if not isinstance(insts, list):
+   86 |                 insts = [insts] if insts else []
+   87 |             t = ''
+   88 |             for inst in insts:
+   89 |                 if isinstance(inst, dict) and inst.get('a'):
+   90 |                     t = str(inst['a']).strip().casefold()
+   91 |                     break
+   92 |             if t == term:
+   93 |                 items.append({'mfn': mfn})
+   94 |         return {'items': items[:limit]}
+   95 | 
+   96 |     def find_exemplar(self, db, item):
+   97 |         for mfn, rec in sorted(self._store(db).items()):
+   98 |             insts = rec.get('910')
+   99 |             if insts is None:
+  100 |                 continue
+  101 |             if not isinstance(insts, list):
+  102 |                 insts = [insts]
+  103 |             for i, inst in enumerate(insts):
+  104 |                 if isinstance(inst, dict) and \
+  105 |                         str(inst.get('b') or inst.get('B') or '') == str(item):
+  106 |                     return (mfn, i, inst)
+  107 |         return None
+  108 | 
+  109 |     def iter_records(self, db):
+  110 |         return [(mfn, copy.deepcopy(rec))
+  111 |                 for mfn, rec in sorted(self._store(db).items())]
+  112 | 
+  113 | 
+  114 | class FakeCatalogNoIter(FakeCatalog):
+  115 |     """Каталог-handle БЕЗ iter_records — проверяет фолбэк скана через find_exemplar."""
+  116 |     iter_records = None
+  117 |     all_records = None
+  118 | 
+  119 | 
+  120 | # --------------------------------------------------------------------------- #
+  121 | # Фабрики.
+  122 | # --------------------------------------------------------------------------- #
+  123 | def fresh_engine(catalog=None):
+  124 |     return AcquisitionEngine(store=AcquisitionStore(':memory:'), catalog=catalog)
+  125 | 
+  126 | 
+  127 | def seed_catalog_book(cat, db='IBIS', title='Базы данных', lang='rus',
+```
+
+<!-- ─── страница 499 ─── -->
+
+```py
+  128 |                       udk='004.6', bbk='З973', invs=(('INV-1', 'ЧЗ'),
+  129 |                                                      ('INV-2', 'АБ'))):
+  130 |     """Засеять запись книги в каталог с экземплярами (910^b/^d), без 910^U."""
+  131 |     rec = {'920': 'PAZK', '200': [{'a': title}], '101': lang,
+  132 |            '675': [{'a': udk}], '621': [{'a': bbk}], '910': []}
+  133 |     for inv, mhr in invs:
+  134 |         rec['910'].append({'a': EXEMPLAR_FREE, 'b': inv, 'd': mhr})
+  135 |     res = cat.save(db, rec)
+  136 |     return res['mfn']
+  137 | 
+  138 | 
+  139 | def _received_engine(eng, ksu='KSU-2026-1', copies=2,
+  140 |                      invs=('INV-1', 'INV-2')):
+  141 |     """Принять партию в ledger (receive) — даёт инв.№ в acq_inventory."""
+  142 |     o = eng.create_order('Базы данных', author='Дейт К.', copies=copies, price=100)
+  143 |     eng.receive(o['id'], ksu, copies, inv_numbers=list(invs))
+  144 |     return o
+  145 | 
+  146 | 
+  147 | # --------------------------------------------------------------------------- #
+  148 | # 5.1 — №КСУ поступления (88^U) ↔ экземпляры (910^U). Ledger-сторона.
+  149 | # --------------------------------------------------------------------------- #
+  150 | def link_ledger_checks():
+  151 |     """[5.1] Связь КСУ↔экз в собственном ledger'е (без каталога)."""
+  152 |     eng = fresh_engine()
+  153 |     _received_engine(eng, ksu='KSU-A', invs=('INV-1', 'INV-2'))
+  154 |     # инв.№ уже в ledger'е с этим КСУ (receive проставил); re-link не задваивает.
+  155 |     res = eng.link_ksu_to_exemplars('KSU-A', ['INV-1', 'INV-2'])
+  156 |     check('5.1 ledger: оба инв.№ связаны', res['ledger'] == ['INV-1', 'INV-2'])
+  157 |     check('5.1 ledger: ничего не зарегистрировано заново (уже в receive)',
+  158 |           res['registered'] == [])
+  159 |     check('5.1 ledger: без каталога catalog[] пуст', res['catalog'] == [])
+  160 | 
+  161 |     # новый инв.№ под другим КСУ — регистрируется в ledger'е «бесхозной» строкой.
+  162 |     res2 = eng.link_ksu_to_exemplars('KSU-B', ['INV-9'])
+  163 |     check('5.1 ledger: новый инв.№ зарегистрирован', res2['registered'] == ['INV-9'])
+  164 |     check('5.1 ledger: новый инв.№ в ledger', res2['ledger'] == ['INV-9'])
+  165 | 
+  166 |     # перепривязка существующего инв.№ на ДРУГОЙ КСУ — обновляет ksu_no (re-link).
+  167 |     res3 = eng.link_ksu_to_exemplars('KSU-C', ['INV-1'])
+  168 |     check('5.1 ledger: re-link не регистрирует заново', res3['registered'] == [])
+  169 |     found_c = eng.find_exemplars_by_ksu('KSU-C')
+  170 |     found_a = eng.find_exemplars_by_ksu('KSU-A')
+  171 |     check('5.1 ledger: re-link перенёс инв.№ на новый КСУ',
+  172 |           found_c['inv_numbers'] == ['INV-1'] and 'INV-1' not in found_a['inv_numbers'])
+  173 | 
+  174 | 
+  175 | def link_requires_ksu_checks():
+  176 |     """[5.1] Валидация аргументов link/find."""
+  177 |     eng = fresh_engine()
+  178 |     for bad in ('', '   ', None):
+  179 |         try:
+  180 |             eng.link_ksu_to_exemplars(bad, ['INV-1'])
+  181 |             check('5.1 пустой №КСУ -> ошибка (%r)' % (bad,), False)
+  182 |         except AcquisitionError:
+```
+
+<!-- ─── страница 500 ─── -->
+
+```py
+  183 |             check('5.1 пустой №КСУ -> ошибка (%r)' % (bad,), True)
+  184 |     try:
+  185 |         eng.find_exemplars_by_ksu('')
+  186 |         check('5.1 find: пустой №КСУ -> ошибка', False)
+  187 |     except AcquisitionError:
+  188 |         check('5.1 find: пустой №КСУ -> ошибка', True)
+  189 |     # пустой список инв.№ — допустимо (no-op), не падает.
+  190 |     res = eng.link_ksu_to_exemplars('KSU-Z', [])
+  191 |     check('5.1 пустой список инв.№ -> no-op', res['ledger'] == [])
+  192 | 
+  193 | 
+  194 | # --------------------------------------------------------------------------- #
+  195 | # 5.1 — каталог-сторона: 910^U проставляется в записи ЭК + поиск по №КСУ.
+  196 | # --------------------------------------------------------------------------- #
+  197 | def link_catalog_checks():
+  198 |     """[5.1] 910^U проставляется в запись каталога через handle; поиск по №КСУ."""
+  199 |     cat = FakeCatalog()
+  200 |     mfn = seed_catalog_book(cat)
+  201 |     eng = fresh_engine(catalog=cat)
+  202 | 
+  203 |     res = eng.link_ksu_to_exemplars('KSU-2026-1',
+  204 |                                     ['INV-1', 'INV-2', 'INV-NONE'])
+  205 |     check('5.1 каталог: оба известных экз. размечены 910^U',
+  206 |           res['catalog'] == ['INV-1', 'INV-2'])
+  207 |     check('5.1 каталог: неизвестный каталогу инв.№ -> missing',
+  208 |           res['missing'] == ['INV-NONE'])
+  209 | 
+  210 |     rec = cat.get('IBIS', mfn)
+  211 |     ksu_vals = [str(i.get(EXEMPLAR_KSU_SUB) or '') for i in rec['910']]
+  212 |     check('5.1 каталог: 910^U == №КСУ на обоих экз.',
+  213 |           ksu_vals == ['KSU-2026-1', 'KSU-2026-1'])
+  214 | 
+  215 |     # поиск экз. партии по №КСУ: объединение ledger + каталог.
+  216 |     found = eng.find_exemplars_by_ksu('KSU-2026-1')
+  217 |     check('5.1 поиск по №КСУ: ledger содержит все 3 инв.№',
+  218 |           set(found['inv_numbers']) == {'INV-1', 'INV-2', 'INV-NONE'})
+  219 |     cat_invs = {h['inv_no'] for h in found['catalog']}
+  220 |     check('5.1 поиск по №КСУ: каталог-хиты только реальные экз. ЭК',
+  221 |           cat_invs == {'INV-1', 'INV-2'})
+  222 |     check('5.1 поиск по №КСУ: каталог-хиты несут mfn',
+  223 |           all(h.get('mfn') == mfn for h in found['catalog']))
+  224 | 
+  225 | 
+  226 | def link_catalog_idempotent_checks():
+  227 |     """[5.1] Повторная разметка тем же №КСУ — идемпотентна (910^U не задваивается)."""
+  228 |     cat = FakeCatalog()
+  229 |     mfn = seed_catalog_book(cat)
+  230 |     eng = fresh_engine(catalog=cat)
+  231 |     eng.link_ksu_to_exemplars('KSU-1', ['INV-1', 'INV-2'])
+  232 |     rec1 = cat.get('IBIS', mfn)
+  233 |     eng.link_ksu_to_exemplars('KSU-1', ['INV-1', 'INV-2'])   # повтор
+  234 |     rec2 = cat.get('IBIS', mfn)
+  235 |     check('5.1 идемпотентность: запись не изменилась при повторе', rec1 == rec2)
+  236 |     check('5.1 идемпотентность: ровно по одному 910^U на экз.',
+  237 |           all(isinstance(i.get(EXEMPLAR_KSU_SUB), str) for i in rec2['910']))
+```
+
+<!-- ─── страница 501 ─── -->
+
+```py
+  238 | 
+  239 | 
+  240 | def link_catalog_no_iter_checks():
+  241 |     """[5.1] Поиск по №КСУ работает и без iter_records (фолбэк через find_exemplar)."""
+  242 |     cat = FakeCatalogNoIter()
+  243 |     seed_catalog_book(cat)
+  244 |     eng = fresh_engine(catalog=cat)
+  245 |     eng.link_ksu_to_exemplars('KSU-NI', ['INV-1', 'INV-2'])
+  246 |     found = eng.find_exemplars_by_ksu('KSU-NI')
+  247 |     # ledger несёт оба; каталог-хиты собираются фолбэком (сверкой ledger↔ЭК).
+  248 |     check('5.1 без iter: ledger полон', set(found['ledger']) == {'INV-1', 'INV-2'})
+  249 |     check('5.1 без iter: каталог-хиты собраны фолбэком',
+  250 |           {h['inv_no'] for h in found['catalog']} == {'INV-1', 'INV-2'})
+  251 | 
+  252 | 
+  253 | def link_catalog_backcompat_checks():
+  254 |     """[5.1] back-compat: тот же вызов без handle проставляет связь только в ledger."""
+  255 |     eng = fresh_engine(catalog=None)
+  256 |     res = eng.link_ksu_to_exemplars('KSU-BC', ['INV-1', 'INV-2'])
+  257 |     check('5.1 back-compat: ledger размечен', res['ledger'] == ['INV-1', 'INV-2'])
+  258 |     check('5.1 back-compat: catalog[] пуст без handle', res['catalog'] == [])
+  259 |     check('5.1 back-compat: missing[] пуст без handle', res['missing'] == [])
+  260 |     found = eng.find_exemplars_by_ksu('KSU-BC')
+  261 |     check('5.1 back-compat: поиск по №КСУ из ledger',
+  262 |           found['inv_numbers'] == ['INV-1', 'INV-2'] and found['catalog'] == [])
+  263 | 
+  264 | 
+  265 | # --------------------------------------------------------------------------- #
+  266 | # 5.3 — базовое авто-распределение партии (Мастер «Пополнение записи КСУ»).
+  267 | # --------------------------------------------------------------------------- #
+  268 | def distribute_catalog_checks():
+  269 |     """[5.3] Авто-распределение по граням с записей/экз. каталога."""
+  270 |     cat = FakeCatalog()
+  271 |     # две записи: книга (rus, 004.6/З973) на 2 экз. + книга (eng, 51/В1) на 1 экз.
+  272 |     seed_catalog_book(cat, title='Базы данных', lang='rus', udk='004.6',
+  273 |                       bbk='З973', invs=(('INV-1', 'ЧЗ'), ('INV-2', 'АБ')))
+  274 |     seed_catalog_book(cat, title='Algorithms', lang='eng', udk='51',
+  275 |                       bbk='В1', invs=(('INV-3', 'ЧЗ'),))
+  276 |     eng = fresh_engine(catalog=cat)
+  277 |     eng.link_ksu_to_exemplars('KSU-D', ['INV-1', 'INV-2', 'INV-3'])
+  278 | 
+  279 |     dist = eng.distribute_ksu_batch('KSU-D')
+  280 |     check('5.3 сумматор: число экземпляров (88^F)', dist['copies'] == 3)
+  281 |     check('5.3 сумматор: число наименований 17 = разные записи ЭК',
+  282 |           dist['17'] == 2)
+  283 |     check('5.3 грань 45 (тип/язык): rus×2, eng×1',
+  284 |           dist['by_type'] == {'rus': 2, 'eng': 1})
+  285 |     check('5.3 грань 48 (УДК): 004.6×2, 51×1',
+  286 |           dist['by_udk'] == {'004.6': 2, '51': 1})
+  287 |     check('5.3 грань 49 (ББК): З973×2, В1×1',
+  288 |           dist['by_bbk'] == {'З973': 2, 'В1': 1})
+  289 |     check('5.3 грань 148 (МХР/фонды): ЧЗ×2, АБ×1',
+  290 |           dist['by_mhr'] == {'ЧЗ': 2, 'АБ': 1})
+  291 |     check('5.3 раздел 151 ≈ ББК (наблюдаемая грань)',
+  292 |           dist['by_section'] == {'З973': 2, 'В1': 1})
+```
+
+<!-- ─── страница 502 ─── -->
+
+```py
+  293 |     # под-№-полей зеркалят грани.
+  294 |     check('5.3 fields[45] == by_type', dist['fields']['45'] == dist['by_type'])
+  295 |     check('5.3 fields[48] == by_udk', dist['fields']['48'] == dist['by_udk'])
+  296 | 
+  297 | 
+  298 | def distribute_explicit_exemplars_checks():
+  299 |     """[5.3] Распределение по ЯВНО переданным экземплярам (чистая логика)."""
+  300 |     eng = fresh_engine()
+  301 |     rows = [
+  302 |         {'b': 'I-1', '45': 'rus', '48': '004', '49': 'З9', '151': 'ИТ', 'd': 'ЧЗ'},
+  303 |         {'b': 'I-2', 'lang': 'rus', 'udk': '004', 'bbk': 'З9', 'mhr': 'АБ'},
+  304 |         {'b': 'I-3', 'type': 'eng', 'udk': '51', 'bbk': 'В1', 'section': 'МАТ'},
+  305 |         {'b': 'I-4'},                                   # без граней — только счёт
+  306 |     ]
+  307 |     dist = eng.distribute_ksu_batch('KSU-X', exemplars=rows)
+  308 |     check('5.3 явн.: copies = 4', dist['copies'] == 4)
+  309 |     check('5.3 явн.: by_type rus×2/eng×1 (alias lang/type)',
+  310 |           dist['by_type'] == {'rus': 2, 'eng': 1})
+  311 |     check('5.3 явн.: by_udk алиасы 48/udk', dist['by_udk'] == {'004': 2, '51': 1})
+  312 |     check('5.3 явн.: by_section алиасы 151/section',
+  313 |           dist['by_section'] == {'ИТ': 1, 'МАТ': 1})
+  314 |     check('5.3 явн.: by_mhr алиасы d/mhr', dist['by_mhr'] == {'ЧЗ': 1, 'АБ': 1})
+  315 |     check('5.3 явн.: экз. без граней не попадает в bucket\'ы',
+  316 |           sum(dist['by_type'].values()) == 3)
+  317 | 
+  318 | 
+  319 | def distribute_todo_checks():
+  320 |     """[5.3] Нераскрытые в recon членения (#CMPL-05) — в todo, НЕ заполнены."""
+  321 |     eng = fresh_engine()
+  322 |     dist = eng.distribute_ksu_batch('KSU-T', exemplars=[{'b': 'I-1'}])
+  323 |     # #CMPL-05: членение наименований 17->18/19, направления 44/744, печатные
+  324 |     # 145-150, периодика 155, ВУЗ 158/248/249 — во внешнем Мастере, не домысливаем.
+  325 |     for tag in ('18', '19', '44', '744', '145', '155', '158', '248', '249'):
+  326 |         check('5.3 TODO #CMPL-05: поле %s в todo (не выдумано)' % tag,
+  327 |               tag in dist['todo'])
+  328 |     # результат не содержит самовыдуманных значений для todo-полей.
+  329 |     check('5.3 TODO: todo-поля отсутствуют среди заполненных fields',
+  330 |           not (set(dist['todo']) & set(dist['fields'].keys())))
+  331 |     # карта полей распределения (для документации/UI) согласована с DB_ACQUISITION.
+  332 |     check('5.3 карта KSU_DISTRIBUTION_FIELDS несёт 17/45/48/49/151',
+  333 |           all(t in KSU_DISTRIBUTION_FIELDS for t in ('17', '45', '48', '49', '151')))
+  334 | 
+  335 | 
+  336 | def distribute_backcompat_checks():
+  337 |     """[5.3] back-compat: без каталога — сумматоры по ledger'у, грани пусты."""
+  338 |     eng = fresh_engine(catalog=None)
+  339 |     _received_engine(eng, ksu='KSU-LB', copies=2, invs=('INV-1', 'INV-2'))
+  340 |     dist = eng.distribute_ksu_batch('KSU-LB')
+  341 |     check('5.3 back-compat: copies из ledger', dist['copies'] == 2)
+  342 |     check('5.3 back-compat: наименований базово 1 на партию', dist['17'] == 1)
+  343 |     check('5.3 back-compat: грани пусты (ledger граней не несёт)',
+  344 |           dist['by_type'] == {} and dist['by_udk'] == {} and dist['by_bbk'] == {})
+  345 |     # пустая партия -> нулевые сумматоры.
+  346 |     empty = eng.distribute_ksu_batch('KSU-EMPTY')
+  347 |     check('5.3 back-compat: пустая партия -> copies 0 / наименований 0',
+```
+
+<!-- ─── страница 503 ─── -->
+
+```py
+  348 |           empty['copies'] == 0 and empty['17'] == 0)
+  349 | 
+  350 | 
+  351 | def distribute_requires_ksu_checks():
+  352 |     """[5.3] Валидация: пустой №КСУ -> ошибка."""
+  353 |     eng = fresh_engine()
+  354 |     try:
+  355 |         eng.distribute_ksu_batch('   ')
+  356 |         check('5.3 пустой №КСУ -> ошибка', False)
+  357 |     except AcquisitionError:
+  358 |         check('5.3 пустой №КСУ -> ошибка', True)
+  359 | 
+  360 | 
+  361 | # --------------------------------------------------------------------------- #
+  362 | # Интеграция: receive -> link -> find -> distribute (полный поток партии).
+  363 | # --------------------------------------------------------------------------- #
+  364 | def end_to_end_checks():
+  365 |     """receive (ledger) + ToCat в каталог + link 910^U + поиск + распределение."""
+  366 |     cat = FakeCatalog()
+  367 |     eng = fresh_engine(catalog=cat)
+  368 |     # приём 2 экз. с ToCat (receive создаёт запись ЭК с 910^U из receive-driven ToCat).
+  369 |     o = eng.create_order('Сети', author='Таненбаум Э.', copies=2, price=200)
+  370 |     r = eng.receive(o['id'], 'KSU-E2E', 2, inv_numbers=['E-1', 'E-2'])
+  371 |     check('e2e: ToCat создал запись каталога', r['catalog_mfn'] is not None)
+  372 |     # независимый link (повторно проставляет 910^U — идемпотентно).
+  373 |     link = eng.link_ksu_to_exemplars('KSU-E2E', ['E-1', 'E-2'])
+  374 |     check('e2e: оба экз. размечены в каталоге', link['catalog'] == ['E-1', 'E-2'])
+  375 |     # поиск экз. партии.
+  376 |     found = eng.find_exemplars_by_ksu('KSU-E2E')
+  377 |     check('e2e: поиск по №КСУ нашёл оба экз.',
+  378 |           set(found['inv_numbers']) == {'E-1', 'E-2'})
+  379 |     # распределение (наименований 1, экз. 2).
+  380 |     dist = eng.distribute_ksu_batch('KSU-E2E')
+  381 |     check('e2e: распределение copies=2, наименований=1',
+  382 |           dist['copies'] == 2 and dist['17'] == 1)
+  383 | 
+  384 | 
+  385 | def main():
+  386 |     for fn in sorted(name for name in globals() if name.endswith('_checks')):
+  387 |         globals()[fn]()
+  388 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
+  389 |     sys.exit(1 if FAIL[0] else 0)
+  390 | 
+  391 | 
+  392 | if __name__ == '__main__':
+  393 |     main()
+```
+
 ### Файл: `irbis-web/backend/tests/test_migrate.py`  · строк: 365
 
 ```py
@@ -29256,15 +30530,15 @@
     7 |   1. catalog: synthetic IBIS records map + load with correct fields/exemplars
     8 |      (200/700/210/910 preserved; subfield codes canonicalized to 200^a/910^b);
     9 |      the loaded records are findable by T=/A=/IN= and the 910 exemplar survives.
+```
+
+<!-- ─── страница 504 ─── -->
+
+```py
    10 |   2. deleted / empty / unreadable source records are SKIPPED (counted), nothing
    11 |      loaded for them.
    12 |   3. idempotent re-run: migrating the same source twice does NOT duplicate — the
    13 |      source-MFN idempotency key resolves the existing target record and upserts.
-```
-
-<!-- ─── страница 483 ─── -->
-
-```py
    14 |   4. readers: RDR records map to circulation readers (ticket + category) and the
    15 |      reader display name is stored as CIPHERTEXT at rest (V1 crypto seam) — a raw
    16 |      read of the at-rest column never reveals the plaintext name. Idempotent by
@@ -29316,15 +30590,15 @@
    62 | # them). A record may be: a dict (returned), 'DELETED' (status carries the delete
    63 | # bit), 'EMPTY' (no fields), or 'ERROR' (read raises, as a locked/-605 MFN does).
    64 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 505 ─── -->
+
+```py
    65 | class FakeIrbisError(Exception):
    66 |     pass
    67 | 
    68 | 
-```
-
-<!-- ─── страница 484 ─── -->
-
-```py
    69 | class FakeIrbis:
    70 |     def __init__(self, dbs):
    71 |         # dbs: {db_name: [record-or-sentinel, …]} 1-indexed by position+1
@@ -29376,15 +30650,15 @@
   117 | 
   118 | 
   119 | def _reader(mfn, ticket, surname, name='', patronymic='', email='', category='В01',
+```
+
+<!-- ─── страница 506 ─── -->
+
+```py
   120 |             status=''):
   121 |     fields = [_fld('30', text=ticket), _fld('920', text='RDR'),
   122 |               _fld('50', text=category)]
   123 |     if surname:
-```
-
-<!-- ─── страница 485 ─── -->
-
-```py
   124 |         fields.append(_fld('10', text=surname))
   125 |     if name:
   126 |         fields.append(_fld('11', text=name))
@@ -29436,15 +30710,15 @@
   172 |     check('910^b inventory preserved', rec['910'][0]['b'] == '1024365')
   173 |     check('910^a status preserved', rec['910'][0]['a'] == '0')
   174 |     check('910^d location preserved', rec['910'][0]['d'] == 'ХР')
+```
+
+<!-- ─── страница 507 ─── -->
+
+```py
   175 |     # idempotency stamp present.
   176 |     stamp = [i for i in rec[SOURCE_MFN_FIELD] if isinstance(i, dict) and SOURCE_MFN_SUB in i]
   177 |     check('source-MFN idempotency stamp written', stamp and stamp[0][SOURCE_MFN_SUB] == '1')
   178 | 
-```
-
-<!-- ─── страница 486 ─── -->
-
-```py
   179 |     # findable by the indexed prefixes.
   180 |     check('findable by T= (title)', t.catalog.search('IBIS', 'T=Основы каталогизации')['total'] == 1)
   181 |     check('findable by A= (author 700^a)', t.catalog.search('IBIS', 'A=Петров П.П.')['total'] == 1)
@@ -29496,15 +30770,15 @@
   227 |     check('catalog STILL holds 2 (no dupes)', t.catalog.count('IBIS') == 2)
   228 |     check('re-run did not mint new mfns', set(t.catalog.list_mfns('IBIS')) == mfns_after_1)
   229 |     check('search still finds exactly one of each',
+```
+
+<!-- ─── страница 508 ─── -->
+
+```py
   230 |           t.catalog.search('IBIS', 'IN=5555')['total'] == 1
   231 |           and t.catalog.search('IBIS', 'IN=6666')['total'] == 1)
   232 | 
   233 | 
-```
-
-<!-- ─── страница 487 ─── -->
-
-```py
   234 | # --------------------------------------------------------------------------- #
   235 | # 4. Reader migration: ticket + category, PII ENCRYPTED at rest, idempotent.
   236 | # --------------------------------------------------------------------------- #
@@ -29556,15 +30830,15 @@
   282 | # --------------------------------------------------------------------------- #
   283 | def dry_run_checks():
   284 |     print('-- dry-run reads + reports but writes nothing')
+```
+
+<!-- ─── страница 509 ─── -->
+
+```py
   285 |     src = FakeIrbis({
   286 |         'IBIS': [_bib(1, 'Сухой прогон', 'Автор С.', '7777'),
   287 |                  _bib(2, 'Второй', 'Автор В.', '8888')],
   288 |         'RDR': [_reader(1, '333', 'Секретов', 'Сергей', email='s@example.ru')],
-```
-
-<!-- ─── страница 488 ─── -->
-
-```py
   289 |     })
   290 |     t = _fresh_targets()
   291 |     rep = Migrator(src, t, dry_run=True).run(dbs=('IBIS', 'RDR'), catalog_db='IBIS')
@@ -29616,15 +30890,15 @@
   337 |     check('redact handles short value', redact('А') == 'А***')
   338 |     check('redact empty -> empty', redact('') == '' and redact(None) == '')
   339 | 
+```
+
+<!-- ─── страница 510 ─── -->
+
+```py
   340 |     # units: mapping of a reader with no PII still yields a ticket.
   341 |     mapped = map_reader_record(_reader(1, '555', '', ''))
   342 |     check('reader map keeps ticket with no PII', mapped['ticket'] == '555')
   343 |     check('reader display name empty when no name parts',
-```
-
-<!-- ─── страница 489 ─── -->
-
-```py
   344 |           _reader_display_name(mapped['pii']) == '')
   345 | 
   346 |     # units: a catalog record with no source mfn maps without an idempotency stamp.
@@ -29681,15 +30955,15 @@
    27 | import sys
    28 | 
    29 | sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+```
+
+<!-- ─── страница 511 ─── -->
+
+```py
    30 | 
    31 | from access.authz import GUEST_GRANTS, READER_GRANTS
    32 | from access.circulation import CirculationStore
    33 | from access.store import AccessStore
-```
-
-<!-- ─── страница 490 ─── -->
-
-```py
    34 | from access.catalog import CatalogStore
    35 | 
    36 | from tools.migrate_irbis import (
@@ -29741,15 +31015,15 @@
    82 |     return {'mfn': mfn, 'status': '', 'fields': [
    83 |         _fld('30', text=ticket), _fld('920', text='RDR'),
    84 |         _fld('50', text='В01'), _fld('10', text=surname),
+```
+
+<!-- ─── страница 512 ─── -->
+
+```py
    85 |         _fld('555', text='нештатное читательское поле'),                        # доппole RDR
    86 |     ]}
    87 | 
    88 | 
-```
-
-<!-- ─── страница 491 ─── -->
-
-```py
    89 | class FakeIrbisError(Exception):
    90 |     pass
    91 | 
@@ -29801,15 +31075,15 @@
   137 |     access = AccessStore(':memory:')
   138 |     catalog = CatalogStore(':memory:', access_store=access)
   139 |     circ = CirculationStore(':memory:')
+```
+
+<!-- ─── страница 513 ─── -->
+
+```py
   140 |     return Targets(catalog, circ, access, catalog_db='IBIS', tenant='public')
   141 | 
   142 | 
   143 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 492 ─── -->
-
-```py
   144 | # 1. Интроспекция — ДВУХФАЗНАЯ (#225):
   145 | #    фаза 1 (без dbs) = быстрый список БД с числом записей, БЕЗ инвентаря полей;
   146 | #    фаза 2 (с dbs)   = инвентарь полей с флагом custom только для этих БД.
@@ -29861,15 +31135,15 @@
   192 |          'RDR': [_reader(1, '111', 'Иванов'), _reader(2, '222', 'Петров')]},
   193 |         names={'IBIS': 'Электронный каталог', 'RDR': 'Читатели'})
   194 | 
+```
+
+<!-- ─── страница 514 ─── -->
+
+```py
   195 |     plan = introspect(src, dbs=['IBIS'])   # с dbs -> фаза 2
   196 |     check('фаза 2: разобрана только запрошенная БД',
   197 |           [d['code'] for d in plan['databases']] == ['IBIS'])
   198 |     ibis = plan['databases'][0]
-```
-
-<!-- ─── страница 493 ─── -->
-
-```py
   199 |     check('IBIS: recordCount по-прежнему == 2', ibis['recordCount'] == 2)
   200 | 
   201 |     by_tag = {f['tag']: f for f in ibis['fields']}
@@ -29921,15 +31195,15 @@
   247 |     recs = [_bib_with_custom(i, 'Книга %d' % i) for i in range(1, big + 1)]
   248 |     counting = _CountingSource({'IBIS': recs}, names={'IBIS': 'Каталог'})
   249 |     plan = introspect(counting, dbs=['IBIS'])
+```
+
+<!-- ─── страница 515 ─── -->
+
+```py
   250 |     ibis = plan['databases'][0]
   251 |     check('recordCount отражает всю БД (max_mfn)', ibis['recordCount'] == big)
   252 |     check('прочитано НЕ больше INSPECT_SAMPLE_SIZE записей',
   253 |           counting.reads <= INSPECT_SAMPLE_SIZE)
-```
-
-<!-- ─── страница 494 ─── -->
-
-```py
   254 |     check('прочитано ровно INSPECT_SAMPLE_SIZE (выборка заполнена)',
   255 |           counting.reads == INSPECT_SAMPLE_SIZE)
   256 |     # явный sample выше предела всё равно режется до INSPECT_SAMPLE_SIZE.
@@ -29981,15 +31255,15 @@
   302 |     t = _fresh_targets()
   303 |     rep = Migrator(src, t).migrate_catalog(src_db='IBIS')
   304 |     check('запись загружена', rep['records_loaded'] == 1 and t.catalog.count('IBIS') == 1)
+```
+
+<!-- ─── страница 516 ─── -->
+
+```py
   305 |     # достать загруженную запись
   306 |     rec = None
   307 |     for mfn in t.catalog.list_mfns('IBIS'):
   308 |         rec = t.catalog.get('IBIS', mfn)
-```
-
-<!-- ─── страница 495 ─── -->
-
-```py
   309 |         break
   310 |     check('кастомное поле 996 сохранено в каталоге', rec is not None and '996' in rec)
   311 |     check('кастомное подполе 996^q сохранено',
@@ -30041,15 +31315,15 @@
   357 |     tags = {f['tag'] for f in parsed['fields']}
   358 |     check('bridge сохранил все теги (вкл. доппole 996)', {'200', '700', '996', '920'} <= tags)
   359 | 
+```
+
+<!-- ─── страница 517 ─── -->
+
+```py
   360 |     # интроспекция поверх LocalSource распознаёт доппole.
   361 |     plan = introspect(src, dbs=['IBIS'])
   362 |     ibis = plan['databases'][0]
   363 |     by_tag = {f['tag']: f for f in ibis['fields']}
-```
-
-<!-- ─── страница 496 ─── -->
-
-```py
   364 |     check('LOCAL: 996 помечено custom', by_tag['996']['custom'] is True)
   365 |     sub200 = {s['code']: s for s in by_tag['200']['subfields']}
   366 |     check('LOCAL: 200^z помечено custom', sub200['z']['custom'] is True)
@@ -30101,15 +31375,15 @@
   412 |         f['tag'] == '996' and f['custom'] for f in d['fields']))
   413 |     check('фаза 2 LOCAL: прочитано НЕ больше выборки (крупная БД не материализована)',
   414 |           adapter2.yielded <= INSPECT_SAMPLE_SIZE + 1)
+```
+
+<!-- ─── страница 518 ─── -->
+
+```py
   415 | 
   416 | 
   417 | def canonical_bridge_checks():
   418 |     print('-- bridge: canonical_to_parsed сохраняет поля и подполя')
-```
-
-<!-- ─── страница 497 ─── -->
-
-```py
   419 |     rec = {'101': ['rus'], '200': [{'a': 'Заглавие', 'f': 'отв.'}],
   420 |            '910': [{'a': '0', 'b': '123'}, {'a': '1', 'b': '456'}]}
   421 |     parsed = canonical_to_parsed(5, rec, status='')
@@ -30161,15 +31435,15 @@
   467 |     os.environ['ACCESS_DB'] = ':memory:'
   468 |     os.environ['CATALOG_DB'] = ':memory:'
   469 |     os.environ['CIRC_DB'] = ':memory:'
+```
+
+<!-- ─── страница 519 ─── -->
+
+```py
   470 |     import importlib
   471 |     import core as _core
   472 |     importlib.reload(_core)
   473 |     api = _core.Api()
-```
-
-<!-- ─── страница 498 ─── -->
-
-```py
   474 |     return api, _core
   475 | 
   476 | 
@@ -30221,15 +31495,15 @@
   522 |     try:
   523 |         H = _super(api)
   524 |         # ФАЗА 1 (без dbs): быстрый список БД с числом записей, БЕЗ инвентаря полей.
+```
+
+<!-- ─── страница 520 ─── -->
+
+```py
   525 |         body = {'mode': 'network',
   526 |                 'source': {'host': 'src.example', 'port': 6666,
   527 |                            'user': 'MIGRATE', 'pass': 'СЕКРЕТ-ПАРОЛЬ'}}
   528 |         st, p = api.route('POST', '/api/admin/migrate/inspect', {}, body, H)
-```
-
-<!-- ─── страница 499 ─── -->
-
-```py
   529 |         check('inspect фаза 1 -> 200', st == 200)
   530 |         dbs = p['data']['databases']
   531 |         check('inspect фаза 1: перечислены БД', {d['code'] for d in dbs} == {'IBIS', 'RDR'})
@@ -30281,15 +31555,15 @@
   577 | 
   578 | 
   579 | def run_endpoint_checks():
+```
+
+<!-- ─── страница 521 ─── -->
+
+```py
   580 |     print('-- эндпойнт POST /api/admin/migrate/run (super-admin)')
   581 |     api, _core = _api()
   582 |     _mig, orig, captured = _patch_source(api)
   583 |     try:
-```
-
-<!-- ─── страница 500 ─── -->
-
-```py
   584 |         H = _super(api)
   585 |         # dry-run: читает + считает, НИЧЕГО не пишет.
   586 |         body = {'mode': 'network', 'tenant': 'public', 'dbs': ['IBIS', 'RDR'],
@@ -30341,15 +31615,15 @@
   632 |         H = _super(api)
   633 |         st, p = api.route('POST', '/api/admin/migrate/inspect', {},
   634 |                           {'mode': 'local', 'source': {'path': 'C:/IRBIS64/Datai'}}, H)
+```
+
+<!-- ─── страница 522 ─── -->
+
+```py
   635 |         check('inspect local (адаптер не готов) -> 503', st == 503)
   636 |         check('inspect local: код ошибки not_ready',
   637 |               p.get('error', {}).get('code') == 'not_ready')
   638 |         check('inspect local: сообщение по-русски «не готов»',
-```
-
-<!-- ─── страница 501 ─── -->
-
-```py
   639 |               'не готов' in p.get('error', {}).get('message', ''))
   640 |     finally:
   641 |         _mig._load_local_adapter = orig
@@ -30401,15 +31675,15 @@
   687 |     migrate_auth_checks()
   688 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   689 |     sys.exit(1 if FAIL[0] else 0)
+```
+
+<!-- ─── страница 523 ─── -->
+
+```py
   690 | 
   691 | 
   692 | if __name__ == '__main__':
   693 |     main()
-```
-
-<!-- ─── страница 502 ─── -->
-
-```py
 ```
 
 ### Файл: `irbis-web/backend/tests/test_notifications.py`  · строк: 332
@@ -30466,15 +31740,15 @@
    49 | # --------------------------------------------------------------------------- #
    50 | # 1. Event catalog.
    51 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 524 ─── -->
+
+```py
    52 | # Every event CirculationEngine._emit raises (grep circulation.py for `_emit(`).
    53 | # A name here with no catalog entry is an intent that falls through silently —
    54 | # rendered/sent never. Keep this list in lock-step with circulation.py.
    55 | CIRCULATION_EVENTS = (
-```
-
-<!-- ─── страница 503 ─── -->
-
-```py
    56 |     'hold_ready', 'due_soon', 'overdue', 'fine_charged',
    57 |     'renewal_confirmed', 'fine_paid', 'lost_confirmed', 'staff_alert',
    58 | )
@@ -30526,15 +31800,15 @@
   104 |         q.enqueue('not_a_real_event', 'r1', {})
   105 |     except KeyError:
   106 |         raised = True
+```
+
+<!-- ─── страница 525 ─── -->
+
+```py
   107 |     check('enqueue rejects unknown event', raised)
   108 | 
   109 | 
   110 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 504 ─── -->
-
-```py
   111 | # 2. Rendering — stdlib fallback (PFT/A1 not built yet).
   112 | # --------------------------------------------------------------------------- #
   113 | def render_checks():
@@ -30586,15 +31860,15 @@
   159 |     check('no double-send on reprocess', len(email.sent) == 1)
   160 | 
   161 | 
+```
+
+<!-- ─── страница 526 ─── -->
+
+```py
   162 | # --------------------------------------------------------------------------- #
   163 | # 4. Dedup prevents double-send.
   164 | # --------------------------------------------------------------------------- #
   165 | def dedup_checks():
-```
-
-<!-- ─── страница 505 ─── -->
-
-```py
   166 |     print('-- dedup (idempotent enqueue)')
   167 |     q = _q()
   168 |     email = nt.MemoryChannel('email')
@@ -30646,15 +31920,15 @@
   214 |     res2 = q.enqueue('overdue', 'reader-9', {'title': 'X', 'days_overdue': 3,
   215 |                                              'ref': 'loan-1'}, prefs=prefs)
   216 |     check('non-opted event still queued', res2['status'] == 'pending')
+```
+
+<!-- ─── страница 527 ─── -->
+
+```py
   217 | 
   218 |     # global '*' opt-out blocks everything
   219 |     q2 = _q()
   220 |     allp = nt.Preferences(opted_out={'*'})
-```
-
-<!-- ─── страница 506 ─── -->
-
-```py
   221 |     r = q2.enqueue('hold_ready', 'r', {'title': 'T', 'ref': 'h1'}, prefs=allp)
   222 |     check('global opt-out suppresses any event', r['status'] == 'suppressed')
   223 | 
@@ -30706,15 +31980,15 @@
   269 |     check('email stub outbox empty', len(em.outbox) == 0)
   270 | 
   271 | 
+```
+
+<!-- ─── страница 528 ─── -->
+
+```py
   272 | # --------------------------------------------------------------------------- #
   273 | # 8. Retry increments attempts; exhausted chain -> failed.
   274 | # --------------------------------------------------------------------------- #
   275 | def retry_checks():
-```
-
-<!-- ─── страница 507 ─── -->
-
-```py
   276 |     print('-- retry / attempts counter')
   277 |     # Channel fails once then succeeds; no fallback wired, so the row must
   278 |     # re-queue (attempts++) and deliver on the next process_once.
@@ -30766,15 +32040,15 @@
   324 |     preference_checks()
   325 |     fallback_checks()
   326 |     retry_checks()
+```
+
+<!-- ─── страница 529 ─── -->
+
+```py
   327 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   328 |     sys.exit(1 if FAIL[0] else 0)
   329 | 
   330 | 
-```
-
-<!-- ─── страница 508 ─── -->
-
-```py
   331 | if __name__ == '__main__':
   332 |     main()
 ```
@@ -30831,15 +32105,15 @@
    47 |         print('  FAIL', name)
    48 | 
    49 | 
+```
+
+<!-- ─── страница 530 ─── -->
+
+```py
    50 | def _q(catalog=None):
    51 |     """Свежая in-memory очередь (каждый тест изолирован)."""
    52 |     return nt.NotificationQueue(':memory:', catalog=catalog)
    53 | 
-```
-
-<!-- ─── страница 509 ─── -->
-
-```py
    54 | 
    55 | # --------------------------------------------------------------------------- #
    56 | # 1. enqueue → dispatch → sent (+ журнал доставки).
@@ -30891,15 +32165,15 @@
   102 |     prefs = nt.Preferences(channels={'hold_ready': ['email', 'inapp']})
   103 |     res = q.enqueue('hold_ready', 'reader-7',
   104 |                     {'reader_name': 'Пётр', 'title': 'Мёртвые души',
+```
+
+<!-- ─── страница 531 ─── -->
+
+```py
   105 |                      'hold_until': '2026-07-01', 'pickup': 'Зал', 'ref': 'h-7'},
   106 |                     prefs=prefs)
   107 | 
   108 |     agg = q.dispatch({'email': email, 'inapp': inapp})
-```
-
-<!-- ─── страница 510 ─── -->
-
-```py
   109 |     check('доставлено через in-app fallback', agg['sent'] == 1)
   110 |     check('in-app принял уведомление', len(inapp.delivered) == 1)
   111 |     check('email-заглушка ничего не отправила', len(email.outbox) == 0)
@@ -30951,15 +32225,15 @@
   157 | 
   158 |     agg = q.dispatch({'email': flaky})
   159 |     row = q.get(res['id'])
+```
+
+<!-- ─── страница 532 ─── -->
+
+```py
   160 |     check('транзиентный канал в итоге доставил', row['status'] == 'sent')
   161 |     check('диспетч отчитался об одной доставке', agg['sent'] == 1)
   162 |     check('были ретраи перед доставкой', agg['retried'] >= 1)
   163 |     check('всего попыток канала == 3 (2 промаха + 1 успех)', flaky.attempts == 3)
-```
-
-<!-- ─── страница 511 ─── -->
-
-```py
   164 |     # журнал: одна строка на канал, tries отражает счёт попыток
   165 |     log = q.delivery_log(res['id'])
   166 |     check('журнал: одна строка email (без задвоения канала)', len(log) == 1)
@@ -31011,15 +32285,15 @@
   212 |     c.execute("UPDATE notification SET status='pending', next_attempt_at=0 WHERE id=?",
   213 |               (res['id'],))
   214 |     c.commit()
+```
+
+<!-- ─── страница 533 ─── -->
+
+```py
   215 |     a3 = q.dispatch({'email': email})
   216 |     check('повторный pending: канал-журнал блокирует второй send',
   217 |           len(email.sent) == 1)
   218 |     row = q.get(res['id'])
-```
-
-<!-- ─── страница 512 ─── -->
-
-```py
   219 |     check('строка снова sent (за счёт журнала, без новой отправки)',
   220 |           row['status'] == 'sent')
   221 |     check('журнал по-прежнему одна строка', len(q.delivery_log(res['id'])) == 1)
@@ -31071,15 +32345,15 @@
   267 |     # in-app переопределяет deliver напрямую (получает весь notification)
   268 |     inapp = nt.InAppChannel()
   269 |     r = inapp.deliver(notice)
+```
+
+<!-- ─── страница 534 ─── -->
+
+```py
   270 |     check('in-app deliver -> ok', r.ok is True)
   271 |     check('in-app получил весь notification (event/recipient)',
   272 |           inapp.delivered[0]['event'] == 'hold_ready'
   273 |           and inapp.delivered[0]['recipient'] == 'r1')
-```
-
-<!-- ─── страница 513 ─── -->
-
-```py
   274 | 
   275 | 
   276 | # --------------------------------------------------------------------------- #
@@ -31136,15 +32410,15 @@
    12 |   1. Field substitution: v200^a, whole-field v101, v200^* first subfield, fragment.
    13 |   2. Repeating fields: all instances of v910^b, repeatable |…| literals, prefix/suffix.
    14 |   3. IF / THEN / ELSE / FI: 920-branching with '=' and ':' (contains), nesting.
+```
+
+<!-- ─── страница 535 ─── -->
+
+```py
    15 |   4. Concatenation: ',' and '+', conditional/unconditional literals.
    16 |   5. UNIFOR implemented: 'C' (ISBN/ISSN checksum — the code ФЛК reuses), '3' (date
    17 |      today, via ctx['now']), 'Av…#n' (Nth occurrence), 'Q'/'9' string ops.
    18 |   5b. UNIFOR deepened batch: date '36'/'37'/'38' (month name nom/gen/eng),
-```
-
-<!-- ─── страница 514 ─── -->
-
-```py
    19 |      '3A' day-of-year, '3B' date±days, '3C' date difference; 'E'/'F' first/keep-N
    20 |      words, 'G' substring up-to/from a marker (#/$ wildcards), 'T' translit
    21 |      cyrillic→latin, 'L' term-ending marker strip, '0' full-record dump, '+6'
@@ -31196,15 +32470,15 @@
    67 |     print('-- field substitution')
    68 |     rec = _book()
    69 |     check('v200^a -> title', pft_eval('v200^a', rec) == 'Основы каталогизации')
+```
+
+<!-- ─── страница 536 ─── -->
+
+```py
    70 |     check('v101 whole-field -> rus', pft_eval('v101', rec) == 'rus')
    71 |     check('v200^f -> author', pft_eval('v200^f', rec) == 'Иванова И.И.')
    72 |     check('v200^* -> first subfield', pft_eval('v200^*', rec) == 'Основы каталогизации')
    73 |     check('absent subfield -> empty', pft_eval('v200^z', rec) == '')
-```
-
-<!-- ─── страница 515 ─── -->
-
-```py
    74 |     check('absent field -> empty', pft_eval('v700^a', rec) == '')
    75 |     # fragment v…*off.len (0-based)
    76 |     check('fragment v101*0.2 -> "ru"', pft_eval('v101*0.2', rec) == 'ru')
@@ -31256,15 +32530,15 @@
   122 |     nested = "if v920:'NJ' then if v101='rus' then 'РУС' else 'X' fi else 'NO' fi"
   123 |     check('nested if (NJ + rus)', pft_eval(nested, njrec) == 'РУС')
   124 |     # missing ELSE: no output when condition false
+```
+
+<!-- ─── страница 537 ─── -->
+
+```py
   125 |     check('if without else, false -> empty',
   126 |           pft_eval("if v920='J' then 'журнал' fi", rec) == '')
   127 |     # predicate p()/a() in condition
   128 |     check('p(v200^a) true branch',
-```
-
-<!-- ─── страница 516 ─── -->
-
-```py
   129 |           pft_eval("if p(v200^a) then 'есть' else 'нет' fi", rec) == 'есть')
   130 |     check('a(v700) (absent) true branch',
   131 |           pft_eval("if a(v700) then 'нет автора' else 'есть' fi", rec) == 'нет автора')
@@ -31316,15 +32590,15 @@
   177 |     # direct API check of the shared algorithm
   178 |     check('isbn_issn_ok valid ISBN-13', pft.isbn_issn_ok('978-0-306-40615-7'))
   179 |     check('isbn_issn_ok rejects bad', not pft.isbn_issn_ok('978-0-306-40615-0'))
+```
+
+<!-- ─── страница 538 ─── -->
+
+```py
   180 | 
   181 |     # '3' — date today (via ctx['now'] for determinism).
   182 |     fixed = datetime.datetime(2026, 6, 21, 9, 30, 0)
   183 |     check("&unifor('3') -> YYYYMMDD",
-```
-
-<!-- ─── страница 517 ─── -->
-
-```py
   184 |           pft_eval("&unifor('3')", rec, {'now': fixed}) == '20260621')
   185 |     check("&unifor('30') -> year",
   186 |           pft_eval("&unifor('30')", rec, {'now': fixed}) == '2026')
@@ -31376,15 +32650,15 @@
   232 |     check("&unifor('3B20260101,10') -> 20260111",
   233 |           pft_eval("&unifor('3B20260101,10')", rec) == '20260111')
   234 |     check("&unifor('3B20260301,-1') -> 20260228",
+```
+
+<!-- ─── страница 539 ─── -->
+
+```py
   235 |           pft_eval("&unifor('3B20260301,-1')", rec) == '20260228')
   236 |     # 3C — whole-day difference date1-date2; non-date arg -> '0'.
   237 |     check("&unifor('3C20260621,20260601') -> 20",
   238 |           pft_eval("&unifor('3C20260621,20260601')", rec) == '20')
-```
-
-<!-- ─── страница 518 ─── -->
-
-```py
   239 |     check("&unifor('3C') bad args -> 0",
   240 |           pft_eval("&unifor('3Cxxx,yyy')", rec) == '0')
   241 | 
@@ -31436,15 +32710,15 @@
   287 |     print('-- unifor misc (0 / +6 / +3E / +3D)')
   288 |     rec = {'200': [{'a': 'T'}], '101': 'rus', '300': 'Москва'}
   289 |     # 0 — full-record dump: every field as 'tag#value' lines.
+```
+
+<!-- ─── страница 540 ─── -->
+
+```py
   290 |     dump = pft_eval("&unifor('0')", rec)
   291 |     check("&unifor('0') dumps all tags",
   292 |           '200#T' in dump and '101#rus' in dump and '300#Москва' in dump)
   293 |     check("&unifor('0') on empty record -> ''",
-```
-
-<!-- ─── страница 519 ─── -->
-
-```py
   294 |           pft_eval("&unifor('0')", {}) == '')
   295 |     # +6 — record status: 1 live, 0 logically deleted (from ctx['deleted']).
   296 |     check("&unifor('+6') live record -> 1",
@@ -31496,15 +32770,15 @@
   342 | # --------------------------------------------------------------------------- #
   343 | # 7. Dummy output, numeric functions, predicates.
   344 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 541 ─── -->
+
+```py
   345 | def func_checks():
   346 |     print('-- dummy / numeric functions')
   347 |     rec = _book()
   348 |     # dummy d<tag>: emit literal only if field present.
-```
-
-<!-- ─── страница 520 ─── -->
-
-```py
   349 |     check('d200 present -> literal emitted',
   350 |           pft_eval('"[есть заглавие]"d200', rec) == '[есть заглавие]')
   351 |     check('n700 absent -> literal emitted',
@@ -31556,15 +32830,15 @@
   397 |     repeat_checks()
   398 |     if_checks()
   399 |     concat_checks()
+```
+
+<!-- ─── страница 542 ─── -->
+
+```py
   400 |     unifor_checks()
   401 |     unifor_date_checks()
   402 |     unifor_string_checks()
   403 |     unifor_misc_checks()
-```
-
-<!-- ─── страница 521 ─── -->
-
-```py
   404 |     degrade_checks()
   405 |     func_checks()
   406 |     golden_checks()
@@ -31621,15 +32895,15 @@
    40 | PASS = [0]
    41 | FAIL = [0]
    42 | 
+```
+
+<!-- ─── страница 543 ─── -->
+
+```py
    43 | 
    44 | def check(name, cond):
    45 |     if cond:
    46 |         PASS[0] += 1
-```
-
-<!-- ─── страница 522 ─── -->
-
-```py
    47 |         print('  ok  ', name)
    48 |     else:
    49 |         FAIL[0] += 1
@@ -31681,15 +32955,15 @@
    95 |     except billing.BillingError:
    96 |         check('unknown plan raises BillingError', True)
    97 | 
+```
+
+<!-- ─── страница 544 ─── -->
+
+```py
    98 |     # plans_catalog shape.
    99 |     cat = billing.plans_catalog()
   100 |     check('plans_catalog lists all 3', {c['plan'] for c in cat} == {'free', 'standard', 'pro'})
   101 |     check('catalog item carries plan/title/modules/limits',
-```
-
-<!-- ─── страница 523 ─── -->
-
-```py
   102 |           all(set(c) >= {'plan', 'title', 'modules', 'limits'} for c in cat))
   103 | 
   104 | 
@@ -31741,15 +33015,15 @@
   150 |     check('sqlite path: postgres flag False', report['postgres'] is False)
   151 | 
   152 |     # 1. roles seeded (administrator role exists with its grants).
+```
+
+<!-- ─── страница 545 ─── -->
+
+```py
   153 |     roles = {r['name'] for r in st.list_roles()}
   154 |     check('administrator role seeded', 'administrator' in roles)
   155 |     check('cataloger role seeded', 'cataloger' in roles)
   156 | 
-```
-
-<!-- ─── страница 524 ─── -->
-
-```py
   157 |     # 2. vocabularies seeded (system dictionaries present + values).
   158 |     vocabs = {v['name'] for v in st.list_vocabularies()}
   159 |     check('system vocab jz.mnu seeded', 'jz.mnu' in vocabs)
@@ -31801,15 +33075,15 @@
   205 |     # public plan reads back DEFAULT_PLAN (fail-open).
   206 |     check('public get_tenant_plan == DEFAULT_PLAN',
   207 |           billing.get_tenant_plan('public') == billing.DEFAULT_PLAN)
+```
+
+<!-- ─── страница 546 ─── -->
+
+```py
   208 |     # unknown plan raises.
   209 |     try:
   210 |         billing.set_tenant_plan(st, 'public', 'nope')
   211 |         check('set_tenant_plan unknown raises', False)
-```
-
-<!-- ─── страница 525 ─── -->
-
-```py
   212 |     except billing.BillingError:
   213 |         check('set_tenant_plan unknown raises', True)
   214 | 
@@ -31861,15 +33135,15 @@
   260 | 
   261 | 
   262 | def _reader(api, ticket='111'):
+```
+
+<!-- ─── страница 547 ─── -->
+
+```py
   263 |     tok, _ = api._new_session('reader', 'RI=%s' % ticket, READER_GRANTS,
   264 |                               tenant='public', rdr_mfn=1)
   265 |     return {'authorization': 'Bearer ' + tok}
   266 | 
-```
-
-<!-- ─── страница 526 ─── -->
-
-```py
   267 | 
   268 | def tenants_route_checks():
   269 |     print('-- routes: GET /api/admin/tenants, POST /api/admin/tenant')
@@ -31921,15 +33195,15 @@
   315 |     check('GET /api/admin/billing -> 200', st == 200)
   316 |     d = p['data']
   317 |     check('billing carries plan/limits/usage/modules',
+```
+
+<!-- ─── страница 548 ─── -->
+
+```py
   318 |           all(k in d for k in ('plan', 'limits', 'usage', 'modules')))
   319 |     check('billing limits cover every resource',
   320 |           set(d['limits']) == set(billing.LIMIT_RESOURCES))
   321 |     check('billing plan is a known plan', billing.is_plan(d['plan']))
-```
-
-<!-- ─── страница 527 ─── -->
-
-```py
   322 | 
   323 |     # Set a plan (dev: validated, modules echoed).
   324 |     st, p = api.route('POST', '/api/admin/billing/plan', {},
@@ -31981,15 +33255,15 @@
   370 |     st, p = api.route('POST', '/api/record/IBIS/0', {},
   371 |                       {'fields': [{'tag': '200', 'value': '^aТест'}]}, H)
   372 |     check('create under plan limit allowed (200)', st == 200)
+```
+
+<!-- ─── страница 549 ─── -->
+
+```py
   373 |     check('create returns the assigned mfn', st == 200 and p['data']['mfn'] == 43)
   374 |     check('create flagged created', st == 200 and p['data']['created'] is True)
   375 | 
   376 |     # If the count blows past a (hypothetical) tiny cap, check_limit blocks → 402.
-```
-
-<!-- ─── страница 528 ─── -->
-
-```py
   377 |     # We force it by pinning the plan via a direct check: the route uses the tenant's
   378 |     # plan, which on dev is standard; so we assert the helper itself blocks the same
   379 |     # input under 'free' (the route would 402 identically once a free plan is set).
@@ -32041,15 +33315,15 @@
   425 |     try:
   426 |         import psycopg
   427 |     except Exception:
+```
+
+<!-- ─── страница 550 ─── -->
+
+```py
   428 |         return False
   429 |     try:
   430 |         conn = psycopg.connect(dsn, connect_timeout=2)
   431 |         conn.close()
-```
-
-<!-- ─── страница 529 ─── -->
-
-```py
   432 |         return True
   433 |     except Exception:
   434 |         return False
@@ -32101,15 +33375,15 @@
   480 |               entitlements.is_module_enabled(slug, 'cataloging', dsn))
   481 | 
   482 |         # Re-plan to pro: acquisition becomes enabled (entitlements converge).
+```
+
+<!-- ─── страница 551 ─── -->
+
+```py
   483 |         billing.set_tenant_plan(tstore, slug, 'pro', dsn=dsn)
   484 |         check('[pg] re-plan pro enables acquisition',
   485 |               entitlements.is_module_enabled(slug, 'acquisition', dsn))
   486 |         check('[pg] re-plan pro recorded', billing.get_tenant_plan(slug, dsn) == 'pro')
-```
-
-<!-- ─── страница 530 ─── -->
-
-```py
   487 | 
   488 |         # Single-module override on top of the plan.
   489 |         entitlements.set_module(slug, 'acquisition', False, dsn)
@@ -32166,15 +33440,15 @@
     7 | scoped by ticket — nothing is written to the live ИРБИС server.
     8 | 
     9 | Covered (per the #222 contract):
+```
+
+<!-- ─── страница 552 ─── -->
+
+```py
    10 |   * HOLDS: place -> ``ready`` when a copy is free, ``queued``+position when taken; a
    11 |     second reader gets position 2; idempotent re-hold; list; cancel.
    12 |   * INBOX: a circulation-dispatched notice (real ``CirculationEngine._emit`` ->
    13 |     persistent queue) appears in the addressed reader's inbox; unread count drops
-```
-
-<!-- ─── страница 531 ─── -->
-
-```py
    14 |     after marking read (one + all); reader-scoped (one reader can't see another's).
    15 |   * SHELVES: the two system lists seed lazily on first GET; add / remove / dedup;
    16 |     create a custom list.
@@ -32226,15 +33500,15 @@
    62 |     api.circulation = circ.CirculationEngine(
    63 |         store=circ.CirculationStore(':memory:'), notifications=api.notifications)
    64 |     seam = brief or (lambda db, mfn: {'title': 'Заглавие %d' % mfn})
+```
+
+<!-- ─── страница 553 ─── -->
+
+```py
    65 |     api.holds = HoldService(api.access, catalog=None, brief_read=seam)
    66 |     api.shelves = ShelfService(api.access, brief_read=seam)
    67 |     return api, _core
    68 | 
-```
-
-<!-- ─── страница 532 ─── -->
-
-```py
    69 | 
    70 | def _reader(api, ticket='111'):
    71 |     _tok, sess = api._new_session('reader', 'RI=%s' % ticket, READER_GRANTS,
@@ -32286,15 +33560,15 @@
   117 |     st, payload = api.list_holds(r2)
   118 |     check('holds reader-scoped (r2 sees only its own)',
   119 |           len(payload['data']['items']) == 1 and
+```
+
+<!-- ─── страница 554 ─── -->
+
+```py
   120 |           payload['data']['items'][0]['holdId'] != hold1)
   121 | 
   122 |     # Cancel r1's hold -> cancelled; then r2 (still queued) is now alone.
   123 |     st, payload = api.cancel_hold(r1, {'holdId': hold1})
-```
-
-<!-- ─── страница 533 ─── -->
-
-```py
   124 |     check('cancel returns 200', st == 200)
   125 |     check('cancel reports cancelled', payload['data']['status'] == 'cancelled')
   126 |     st, payload = api.list_holds(r1)
@@ -32346,15 +33620,15 @@
   172 |     cstore = api.circulation.store
   173 |     cstore.add_reader('owner', category='В01')
   174 |     cstore.add_reader(ticket, category='В01')      # the reader, keyed by ticket
+```
+
+<!-- ─── страница 555 ─── -->
+
+```py
   175 |     DAY = circ.SECONDS_PER_DAY
   176 |     T0 = 1_700_000_000
   177 |     loan = api.circulation.checkout('owner', 'BK-1', T0).computed['loan']
   178 |     api.circulation.place_hold(ticket, 'BK-1', T0 + DAY)   # reader queues
-```
-
-<!-- ─── страница 534 ─── -->
-
-```py
   179 |     api.circulation.return_item(loan['id'], T0 + 2 * DAY)  # -> hold_ready to ticket
   180 | 
   181 |     # The dispatched notice is now in the persistent queue, addressed to ticket.
@@ -32406,15 +33680,15 @@
   227 |     by_id = {l['id']: l for l in lists}
   228 |     check('want is «Хочу прочитать» and system', by_id['want']['name'] == 'Хочу прочитать'
   229 |           and by_id['want']['system'] is True)
+```
+
+<!-- ─── страница 556 ─── -->
+
+```py
   230 |     check('fav is «Избранное» and system', by_id['fav']['name'] == 'Избранное'
   231 |           and by_id['fav']['system'] is True)
   232 |     check('system lists start empty', by_id['want']['items'] == [])
   233 | 
-```
-
-<!-- ─── страница 535 ─── -->
-
-```py
   234 |     # Add an item to 'want'; dedup on a repeated add.
   235 |     st, payload = api.shelf_add_item(r1, {'listId': 'want', 'db': 'IBIS', 'mfn': 10})
   236 |     check('add item returns 200', st == 200 and payload['data']['listId'] == 'want')
@@ -32466,15 +33740,15 @@
   282 |     guest = _guest(api)
   283 | 
   284 |     routes = [
+```
+
+<!-- ─── страница 557 ─── -->
+
+```py
   285 |         ('POST', '/api/hold', {'db': 'IBIS', 'mfn': 1}),
   286 |         ('GET', '/api/holds', None),
   287 |         ('POST', '/api/hold/cancel', {'holdId': 1}),
   288 |         ('GET', '/api/notifications', None),
-```
-
-<!-- ─── страница 536 ─── -->
-
-```py
   289 |         ('POST', '/api/notifications/read', {'all': True}),
   290 |         ('GET', '/api/shelves', None),
   291 |         ('POST', '/api/shelves', {'name': 'x'}),
@@ -32526,15 +33800,15 @@
   337 |     if not want:
   338 |         return
   339 |     try:
+```
+
+<!-- ─── страница 558 ─── -->
+
+```py
   340 |         from access.pgstore import PgAccessStore, default_pg_dsn
   341 |         st = PgAccessStore(os.environ.get('ACCESS_PG_DSN', default_pg_dsn()))
   342 |         st._conn().execute('TRUNCATE reader_hold, reader_shelf, reader_shelf_item '
   343 |                            'RESTART IDENTITY')
-```
-
-<!-- ─── страница 537 ─── -->
-
-```py
   344 |     except Exception as e:
   345 |         print('-- portal222 pg parity SKIPPED (%s: %s)'
   346 |               % (type(e).__name__, str(e).splitlines()[0]))
@@ -32591,15 +33865,15 @@
     2 | """Тесты материализации поля 40 RDR + архива RDR_ARH (рёбра 2.4/2.5).
     3 | 
     4 | Покрывает «связующую ткань» INTEGRATION_MAP, кластер 2:
+```
+
+<!-- ─── страница 559 ─── -->
+
+```py
     5 | 
     6 |   * [2.4] Материализация поля 40 — выдача отдаётся в структуре поля 40 RDR
     7 |     (``RQSTRDR.pft``): подполя ``^A``=903 (шифр), ``^B``=910^B (инв.№),
     8 |     ``^H``=910^H (штрих-код), ``^K``=910^D (место хранения), ``^D``=41 (дата
-```
-
-<!-- ─── страница 538 ─── -->
-
-```py
     9 |     выдачи), ``^E``=42 (срок), ``^F``=дата факт. возврата / ``******`` (долг),
    10 |     ``^G``=имя БД, ``^C``=brief, ``^U``=утеря. Это ДОП. представление поверх
    11 |     существующей loan-модели — её колонки/сценарии не меняются.
@@ -32651,15 +33925,15 @@
    57 |         print('  FAIL', name)
    58 | 
    59 | 
+```
+
+<!-- ─── страница 560 ─── -->
+
+```py
    60 | # --------------------------------------------------------------------------- #
    61 | # Фикстуры.
    62 | # --------------------------------------------------------------------------- #
    63 | def _seeded_access_store():
-```
-
-<!-- ─── страница 539 ─── -->
-
-```py
    64 |     st = AccessStore(':memory:')
    65 |     seed_vocab.seed_vocabularies(st, from_catalog=False)
    66 |     return st
@@ -32711,15 +33985,15 @@
   112 |                             catalog=cat, catalog_db='IBIS',
   113 |                             archive_on_return=archive_on_return)
   114 |     store.add_reader('R1', category='В01')
+```
+
+<!-- ─── страница 561 ─── -->
+
+```py
   115 |     return cat, store, eng, inv
   116 | 
   117 | 
   118 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 540 ─── -->
-
-```py
   119 | # [2.4] Структура поля 40 при выдаче — подполя из 903/910/41/42/БД.
   120 | # --------------------------------------------------------------------------- #
   121 | def field40_structure_checks():
@@ -32771,15 +34045,15 @@
   167 |     eng.mark_lost(loan_id, T0 + 70 * DAY, confirm=True, override_grant=True)
   168 |     loan = store.get_loan(loan_id)
   169 |     f40 = eng.loan_field40(loan)
+```
+
+<!-- ─── страница 562 ─── -->
+
+```py
   170 |     check('40^U=1 при подтверждённой утере', f40.get('U') == '1')
   171 | 
   172 | 
   173 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 541 ─── -->
-
-```py
   174 | # [2.4] Возврат: ^F переходит от ****** к дате факт. возврата.
   175 | # --------------------------------------------------------------------------- #
   176 | def field40_return_marker_checks():
@@ -32831,15 +34105,15 @@
   222 | 
   223 | 
   224 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 563 ─── -->
+
+```py
   225 | # [2.5] Архив RDR_ARH — opt-in при возврате.
   226 | # --------------------------------------------------------------------------- #
   227 | def archive_optin_checks():
   228 |     print('-- [2.5] архив RDR_ARH: opt-in при возврате')
-```
-
-<!-- ─── страница 542 ─── -->
-
-```py
   229 |     cat, store, eng, inv = _wired(archive_on_return=True)
   230 |     d = eng.checkout('R1', inv, T0)
   231 |     loan_id = d.computed['loan']['id']
@@ -32891,15 +34165,15 @@
   277 |     check('без флага: computed без archived', 'archived' not in dr.computed)
   278 |     check('без флага: loan returned=1 (как раньше)',
   279 |           store.get_loan(loan_id)['returned'] == 1)
+```
+
+<!-- ─── страница 564 ─── -->
+
+```py
   280 |     # каталожный flip 910^A 1→0 не сломан архивом
   281 |     check('без флага: каталог 910^A вернулся в FREE',
   282 |           cat.exemplar_status('IBIS', inv) == EXEMPLAR_FREE)
   283 | 
-```
-
-<!-- ─── страница 543 ─── -->
-
-```py
   284 | 
   285 | # --------------------------------------------------------------------------- #
   286 | # Back-compat: checkout/return/renew/лимиты/долг целы под новым кодом.
@@ -32951,15 +34225,15 @@
   332 |     print('-- back-compat: каталожный flip 910^A 0↔1 не задет полем 40')
   333 |     cat, store, eng, inv = _wired()
   334 |     d = eng.checkout('R1', inv, T0)
+```
+
+<!-- ─── страница 565 ─── -->
+
+```py
   335 |     check('выдача флипает 910^A 0→1',
   336 |           cat.exemplar_status('IBIS', inv) == EXEMPLAR_ISSUED)
   337 |     eng.return_item(d.computed['loan']['id'], T0 + 1 * DAY)
   338 |     check('возврат флипает 910^A 1→0',
-```
-
-<!-- ─── страница 544 ─── -->
-
-```py
   339 |           cat.exemplar_status('IBIS', inv) == EXEMPLAR_FREE)
   340 | 
   341 | 
@@ -33011,15 +34285,15 @@
   387 |         pgstore.deprovision_tenant(slug, dsn)
   388 |     except Exception:
   389 |         pass
+```
+
+<!-- ─── страница 566 ─── -->
+
+```py
   390 | 
   391 | 
   392 | def main():
   393 |     field40_structure_checks()
-```
-
-<!-- ─── страница 545 ─── -->
-
-```py
   394 |     field40_lost_checks()
   395 |     field40_return_marker_checks()
   396 |     field40_standalone_checks()
@@ -33076,15 +34350,15 @@
    34 | 
    35 | def check(name, cond):
    36 |     if cond:
+```
+
+<!-- ─── страница 567 ─── -->
+
+```py
    37 |         PASS[0] += 1
    38 |         print('  ok  ', name)
    39 |     else:
    40 |         FAIL[0] += 1
-```
-
-<!-- ─── страница 546 ─── -->
-
-```py
    41 |         print('  FAIL', name)
    42 | 
    43 | 
@@ -33136,15 +34410,15 @@
    89 |         for rec in self._readers.values():
    90 |             if rec['mfn'] == mfn:
    91 |                 return {'mfn': mfn, 'status': '0', 'version': '1',
+```
+
+<!-- ─── страница 568 ─── -->
+
+```py
    92 |                         'guid': None, 'fields': rec['fields']}
    93 |         return {'mfn': mfn, 'status': '0', 'version': '1', 'guid': None, 'fields': []}
    94 | 
    95 |     def read_terms(self, db, start, count=20):
-```
-
-<!-- ─── страница 547 ─── -->
-
-```py
    96 |         self._maybe_raise('read_terms')
    97 |         rows = self._terms.get(db, [])
    98 |         out = [(c, t) for (c, t) in rows if t >= start]
@@ -33196,15 +34470,15 @@
   144 |     check('MD5 верный (UPPER hex)', core.verify_reader_password('s3cret', md5.upper()))
   145 |     check('MD5 неверный', not core.verify_reader_password('nope', md5))
   146 |     check('пустой supplied -> False', not core.verify_reader_password('', 's3cret'))
+```
+
+<!-- ─── страница 569 ─── -->
+
+```py
   147 |     check('пустой stored -> False', not core.verify_reader_password('x', ''))
   148 |     # значение пароля выбирается из 130 (приоритет) либо 100
   149 |     r130 = {'fields': [_fld('130', 'aaa'), _fld('100', 'bbb')]}
   150 |     r100 = {'fields': [_fld('100', 'bbb')]}
-```
-
-<!-- ─── страница 548 ─── -->
-
-```py
   151 |     check('пароль читается из 130 (приоритет)', core._reader_password_value(r130) == 'aaa')
   152 |     check('пароль читается из 100 (фолбэк)', core._reader_password_value(r100) == 'bbb')
   153 |     check('нет поля пароля -> ""', core._reader_password_value({'fields': []}) == '')
@@ -33256,15 +34530,15 @@
   199 | 
   200 |     status, payload = api.auth_reader({'password': 'x'})
   201 |     check('без билета -> 400', status == 400)
+```
+
+<!-- ─── страница 570 ─── -->
+
+```py
   202 | 
   203 | 
   204 | def auth_reader_md5_checks():
   205 |     print('-- auth_reader: несолёный MD5 в RDR')
-```
-
-<!-- ─── страница 549 ─── -->
-
-```py
   206 |     md5 = hashlib.md5('letmein'.encode('utf-8')).hexdigest()
   207 |     fake = FakeIrbis(readers={
   208 |         '222': _reader_rec(7, pwd_tag='130', pwd_value=md5),   # поле 130 (ИРБИС64+)
@@ -33316,15 +34590,15 @@
   254 |     rows = api.access.recent_audit()
   255 |     check('аудит зафиксировал события auth.reader',
   256 |           any(r.get('function') == 'auth.reader' for r in rows))
+```
+
+<!-- ─── страница 571 ─── -->
+
+```py
   257 |     blob = repr(rows)
   258 |     check('пароль не попал в аудит (plaintext)', 'topsecret' not in blob)
   259 |     check('ошибочный ввод не попал в аудит', 'wrong-guess' not in blob)
   260 |     results = {r['result'] for r in rows if r.get('function') == 'auth.reader'}
-```
-
-<!-- ─── страница 550 ─── -->
-
-```py
   261 |     check('аудит содержит ok и denied', 'ok' in results and 'denied' in results)
   262 | 
   263 | 
@@ -33376,15 +34650,15 @@
   309 |     vals = [s['value'] for s in payload['data']['suggestions']]
   310 |     check('suggest не включает точный термин сам по себе',
   311 |           'ТОЛСТОЙ ЛЕВ' not in vals)
+```
+
+<!-- ─── страница 572 ─── -->
+
+```py
   312 | 
   313 |     # пустой q -> пустой список, 200
   314 |     status, payload = api.suggest(guest, 'IBIS', 'A=', '')
   315 |     check('suggest пустой q -> 200 + []',
-```
-
-<!-- ─── страница 551 ─── -->
-
-```py
   316 |           status == 200 and payload['data']['suggestions'] == [])
   317 | 
   318 |     # сервер недоступен (read_terms бросает) -> [], не 500
@@ -33436,15 +34710,15 @@
   364 | 
   365 | def did_you_mean_checks():
   366 |     print('-- /api/search: didYouMean на пустую выдачу')
+```
+
+<!-- ─── страница 573 ─── -->
+
+```py
   367 |     api, _core = _api(_fake_with_author_terms())
   368 |     _tok, guest = _guest(api)
   369 |     # запрос даёт 0 (опечатка): ждём поле didYouMean
   370 |     status, payload = api.search(guest, 'IBIS', '"A=ТОЛСТОЙ ЛЕВВ$"', 1, 20)
-```
-
-<!-- ─── страница 552 ─── -->
-
-```py
   371 |     check('search 0 результатов -> 200', status == 200 and payload['data']['total'] == 0)
   372 |     check('search добавил didYouMean на опечатку',
   373 |           'didYouMean' in payload['data'] and len(payload['data']['didYouMean']) >= 1)
@@ -33501,15 +34775,15 @@
    16 |      своим родственником; запись без ключей нужной стороны → пусто; несуществующий
    17 |      mfn → пусто без краха.
    18 | 
+```
+
+<!-- ─── страница 574 ─── -->
+
+```py
    19 | Дом-стиль (как test_catalog.py)::
    20 |   py -3.12 tests/test_record_links.py  -> 'ok …' + 'N passed, M failed', exit!=0
    21 | """
    22 | import os
-```
-
-<!-- ─── страница 553 ─── -->
-
-```py
    23 | import sys
    24 | 
    25 | sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -33561,15 +34835,15 @@
    71 | 
    72 | def _mfns(result):
    73 |     return {it['mfn'] for it in result['items']}
+```
+
+<!-- ─── страница 575 ─── -->
+
+```py
    74 | 
    75 | 
    76 | # --------------------------------------------------------------------------- #
    77 | # 9.1 статья ↔ журнал/сборник (463).
-```
-
-<!-- ─── страница 554 ─── -->
-
-```py
    78 | # --------------------------------------------------------------------------- #
    79 | def article_journal_checks():
    80 |     print('-- 9.1 статья ↔ журнал (463^c/^j ↔ 200^a/11^a)')
@@ -33621,15 +34895,15 @@
   126 |                                **{'481': [{'c': 'Собрание сочинений'}]}))
   127 |     kids = st.linked_records('IBIS', mv, 'children')
   128 |     check('многотомник children → оба тома', _mfns(kids) == {v1, v2})
+```
+
+<!-- ─── страница 576 ─── -->
+
+```py
   129 |     check('том host → сводная', mv in _mfns(st.linked_records('IBIS', v1, 'host')))
   130 | 
   131 | 
   132 | # --------------------------------------------------------------------------- #
-```
-
-<!-- ─── страница 555 ─── -->
-
-```py
   133 | # 4. Краевые: нормализация / self / пусто.
   134 | # --------------------------------------------------------------------------- #
   135 | def edge_checks():
@@ -33686,15 +34960,15 @@
    16 |      PUBLIC bibliographic bases (Config.public_dbs, default {IBIS}); a non-public
    17 |      db (RDR readers, LICH/PAY/RIGHT ПДн, RQST/CMPL service, LOG*) is refused 403
    18 |      on search/record/render/terms/showcase/rubricator/facets/cover/
+```
+
+<!-- ─── страница 577 ─── -->
+
+```py
    19 |      example-queries, and is hidden from /api/databases. STAFF keep access per
    20 |      their grants (the public confinement does not apply to them).
    21 | 
    22 | House style mirrors tests/test_discovery.py — a constructed ``Api`` (whose
-```
-
-<!-- ─── страница 556 ─── -->
-
-```py
    23 | constructor does NOT connect to ИРБИС) with stubs injected over ``api.irbis``.
    24 | Invoked by the tests/test_access.py runner via the generic ``module_checks``
    25 | loop, so the existing CI step that runs test_access.py also runs this suite with
@@ -33746,15 +35020,15 @@
    71 |     re-register is observed)."""
    72 | 
    73 |     def __init__(self, fail_plan=None, results=None):
+```
+
+<!-- ─── страница 578 ─── -->
+
+```py
    74 |         self._fail_plan = {k: list(v) for k, v in (fail_plan or {}).items()}
    75 |         self._results = results or {}
    76 |         self._calls = {}
    77 |         self.connected = True
-```
-
-<!-- ─── страница 557 ─── -->
-
-```py
    78 |         self._client = _FakeClient()
    79 |         self.reset_count = 0
    80 |         self.closed = False
@@ -33806,15 +35080,15 @@
   126 | def _resilient(fail_plan=None, results=None, retries=2, backoff=0.0):
   127 |     """Build a ResilientIrbis over a FlakySession (backoff 0 keeps tests fast)."""
   128 |     import core as _core
+```
+
+<!-- ─── страница 579 ─── -->
+
+```py
   129 |     importlib.reload(_core)
   130 |     sm = FlakySession(fail_plan=fail_plan, results=results)
   131 |     wrapper = _core.ResilientIrbis(sm, retries=retries, backoff=backoff)
   132 |     return wrapper, sm, _core
-```
-
-<!-- ─── страница 558 ─── -->
-
-```py
   133 | 
   134 | 
   135 | # --------------------------------------------------------------------------- #
@@ -33866,15 +35140,15 @@
   181 |         check('data code %d propagates unchanged' % code, raised == code)
   182 |         check('data code %d NOT retried (single attempt)' % code,
   183 |               sm.calls('read_record') == 1)
+```
+
+<!-- ─── страница 580 ─── -->
+
+```py
   184 | 
   185 | 
   186 | def retries_are_bounded_checks():
   187 |     print('-- ResilientIrbis: bounded retries (exhaustion raises)')
-```
-
-<!-- ─── страница 559 ─── -->
-
-```py
   188 |     from irbis.client import IrbisError
   189 |     # Every attempt fails with a connection error -> after retries exhausted, raise.
   190 |     w, sm, _ = _resilient(
@@ -33926,15 +35200,15 @@
   236 |     print('-- _is_stale_session classifier')
   237 |     import core as _core
   238 |     importlib.reload(_core)
+```
+
+<!-- ─── страница 581 ─── -->
+
+```py
   239 |     f = _core._is_stale_session
   240 |     check('-3337 is stale', f(-3337))
   241 |     check('-3338 is stale', f(-3338))
   242 |     check('-3300/-3349 range is stale', f(-3300) and f(-3349) and f(-3325))
-```
-
-<!-- ─── страница 560 ─── -->
-
-```py
   243 |     check('-140 (missing MFN) is NOT stale', not f(-140))
   244 |     check('-603 (deleted) is NOT stale', not f(-603))
   245 |     check('-202 (terms) is NOT stale', not f(-202))
@@ -33986,15 +35260,15 @@
   291 |     os.environ['JWT_SECRET'] = 'resilience-test-secret'
   292 |     os.environ.pop('IRBIS_PUBLIC_DBS', None)        # exercise the default {IBIS}
   293 |     import core as _core
+```
+
+<!-- ─── страница 582 ─── -->
+
+```py
   294 |     importlib.reload(_core)
   295 |     api = _core.Api()
   296 |     api.irbis = fake
   297 |     return api, _core
-```
-
-<!-- ─── страница 561 ─── -->
-
-```py
   298 | 
   299 | 
   300 | def _guest(api):
@@ -34046,15 +35320,15 @@
   346 |         check('guest search %s -> 403' % db, denied_g == 403)
   347 |         check('reader search %s -> 403' % db, denied_r == 403)
   348 |     # crucially the forbidden db never reached IRBIS (guard runs before the call)
+```
+
+<!-- ─── страница 583 ─── -->
+
+```py
   349 |     check('no forbidden db ever reached the IRBIS stub',
   350 |           not any(db in api.irbis.touched for db in _FORBIDDEN))
   351 | 
   352 | 
-```
-
-<!-- ─── страница 562 ─── -->
-
-```py
   353 | def public_db_guard_all_endpoints_checks():
   354 |     print('-- public-DB: guest 403 across every OPAC read endpoint on RDR/LICH')
   355 |     api, _core = _api(OpacFake())
@@ -34106,15 +35380,15 @@
   401 |     _t, guest = _guest(api)
   402 |     _tr, reader = _reader(api)
   403 |     _ts, staff = _staff(api)
+```
+
+<!-- ─── страница 584 ─── -->
+
+```py
   404 | 
   405 |     status, payload = api.databases(guest, with_counts=False)
   406 |     codes = {i['code'] for i in payload['data']['items']}
   407 |     check('guest /api/databases returns 200', status == 200)
-```
-
-<!-- ─── страница 563 ─── -->
-
-```py
   408 |     check('guest sees IBIS (public)', codes == {'IBIS'})
   409 |     check('guest does NOT see RDR/LICH/RQST',
   410 |           not ({'RDR', 'LICH', 'RQST'} & codes))
@@ -34166,15 +35440,15 @@
   456 |     print('-- route(): guest hitting non-public db via the real dispatch -> 403')
   457 |     menu = 'IBIS\nКаталог\nRDR\nЧитатели\n'
   458 |     api, _core = _api(OpacFake(dbmenu=menu))
+```
+
+<!-- ─── страница 585 ─── -->
+
+```py
   459 |     tok, _s = _guest(api)
   460 |     h = {'authorization': 'Bearer ' + tok}
   461 | 
   462 |     status, payload = api.route('GET', '/api/search',
-```
-
-<!-- ─── страница 564 ─── -->
-
-```py
   463 |                                 {'db': ['RDR'], 'q': ['x']}, None, h)
   464 |     check('route GET /api/search?db=RDR (guest) -> 403',
   465 |           status == 403 and payload['ok'] is False)
@@ -34226,15 +35500,15 @@
   511 |     is_stale_session_helper_checks()
   512 |     # B. public-only OPAC
   513 |     public_db_guard_search_checks()
+```
+
+<!-- ─── страница 586 ─── -->
+
+```py
   514 |     public_db_guard_all_endpoints_checks()
   515 |     public_db_guard_staff_allowed_checks()
   516 |     databases_visibility_checks()
   517 |     public_db_config_override_checks()
-```
-
-<!-- ─── страница 565 ─── -->
-
-```py
   518 |     route_public_db_checks()
   519 |     health_endpoint_checks()
   520 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
@@ -34291,15 +35565,15 @@
    41 | FAIL = [0]
    42 | 
    43 | 
+```
+
+<!-- ─── страница 587 ─── -->
+
+```py
    44 | def check(name, cond):
    45 |     if cond:
    46 |         PASS[0] += 1
    47 |         print('  ok  ', name)
-```
-
-<!-- ─── страница 566 ─── -->
-
-```py
    48 |     else:
    49 |         FAIL[0] += 1
    50 |         print('  FAIL', name)
@@ -34351,15 +35625,15 @@
    96 |     check('пустая категория → deny',
    97 |           access_level('', TEMPLATE, today=TODAY) == DENY)
    98 |     check('None категория → deny',
+```
+
+<!-- ─── страница 588 ─── -->
+
+```py
    99 |           access_level(None, TEMPLATE, today=TODAY) == DENY)
   100 | 
   101 |     # Пустой шаблон (955^B пусто) → полный доступ download (п.1).
   102 |     check('пустой шаблон (None) → download',
-```
-
-<!-- ─── страница 567 ─── -->
-
-```py
   103 |           access_level(KAT_GUEST, None, today=TODAY) == DOWNLOAD)
   104 |     check('пустой dict → download',
   105 |           access_level(KAT_GUEST, {}, today=TODAY) == DOWNLOAD)
@@ -34411,15 +35685,15 @@
   151 |           access_level(KAT_STUDENT, other_dim, today=TODAY) == DENY)
   152 | 
   153 | 
+```
+
+<!-- ─── страница 589 ─── -->
+
+```py
   154 | # --------------------------------------------------------------------------- #
   155 | # 2. page_limit — лимит страниц ^F по категории (ребро 7.3/7.5).
   156 | # --------------------------------------------------------------------------- #
   157 | def page_limit_checks():
-```
-
-<!-- ─── страница 568 ─── -->
-
-```py
   158 |     print('-- rights: page_limit (^F)')
   159 |     check('преподаватель: лимит 50 страниц',
   160 |           page_limit(KAT_TEACHER, TEMPLATE, today=TODAY) == 50)
@@ -34471,15 +35745,15 @@
   206 |     st.upsert('R2', rules=[{'A': rights_mod.CAT_READER_KAT, 'B': KAT_TEACHER,
   207 |                             'C': '2', 'F': '10'}])
   208 |     r2 = st.get('R2')
+```
+
+<!-- ─── страница 590 ─── -->
+
+```py
   209 |     check('subfield aliases canonicalised',
   210 |           r2['rules'][0]['category'] == rights_mod.CAT_READER_KAT
   211 |           and r2['rules'][0]['value'] == KAT_TEACHER
   212 |           and r2['rules'][0]['level'] == '2'
-```
-
-<!-- ─── страница 569 ─── -->
-
-```py
   213 |           and r2['rules'][0]['limit'] == '10')
   214 | 
   215 |     items = st.list()
@@ -34531,15 +35805,15 @@
   261 |     check('запись без 955^B → download (полный доступ)',
   262 |           svc.access_level(KAT_GUEST, db='IBIS', mfn=11) == DOWNLOAD)
   263 |     # page_limit по записи.
+```
+
+<!-- ─── страница 591 ─── -->
+
+```py
   264 |     check('по записи: лимит преподавателя 50',
   265 |           svc.page_limit(KAT_TEACHER, db='IBIS', mfn=10) == 50)
   266 | 
   267 |     # back-compat без handle: template_id напрямую из стора.
-```
-
-<!-- ─── страница 570 ─── -->
-
-```py
   268 |     svc_nohandle = RightService(store=st, catalog=None, now=lambda: _ts(TODAY))
   269 |     check('back-compat: template_id → download',
   270 |           svc_nohandle.access_level(KAT_TEACHER, template_id='R1') == DOWNLOAD)
@@ -34591,15 +35865,15 @@
   316 | 
   317 |     # Рейтинг (поле 7): 0..5; вне диапазона → ValueError.
   318 |     check('rate 4 → 4', svc.rate(R, T, 4) == 4)
+```
+
+<!-- ─── страница 592 ─── -->
+
+```py
   319 |     check('rating читает 4', svc.rating(R, T) == 4)
   320 |     check('rate 0 допустим', svc.rate(R, T, 0) == 0)
   321 |     for badv in (6, -1, 'x', None):
   322 |         raised = False
-```
-
-<!-- ─── страница 571 ─── -->
-
-```py
   323 |         try:
   324 |             svc.rate(R, T, badv)
   325 |         except ValueError:
@@ -34651,15 +35925,15 @@
   371 |     # Скачали ещё 40 (всего 60 > 50) → остаток 0 (не отрицательный).
   372 |     lsvc.record_download(R, T, 40)
   373 |     check('остаток не отрицательный (max(0, 50−60)=0)',
+```
+
+<!-- ─── страница 593 ─── -->
+
+```py
   374 |           lsvc.download_budget(R, T, reader_category=KAT_TEACHER, template_id='R1') == 0)
   375 | 
   376 |     # Студент: лимит не задан (^F пусто) → бюджет None (без ограничения).
   377 |     check('студент без ^F → бюджет None',
-```
-
-<!-- ─── страница 572 ─── -->
-
-```py
   378 |           lsvc.download_budget(R, T, reader_category=KAT_STUDENT, template_id='R1') is None)
   379 | 
   380 |     # Явный page_limit имеет приоритет над seam.
@@ -34711,15 +35985,15 @@
   426 | 
   427 | def pg_parity_checks():
   428 |     dsn = _pg_reachable_dsn()
+```
+
+<!-- ─── страница 594 ─── -->
+
+```py
   429 |     if dsn is None:
   430 |         return
   431 |     print('-- rights/lich: store (postgres parity)')
   432 | 
-```
-
-<!-- ─── страница 573 ─── -->
-
-```py
   433 |     # RIGHT на PG.
   434 |     rst = RightStore(dsn, backend='postgres')
   435 |     check('[pg] right empty count == 0', rst.count() == 0)
@@ -34771,15 +36045,15 @@
   481 |     access_level_checks()
   482 |     page_limit_checks()
   483 |     right_store_checks()
+```
+
+<!-- ─── страница 595 ─── -->
+
+```py
   484 |     right_service_checks()
   485 |     lich_basics_checks()
   486 |     download_budget_checks()
   487 |     pg_parity_checks()
-```
-
-<!-- ─── страница 574 ─── -->
-
-```py
   488 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   489 |     sys.exit(1 if FAIL[0] else 0)
   490 | 
@@ -34836,15 +36110,15 @@
    43 | # --------------------------------------------------------------------------- #
    44 | # 1. Parsers — pure, backend-independent.
    45 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 596 ─── -->
+
+```py
    46 | def parser_checks():
    47 |     print('-- parsers (.mnu / .tre)')
    48 | 
    49 |     # Basic round-trip from a str menu with the ***** terminator.
-```
-
-<!-- ─── страница 575 ─── -->
-
-```py
    50 |     text = 'KN\nКниги в целом\n05\nОднотомное издание\n*****\n'
    51 |     pairs = _mnu.parse_mnu(text)
    52 |     check('parse_mnu pairs count', pairs == [('KN', 'Книги в целом'),
@@ -34896,15 +36170,15 @@
    98 | def sqlite_seed_checks():
    99 |     print('-- sqlite seed (single-tenant public)')
   100 |     st = AccessStore(':memory:')
+```
+
+<!-- ─── страница 597 ─── -->
+
+```py
   101 |     report = seed_vocab.seed_vocabularies(st, from_catalog=False)
   102 | 
   103 |     check('report counts system vocabs', report['system_vocabs'] == len(seed_data.SYSTEM_VOCABS))
   104 |     check('report counts institution vocabs',
-```
-
-<!-- ─── страница 576 ─── -->
-
-```py
   105 |           report['institution_vocabs'] == len(seed_data.INSTITUTION_VOCABS))
   106 | 
   107 |     # SYSTEM vocab present & populated
@@ -34956,15 +36230,15 @@
   153 | 
   154 | # --------------------------------------------------------------------------- #
   155 | # 3. PostgreSQL — provision -> seeded; isolation; idempotent re-provision.
+```
+
+<!-- ─── страница 598 ─── -->
+
+```py
   156 | # --------------------------------------------------------------------------- #
   157 | A_SLUG, B_SLUG = 'seed_a', 'seed_b'
   158 | 
   159 | 
-```
-
-<!-- ─── страница 577 ─── -->
-
-```py
   160 | def pg_reachable(dsn):
   161 |     want = os.environ.get('ACCESS_BACKEND', '').lower() in ('postgres', 'pg') \
   162 |         or os.environ.get('ACCESS_TEST_PG') == '1'
@@ -35016,15 +36290,15 @@
   208 |     check('PG: B does NOT see A kv edit (isolation)', b_kv == [])
   209 |     # And a system-vocab edit in A is invisible to B too
   210 |     sa.upsert_vocabulary_value('vd.mnu', 'KN', 'KN-renamed-in-A', 0, 'custom')
+```
+
+<!-- ─── страница 599 ─── -->
+
+```py
   211 |     b_kn = [v for v in sb.vocabulary_values('vd.mnu') if v['code'] == 'KN']
   212 |     check('PG: B keeps original KN label (isolation)',
   213 |           b_kn and b_kn[0]['label'] == 'Книги в целом')
   214 | 
-```
-
-<!-- ─── страница 578 ─── -->
-
-```py
   215 |     # --- re-provision is idempotent: counts stable, custom edit preserved ---
   216 |     before = len(sa.vocabulary_values('vd.mnu'))
   217 |     sa2 = pgstore.provision_tenant(A_SLUG, 'Seed A', 'публичная', dsn)
@@ -35081,15 +36355,15 @@
    17 |     history subjects and is empty with no history.
    18 |   * HISTORY: the record-open path auto-logs for a reader (not a guest); deduped by
    19 |     (db,mfn) keeping the latest; capped/newest-first.
+```
+
+<!-- ─── страница 600 ─── -->
+
+```py
    20 |   * SAVED SEARCHES: CRUD (list/add/delete), reader-scoped, delete-own.
    21 |   * AUTH: guests READ reviews/recommendations but are 401/403 on every write +
    22 |     history + saved-search + foryou route.
    23 |   * PG parity: the social-store CRUD on a real PostgreSQL when reachable (skips
-```
-
-<!-- ─── страница 579 ─── -->
-
-```py
    24 |     cleanly otherwise) — proves schema_postgres.sql + PgAccessStore methods.
    25 | 
    26 | Wired into the test_access.py runner (module list) so the CI sqlite + postgres
@@ -35141,15 +36415,15 @@
    72 |         'collectives': [], 'title': 'Алгоритмы'},
    73 | }
    74 | 
+```
+
+<!-- ─── страница 601 ─── -->
+
+```py
    75 | 
    76 | def _make_record(mfn):
    77 |     """Build the parsed-record shape core's seams expect from a _CATALOG row."""
    78 |     rec = {'mfn': mfn, 'fields': []}
-```
-
-<!-- ─── страница 580 ─── -->
-
-```py
    79 |     row = _CATALOG[mfn]
    80 |     for s in row['subjects']:
    81 |         rec['fields'].append({'tag': '606', 'value': '^A' + s, 'text': '',
@@ -35201,15 +36475,15 @@
   127 |                  'subfields': {}}]}
   128 |         return super().read_record(db, mfn)
   129 | 
+```
+
+<!-- ─── страница 602 ─── -->
+
+```py
   130 | 
   131 | # --------------------------------------------------------------------------- #
   132 | # A constructed Api with NO live ИРБИС: a fresh in-memory access store + the fake
   133 | # ИРБИС wired so the real social seams run deterministically.
-```
-
-<!-- ─── страница 581 ─── -->
-
-```py
   134 | # --------------------------------------------------------------------------- #
   135 | def _api(irbis=None):
   136 |     os.environ['JWT_SECRET'] = 'social-test-secret'
@@ -35261,15 +36535,15 @@
   182 |     d = payload['data']
   183 |     check('reviews list 200', st == 200)
   184 |     check('avg is mean of the two ratings', d['avg'] == 3.0)
+```
+
+<!-- ─── страница 603 ─── -->
+
+```py
   185 |     check('count is 2', d['count'] == 2)
   186 |     check('two review cards', len(d['items']) == 2)
   187 |     check('mine reflects r1 review', d.get('mine') == {'rating': 4, 'text': 'Хорошая книга'})
   188 |     check('review card carries reader name',
-```
-
-<!-- ─── страница 582 ─── -->
-
-```py
   189 |           any(it['readerName'] == 'Читателев Ч.Ч.' for it in d['items']))
   190 | 
   191 |     # Upsert: r1 re-posts -> rating/text replaced, still ONE review (count stays 2).
@@ -35321,15 +36595,15 @@
   237 | 
   238 |     st, payload = api.recommendations(g, 'IBIS', 1)
   239 |     check('recommendations 200 (guest-readable)', st == 200)
+```
+
+<!-- ─── страница 604 ─── -->
+
+```py
   240 |     items = payload['data']['items']
   241 |     mfns = [it['mfn'] for it in items]
   242 |     check('seed (mfn 1) excluded from its own recs', 1 not in mfns)
   243 |     check('non-overlapping record (mfn 4) excluded', 4 not in mfns)
-```
-
-<!-- ─── страница 583 ─── -->
-
-```py
   244 |     check('overlapping records surfaced (2 and 3)', 2 in mfns and 3 in mfns)
   245 |     # mfn 2 shares two subjects; mfn 3 shares one subject + one author => both
   246 |     # overlap 2; mfn 5 shares one author => overlap 1. Top-overlap come first.
@@ -35381,15 +36655,15 @@
   292 |     check('guest record-open logs no history',
   293 |           api.history(r1)[1]['data']['items'] == [])
   294 | 
+```
+
+<!-- ─── страница 605 ─── -->
+
+```py
   295 |     # Reader opens 1 then 2 then re-opens 1 -> dedup keeps 1 once, newest first.
   296 |     api.record(r1, 'IBIS', 1)
   297 |     api.record(r1, 'IBIS', 2)
   298 |     api.record(r1, 'IBIS', 1)         # re-open bumps 1 to the top
-```
-
-<!-- ─── страница 584 ─── -->
-
-```py
   299 |     st, payload = api.history(r1)
   300 |     items = payload['data']['items']
   301 |     check('history 200', st == 200)
@@ -35441,15 +36715,15 @@
   347 |     check('delete own saved search -> 200', st == 200)
   348 |     check('one saved search left', len(api.saved_searches(r1)[1]['data']['items']) == 1)
   349 | 
+```
+
+<!-- ─── страница 606 ─── -->
+
+```py
   350 | 
   351 | # --------------------------------------------------------------------------- #
   352 | # 5. Auth — guest is refused on every write/history/saved-search/foryou route,
   353 | # both via direct handler (Denied) and via the dispatcher (401/403 status).
-```
-
-<!-- ─── страница 585 ─── -->
-
-```py
   354 | # --------------------------------------------------------------------------- #
   355 | def auth_checks():
   356 |     print('-- auth: guest 401/403 on writes + history + saved-search + foryou')
@@ -35501,15 +36775,15 @@
   402 |     st, _p = api.route('GET', '/api/recommendations',
   403 |                        {'db': ['IBIS'], 'mfn': ['1']}, None, hdr)
   404 |     check('guest route GET /api/recommendations -> 200', st == 200)
+```
+
+<!-- ─── страница 607 ─── -->
+
+```py
   405 | 
   406 | 
   407 | # --------------------------------------------------------------------------- #
   408 | # 6. Postgres parity — social-store CRUD on real PG (skips cleanly otherwise).
-```
-
-<!-- ─── страница 586 ─── -->
-
-```py
   409 | # --------------------------------------------------------------------------- #
   410 | def pg_parity_checks():
   411 |     want = os.environ.get('ACCESS_BACKEND', '').lower() in ('postgres', 'pg') \
@@ -35561,15 +36835,15 @@
   457 |     foryou_checks()
   458 |     history_checks()
   459 |     saved_search_checks()
+```
+
+<!-- ─── страница 608 ─── -->
+
+```py
   460 |     auth_checks()
   461 |     pg_parity_checks()
   462 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   463 |     sys.exit(1 if FAIL[0] else 0)
-```
-
-<!-- ─── страница 587 ─── -->
-
-```py
   464 | 
   465 | 
   466 | if __name__ == '__main__':
@@ -35626,15 +36900,15 @@
    45 | PASS = [0]
    46 | FAIL = [0]
    47 | 
+```
+
+<!-- ─── страница 609 ─── -->
+
+```py
    48 | # A minimal DB-menu + max_mfn stub so a constructed Api needs no live ИРБИС.
    49 | _DB_MENU = 'IBIS\nЭлектронный каталог\nRDR\nЧитатели\n*****\n'
    50 | 
    51 | SUPER_ADMIN_GRANTS = [
-```
-
-<!-- ─── страница 588 ─── -->
-
-```py
    52 |     {'function': 'admin.db', 'db': '*', 'level': 'admin'},
    53 |     {'function': 'admin.users', 'db': '*', 'level': 'admin'},
    54 |     {'function': 'search', 'db': '*', 'level': 'read'},
@@ -35686,15 +36960,15 @@
   100 |     check('uptimeSec is a non-negative number',
   101 |           isinstance(d['uptimeSec'], (int, float)) and d['uptimeSec'] >= 0)
   102 |     check('requests carries total+errors ints',
+```
+
+<!-- ─── страница 610 ─── -->
+
+```py
   103 |           set(d['requests']) == {'total', 'errors'}
   104 |           and all(isinstance(d['requests'][k], int) for k in ('total', 'errors')))
   105 |     check('irbis block carries server/db/reachable',
   106 |           set(d['irbis']) >= {'server', 'db', 'reachable'})
-```
-
-<!-- ─── страница 589 ─── -->
-
-```py
   107 |     check('tenants carries a bare count int', isinstance(d['tenants'].get('count'), int))
   108 | 
   109 |     # No per-tenant DETAIL is exposed to an anonymous scrape.
@@ -35746,15 +37020,15 @@
   155 |     # Non-admin staff must NOT receive a tenants.detail block.
   156 |     ntok, _ = api._new_session('staff', 'cat', NONADMIN_STAFF_GRANTS, tenant='public')
   157 |     _st, p_non = api.route('GET', '/api/metrics', {}, None,
+```
+
+<!-- ─── страница 611 ─── -->
+
+```py
   158 |                            {'authorization': 'Bearer ' + ntok})
   159 |     check('non-admin staff withholds tenants.detail',
   160 |           'detail' not in p_non['data']['tenants'])
   161 | 
-```
-
-<!-- ─── страница 590 ─── -->
-
-```py
   162 |     # No secret/PII anywhere in the payload: JWT secret, a password, or a reader ticket.
   163 |     rtok, _ = api._new_session('reader', 'RI=111', [], tenant='public', rdr_mfn=1)
   164 |     api.route('POST', '/api/auth/staff', {}, {'login': 'admin', 'password': 'admin'}, {})
@@ -35806,15 +37080,15 @@
   210 | 
   211 | 
   212 | def pg_regression_checks():
+```
+
+<!-- ─── страница 612 ─── -->
+
+```py
   213 |     """THE regression for the container-smoke bug: provision the DEFAULT tenant on
   214 |     PG (admin lands in t_public) and assert the very next POST /api/auth/staff
   215 |     succeeds. This 401'd before the _store_for fix (it read the bare public schema)
   216 |     and 200s after. Skips cleanly when postgres/psycopg unavailable.
-```
-
-<!-- ─── страница 591 ─── -->
-
-```py
   217 | 
   218 |     Named ``*_checks`` (not ``run_pg``) so the test_access.py runner's
   219 |     ``module_checks`` — which invokes every ``*_checks()`` — actually exercises
@@ -35866,15 +37140,15 @@
   265 |                            {'login': 'smokeadmin', 'password': 'nope', 'tenant': 'public'}, {})
   266 |         check('[pg] wrong password rejected on t_public path (401)', st3 == 401)
   267 | 
+```
+
+<!-- ─── страница 613 ─── -->
+
+```py
   268 |         # Metrics over PG: the provisioned tenant shows in the bare count, and the
   269 |         # super-admin detail lists it (slug/name only — operational, not PII).
   270 |         st4, pm = api.route('GET', '/api/metrics', {}, None, {})
   271 |         check('[pg] metrics tenant count >= 1', st4 == 200
-```
-
-<!-- ─── страница 592 ─── -->
-
-```py
   272 |               and pm['data']['tenants']['count'] >= 1)
   273 |         atok, _ = api._new_session('staff', 'super', SUPER_ADMIN_GRANTS, tenant='public')
   274 |         _st, pa = api.route('GET', '/api/metrics', {}, None,
@@ -35931,15 +37205,15 @@
     3 | 
     4 | The hard gate for multi-tenancy. Provisions two tenants in separate schemas
     5 | (t_<slug>) and asserts that a tenant-scoped Access store sees ONLY its own
+```
+
+<!-- ─── страница 614 ─── -->
+
+```py
     6 | tenant's accounts / grants / audit — never the other tenant's rows, in either
     7 | direction — plus a direct negative SQL probe that tenant A's scope cannot read
     8 | tenant B's schema. Also checks provisioning idempotency and deprovision teardown.
     9 | 
-```
-
-<!-- ─── страница 593 ─── -->
-
-```py
    10 | Backends:
    11 |   * postgres only — schema-per-tenant is a PG feature. Runs when
    12 |     ACCESS_BACKEND=postgres (or ACCESS_TEST_PG=1) AND a PG is reachable at
@@ -35991,15 +37265,15 @@
    58 | def _count_in_schema(dsn, schema, table):
    59 |     """Direct row count in a fully-qualified schema.table (control-plane probe)."""
    60 |     from psycopg import sql
+```
+
+<!-- ─── страница 615 ─── -->
+
+```py
    61 |     conn = pgstore._admin_conn(dsn)
    62 |     try:
    63 |         return conn.execute(sql.SQL('SELECT count(*) AS n FROM {}.{}').format(
    64 |             sql.Identifier(schema), sql.Identifier(table))).fetchone()['n']
-```
-
-<!-- ─── страница 594 ─── -->
-
-```py
    65 |     finally:
    66 |         conn.close()
    67 | 
@@ -36051,15 +37325,15 @@
   113 |     check('A audit has its row', any(r['actor'] == 'alice' for r in aud_a))
   114 |     check('B audit never sees A row', not any(r['actor'] == 'alice' for r in aud_b))
   115 | 
+```
+
+<!-- ─── страница 616 ─── -->
+
+```py
   116 |     # ---- NEGATIVE probe: tenant A's scope cannot read tenant B's schema rows ----
   117 |     # Run a query through A's pinned connection (search_path = t_tnt_a, public)
   118 |     # using the UNQUALIFIED table name: it must resolve to A's schema, so bob
   119 |     # (who only exists in B) is invisible. Reaching bob would prove a leak.
-```
-
-<!-- ─── страница 595 ─── -->
-
-```py
   120 |     leaked = sa._conn().execute(
   121 |         'SELECT count(*) AS n FROM staff_account WHERE login=%s', ('bob',)
   122 |     ).fetchone()['n']
@@ -36111,15 +37385,15 @@
   168 |     if not pg_reachable(dsn):
   169 |         print('\n0 passed, 0 failed (tenancy: postgres unavailable, skipped)')
   170 |         sys.exit(0)
+```
+
+<!-- ─── страница 617 ─── -->
+
+```py
   171 |     print('-- tenancy: postgres', dsn.rsplit('@', 1)[-1])
   172 |     run(dsn)
   173 |     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
   174 |     sys.exit(1 if FAIL[0] else 0)
-```
-
-<!-- ─── страница 596 ─── -->
-
-```py
   175 | 
   176 | 
   177 | if __name__ == '__main__':
@@ -36176,15 +37450,15 @@
    45 | except Exception:  # pragma: no cover
    46 |     _catalog = None
    47 | 
+```
+
+<!-- ─── страница 618 ─── -->
+
+```py
    48 | PASS = [0]
    49 | FAIL = [0]
    50 | 
    51 | 
-```
-
-<!-- ─── страница 597 ─── -->
-
-```py
    52 | # --------------------------------------------------------------------------- #
    53 | # FakeIrbis: самодостаточный каталог-handle (контракт ToCat — save/get/search/
    54 | # find_exemplar/exemplar_status/is_available/count). Хранит записи в dict, выдаёт
@@ -36236,15 +37510,15 @@
   100 | 
   101 |     def _find910(self, db, item):
   102 |         for mfn, rec in sorted(self._store(db).items()):
+```
+
+<!-- ─── страница 619 ─── -->
+
+```py
   103 |             insts = rec.get('910')
   104 |             if insts is None:
   105 |                 continue
   106 |             if not isinstance(insts, list):
-```
-
-<!-- ─── страница 598 ─── -->
-
-```py
   107 |                 insts = [insts]
   108 |             for i, inst in enumerate(insts):
   109 |                 if isinstance(inst, dict) and \
@@ -36296,15 +37570,15 @@
   155 |     Сиблинг может держать catalog.py в промежуточном состоянии — тогда сквозная
   156 |     проверка корректно пропускается (skip, не fail), а основное покрытие даёт
   157 |     FakeCatalog."""
+```
+
+<!-- ─── страница 620 ─── -->
+
+```py
   158 |     if _catalog is None:
   159 |         return None
   160 |     try:
   161 |         cat = _catalog.CatalogStore(':memory:')
-```
-
-<!-- ─── страница 599 ─── -->
-
-```py
   162 |         # дымовая проба save: если ФЛК-пайплайн в дереве сейчас сломан, пропускаем.
   163 |         probe = cat.save('IBIS', {'920': 'PAZK', '200': [{'a': 'проба'}]})
   164 |         if not probe.get('saved'):
@@ -36356,15 +37630,15 @@
   210 | 
   211 | 
   212 | # --------------------------------------------------------------------------- #
+```
+
+<!-- ─── страница 621 ─── -->
+
+```py
   213 | # Локальные аксессоры для ассертов.
   214 | # --------------------------------------------------------------------------- #
   215 | def _insts(record, field):
   216 |     raw = record.get(field)
-```
-
-<!-- ─── страница 600 ─── -->
-
-```py
   217 |     if raw is None:
   218 |         return []
   219 |     return raw if isinstance(raw, list) else [raw]
@@ -36416,15 +37690,15 @@
   265 | 
   266 |     # маппинг РЛ: коды видов документа CMPL -> IBIS
   267 |     for code in ('PAZK', 'SPEC', 'PVK', 'J', 'ASP'):
+```
+
+<!-- ─── страница 622 ─── -->
+
+```py
   268 |         r = {'920': code, '200': [{'a': 'X'}]}
   269 |         check('920 %s маппится' % code,
   270 |               eng.reformat_to_ibis(r)['920'] == WORKLIST_MAP_TO_CAT[code])
   271 | 
-```
-
-<!-- ─── страница 601 ─── -->
-
-```py
   272 |     # реформат не мутирует исходник
   273 |     src = cmpl_book()
   274 |     before = dict(src)
@@ -36476,15 +37750,15 @@
   320 |           _val(saved, '200', 'a') == 'Машинное обучение')
   321 |     check('IBIS автор 700^a', _val(saved, '700', 'a') == 'Бишоп')
   322 |     check('IBIS РЛ 920=PAZK', saved.get('920') == 'PAZK')
+```
+
+<!-- ─── страница 623 ─── -->
+
+```py
   323 | 
   324 |     # [1.2] экземпляры 910 CMPL -> IBIS 910
   325 |     ex_list = saved['910'] if isinstance(saved['910'], list) else [saved['910']]
   326 |     check('[1.2] 2 экземпляра перенесены', len(ex_list) == 2)
-```
-
-<!-- ─── страница 602 ─── -->
-
-```py
   327 |     check('[1.2] экз. findable по инв.№',
   328 |           cat.find_exemplar('IBIS', 'INV-A') is not None)
   329 |     check('[1.2] экз. ^A свободен (выдаваем)',
@@ -36536,15 +37810,15 @@
   375 | def vd_del_checks():
   376 |     print('-- [1.5] VD=DEL на исходную CMPL-запись (анти-дубль)')
   377 |     cat = fresh_catalog()
+```
+
+<!-- ─── страница 624 ─── -->
+
+```py
   378 |     if cat is None:
   379 |         check('catalog importable (skip)', False)
   380 |         return
   381 |     eng = fresh_engine(catalog=cat)
-```
-
-<!-- ─── страница 603 ─── -->
-
-```py
   382 | 
   383 |     rec = cmpl_book(title='Удаляемый исходник', inv=('D-1',))
   384 |     res = eng.to_catalog(rec, ksu_no='2026/60')
@@ -36596,15 +37870,15 @@
   430 |     if cat is None:
   431 |         check('catalog importable (skip)', False)
   432 |         return
+```
+
+<!-- ─── страница 625 ─── -->
+
+```py
   433 |     eng = fresh_engine(catalog=cat)
   434 | 
   435 |     r1 = eng.to_catalog(cmpl_book(title='Сети', author='Таненбаум Э.',
   436 |                                   inv=('N-1',)), ksu_no='2026/1')
-```
-
-<!-- ─── страница 604 ─── -->
-
-```py
   437 |     r2 = eng.to_catalog(cmpl_book(title='Сети', author='Таненбаум Э.',
   438 |                                   inv=('N-2',)), ksu_no='2026/2')
   439 |     check('1-й перенос -> created', r1['action'] == 'created')
@@ -36656,15 +37930,15 @@
   485 |     check('standalone -> исходник НЕ помечен (нечего удалять без переноса)',
   486 |           not is_source_deleted(rec))
   487 |     check('standalone -> source_deleted False', res2['source_deleted'] is False)
+```
+
+<!-- ─── страница 626 ─── -->
+
+```py
   488 | 
   489 | 
   490 | # --------------------------------------------------------------------------- #
   491 | # PG-паритет: реформат — чистая функция, идентична на любом backend'е.
-```
-
-<!-- ─── страница 605 ─── -->
-
-```py
   492 | # --------------------------------------------------------------------------- #
   493 | def pg_parity_checks():
   494 |     print('-- PG-паритет: реформат БО store-независим')
@@ -36716,15 +37990,15 @@
   540 |         '910': [{'A': EXEMPLAR_FREE, 'B': 'BK-1'}],
   541 |         '66': [{'a': 'X'}],
   542 |     }
+```
+
+<!-- ─── страница 627 ─── -->
+
+```py
   543 |     ibis = eng.reformat_to_ibis(rec)
   544 | 
   545 |     # 200 — заглавие + ^e свед. к загл. + ^f + ^v
   546 |     check('200^a осн. заглавие', _val(ibis, '200', 'a') == 'Введение в СУБД')
-```
-
-<!-- ─── страница 606 ─── -->
-
-```py
   547 |     check('200^e свед. к заглавию', _val(ibis, '200', 'e') == 'учебное пособие')
   548 |     check('200^f свед. об отв.', _val(ibis, '200', 'f') == 'К. Дж. Дейт')
   549 |     check('200^v номер тома', _val(ibis, '200', 'v') == 'Т. 1')
@@ -36776,15 +38050,15 @@
   595 |         '906': 'A-12',            # скаляр -> ^a
   596 |         '66': [{'a': 'X'}],
   597 |     }
+```
+
+<!-- ─── страница 628 ─── -->
+
+```py
   598 |     ibis = eng.reformat_to_ibis(rec)
   599 |     check('675 скаляр -> ^a', _val(ibis, '675', 'a') == '004.65')
   600 |     check('621 скаляр -> ^a', _val(ibis, '621', 'a') == '32.973')
   601 |     check('906 скаляр -> ^a', _val(ibis, '906', 'a') == 'A-12')
-```
-
-<!-- ─── страница 607 ─── -->
-
-```py
   602 | 
   603 |     # CMPL хранит подполя в ВЕРХНЕМ регистре (как в исходных .wss) — маппинг терпим
   604 |     rec_u = {
@@ -36836,15 +38110,15 @@
   650 |           {i.get('a') for i in udk} == {'004.65', '004.43'})
   651 | 
   652 |     # пустые/множественные авторы
+```
+
+<!-- ─── страница 629 ─── -->
+
+```py
   653 |     # пустой автор -> 700 не появляется
   654 |     rec_noauth = {'920': 'PAZK', '200': [{'a': 'Без автора'}], '66': [{'a': 'X'}]}
   655 |     ina = eng.reformat_to_ibis(rec_noauth)
   656 |     check('нет автора -> нет 700', '700' not in ina)
-```
-
-<!-- ─── страница 608 ─── -->
-
-```py
   657 | 
   658 |     # три автора из аналитики -> 700 (1-й) + 701 (2 прочих)
   659 |     rec_3 = {'920': 'ASP',
@@ -36896,15 +38170,15 @@
   705 |         '700': [{'a': 'Автор', 'b': 'А.'}],
   706 |         '210': [{'a': 'СПб', 'c': 'Питер', 'd': '2021'}],
   707 |         '215': [{'a': '512 с.'}],
+```
+
+<!-- ─── страница 630 ─── -->
+
+```py
   708 |         '10': [{'a': '978-5-4461-1234-5', 'd': '700.00', 'c': 'RUB'}],
   709 |         '675': [{'a': '004.7'}],
   710 |         '621': [{'a': '32.973'}],
   711 |         '906': [{'a': 'К-7'}],
-```
-
-<!-- ─── страница 609 ─── -->
-
-```py
   712 |         '910': [{'A': EXEMPLAR_FREE, 'B': 'TH-1'}],
   713 |         '66': [{'a': 'X'}],
   714 |     }
@@ -36956,15 +38230,15 @@
   760 |     field_mapping_idempotent_and_compat_checks()
   761 |     field_mapping_through_catalog_checks()
   762 |     to_catalog_full_checks()
+```
+
+<!-- ─── страница 631 ─── -->
+
+```py
   763 |     explicit_901_checks()
   764 |     vd_del_checks()
   765 |     vd_del_not_set_on_reject_checks()
   766 |     resupply_checks()
-```
-
-<!-- ─── страница 610 ─── -->
-
-```py
   767 |     trigger_and_standalone_checks()
   768 |     pg_parity_checks()
   769 |     real_catalog_smoke_checks()
@@ -37026,15 +38300,15 @@
    38 | 
    39 |     +0x00     4       CTLMFN      (служебное, обычно 0)
    40 |     +0x04     4       NXTMFN      следующий свободный MFN  => max_mfn = NXTMFN - 1
+```
+
+<!-- ─── страница 632 ─── -->
+
+```py
    41 |     +0x08     4       NXTBLK_LOW  младшие разряды смещения хвоста (куда дописывать)
    42 |     +0x0c     4       NXTBLK_HIGH старшие разряды
    43 |     +0x10..   …       (резерв / флаги БД)
    44 | 
-```
-
-<!-- ─── страница 611 ─── -->
-
-```py
    45 | Каждая запись (по смещению из `.xrf`) — лидер 32 байта BE + директорий полей +
    46 | переменная часть:
    47 | 
@@ -37086,15 +38360,15 @@
    93 | 
    94 | SUBFIELD_DELIM = '^'
    95 | SYSTEM_GUID_TAG = 2147483647   # MaxInt32 — системное поле GUID, не библиографическое
+```
+
+<!-- ─── страница 633 ─── -->
+
+```py
    96 | 
    97 | # Кодировка значений полей. Классический ИРБИС64 хранит записи в CP1251 (правило
    98 | # проекта, см. docs/recon/.../databases/*), НО встречаются UTF-8-сборки/базы
    99 | # (выверено на реальном C:\IRBIS64\Datai\IBIS: все поля — валидный UTF-8 с
-```
-
-<!-- ─── страница 612 ─── -->
-
-```py
   100 | # многобайтовой кириллицей). Поэтому декодирование адаптивное: если байты поля —
   101 | # валидный UTF-8 и содержат не-ASCII, читаем как UTF-8; иначе — как CP1251.
   102 | # Чисто-ASCII декодируется одинаково в обеих кодировках.
@@ -37146,15 +38420,15 @@
   148 |         entries = os.listdir(data_path)
   149 |     except OSError as e:
   150 |         raise IrbisMstError('DataPath недоступен: %s (%s)' % (data_path, e))
+```
+
+<!-- ─── страница 634 ─── -->
+
+```py
   151 |     for entry in entries:
   152 |         sub = os.path.join(data_path, entry)
   153 |         if not os.path.isdir(sub):
   154 |             continue
-```
-
-<!-- ─── страница 613 ─── -->
-
-```py
   155 |         if _find_file(sub, entry, _MST_SUFFIX):
   156 |             found.append(entry.upper())
   157 |     return sorted(found)
@@ -37206,15 +38480,15 @@
   203 |     if len(raw) < 8:
   204 |         return None
   205 |     low, high = struct.unpack('>2i', raw[:8])
+```
+
+<!-- ─── страница 635 ─── -->
+
+```py
   206 |     low_u = low & 0xffffffff
   207 |     deleted = bool(low_u & XRF_DELETED_FLAG)
   208 |     offset = (high << 32) | (low_u & ~XRF_DELETED_FLAG & 0xffffffff)
   209 |     if offset <= 0:
-```
-
-<!-- ─── страница 614 ─── -->
-
-```py
   210 |         return None
   211 |     return offset, deleted
   212 | 
@@ -37266,15 +38540,15 @@
   258 |     Это ровно форма ``tools.migrate_irbis._instance_from_field``."""
   259 |     head, subs = _parse_subfields(value)
   260 |     if not subs:
+```
+
+<!-- ─── страница 636 ─── -->
+
+```py
   261 |         return value
   262 |     inst = {}
   263 |     if head:
   264 |         inst[''] = head
-```
-
-<!-- ─── страница 615 ─── -->
-
-```py
   265 |     inst.update(subs)
   266 |     return inst
   267 | 
@@ -37326,15 +38600,15 @@
   313 | def _read_raw_record(mst_path, offset, length_hint=None):
   314 |     """Сырые байты записи из `.mst`. Длина берётся из MFRL лидера."""
   315 |     with open(mst_path, 'rb') as f:
+```
+
+<!-- ─── страница 637 ─── -->
+
+```py
   316 |         f.seek(offset)
   317 |         head = f.read(MST_LEADER_SIZE)
   318 |         if len(head) < MST_LEADER_SIZE:
   319 |             return head
-```
-
-<!-- ─── страница 616 ─── -->
-
-```py
   320 |         mfrl = struct.unpack('>i', head[4:8])[0]
   321 |         if mfrl < MST_LEADER_SIZE or mfrl > (1 << 28):
   322 |             # MFRL невменяемый — читаем щедрый блок, разбор всё равно проверит границы.
@@ -37386,15 +38660,15 @@
   368 |     записи (с подсчётом предупреждений). Потребляется мигратором/интроспекцией
   369 |     точно так же, как сетевой путь."""
   370 |     warn = _warn or (lambda _m: None)
+```
+
+<!-- ─── страница 638 ─── -->
+
+```py
   371 |     top = max_mfn(data_path, db)
   372 |     for mfn in range(1, top + 1):
   373 |         record = read_record(data_path, db, mfn, _warn=warn)
   374 |         if record is None:
-```
-
-<!-- ─── страница 617 ─── -->
-
-```py
   375 |             continue
   376 |         yield mfn, record
   377 | 
@@ -37446,15 +38720,15 @@
   423 |         low = offset
   424 |         if mfn in deleted:
   425 |             low |= XRF_DELETED_FLAG
+```
+
+<!-- ─── страница 639 ─── -->
+
+```py
   426 |         xrf += struct.pack('>2i', _as_int32(low), 0) + b'\x00' * 4
   427 | 
   428 |     return bytes(mst), bytes(xrf)
   429 | 
-```
-
-<!-- ─── страница 618 ─── -->
-
-```py
   430 | 
   431 | def _serialize_value(inst):
   432 |     """Канонический экземпляр поля -> сырая строка ``^aЗнач``.
@@ -37511,15 +38785,15 @@
    28 |     enabled) prints redacted samples (``Бр***``), never a full name/contact and
    29 |     never the source password.
    30 | 
+```
+
+<!-- ─── страница 640 ─── -->
+
+```py
    31 | Mapping (ИРБИС → Biblio)
    32 | ------------------------
    33 | *Catalog* (``IBIS`` → ``CatalogStore`` records — the shapes already match, so the
    34 | map is largely 1:1, lower-casing subfield codes to the canonical ``200^a`` form
-```
-
-<!-- ─── страница 619 ─── -->
-
-```py
    35 | the engines/index use)::
    36 | 
    37 |     200 (заглавие)        -> 200^a title, ^e/^f/^v…   (DB_IBIS §3.5)
@@ -37571,15 +38845,15 @@
    83 |     ``list_databases``) и для каждой отдаёт только дешёвые метаданные
    84 |     ``{code, name, kind, recordCount, readerCount?}``. Число записей берётся из
    85 |     управляющей записи (``max_mfn``/NXTMFN-1) — это один round-trip без чтения
+```
+
+<!-- ─── страница 641 ─── -->
+
+```py
    86 |     записей, поэтому фаза проходит быстро даже на ~50 БД. Поля НЕ сэмплируются.
    87 |   * **Фаза 2 — инвентарь полей (с ``dbs=[коды]``).** Только для запрошенных БД
    88 |     строит инвентарь полей по выборке записей (тяжёлая часть), где каждое поле/
    89 |     подполе помечено флагом ``custom`` (нештатное доппole — то, чего нет в
-```
-
-<!-- ─── страница 620 ─── -->
-
-```py
    90 |     эталонном :data:`STANDARD_CATALOG`). Выборка ограничена сверху
    91 |     :data:`INSPECT_SAMPLE_SIZE` записями на БД — достаточно для инвентаря, но не
    92 |     заставляет сканировать всю базу.
@@ -37631,15 +38905,15 @@
   138 |     # поле штатное, но без выделенных подполей (значение в «голове»).
   139 |     'bib': {
   140 |         '10': {'a', 'b', 'd', 'z'},                     # ISBN / цена
+```
+
+<!-- ─── страница 642 ─── -->
+
+```py
   141 |         '101': set(),                                   # язык текста
   142 |         '102': set(),                                   # страна
   143 |         '200': {'a', 'b', 'c', 'e', 'f', 'g', 'h', 'i', 'v'},   # заглавие
   144 |         '205': {'a', 'b', 'f'},                         # сведения об издании
-```
-
-<!-- ─── страница 621 ─── -->
-
-```py
   145 |         '210': {'a', 'b', 'c', 'd', 'e', 'g', 'h'},     # выходные данные
   146 |         '215': {'a', 'c', 'd', 'e'},                    # количеств. характеристики
   147 |         '300': {'a'}, '330': {'a'}, '331': {'a'},       # примечания / аннотация
@@ -37691,15 +38965,15 @@
   193 | STANDARD_FIELD_LABELS = {
   194 |     '10': 'ISBN / Фамилия читателя', '11': 'Имя читателя', '12': 'Отчество читателя',
   195 |     '30': 'Номер читательского билета', '32': 'Электронная почта',
+```
+
+<!-- ─── страница 643 ─── -->
+
+```py
   196 |     '50': 'Категория читателя',
   197 |     '101': 'Язык основного текста', '102': 'Страна', '200': 'Заглавие',
   198 |     '205': 'Сведения об издании', '210': 'Выходные данные',
   199 |     '215': 'Количественные характеристики', '331': 'Аннотация',
-```
-
-<!-- ─── страница 622 ─── -->
-
-```py
   200 |     '606': 'Предметная рубрика', '607': 'Географическая рубрика',
   201 |     '610': 'Неуправляемые ключевые слова', '621': 'Шифр (ББК)', '675': 'Индекс УДК',
   202 |     '700': 'Первый автор', '701': 'Другой автор', '702': 'Второй ответственный',
@@ -37751,15 +39025,15 @@
   248 | 
   249 | # Catalog fields we carry across. The record shapes already match (MARC-ish
   250 | # field->[{subfield:value}]); we copy every field the source has, but this is the
+```
+
+<!-- ─── страница 644 ─── -->
+
+```py
   251 | # documented set the product reads / indexes (DB_IBIS §3.3/§3.5). We copy ALL
   252 | # fields verbatim — this list is for documentation + the dry-run preview.
   253 | CATALOG_FIELDS = (
   254 |     '200', '700', '701', '702', '710', '210', '205', '215', '101', '102',
-```
-
-<!-- ─── страница 623 ─── -->
-
-```py
   255 |     '675', '621', '606', '607', '610', '900', '910', '920', '907',
   256 | )
   257 | 
@@ -37811,15 +39085,15 @@
   303 | # The client parser yields rec['fields'] = [{'tag','value','text','subfields'}…].
   304 | # CatalogStore wants {tag: [ {subfield_lower: value}, … ]} (repeatable fields are
   305 | # lists; a field with no subfields becomes a bare-value instance under '' ). We
+```
+
+<!-- ─── страница 645 ─── -->
+
+```py
   306 | # lower-case subfield codes so the stored record matches the canonical 200^a /
   307 | # 910^b shape the ФЛК / PFT / index engines key on (the live server returns
   308 | # UPPER-case codes; CatalogStore reads case-insensitively but we normalize so the
   309 | # AT-REST record is canonical and round-trips byte-for-byte in tests).
-```
-
-<!-- ─── страница 624 ─── -->
-
-```py
   310 | # --------------------------------------------------------------------------- #
   311 | def _instance_from_field(f):
   312 |     """One CatalogStore field-instance from a parsed source field.
@@ -37871,15 +39145,15 @@
   358 | def map_reader_record(parsed):
   359 |     """Map a parsed ИРБИС RDR record -> a minimal Biblio reader dict.
   360 | 
+```
+
+<!-- ─── страница 646 ─── -->
+
+```py
   361 |     Returns ``{ticket, category, pii:{...plaintext...}}`` or None when the record
   362 |     has no ticket (field 30). The ``pii`` map is PLAINTEXT here — the loader
   363 |     encrypts it before any store write (so plaintext never leaves this process).
   364 |     """
-```
-
-<!-- ─── страница 625 ─── -->
-
-```py
   365 |     def first(tag):
   366 |         for f in parsed.get('fields', []):
   367 |             if f['tag'] == tag:
@@ -37931,15 +39205,15 @@
   413 |     и терминатор отбрасываются (как в core.databases). Регистр кода сохраняется."""
   414 |     lines = [x.strip() for x in (text or '').splitlines()
   415 |              if x.strip() and x.strip() != '*****']
+```
+
+<!-- ─── страница 647 ─── -->
+
+```py
   416 |     pairs = []
   417 |     for i in range(0, len(lines) - 1, 2):
   418 |         code = lines[i]
   419 |         if code:
-```
-
-<!-- ─── страница 626 ─── -->
-
-```py
   420 |             pairs.append({'code': code, 'name': lines[i + 1]})
   421 |     return pairs
   422 | 
@@ -37991,15 +39265,15 @@
   468 |         raise LocalAdapterUnavailable(
   469 |             'адаптер локального режима (tools.irbis_mst) ещё не готов: %s' % e)
   470 |     return irbis_mst
+```
+
+<!-- ─── страница 648 ─── -->
+
+```py
   471 | 
   472 | 
   473 | def canonical_to_parsed(mfn, record, status=''):
   474 |     """Канонический ``{tag: [значение|{подполе: значение}]}`` -> parser-shape запись.
-```
-
-<!-- ─── страница 627 ─── -->
-
-```py
   475 | 
   476 |     Локальный адаптер (``tools.irbis_mst``) отдаёт запись в канонической форме
   477 |     CatalogStore. Сетевой путь и интроспекция/мигратор работают с parser-shape
@@ -38051,15 +39325,15 @@
   523 |             else:
   524 |                 out.append({'code': d, 'name': d})
   525 |         return out
+```
+
+<!-- ─── страница 649 ─── -->
+
+```py
   526 | 
   527 |     def max_mfn(self, db):
   528 |         return self._adapter.max_mfn(self.path, db)
   529 | 
-```
-
-<!-- ─── страница 628 ─── -->
-
-```py
   530 |     def _records(self, db):
   531 |         """Материализовать живые записи БД как ``{mfn: parser-shape}`` (с кэшем).
   532 | 
@@ -38111,15 +39385,15 @@
   578 | #   Фаза 1 (быстрая, без dbs): перечислить БД + на каждую дешёвые метаданные
   579 | #     {code,name,kind,recordCount,readerCount?} — БЕЗ чтения записей.
   580 | #   Фаза 2 (тяжёлая, с dbs=[коды]): для запрошенных БД построить инвентарь полей
+```
+
+<!-- ─── страница 650 ─── -->
+
+```py
   581 | #     по выборке записей, помечая нештатные допполя флагом ``custom``.
   582 | # Возвращает структурированный план (тот же shape, что /api/admin/migrate/inspect).
   583 | # --------------------------------------------------------------------------- #
   584 | # Верхний ПРЕДЕЛ выборки на БД для инвентаря полей (фаза 2). 300 записей с запасом
-```
-
-<!-- ─── страница 629 ─── -->
-
-```py
   585 | # хватает, чтобы увидеть штатные и нештатные поля/подполя, но не заставляет
   586 | # сканировать всю базу — поэтому даже большая БД интроспектируется быстро.
   587 | INSPECT_SAMPLE_SIZE = 300          # сколько записей сэмплировать на БД для инвентаря полей
@@ -38171,15 +39445,15 @@
   633 |                 # подполе кастомное, только если поле штатное, а подполя в эталоне нет
   634 |                 'custom': (not custom_field) and is_custom_subfield(kind, tag, sub),
   635 |             })
+```
+
+<!-- ─── страница 651 ─── -->
+
+```py
   636 |         out.append({
   637 |             'tag': tag,
   638 |             'label': STANDARD_FIELD_LABELS.get(tag),
   639 |             'subfields': subfields,
-```
-
-<!-- ─── страница 630 ─── -->
-
-```py
   640 |             'freq': slot['freq'],
   641 |             'custom': custom_field,
   642 |         })
@@ -38231,15 +39505,15 @@
   688 |     :data:`INSPECT_SAMPLE_SIZE`). Удалённые/пустые/нечитаемые записи в выборке
   689 |     пропускаются (но в recordCount учитывается max_mfn целиком)."""
   690 |     item = database_summary(source, db_code, db_name=db_name)
+```
+
+<!-- ─── страница 652 ─── -->
+
+```py
   691 |     record_count = item['recordCount']
   692 |     kind = item['kind']
   693 |     cap = min(int(sample), INSPECT_SAMPLE_SIZE) if sample else INSPECT_SAMPLE_SIZE
   694 |     inv = {}
-```
-
-<!-- ─── страница 631 ─── -->
-
-```py
   695 |     for parsed in _sample_records(source, db_code, record_count, cap):
   696 |         _accumulate_field_inventory(parsed, inv)
   697 |     item['fields'] = _inventory_to_fields(kind, inv)
@@ -38291,15 +39565,15 @@
   743 |             continue
   744 |         if _status_is_deleted(parsed.get('status')) or not parsed.get('fields'):
   745 |             continue
+```
+
+<!-- ─── страница 653 ─── -->
+
+```py
   746 |         yield parsed
   747 |         sampled += 1
   748 | 
   749 | 
-```
-
-<!-- ─── страница 632 ─── -->
-
-```py
   750 | def introspect(source, dbs=None, sample=INSPECT_SAMPLE_SIZE):
   751 |     """Интроспекция источника -> структурированный план миграции (ДВУХФАЗНАЯ, #225).
   752 | 
@@ -38351,15 +39625,15 @@
   798 | 
   799 |     def __init__(self, catalog, circulation, access, catalog_db='IBIS',
   800 |                  tenant='public'):
+```
+
+<!-- ─── страница 654 ─── -->
+
+```py
   801 |         self.catalog = catalog
   802 |         self.circulation = circulation
   803 |         self.access = access
   804 |         self.catalog_db = catalog_db
-```
-
-<!-- ─── страница 633 ─── -->
-
-```py
   805 |         self.tenant = tenant
   806 | 
   807 |     @classmethod
@@ -38411,15 +39685,15 @@
   853 |         self.dry_run = dry_run
   854 |         self._log = log                    # callable(str) or None
   855 | 
+```
+
+<!-- ─── страница 655 ─── -->
+
+```py
   856 |     def _emit(self, msg):
   857 |         if self._log:
   858 |             self._log(msg)
   859 | 
-```
-
-<!-- ─── страница 634 ─── -->
-
-```py
   860 |     # -- catalog ------------------------------------------------------------ #
   861 |     def migrate_catalog(self, src_db='IBIS', limit=None, report=None):
   862 |         """Iterate source ``src_db`` MFN 1..max_mfn, map + load each record.
@@ -38471,15 +39745,15 @@
   908 |             raise CatalogLoadRejected(res.get('violations'))
   909 |         return res
   910 | 
+```
+
+<!-- ─── страница 656 ─── -->
+
+```py
   911 |     # -- readers ------------------------------------------------------------ #
   912 |     def migrate_readers(self, src_db='RDR', limit=None, report=None):
   913 |         """Iterate source ``src_db`` (readers), map + load each ticket.
   914 | 
-```
-
-<!-- ─── страница 635 ─── -->
-
-```py
   915 |         PII is ENCRYPTED before any store write. Idempotent by ticket (upsert).
   916 |         Seeds the circulation reader row (ticket + category) so holds/loans can
   917 |         reference it. Returns the running report dict."""
@@ -38531,15 +39805,15 @@
   963 |         the resolved display name under the same encrypted column the social layer
   964 |         uses (``reader_review.reader_name``) so the migrated reader's name is
   965 |         ciphertext at rest, identical to a name written by the running app. The
+```
+
+<!-- ─── страница 657 ─── -->
+
+```py
   966 |         circulation reader row holds only the ticket + policy category (no PII).
   967 |         """
   968 |         ticket = mapped['ticket']
   969 |         # circulation reader (no PII — just ticket + category bucket)
-```
-
-<!-- ─── страница 636 ─── -->
-
-```py
   970 |         self.targets.circulation.add_reader(ticket, category=mapped['category'])
   971 |         # reader display name -> ENCRYPTED at rest via the V1 seam.
   972 |         display = _reader_display_name(mapped['pii'])
@@ -38591,15 +39865,15 @@
  1018 | 
  1019 | 
  1020 | def _new_report():
+```
+
+<!-- ─── страница 658 ─── -->
+
+```py
  1021 |     return {'records_read': 0, 'records_loaded': 0, 'readers_loaded': 0,
  1022 |             'skipped': 0, 'errors': 0}
  1023 | 
  1024 | 
-```
-
-<!-- ─── страница 637 ─── -->
-
-```py
  1025 | # --------------------------------------------------------------------------- #
  1026 | # CLI.
  1027 | # --------------------------------------------------------------------------- #
@@ -38651,15 +39925,15 @@
  1073 | def _parse_dbs_arg(raw):
  1074 |     """``--dbs`` -> кортеж кодов (или () если не задано). Разделители ',' и ';'."""
  1075 |     if not raw:
+```
+
+<!-- ─── страница 659 ─── -->
+
+```py
  1076 |         return ()
  1077 |     return tuple(d.strip() for d in raw.replace(';', ',').split(',') if d.strip())
  1078 | 
  1079 | 
-```
-
-<!-- ─── страница 638 ─── -->
-
-```py
  1080 | def main(argv=None):
  1081 |     args = build_arg_parser().parse_args(argv)
  1082 |     dbs = _parse_dbs_arg(args.dbs)
@@ -38716,15 +39990,15 @@
    12 |   display:flex;align-items:center;gap:var(--space-3);width:100%;
    13 |   background:var(--surface-card);border:var(--border-width) solid var(--border-default);
    14 |   border-radius:var(--radius-md);padding:var(--space-2) var(--space-3);cursor:pointer;text-align:left;
+```
+
+<!-- ─── страница 660 ─── -->
+
+```jsx
    15 |   transition:border-color var(--dur) var(--ease-standard), box-shadow var(--dur) var(--ease-standard);
    16 | }
    17 | .irb-dbsel__btn:hover{border-color:var(--border-strong);}
    18 | .irb-dbsel__btn:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 var(--focus-ring-width) var(--focus-ring-color);}
-```
-
-<!-- ─── страница 639 ─── -->
-
-```jsx
    19 | .irb-dbsel__mark{
    20 |   flex:none;width:38px;height:38px;border-radius:var(--radius-sm);
    21 |   display:flex;align-items:center;justify-content:center;
@@ -38776,15 +40050,15 @@
    67 | .irb-dbsel__row:hover{background:var(--surface-hover);}
    68 | .irb-dbsel__row .irb-check{pointer-events:none;}
    69 | .irb-dbsel__oicon{flex:none;width:30px;height:30px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;
+```
+
+<!-- ─── страница 661 ─── -->
+
+```jsx
    70 |   background:var(--surface-sunken);color:var(--text-muted);}
    71 | .irb-dbsel__row--on .irb-dbsel__oicon{background:var(--accent-weak);color:var(--accent);}
    72 | .irb-dbsel__oname{font-size:var(--text-sm);font-weight:var(--weight-semibold);color:var(--text-strong);}
    73 | .irb-dbsel__odesc{font-size:var(--text-xs);color:var(--text-muted);}
-```
-
-<!-- ─── страница 640 ─── -->
-
-```jsx
    74 | .irb-dbsel__ocount{margin-left:auto;font-size:var(--text-xs);color:var(--text-subtle);font-variant-numeric:tabular-nums;}
    75 | .irb-dbsel__stub{margin-left:6px;font-size:var(--text-2xs);color:var(--text-subtle);border:1px solid var(--border-subtle);border-radius:var(--radius-pill);padding:0 6px;}
    76 | `;
@@ -38836,15 +40110,15 @@
   122 |   }, [open]);
   123 | 
   124 |   const emit = (ids) => onChange && onChange(ids);
+```
+
+<!-- ─── страница 662 ─── -->
+
+```jsx
   125 |   const toggle = (id) => {
   126 |     const next = new Set(selected);
   127 |     next.has(id) ? next.delete(id) : next.add(id);
   128 |     emit(databases.filter((d) => next.has(d.id)).map((d) => d.id));
-```
-
-<!-- ─── страница 641 ─── -->
-
-```jsx
   129 |   };
   130 |   const allIds = databases.map((d) => d.id);
   131 |   const selectAll = () => emit(allIds.slice());
@@ -38896,15 +40170,15 @@
   177 | 
   178 |       {open && (
   179 |         <div className="irb-dbsel__menu" role="dialog" aria-label={title}>
+```
+
+<!-- ─── страница 663 ─── -->
+
+```jsx
   180 |           <div className="irb-dbsel__head">
   181 |             <div className="irb-dbsel__title">{title}</div>
   182 |             <div className="irb-dbsel__tools">
   183 |               <button type="button" className="irb-dbsel__link" onClick={selectAll} disabled={count === allIds.length}>Выбрать все</button>
-```
-
-<!-- ─── страница 642 ─── -->
-
-```jsx
   184 |               <button type="button" className="irb-dbsel__link" onClick={clearAll} disabled={count === 0}>Снять всё</button>
   185 |               <span className="irb-dbsel__sel">{count > 0 ? `выбрано: ${count}` : "ничего не выбрано"}</span>
   186 |             </div>
@@ -38961,15 +40235,15 @@
    13 | .irb-holdings__tbl td{padding:var(--space-3);border-bottom:var(--border-width) solid var(--border-subtle);color:var(--text-body);vertical-align:middle;}
    14 | .irb-holdings__tbl tr:last-child td{border-bottom:none;}
    15 | .irb-holdings__loc{font-weight:var(--weight-medium);color:var(--text-strong);}
+```
+
+<!-- ─── страница 664 ─── -->
+
+```jsx
    16 | .irb-holdings__inv{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-muted);}
    17 | .irb-holdings__act{text-align:right;}
    18 | 
    19 | /* Карточки на узких экранах */
-```
-
-<!-- ─── страница 643 ─── -->
-
-```jsx
    20 | .irb-holdings__cards{display:none;flex-direction:column;gap:var(--space-2);}
    21 | .irb-holdings__card{border:var(--border-width) solid var(--border-subtle);border-radius:var(--radius-md);
    22 |   padding:var(--space-3);display:flex;flex-direction:column;gap:var(--space-2);background:var(--surface-card);}
@@ -39021,15 +40295,15 @@
    68 |               )}
    69 |             </tr>
    70 |           ))}
+```
+
+<!-- ─── страница 665 ─── -->
+
+```jsx
    71 |         </tbody>
    72 |       </table>
    73 | 
    74 |       <div className="irb-holdings__cards">
-```
-
-<!-- ─── страница 644 ─── -->
-
-```jsx
    75 |         {holdings.map((h, i) => (
    76 |           <div className="irb-holdings__card" key={i}>
    77 |             <div className="irb-holdings__crow">
@@ -39086,15 +40360,15 @@
    23 | .irb-pg__stat b{color:var(--text-strong);font-weight:var(--weight-semibold);}
    24 | .irb-pg__size{display:flex;align-items:center;gap:var(--space-2);margin-left:auto;font-size:var(--text-sm);color:var(--text-muted);}
    25 | .irb-pg__size .irb-select{min-width:84px;}
+```
+
+<!-- ─── страница 666 ─── -->
+
+```jsx
    26 | .irb-pg--compact{justify-content:flex-end;}
    27 | .irb-pg--compact .irb-pg__stat{margin-right:auto;}
    28 | `;
    29 | 
-```
-
-<!-- ─── страница 645 ─── -->
-
-```jsx
    30 | if (typeof document !== "undefined" && !document.getElementById("irb-pg-css")) {
    31 |   const s = document.createElement("style");
    32 |   s.id = "irb-pg-css";
@@ -39146,15 +40420,15 @@
    78 |             <span key={`e${i}`} className="irb-pg__ell" aria-hidden="true">…</span>
    79 |           ) : (
    80 |             <button
+```
+
+<!-- ─── страница 667 ─── -->
+
+```jsx
    81 |               key={p}
    82 |               type="button"
    83 |               className={`irb-pg__b${p === page ? " irb-pg__b--cur" : ""}`}
    84 |               aria-current={p === page ? "page" : undefined}
-```
-
-<!-- ─── страница 646 ─── -->
-
-```jsx
    85 |               onClick={() => go(p)}
    86 |             >
    87 |               {p}
@@ -39211,15 +40485,15 @@
    21 | .irb-pft td,.irb-pft th{border:var(--border-width) solid var(--border-subtle);padding:var(--space-2) var(--space-3);text-align:left;}
    22 | .irb-pft__label{display:flex;align-items:center;gap:var(--space-2);font-size:var(--text-2xs);
    23 |   text-transform:uppercase;letter-spacing:var(--tracking-caps);color:var(--text-subtle);
+```
+
+<!-- ─── страница 668 ─── -->
+
+```jsx
    24 |   font-weight:var(--weight-semibold);font-family:var(--font-ui);margin-bottom:var(--space-3);}
    25 | .irb-pft__label::after{content:"";flex:1;height:1px;background:var(--border-subtle);}
    26 | `;
    27 | 
-```
-
-<!-- ─── страница 647 ─── -->
-
-```jsx
    28 | if (typeof document !== "undefined" && !document.getElementById("irb-pft-css")) {
    29 |   const s = document.createElement("style");
    30 |   s.id = "irb-pft-css";
@@ -39276,15 +40550,15 @@
    31 |   color:var(--text-strong);line-height:var(--leading-snug);margin:3px 0;cursor:pointer;
    32 |   background:none;border:none;padding:0;text-align:left;display:block;
    33 | }
+```
+
+<!-- ─── страница 669 ─── -->
+
+```jsx
    34 | .irb-result__title:hover{color:var(--accent-hover);text-decoration:underline;text-underline-offset:3px;}
    35 | .irb-result__meta{display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);
    36 |   font-size:var(--text-sm);color:var(--text-muted);align-items:center;}
    37 | .irb-result__author{color:var(--text-body);font-weight:var(--weight-medium);}
-```
-
-<!-- ─── страница 648 ─── -->
-
-```jsx
    38 | .irb-result__sep{color:var(--border-strong);}
    39 | .irb-result__extra{margin-top:var(--space-2);display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-4);
    40 |   font-size:var(--text-sm);color:var(--text-muted);}
@@ -39336,15 +40610,15 @@
    86 |         <button type="button" className="irb-result__title" onClick={onOpen}>{title}</button>
    87 |         <div className="irb-result__meta">
    88 |           {author && <span className="irb-result__author">{author}</span>}
+```
+
+<!-- ─── страница 670 ─── -->
+
+```jsx
    89 |           {author && year && <span className="irb-result__sep" aria-hidden="true">·</span>}
    90 |           {year && <span>{year}</span>}
    91 |         </div>
    92 |         {fields.length > 0 && (
-```
-
-<!-- ─── страница 649 ─── -->
-
-```jsx
    93 |           <div className="irb-result__extra">
    94 |             {fields.map((f, i) => (
    95 |               <span key={i}>{f.label}: <b>{f.value}</b></span>
@@ -39401,15 +40675,15 @@
    35 | .irb-searchbar__foot{display:flex;justify-content:flex-end;margin-top:var(--space-2);}
    36 | .irb-searchbar__adv{display:inline-flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;
    37 |   color:var(--text-link);font-family:var(--font-ui);font-size:var(--text-sm);font-weight:var(--weight-medium);}
+```
+
+<!-- ─── страница 671 ─── -->
+
+```jsx
    38 | .irb-searchbar__adv:hover{text-decoration:underline;}
    39 | `;
    40 | 
    41 | if (typeof document !== "undefined" && !document.getElementById("irb-searchbar-css")) {
-```
-
-<!-- ─── страница 650 ─── -->
-
-```jsx
    42 |   const s = document.createElement("style");
    43 |   s.id = "irb-searchbar-css";
    44 |   s.textContent = CSS;
@@ -39461,15 +40735,15 @@
    90 | 
    91 |   return (
    92 |     <div className={`irb-searchbar ${className}`} ref={wrapRef}>
+```
+
+<!-- ─── страница 672 ─── -->
+
+```jsx
    93 |       <div className="irb-searchbar__row">
    94 |         <div className="irb-searchbar__field" role="search">
    95 |           <Icon name="search" size={20} className="irb-sb-ico" />
    96 |           <input
-```
-
-<!-- ─── страница 651 ─── -->
-
-```jsx
    97 |             className="irb-searchbar__input"
    98 |             value={value}
    99 |             placeholder={placeholder}
@@ -39521,6 +40795,11 @@
   145 |         </div>
   146 |       )}
   147 |     </div>
+```
+
+<!-- ─── страница 673 ─── -->
+
+```jsx
   148 |   );
   149 | }
 ```
@@ -39530,11 +40809,6 @@
 ```jsx
     1 | import React from "react";
     2 | import { Icon } from "../icon/Icon.jsx";
-```
-
-<!-- ─── страница 652 ─── -->
-
-```jsx
     3 | 
     4 | /* Модуль «Поисковые режимы» (§1.10, §7): список режимов поиска;
     5 |    выбранный ВЫДЕЛЯЕТСЯ ЦВЕТОМ. Состав режимов зависит от базы (конфиг). */
@@ -39586,15 +40860,15 @@
    51 |           const on = m === value;
    52 |           return (
    53 |             <button
+```
+
+<!-- ─── страница 674 ─── -->
+
+```jsx
    54 |               key={m} type="button" role="tab" aria-selected={on}
    55 |               className={`irb-modes__item${on ? " irb-modes__item--on" : ""}`}
    56 |               onClick={() => onChange && onChange(m)}
    57 |             >
-```
-
-<!-- ─── страница 653 ─── -->
-
-```jsx
    58 |               <span className="irb-modes__bar" aria-hidden="true" />
    59 |               <Icon name={meta.icon} size={16} className="irb-modes__ic" />
    60 |               {labels[m] || meta.label}
@@ -39651,15 +40925,15 @@
    39 |   unknown: { text: "Нет данных", dot: "var(--status-unknown)" },
    40 | };
    41 | 
+```
+
+<!-- ─── страница 675 ─── -->
+
+```jsx
    42 | export function StatusBadge({ status = "unknown", label, size = "md", dot = false, className = "", ...rest }) {
    43 |   const cfg = MAP[status] || MAP.unknown;
    44 |   const text = label || cfg.text;
    45 |   if (dot) {
-```
-
-<!-- ─── страница 654 ─── -->
-
-```jsx
    46 |     return (
    47 |       <span className={`irb-status irb-status--dot ${className}`} {...rest}>
    48 |         <span className="irb-status__dot" style={{ background: cfg.dot }} aria-hidden="true"></span>
@@ -39718,6 +40992,11 @@
    37 | }
 ```
 
+<!-- ─── страница 676 ─── -->
+
+```jsx
+```
+
 ### Файл: `irbis-web/frontend/components/catalog/TreeNav.jsx`  · строк: 80
 
 ```jsx
@@ -39725,11 +41004,6 @@
     2 | import { Icon } from "../icon/Icon.jsx";
     3 | 
     4 | /* TreeNav (§4, §10) — навигатор-классификатор (ГРНТИ/УДК/ББК): раскрываемое
-```
-
-<!-- ─── страница 655 ─── -->
-
-```jsx
     5 |    дерево рубрик с количеством записей; выбор узла фильтрует выдачу. Ленивая
     6 |    подача: показываем счётчик у каждого узла. */
     7 | 
@@ -39781,15 +41055,15 @@
    53 |         </button>
    54 |         {node.count != null && <span className="irb-tnav__cnt">{node.count}</span>}
    55 |       </div>
+```
+
+<!-- ─── страница 677 ─── -->
+
+```jsx
    56 |       {has && open && node.children.map((c) => <Node key={c.code || c.label} node={c} depth={depth + 1} value={value} onPick={onPick} />)}
    57 |     </div>
    58 |   );
    59 | }
-```
-
-<!-- ─── страница 656 ─── -->
-
-```jsx
    60 | 
    61 | export function TreeNav({ navigators = [], value, onPick, className = "" }) {
    62 |   const [active, setActive] = React.useState(navigators[0] ? navigators[0].id : null);
@@ -39846,15 +41120,15 @@
    28 |   color:var(--text-link);font-family:var(--font-ui);font-size:var(--text-xs);font-weight:var(--weight-semibold);padding:2px 0;}
    29 | .irb-dyn__err{font-size:var(--text-xs);color:var(--danger-500);display:flex;align-items:center;gap:4px;}
    30 | .irb-dyn__hint{font-size:var(--text-xs);color:var(--text-muted);}
+```
+
+<!-- ─── страница 678 ─── -->
+
+```jsx
    31 | 
    32 | /* да-нет — сегмент */
    33 | .irb-dyn__seg{display:inline-flex;border:1px solid var(--border-default);border-radius:var(--radius-sm);overflow:hidden;}
    34 | .irb-dyn__seg button{border:none;background:var(--surface-card);color:var(--text-muted);cursor:pointer;
-```
-
-<!-- ─── страница 657 ─── -->
-
-```jsx
    35 |   font-family:var(--font-ui);font-size:var(--text-sm);font-weight:var(--weight-medium);padding:8px 16px;}
    36 | .irb-dyn__seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);}
    37 | .irb-dyn__seg button + button{border-left:1px solid var(--border-default);}
@@ -39906,15 +41180,15 @@
    83 |   React.useEffect(() => {
    84 |     if (!open) return;
    85 |     const onDoc = (e) => ref.current && !ref.current.contains(e.target) && setOpen(false);
+```
+
+<!-- ─── страница 679 ─── -->
+
+```jsx
    86 |     document.addEventListener("mousedown", onDoc);
    87 |     return () => document.removeEventListener("mousedown", onDoc);
    88 |   }, [open]);
    89 |   const text = q || value || "";
-```
-
-<!-- ─── страница 658 ─── -->
-
-```jsx
    90 |   const filtered = options.filter((o) => (o.term || o.label || o).toLowerCase().startsWith((q || "").toLowerCase()));
    91 |   return (
    92 |     <div className="irb-dyn__cb" ref={ref}>
@@ -39966,15 +41240,15 @@
   138 |       return <Select size="sm" value={value || ""} onChange={(e) => onChange(e.target.value)}
   139 |         options={[{ value: "", label: field.placeholder || "— выберите —" }].concat((field.options || []).map((o) => (typeof o === "string" ? { value: o, label: o } : o)))} />;
   140 |     case "bool":
+```
+
+<!-- ─── страница 680 ─── -->
+
+```jsx
   141 |       return (
   142 |         <div className="irb-dyn__seg" role="group" aria-label={field.label}>
   143 |           {(field.options || ["Да", "Нет"]).map((o) => {
   144 |             const v = typeof o === "string" ? o : o.value;
-```
-
-<!-- ─── страница 659 ─── -->
-
-```jsx
   145 |             return <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(value === v ? "" : v)}>{typeof o === "string" ? o : o.label}</button>;
   146 |           })}
   147 |         </div>
@@ -40026,15 +41300,15 @@
   193 |                 <Control field={sf} value={(occ || {})[sf.code] || ""} onChange={(v) => setOcc(i, { ...(occ || {}), [sf.code]: v })} />
   194 |               </div>
   195 |             ))}
+```
+
+<!-- ─── страница 681 ─── -->
+
+```jsx
   196 |           </div>
   197 |         ) : (
   198 |           <Control field={field} value={occ} onChange={(v) => setOcc(i, v)} />
   199 |         )}
-```
-
-<!-- ─── страница 660 ─── -->
-
-```jsx
   200 |       </div>
   201 |       {repeatable && occurrences.length > 1 && (
   202 |         <IconButton icon="trash" label="Удалить повторение" size="sm" variant="ghost" onClick={() => delOcc(i)} />
@@ -40091,15 +41365,15 @@
    24 | .irb-alert--error .irb-alert__icon{color:var(--danger-500);}
    25 | `;
    26 | 
+```
+
+<!-- ─── страница 682 ─── -->
+
+```jsx
    27 | if (typeof document !== "undefined" && !document.getElementById("irb-alert-css")) {
    28 |   const s = document.createElement("style");
    29 |   s.id = "irb-alert-css";
    30 |   s.textContent = CSS;
-```
-
-<!-- ─── страница 661 ─── -->
-
-```jsx
    31 |   document.head.appendChild(s);
    32 | }
    33 | 
@@ -40156,6 +41430,11 @@
    28 |     <span className={`irb-badge irb-badge--${variant}${count ? " irb-badge--count" : ""} ${className}`} {...rest}>
    29 |       {children}
    30 |     </span>
+```
+
+<!-- ─── страница 683 ─── -->
+
+```jsx
    31 |   );
    32 | }
 ```
@@ -40165,11 +41444,6 @@
 ```jsx
     1 | import React from "react";
     2 | import { IconButton } from "../forms/IconButton.jsx";
-```
-
-<!-- ─── страница 662 ─── -->
-
-```jsx
     3 | 
     4 | const CSS = `
     5 | .irb-overlay{
@@ -40221,15 +41495,15 @@
    51 |     const onKey = (e) => e.key === "Escape" && onClose && onClose();
    52 |     document.addEventListener("keydown", onKey);
    53 |     return () => document.removeEventListener("keydown", onKey);
+```
+
+<!-- ─── страница 684 ─── -->
+
+```jsx
    54 |   }, [open, onClose]);
    55 | 
    56 |   if (!open) return null;
    57 |   return (
-```
-
-<!-- ─── страница 663 ─── -->
-
-```jsx
    58 |     <div className="irb-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose && onClose()}>
    59 |       <div
    60 |         className={`irb-dialog irb-dialog--${size} ${className}`}
@@ -40286,15 +41560,15 @@
    29 | }
    30 | 
    31 | const DEFAULT_ICON = { neutral: "search", error: "alert-triangle", locked: "log-in" };
+```
+
+<!-- ─── страница 685 ─── -->
+
+```jsx
    32 | 
    33 | export function EmptyState({ variant = "neutral", icon, title, description, hints, action, className = "" }) {
    34 |   return (
    35 |     <div className={`irb-empty irb-empty--${variant} ${className}`} role={variant === "error" ? "alert" : undefined}>
-```
-
-<!-- ─── страница 664 ─── -->
-
-```jsx
    36 |       <span className="irb-empty__icon"><Icon name={icon || DEFAULT_ICON[variant]} size={30} /></span>
    37 |       {title && <div className="irb-empty__title">{title}</div>}
    38 |       {description && <p className="irb-empty__desc">{description}</p>}
@@ -40351,15 +41625,15 @@
    37 | /** Скелетон карточки результата — для состояния загрузки списка. */
    38 | export function SkeletonResult({ showThumb = false }) {
    39 |   return (
+```
+
+<!-- ─── страница 686 ─── -->
+
+```jsx
    40 |     <div className="irb-skelcard" aria-hidden="true">
    41 |       <Skeleton variant="circle" width={18} height={18} />
    42 |       {showThumb && <Skeleton width={56} height={74} radius="var(--radius-sm)" />}
    43 |       <div className="irb-skelcard__b">
-```
-
-<!-- ─── страница 665 ─── -->
-
-```jsx
    44 |         <Skeleton width="38%" height={10} />
    45 |         <Skeleton width="72%" height={18} />
    46 |         <Skeleton width="46%" height={12} />
@@ -40416,15 +41690,15 @@
    41 | const ICONS = { info: "info", success: "check-circle", warning: "alert-triangle", error: "alert-octagon" };
    42 | 
    43 | export function Toast({ variant = "info", title, children, onClose, className = "" }) {
+```
+
+<!-- ─── страница 687 ─── -->
+
+```jsx
    44 |   return (
    45 |     <div className={`irb-toast irb-toast--${variant} ${className}`} role="status">
    46 |       <Icon name={ICONS[variant]} size={18} className="irb-toast__icon" />
    47 |       <div className="irb-toast__body">
-```
-
-<!-- ─── страница 666 ─── -->
-
-```jsx
    48 |         {title && <div className="irb-toast__title">{title}</div>}
    49 |         {children && <div>{children}</div>}
    50 |       </div>
@@ -40481,15 +41755,15 @@
    25 | .irb-btn--primary:active:not(:disabled){background:var(--accent-press);}
    26 | 
    27 | .irb-btn--secondary{background:var(--surface-card);color:var(--text-strong);border-color:var(--border-default);}
+```
+
+<!-- ─── страница 688 ─── -->
+
+```jsx
    28 | .irb-btn--secondary:hover:not(:disabled){background:var(--surface-hover);border-color:var(--border-strong);}
    29 | .irb-btn--secondary:active:not(:disabled){background:var(--surface-active);}
    30 | 
    31 | .irb-btn--ghost{background:transparent;color:var(--accent);}
-```
-
-<!-- ─── страница 667 ─── -->
-
-```jsx
    32 | .irb-btn--ghost:hover:not(:disabled){background:var(--accent-weak);}
    33 | .irb-btn--ghost:active:not(:disabled){background:var(--accent-weak-hover);}
    34 | 
@@ -40543,6 +41817,11 @@
    82 | }
 ```
 
+<!-- ─── страница 689 ─── -->
+
+```jsx
+```
+
 ### Файл: `irbis-web/frontend/components/forms/Checkbox.jsx`  · строк: 62
 
 ```jsx
@@ -40550,11 +41829,6 @@
     2 | import { Icon } from "../icon/Icon.jsx";
     3 | 
     4 | const CSS = `
-```
-
-<!-- ─── страница 668 ─── -->
-
-```jsx
     5 | .irb-check{display:inline-flex;align-items:flex-start;gap:var(--space-2);cursor:pointer;
     6 |   font-family:var(--font-ui);font-size:var(--text-sm);color:var(--text-body);line-height:var(--leading-snug);}
     7 | .irb-check--disabled{opacity:.5;cursor:not-allowed;}
@@ -40606,15 +41880,15 @@
    53 |           size={13}
    54 |           strokeWidth={2.6}
    55 |           className="irb-check__mark"
+```
+
+<!-- ─── страница 690 ─── -->
+
+```jsx
    56 |           style={indeterminate ? { opacity: 1 } : undefined}
    57 |         />
    58 |       </span>
    59 |       {label != null && <span>{label}</span>}
-```
-
-<!-- ─── страница 669 ─── -->
-
-```jsx
    60 |     </label>
    61 |   );
    62 | }
@@ -40671,15 +41945,15 @@
    46 |   ...rest
    47 | }) {
    48 |   // Режим переключателя (выбор фильтра)
+```
+
+<!-- ─── страница 691 ─── -->
+
+```jsx
    49 |   if (onToggle) {
    50 |     return (
    51 |       <button
    52 |         type="button"
-```
-
-<!-- ─── страница 670 ─── -->
-
-```jsx
    53 |         className={`irb-chip irb-chip--toggle ${className}`}
    54 |         aria-pressed={!!pressed}
    55 |         onClick={onToggle}
@@ -40736,15 +42010,15 @@
    21 | .irb-iconbtn--accent{color:var(--accent);}
    22 | .irb-iconbtn--accent:hover:not(:disabled){background:var(--accent-weak);color:var(--accent-hover);}
    23 | .irb-iconbtn--solid{background:var(--accent);color:var(--accent-fg);}
+```
+
+<!-- ─── страница 692 ─── -->
+
+```jsx
    24 | .irb-iconbtn--solid:hover:not(:disabled){background:var(--accent-hover);}
    25 | `;
    26 | 
    27 | if (typeof document !== "undefined" && !document.getElementById("irb-iconbtn-css")) {
-```
-
-<!-- ─── страница 671 ─── -->
-
-```jsx
    28 |   const s = document.createElement("style");
    29 |   s.id = "irb-iconbtn-css";
    30 |   s.textContent = CSS;
@@ -40801,15 +42075,15 @@
    20 | .irb-input:hover{border-color:var(--border-strong);}
    21 | .irb-input:focus-within{border-color:var(--accent);box-shadow:0 0 0 var(--focus-ring-width) var(--focus-ring-color);}
    22 | .irb-input--error{border-color:var(--danger-500);}
+```
+
+<!-- ─── страница 693 ─── -->
+
+```jsx
    23 | .irb-input--error:focus-within{box-shadow:0 0 0 var(--focus-ring-width) rgba(178,59,59,.3);}
    24 | .irb-input--disabled{background:var(--surface-sunken);opacity:.7;cursor:not-allowed;}
    25 | .irb-input__icon{color:var(--text-subtle);flex:none;}
    26 | .irb-input__el{
-```
-
-<!-- ─── страница 672 ─── -->
-
-```jsx
    27 |   flex:1;min-width:0;border:none;background:transparent;outline:none;
    28 |   font-family:var(--font-ui);font-size:var(--text-base);color:inherit;
    29 | }
@@ -40861,15 +42135,15 @@
    75 |         <input
    76 |           id={autoId}
    77 |           className="irb-input__el"
+```
+
+<!-- ─── страница 694 ─── -->
+
+```jsx
    78 |           value={value}
    79 |           disabled={disabled}
    80 |           aria-invalid={error ? true : undefined}
    81 |           aria-describedby={error ? `${autoId}-err` : hint ? `${autoId}-hint` : undefined}
-```
-
-<!-- ─── страница 673 ─── -->
-
-```jsx
    82 |           {...rest}
    83 |         />
    84 |         {showClear && (
@@ -40926,15 +42200,15 @@
    26 | }
    27 | 
    28 | export function Radio({ label, disabled = false, className = "", ...rest }) {
+```
+
+<!-- ─── страница 695 ─── -->
+
+```jsx
    29 |   return (
    30 |     <label className={`irb-radio${disabled ? " irb-radio--disabled" : ""} ${className}`}>
    31 |       <input type="radio" disabled={disabled} {...rest} />
    32 |       <span className="irb-radio__dot" aria-hidden="true"></span>
-```
-
-<!-- ─── страница 674 ─── -->
-
-```jsx
    33 |       {label != null && <span>{label}</span>}
    34 |     </label>
    35 |   );
@@ -40991,15 +42265,15 @@
    45 |   return (
    46 |     <div className={`irb-select ${className}`}>
    47 |       {label && (
+```
+
+<!-- ─── страница 696 ─── -->
+
+```jsx
    48 |         <label className="irb-select__label" htmlFor={autoId}>{label}</label>
    49 |       )}
    50 |       <div className="irb-select__wrap">
    51 |         <select
-```
-
-<!-- ─── страница 675 ─── -->
-
-```jsx
    52 |           id={autoId}
    53 |           className={`irb-select__el irb-select__el--${size}`}
    54 |           disabled={disabled}
@@ -41056,15 +42330,15 @@
    29 | 
    30 | export function Switch({ label, checked, disabled = false, className = "", ...rest }) {
    31 |   return (
+```
+
+<!-- ─── страница 697 ─── -->
+
+```jsx
    32 |     <label className={`irb-switch${disabled ? " irb-switch--disabled" : ""} ${className}`}>
    33 |       <input type="checkbox" role="switch" checked={checked} disabled={disabled} {...rest} />
    34 |       <span className="irb-switch__track" aria-hidden="true">
    35 |         <span className="irb-switch__thumb"></span>
-```
-
-<!-- ─── страница 676 ─── -->
-
-```jsx
    36 |       </span>
    37 |       {label != null && <span>{label}</span>}
    38 |     </label>
@@ -41121,15 +42395,15 @@
    44 |   download: '<path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M5 19h14"/>',
    45 |   "share": '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/>',
    46 |   "link": '<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/>',
+```
+
+<!-- ─── страница 698 ─── -->
+
+```jsx
    47 |   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
    48 |   list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><path d="M3.5 6h.01"/><path d="M3.5 12h.01"/><path d="M3.5 18h.01"/>',
    49 |   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
    50 |   eye: '<path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7z"/><circle cx="12" cy="12" r="3"/>',
-```
-
-<!-- ─── страница 677 ─── -->
-
-```jsx
    51 |   "eye-off": '<path d="M3 3l18 18"/><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6 0 9.5 7 9.5 7a17 17 0 0 1-3.2 4"/><path d="M6.5 6.6A16.6 16.6 0 0 0 2.5 12S6 19 12 19a9.6 9.6 0 0 0 2.6-.4"/>',
    52 |   type: '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
    53 |   accessibility: '<circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="6.2" r="1.2"/><path d="M5.5 9.5 12 11l6.5-1.5"/><path d="M12 11v4"/><path d="m9.5 20 2.5-5 2.5 5"/>',
@@ -41181,15 +42455,15 @@
    99 |   size = 20,
   100 |   strokeWidth = 1.75,
   101 |   className = "",
+```
+
+<!-- ─── страница 699 ─── -->
+
+```jsx
   102 |   style,
   103 |   label,
   104 |   ...rest
   105 | }) {
-```
-
-<!-- ─── страница 678 ─── -->
-
-```jsx
   106 |   const inner = ICONS[name] || "";
   107 |   const a11y = label
   108 |     ? { role: "img", "aria-label": label }
@@ -41246,15 +42520,15 @@
    24 | 
    25 | .irb-tabs--pill .irb-tab{border-radius:var(--radius-sm);padding:var(--space-2) var(--space-4);}
    26 | .irb-tabs--pill .irb-tab[aria-selected="true"]{background:var(--surface-card);color:var(--text-strong);box-shadow:var(--shadow-xs);}
+```
+
+<!-- ─── страница 700 ─── -->
+
+```jsx
    27 | .irb-tabs--pill .irb-tab[aria-selected="true"]::after{display:none;}
    28 | `;
    29 | 
    30 | if (typeof document !== "undefined" && !document.getElementById("irb-tabs-css")) {
-```
-
-<!-- ─── страница 679 ─── -->
-
-```jsx
    31 |   const s = document.createElement("style");
    32 |   s.id = "irb-tabs-css";
    33 |   s.textContent = CSS;
@@ -41311,15 +42585,15 @@
    18 |   border-radius:var(--radius-xl);box-shadow:var(--shadow-lg);width:min(880px,100%);max-height:92vh;
    19 |   display:flex;flex-direction:column;overflow:hidden;font-family:var(--font-ui);}
    20 | .irb-fv__head{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);
+```
+
+<!-- ─── страница 701 ─── -->
+
+```jsx
    21 |   border-bottom:var(--border-width) solid var(--border-subtle);}
    22 | .irb-fv__ic{flex:none;width:34px;height:34px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;
    23 |   background:var(--accent-weak);color:var(--accent);}
    24 | .irb-fv__t{min-width:0;flex:1;}
-```
-
-<!-- ─── страница 680 ─── -->
-
-```jsx
    25 | .irb-fv__title{font-size:var(--text-sm);font-weight:var(--weight-bold);color:var(--text-strong);
    26 |   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
    27 | .irb-fv__sub{font-size:var(--text-xs);color:var(--text-muted);}
@@ -41371,15 +42645,15 @@
    73 |   React.useEffect(() => { if (open) setPage(relevantPages && relevantPages.length ? relevantPages[0] : 1); }, [open, file]);
    74 |   React.useEffect(() => {
    75 |     if (!open) return;
+```
+
+<!-- ─── страница 702 ─── -->
+
+```jsx
    76 |     const onKey = (e) => e.key === "Escape" && onClose && onClose();
    77 |     document.addEventListener("keydown", onKey);
    78 |     return () => document.removeEventListener("keydown", onKey);
    79 |   }, [open, onClose]);
-```
-
-<!-- ─── страница 681 ─── -->
-
-```jsx
    80 | 
    81 |   if (!open || !file) return null;
    82 |   const kind = file.kind || "pdf";
@@ -41431,15 +42705,15 @@
   128 |             </div>
   129 |             <div className="irb-fv__foot">
   130 |               {relevantPages && relevantPages.length > 0 && (
+```
+
+<!-- ─── страница 703 ─── -->
+
+```jsx
   131 |                 <div style={{ display: "flex", alignItems: "center", gap: 7, marginRight: 8 }}>
   132 |                   <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-subtle)" }}>Релевантные с.:</span>
   133 |                   {relevantPages.map((p) => (
   134 |                     <button key={p} type="button" onClick={() => setPage(p)} style={{
-```
-
-<!-- ─── страница 682 ─── -->
-
-```jsx
   135 |                       border: "1px solid " + (p === page ? "var(--accent)" : "var(--border-default)"), cursor: "pointer",
   136 |                       background: p === page ? "var(--accent-weak)" : "var(--surface-card)", color: p === page ? "var(--accent-press)" : "var(--text-muted)",
   137 |                       borderRadius: "var(--radius-pill)", padding: "1px 9px", fontFamily: "var(--font-mono)", fontSize: "var(--text-2xs)", fontWeight: 600,
@@ -41496,15 +42770,15 @@
    27 | .acq__fld{display:flex;flex-direction:column;gap:5px;margin-bottom:11px;}
    28 | .acq__fld-lab{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-subtle);}
    29 | .acq__in,.acq__sel{width:100%;box-sizing:border-box;padding:8px 11px;border-radius:var(--radius-md);
+```
+
+<!-- ─── страница 704 ─── -->
+
+```tsx
    30 |   border:1px solid var(--border-default);background:var(--surface-card);color:var(--text-body);
    31 |   font-family:var(--font-ui);font-size:13.5px;}
    32 | .acq__in:focus,.acq__sel:focus{outline:none;border-color:var(--accent);}
    33 | .acq__in--mono{font-family:var(--font-mono);}
-```
-
-<!-- ─── страница 683 ─── -->
-
-```tsx
    34 | .acq__row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
    35 | .acq__orders{padding:0;}
    36 | .acq__order{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;padding:12px 16px;border-bottom:1px solid var(--border-subtle);cursor:pointer;background:var(--surface-card);text-align:left;width:100%;border-left:none;border-right:none;border-top:none;font:inherit;color:inherit;}
@@ -41556,15 +42830,15 @@
    82 |   const [unavailable, setUnavailable] = React.useState(false);
    83 |   const [selId, setSelId] = React.useState<string | number | null>(null);
    84 |   const [creating, setCreating] = React.useState(false);
+```
+
+<!-- ─── страница 705 ─── -->
+
+```tsx
    85 |   const [receiving, setReceiving] = React.useState(false);
    86 |   const [busyId, setBusyId] = React.useState<string | number | null>(null);
    87 |   const [lastReceive, setLastReceive] = React.useState<AcqReceiveResult | null>(null);
    88 | 
-```
-
-<!-- ─── страница 684 ─── -->
-
-```tsx
    89 |   // форма заказа
    90 |   const [title, setTitle] = React.useState("");
    91 |   const [author, setAuthor] = React.useState("");
@@ -41616,15 +42890,15 @@
   137 |       setSelId(created.id);
   138 |       setTitle(""); setAuthor(""); setSupplier(""); setCopies("1"); setPrice("");
   139 |     } else if (r.status === 404 || r.status === 501) {
+```
+
+<!-- ─── страница 706 ─── -->
+
+```tsx
   140 |       setUnavailable(true);
   141 |     } else if (r.status === 401 || r.status === 403) {
   142 |       toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант acq.receipt." });
   143 |     } else {
-```
-
-<!-- ─── страница 685 ─── -->
-
-```tsx
   144 |       toast({ variant: "error", title: "Заказ не создан", message: "Повторите попытку." });
   145 |     }
   146 |   }
@@ -41676,15 +42950,15 @@
   192 | 
   193 |   async function lookupKsu() {
   194 |     const no = ksuQuery.trim();
+```
+
+<!-- ─── страница 707 ─── -->
+
+```tsx
   195 |     if (!no) return;
   196 |     const r = await api.acqKsu(no);
   197 |     if (r.json?.ok && r.json.data) {
   198 |       const e = r.json.data.entry || (r.json.data.items && r.json.data.items[0]);
-```
-
-<!-- ─── страница 686 ─── -->
-
-```tsx
   199 |       setKsuResult(e || "none");
   200 |     } else if (r.status === 404 || r.status === 501) {
   201 |       toast({ variant: "info", title: "КСУ недоступна", message: "Книга суммарного учёта подключается модулем комплектования." });
@@ -41736,15 +43010,15 @@
   247 |               <input id="acq-supplier" className="acq__in" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="издательство / поставщик" autoComplete="off" />
   248 |             </div>
   249 |             <div className="acq__row2">
+```
+
+<!-- ─── страница 708 ─── -->
+
+```tsx
   250 |               <div className="acq__fld">
   251 |                 <label className="acq__fld-lab" htmlFor="acq-copies">Экземпляров</label>
   252 |                 <input id="acq-copies" className="acq__in acq__in--mono" type="number" min={1} value={copies} onChange={(e) => setCopies(e.target.value)} />
   253 |               </div>
-```
-
-<!-- ─── страница 687 ─── -->
-
-```tsx
   254 |               <div className="acq__fld">
   255 |                 <label className="acq__fld-lab" htmlFor="acq-price">Цена за экз.</label>
   256 |                 <input id="acq-price" className="acq__in acq__in--mono" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="₽" autoComplete="off" inputMode="decimal" />
@@ -41796,15 +43070,15 @@
   302 |                 <EmptyState icon="archive" title="Заказов пока нет" description="Оформите заказ слева — он появится здесь. По заказу можно оформить поступление: создастся запись КСУ и каталожная запись." />
   303 |               </div>
   304 |             ) : (
+```
+
+<!-- ─── страница 709 ─── -->
+
+```tsx
   305 |               <div className="acq__orders">
   306 |                 {orders.map((o) => {
   307 |                   const st = statusOf(o);
   308 |                   return (
-```
-
-<!-- ─── страница 688 ─── -->
-
-```tsx
   309 |                     <button key={o.id} type="button" className={"acq__order" + (o.id === selId ? " acq__order--on" : "")} onClick={() => { setSelId(o.id); setLastReceive(null); }}>
   310 |                       <div style={{ minWidth: 0 }}>
   311 |                         <div className="acq__order-title">{o.title}{o.author ? <span style={{ fontWeight: 400, color: "var(--text-subtle)" }}> · {o.author}</span> : null}</div>
@@ -41856,15 +43130,15 @@
   357 |                   <input id="acq-rcv-ksu" className="acq__in acq__in--mono" value={rcvKsuNo} onChange={(e) => setRcvKsuNo(e.target.value)} placeholder="авто" autoComplete="off" />
   358 |                 </div>
   359 |               </div>
+```
+
+<!-- ─── страница 710 ─── -->
+
+```tsx
   360 |               <div className="acq__row2">
   361 |                 <div className="acq__fld">
   362 |                   <label className="acq__fld-lab" htmlFor="acq-rcv-unit">Цена за экз.</label>
   363 |                   <input id="acq-rcv-unit" className="acq__in acq__in--mono" value={rcvUnit} onChange={(e) => setRcvUnit(e.target.value)} placeholder={selected.price != null ? String(selected.price) : "₽"} autoComplete="off" inputMode="decimal" />
-```
-
-<!-- ─── страница 689 ─── -->
-
-```tsx
   364 |                 </div>
   365 |                 <div className="acq__fld">
   366 |                   <label className="acq__fld-lab" htmlFor="acq-rcv-act">Акт / счёт</label>
@@ -41921,15 +43195,15 @@
     9 | // вкладке, остальные продолжают работать; приложение не падает.
    10 | import React from "react";
    11 | import { api } from "./api";
+```
+
+<!-- ─── страница 711 ─── -->
+
+```tsx
    12 | import type { AdminUser, AdminRole, AuditEntry, AdminDatabase, PdnAccessEntry } from "./api";
    13 | import type { ToastVariant } from "../components/feedback/Toast.jsx";
    14 | import { Button } from "../components/forms/Button.jsx";
    15 | import { Icon } from "../components/icon/Icon.jsx";
-```
-
-<!-- ─── страница 690 ─── -->
-
-```tsx
    16 | import type { IconName } from "../components/icon/Icon.jsx";
    17 | import { EmptyState } from "../components/feedback/EmptyState.jsx";
    18 | 
@@ -41981,15 +43255,15 @@
    64 |   { id: "roles", label: "Роли", icon: "shield" },
    65 |   { id: "audit", label: "Аудит", icon: "list" },
    66 |   { id: "pdn", label: "Доступ к ПДн", icon: "eye" },
+```
+
+<!-- ─── страница 712 ─── -->
+
+```tsx
    67 |   { id: "databases", label: "Базы", icon: "archive" },
    68 | ];
    69 | 
    70 | // Информер «эндпойнт вкладки не развёрнут».
-```
-
-<!-- ─── страница 691 ─── -->
-
-```tsx
    71 | function SectionDown({ icon, title }: { icon: IconName; title: string }) {
    72 |   return (
    73 |     <div className="adm__card" style={{ padding: 4 }}>
@@ -42041,15 +43315,15 @@
   119 |   // форма создания
   120 |   const [showCreate, setShowCreate] = React.useState(false);
   121 |   const [login, setLogin] = React.useState(""); const [fullName, setFullName] = React.useState("");
+```
+
+<!-- ─── страница 713 ─── -->
+
+```tsx
   122 |   const [password, setPassword] = React.useState(""); const [newRoles, setNewRoles] = React.useState<string[]>([]);
   123 |   const [creating, setCreating] = React.useState(false);
   124 | 
   125 |   async function load() {
-```
-
-<!-- ─── страница 692 ─── -->
-
-```tsx
   126 |     const [u, r] = await Promise.all([api.adminUsers(), api.adminRoles()]);
   127 |     if (u.status === 404 || u.status === 501) { setDown(true); return; }
   128 |     if (u.json?.ok && u.json.data) setUsers(u.json.data.items || []);
@@ -42101,15 +43375,15 @@
   174 |     else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.users." });
   175 |     else toast({ variant: "error", title: "Не назначено", message: "Повторите попытку." });
   176 |   }
+```
+
+<!-- ─── страница 714 ─── -->
+
+```tsx
   177 | 
   178 |   if (down) return <SectionDown icon="users" title="Управление пользователями подключается отдельно" />;
   179 | 
   180 |   return (
-```
-
-<!-- ─── страница 693 ─── -->
-
-```tsx
   181 |     <div className="adm__card">
   182 |       <div className="adm__bar">
   183 |         <span className="adm__cap">Учётные записи сотрудников {users ? "· " + users.length : ""}</span>
@@ -42161,15 +43435,15 @@
   229 |                         <Button size="sm" variant="ghost" onClick={() => setEditRolesFor(null)}>Отмена</Button>
   230 |                       </>
   231 |                     ) : (
+```
+
+<!-- ─── страница 715 ─── -->
+
+```tsx
   232 |                       <>
   233 |                         <Button size="sm" variant="ghost" iconLeft="shield" onClick={() => startEditRoles(u)}>Роли</Button>{" "}
   234 |                         <Button size="sm" variant={u.active ? "ghost" : "secondary"} iconLeft={u.active ? "eye-off" : "check-circle"} loading={busy === u.id} onClick={() => toggleActive(u)}>{u.active ? "Отключить" : "Включить"}</Button>
   235 |                       </>
-```
-
-<!-- ─── страница 694 ─── -->
-
-```tsx
   236 |                     )}
   237 |                   </td>
   238 |                 </tr>
@@ -42221,15 +43495,15 @@
   284 |   const [limit, setLimit] = React.useState(50);
   285 |   const [loading, setLoading] = React.useState(false);
   286 | 
+```
+
+<!-- ─── страница 716 ─── -->
+
+```tsx
   287 |   async function load(lim: number) {
   288 |     setLoading(true);
   289 |     const r = await api.adminAudit(lim);
   290 |     setLoading(false);
-```
-
-<!-- ─── страница 695 ─── -->
-
-```tsx
   291 |     if (r.status === 404 || r.status === 501) { setDown(true); return; }
   292 |     if (r.json?.ok && r.json.data) setRows(r.json.data.items || []); else setRows([]);
   293 |   }
@@ -42281,15 +43555,15 @@
   339 | // Журнал обращений к персональным данным субъектов: когда / кто (актор) /
   340 | // субъект (билет читателя) / действие. Лимит + обновление, как у журнала аудита.
   341 | // 404/501 → информер (эндпойнт /api/admin/pdn-access ещё не развёрнут).
+```
+
+<!-- ─── страница 717 ─── -->
+
+```tsx
   342 | function PdnAccessTab() {
   343 |   const [rows, setRows] = React.useState<PdnAccessEntry[] | null>(null);
   344 |   const [down, setDown] = React.useState(false);
   345 |   const [limit, setLimit] = React.useState(50);
-```
-
-<!-- ─── страница 696 ─── -->
-
-```tsx
   346 |   const [loading, setLoading] = React.useState(false);
   347 | 
   348 |   async function load(lim: number) {
@@ -42341,15 +43615,15 @@
   394 | }
   395 | 
   396 | // ===== Базы данных ==========================================================
+```
+
+<!-- ─── страница 718 ─── -->
+
+```tsx
   397 | function DatabasesTab() {
   398 |   const [dbs, setDbs] = React.useState<AdminDatabase[] | null>(null);
   399 |   const [down, setDown] = React.useState(false);
   400 |   React.useEffect(() => { (async () => {
-```
-
-<!-- ─── страница 697 ─── -->
-
-```tsx
   401 |     // основной эндпойнт админа; при его отсутствии — общий /api/databases.
   402 |     let r = await api.adminDatabases();
   403 |     if (r.status === 404 || r.status === 501) {
@@ -42406,15 +43680,15 @@
    17 | import { exportRecord, exportBasket, basketMailto } from "./export";
    18 | import { HomeScreen } from "./reader/HomeScreen";
    19 | import { GalleryGrid } from "./reader/GalleryGrid";
+```
+
+<!-- ─── страница 719 ─── -->
+
+```tsx
    20 | import { CalendarGrid } from "./reader/CalendarGrid";
    21 | import { ArchiveList } from "./reader/ArchiveList";
    22 | import { ResultsToolbar, sortItems } from "./reader/ResultsToolbar";
    23 | import type { ViewMode, SortKey } from "./reader/ResultsToolbar";
-```
-
-<!-- ─── страница 698 ─── -->
-
-```tsx
    24 | import { OrdersTab } from "./reader/OrdersTab";
    25 | import { NotificationInbox } from "./reader/NotificationInbox";
    26 | import { HoldsTab } from "./reader/HoldsTab";
@@ -42466,15 +43740,15 @@
    72 |     expr = "(" + expr + ') * "' + a.prefix + "=" + a.value.replace(/"/g, "") + '"';
    73 |   }
    74 |   return expr;
+```
+
+<!-- ─── страница 720 ─── -->
+
+```tsx
    75 | }
    76 | 
    77 | function recView(d: RecordData) {
    78 |   const F = (tag: string) => d.fields.filter((x) => x.tag === tag);
-```
-
-<!-- ─── страница 699 ─── -->
-
-```tsx
    79 |   const F1 = (tag: string) => F(tag)[0];
    80 |   const authors = ["700", "701", "702"].flatMap(F).map((f) => (sf(f, "A") + (sf(f, "G") ? ", " + sf(f, "G") : "")).trim()).filter(Boolean);
    81 |   const orgs = ["710", "711"].flatMap(F).map((f) => sf(f, "A")).filter(Boolean);
@@ -42526,15 +43800,15 @@
   127 |   // полем db (источник), фасеты/уточнение отключены (база не одна).
   128 |   const [allDbs, setAllDbs] = React.useState(false);
   129 |   const [items, setItems] = React.useState<ResultItem[]>([]);
+```
+
+<!-- ─── страница 721 ─── -->
+
+```tsx
   130 |   const [total, setTotal] = React.useState(0);
   131 |   const [page, setPage] = React.useState(1);
   132 |   const [facets, setFacets] = React.useState<Facet[]>([]);
   133 |   const [baseExpr, setBaseExpr] = React.useState<string | null>(null);
-```
-
-<!-- ─── страница 700 ─── -->
-
-```tsx
   134 |   const [activeFacets, setActiveFacets] = React.useState<ActiveFacet[]>([]);
   135 |   const [loading, setLoading] = React.useState(false);
   136 |   const [rec, setRec] = React.useState<RecordData | null>(null);
@@ -42586,15 +43860,15 @@
   182 |         const linkDb = p.get("db"); const linkMfn = p.get("mfn");
   183 |         if (linkMfn && /^\d+$/.test(linkMfn)) {
   184 |           const useDb = linkDb || startDb; setDb(useDb);
+```
+
+<!-- ─── страница 722 ─── -->
+
+```tsx
   185 |           setHome(false); // permalink ведёт сразу к записи, минуя лендинг
   186 |           await openRecord(parseInt(linkMfn, 10), useDb);
   187 |         }
   188 |       } catch { /* ignore */ }
-```
-
-<!-- ─── страница 701 ─── -->
-
-```tsx
   189 |       // Иначе остаёмся на главной-лендинге (фасад discovery, G1) — без авто-поиска.
   190 |     })();
   191 |   }, []);
@@ -42646,15 +43920,15 @@
   237 |     if (grand === 0) loadSuggestions(pubs[0], px, query);
   238 |     setLoading(false);
   239 |   }
+```
+
+<!-- ─── страница 723 ─── -->
+
+```tsx
   240 |   // «Вы имели в виду» (#4): дёргаем GET /api/suggest. 404/501 (эндпойнт-сиблинг
   241 |   // ещё не приземлён) или пустой ответ → блок остаётся скрытым (мягкая деградация).
   242 |   async function loadSuggestions(database: string, px: string, query: string) {
   243 |     setDidYouMean([]);
-```
-
-<!-- ─── страница 702 ─── -->
-
-```tsx
   244 |     const r = await api.suggest(database, px, query);
   245 |     if (r.status === 200 && r.json?.ok && r.json.data) {
   246 |       const raw = (r.json.data.suggestions || []) as Array<string | { term: string; count?: number }>;
@@ -42706,15 +43980,15 @@
   292 |       if (asBase && pg === 1) { setBaseExpr(expr); setActiveFacets([]); loadFacets(database, expr); }
   293 |     } else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
   294 |     setLoading(false);
+```
+
+<!-- ─── страница 724 ─── -->
+
+```tsx
   295 |   }
   296 |   // Re-run the search with the current base intersected by the given active facets.
   297 |   function applyFacets(next: ActiveFacet[]) {
   298 |     if (baseExpr == null) return;
-```
-
-<!-- ─── страница 703 ─── -->
-
-```tsx
   299 |     setActiveFacets(next);
   300 |     runExpr(db, composeExpr(baseExpr, next), 1);
   301 |   }
@@ -42766,15 +44040,15 @@
   347 |     else if (mode === "advanced") { const ex = buildAdvExpr(); if (ex) { setLoading(true); setPage(1); api.searchExpr(db, ex, 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); } }
   348 |     else { setLoading(true); setPage(1); api.search(db, prefix, q, 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); }
   349 |   }
+```
+
+<!-- ─── страница 725 ─── -->
+
+```tsx
   350 | 
   351 |   async function openRecord(mfn: number, database: string = db) {
   352 |     setLoading(true); const r = await api.record(database, mfn); setLoading(false);
   353 |     if (r.json?.ok && r.json.data) {
-```
-
-<!-- ─── страница 704 ─── -->
-
-```tsx
   354 |       setRec(r.json.data); setRecTab(0); setShareOpen(false);
   355 |       // Постоянная ссылка: ?db=<db>&mfn=<mfn> в адресной строке без перезагрузки.
   356 |       try { const u = new URL(window.location.href); u.searchParams.set("db", database); u.searchParams.set("mfn", String(mfn)); window.history.replaceState(null, "", u.toString()); } catch { /* ignore */ }
@@ -42826,15 +44100,15 @@
   402 |     if (r.json?.ok && r.json.data) {
   403 |       setCab(r.json.data); setView("cabinet"); setRec(null);
   404 |       // «06» — тёмная витрина: показываем кабинет в тёмной теме (если не a11y и
+```
+
+<!-- ─── страница 726 ─── -->
+
+```tsx
   405 |       // пользователь сам ещё не выбрал светлую в этой сессии). Тумблер остаётся рабочим.
   406 |       if (!a11y && !cabinetSeen) { setDarkMode(true); setCabinetSeen(true); }
   407 |     } else toast({ variant: "info", title: "Кабинет недоступен", message: "Войдите по читательскому билету." });
   408 |   }
-```
-
-<!-- ─── страница 705 ─── -->
-
-```tsx
   409 |   async function doLogin(ticket: string, password: string) {
   410 |     const r = await api.loginReader(ticket, password);
   411 |     if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); loadCabinet(); }
@@ -42886,15 +44160,15 @@
   457 |             <button onClick={() => switchContext("staff")} style={hbtn(context === "staff")}>Сотрудник</button>
   458 |           </div>
   459 |           <button onClick={() => setDarkMode((v) => !v)} title="Светлая / тёмная тема" style={hbtn(darkMode && !a11y)}>{darkMode ? "Светлая" : "Тёмная"}</button>
+```
+
+<!-- ─── страница 727 ─── -->
+
+```tsx
   460 |           <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
   461 |           {/* Почтовый ящик уведомлений (#222) — только для вошедшего читателя. */}
   462 |           {context === "reader" && account.loggedIn && <NotificationInbox />}
   463 |           {context === "reader" && account.loggedIn && <button onClick={loadCabinet} style={hbtn(view === "cabinet")}>Кабинет</button>}
-```
-
-<!-- ─── страница 706 ─── -->
-
-```tsx
   464 |           {context === "reader" && <button onClick={() => account.loggedIn ? (setAccount({ loggedIn: false }), setView("search"), setCab(null)) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
   465 |           {context === "staff" && staff && <button onClick={() => { setStaff(null); setContext("reader"); }} style={hbtn(false)}>Выйти ({staff.login})</button>}
   466 |         </div>
@@ -42946,15 +44220,15 @@
   512 |               <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
   513 |                 {/* Сохранённые запросы (#133): меню повтора + сохранение текущего поиска. */}
   514 |                 <SavedSearchMenu toast={toast} onRun={runSavedSearch} refreshKey={savedRefresh} />
+```
+
+<!-- ─── страница 728 ─── -->
+
+```tsx
   515 |                 {(total > 0 || baseExpr != null) && (
   516 |                   <SaveSearchButton
   517 |                     db={db}
   518 |                     prefix={mode === "simple" ? prefix : ""}
-```
-
-<!-- ─── страница 707 ─── -->
-
-```tsx
   519 |                     query={mode === "simple" ? q : (baseExpr || expertExpr)}
   520 |                     defaultName={mode === "simple" ? q : undefined}
   521 |                     toast={toast} onSaved={() => setSavedRefresh((n) => n + 1)} />
@@ -43006,15 +44280,15 @@
   567 |                     {advRows.length > 1 && <button onClick={() => setAdvRows((rows) => rows.filter((_, j) => j !== i))} style={iconBtn} title="Убрать условие">×</button>}
   568 |                   </div>
   569 |                 ))}
+```
+
+<!-- ─── страница 729 ─── -->
+
+```tsx
   570 |                 <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
   571 |                   <button onClick={() => setAdvRows((rows) => [...rows, { field: "K", value: "" }])} style={iconBtn}>+ условие</button>
   572 |                   <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
   573 |                     <Button variant="ghost" onClick={() => setAdvRows([{ field: "A", value: "" }, { field: "T", value: "" }])}>Сброс</Button>
-```
-
-<!-- ─── страница 708 ─── -->
-
-```tsx
   574 |                     <Button iconLeft="search" onClick={runAdvanced}>Найти</Button>
   575 |                   </div>
   576 |                 </div>
@@ -43066,15 +44340,15 @@
   622 |                               <CalendarGrid items={sorted}
   623 |                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
   624 |                             ) : effLayout === "archive" ? (
+```
+
+<!-- ─── страница 730 ─── -->
+
+```tsx
   625 |                               <ArchiveList items={sorted} startIndex={(page - 1) * pageSize}
   626 |                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
   627 |                             ) : (
   628 |                               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-```
-
-<!-- ─── страница 709 ─── -->
-
-```tsx
   629 |                                 {sorted.map((it) => {
   630 |                                   // Мульти-БД (#3): запись открывается/бронируется в своей базе (it.db).
   631 |                                   const itDb = it.db || db;
@@ -43126,15 +44400,15 @@
   677 |       <footer style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 20px", fontSize: "var(--text-xs)", color: "var(--text-subtle)", display: "flex", gap: 10, alignItems: "center" }}>
   678 |         <Icon name="globe" size={14} />
   679 |         <span>Читательский портал поверх ИРБИС64 (база {DB}). Работает в защищённом контуре.</span>
+```
+
+<!-- ─── страница 731 ─── -->
+
+```tsx
   680 |       </footer>
   681 | 
   682 |       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
   683 |       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
-```
-
-<!-- ─── страница 710 ─── -->
-
-```tsx
   684 |       {basketOpen && <BasketPanel items={basket} onClose={() => setBasketOpen(false)} onRemove={removeFromBasket} onClear={() => setBasket([])} toast={toast} />}
   685 |       {docView && <DocViewer pages={docView.pages} startIndex={docView.idx} title={docView.title} onClose={() => setDocView(null)} />}
   686 |       {/* Согласие на обработку ПДн (#199) — баннер первого сеанса. Только для вошедшего
@@ -43186,15 +44460,15 @@
   732 |       {suggestions.map((s, i) => (
   733 |         <button key={s.term + i} type="button" onClick={() => onPick(s.term)}
   734 |           title={s.count != null ? "Найдётся записей: " + s.count : "Повторить поиск по этому варианту"}
+```
+
+<!-- ─── страница 732 ─── -->
+
+```tsx
   735 |           style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", border: "1px solid var(--border-subtle)", borderRadius: 999, padding: "5px 13px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
   736 |           {s.term}
   737 |           {s.count != null && <span style={{ fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{s.count}</span>}
   738 |         </button>
-```
-
-<!-- ─── страница 711 ─── -->
-
-```tsx
   739 |       ))}
   740 |     </div>
   741 |   );
@@ -43246,15 +44520,15 @@
   787 |   if (m < 1 || m > 12 || d < 1 || d > 31) return null;
   788 |   const dt = new Date(y, m - 1, d);
   789 |   return isNaN(dt.getTime()) ? null : dt;
+```
+
+<!-- ─── страница 733 ─── -->
+
+```tsx
   790 | }
   791 | function fmtDate(dt: Date | null): string {
   792 |   return dt ? dt.getDate() + " " + RU_MONTH[dt.getMonth()] : "";
   793 | }
-```
-
-<!-- ─── страница 712 ─── -->
-
-```tsx
   794 | // Декоративная палитра подложек обложек-плейсхолдеров — токены Biblio
   795 | // (--cover-tint-*); hex оставлен как фолбэк на случай отсутствия токен-слоя.
   796 | const COVER_TINTS = [
@@ -43306,15 +44580,15 @@
   842 |   const returned = !!fact && fact.indexOf("*") < 0; // реальная дата возврата
   843 |   const onHand = !returned;                          // ****** или пусто → на руках
   844 |   const renewals = (() => { const v = get("L"); const n = parseInt(v, 10); return isNaN(n) ? 0 : n; })();
+```
+
+<!-- ─── страница 734 ─── -->
+
+```tsx
   845 |   const t = loanTitle(desc, code);
   846 |   let tone: LoanView["tone"] = "ok";
   847 |   let dueLabel = due ? "до " + fmtDate(due) : "";
   848 |   let daysWord = "";
-```
-
-<!-- ─── страница 713 ─── -->
-
-```tsx
   849 |   if (returned) {
   850 |     tone = "done"; dueLabel = "возвращено";
   851 |   } else if (due) {
@@ -43366,15 +44640,15 @@
   897 |   const cardSx: React.CSSProperties = { background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-xl,16px)", boxShadow: "var(--shadow-sm)" };
   898 |   const h2Sx: React.CSSProperties = { fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-xl,1.25rem)", letterSpacing: "-.02em", margin: 0 };
   899 |   const demoHint: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 999, background: "var(--surface-sunken)", color: "var(--text-subtle)", fontSize: "var(--text-2xs,11px)", fontWeight: 600, letterSpacing: ".02em" };
+```
+
+<!-- ─── страница 735 ─── -->
+
+```tsx
   900 | 
   901 |   // Челлендж остаётся демонстрационным (вне объёма #222) — помечен «демо».
   902 |   const challengeGoal = 50, challengeDone = Math.min(returnedCount + 35, 49);
   903 |   const pct = Math.round((challengeDone / challengeGoal) * 100);
-```
-
-<!-- ─── страница 714 ─── -->
-
-```tsx
   904 |   // Реальное число активных броней (#222) для статистики профиля; 0 пока не загружено
   905 |   // или модуль брони недоступен.
   906 |   const [holdsCount, setHoldsCount] = React.useState(0);
@@ -43426,15 +44700,15 @@
   952 |             <p style={{ fontSize: "var(--text-sm)", color: "var(--text-muted,var(--text-secondary))", margin: "10px 0 14px" }}>Прочитать {challengeGoal} книг за год</p>
   953 |             <div style={{ height: 9, borderRadius: 999, background: "var(--surface-hover,var(--surface-3))", overflow: "hidden" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Прогресс челленджа">
   954 |               <div style={{ height: "100%", width: pct + "%", borderRadius: 999, background: "linear-gradient(90deg, var(--accent), var(--accent-hover))" }} />
+```
+
+<!-- ─── страница 736 ─── -->
+
+```tsx
   955 |             </div>
   956 |             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 9 }}>
   957 |               <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--accent)" }}>{challengeDone} из {challengeGoal}</span>
   958 |               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
-```
-
-<!-- ─── страница 715 ─── -->
-
-```tsx
   959 |             </div>
   960 |           </div>
   961 |         </aside>
@@ -43486,15 +44760,15 @@
  1007 |             {onHand.length ? (
  1008 |               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
  1009 |                 {onHand.map((l, i) => (
+```
+
+<!-- ─── страница 737 ─── -->
+
+```tsx
  1010 |                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: "14px 16px" }}>
  1011 |                     <div aria-hidden="true" style={{ width: 40, height: 56, flex: "none", borderRadius: 6, background: "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.35))", boxShadow: "var(--shadow-md)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 4 }}>
  1012 |                       <Icon name="book" size={13} style={{ color: "rgba(255,255,255,.85)" }} />
  1013 |                     </div>
-```
-
-<!-- ─── страница 716 ─── -->
-
-```tsx
  1014 |                     <div style={{ flex: 1, minWidth: 0 }}>
  1015 |                       <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-base,15.5px)", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{l.title}</div>
  1016 |                       <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -43546,15 +44820,15 @@
  1062 | // «Продлить» — реальное продление это запись в backend, которой ещё нет.
  1063 | // Кнопка задизейблена с подсказкой «скоро»; write-эндпойнты не вызываются.
  1064 | function RenewButton() {
+```
+
+<!-- ─── страница 738 ─── -->
+
+```tsx
  1065 |   return (
  1066 |     <span title="Онлайн-продление появится скоро" style={{ display: "inline-block" }}>
  1067 |       <button type="button" disabled aria-disabled="true" aria-label="Продлить (скоро)"
  1068 |         style={{ border: "1px solid var(--border-default,var(--border-strong))", background: "transparent", color: "var(--text-muted,var(--text-secondary))", borderRadius: 8, padding: "6px 13px", fontFamily: "var(--font-ui)", fontWeight: 500, fontSize: "var(--text-xs,12px)", cursor: "not-allowed", opacity: .7, display: "inline-flex", alignItems: "center", gap: 5 }}>
-```
-
-<!-- ─── страница 717 ─── -->
-
-```tsx
  1069 |         <Icon name="refresh-cw" size={13} /> Продлить
  1070 |       </button>
  1071 |     </span>
@@ -43606,15 +44880,15 @@
  1117 |   onOpenRecord: (db: string, mfn: number) => void;
  1118 |   onViewDoc: (pages: DocPage[], idx: number, title?: string) => void;
  1119 |   inBasket: boolean; onToggleBasket: () => void;
+```
+
+<!-- ─── страница 739 ─── -->
+
+```tsx
  1120 | }) {
  1121 |   const v = recView(rec);
  1122 |   // «Полное описание» (#1): серверный формат ИРБИС. Цепочка деградации
  1123 |   //   @full → (пусто/404) @brief → (пусто/404) показ полей (вкладка «Поля»).
-```
-
-<!-- ─── страница 718 ─── -->
-
-```tsx
  1124 |   // state.text — готовый текст; state.fmt — какой формат отдал результат;
  1125 |   // state.status — loading | ok | empty (нет ни @full, ни @brief → откат к полям).
  1126 |   const [full, setFull] = React.useState<{ status: "loading" | "ok" | "empty"; text: string; fmt: string }>(
@@ -43666,15 +44940,15 @@
  1172 |   return (
  1173 |     <div>
  1174 |       <Button iconLeft="arrow-left" onClick={onBack}>К результатам</Button>
+```
+
+<!-- ─── страница 740 ─── -->
+
+```tsx
  1175 |       <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
  1176 |         {rec.hasCover && <img alt="обложка" src={api.coverUrl(db, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
  1177 |         <div style={{ flex: 1, minWidth: 300 }}>
  1178 |           <h2 style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-2xl, 1.5rem)", lineHeight: 1.3, margin: "2px 0 12px" }}>{v.brief}</h2>
-```
-
-<!-- ─── страница 719 ─── -->
-
-```tsx
  1179 | 
  1180 |           {/* Действия: заказ, бронь, список, корзина, поделиться, экспорт */}
  1181 |           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14, position: "relative" }}>
@@ -43726,15 +45000,15 @@
  1227 |             {tab === 0 && (
  1228 |               full.status === "loading" ? (
  1229 |                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Загрузка описания…</div>
+```
+
+<!-- ─── страница 741 ─── -->
+
+```tsx
  1230 |               ) : full.status === "ok" ? (
  1231 |                 <div>
  1232 |                   <div style={{
  1233 |                     fontFamily: "var(--font-record-body, var(--font-serif, serif))",
-```
-
-<!-- ─── страница 720 ─── -->
-
-```tsx
  1234 |                     fontSize: "var(--text-base, 15.5px)", lineHeight: 1.6, color: "var(--text-body)",
  1235 |                     whiteSpace: "pre-wrap", wordBreak: "break-word",
  1236 |                   }}
@@ -43786,15 +45060,15 @@
  1282 |             {tab === 3 && (
  1283 |               v.files.length ?
  1284 |                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+```
+
+<!-- ─── страница 742 ─── -->
+
+```tsx
  1285 |                   {/* Постраничный просмотрщик (#222): доступен, если есть страницы-файлы. */}
  1286 |                   {docPages.length > 0 && (
  1287 |                     <div style={{ marginBottom: 6 }}>
  1288 |                       <Button size="sm" iconLeft={hasImagePages ? "images" : "book-open"}
-```
-
-<!-- ─── страница 721 ─── -->
-
-```tsx
  1289 |                         onClick={() => onViewDoc(docPages, 0, rec.brief || "")}>
  1290 |                         Открыть просмотр{docPages.length > 1 ? " · " + docPages.length + " стр." : ""}
  1291 |                       </Button>
@@ -43846,15 +45120,15 @@
  1337 |   items: ResultItem[]; onClose: () => void; onRemove: (mfn: number) => void; onClear: () => void;
  1338 |   toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
  1339 | }) {
+```
+
+<!-- ─── страница 743 ─── -->
+
+```tsx
  1340 |   const empty = items.length === 0;
  1341 |   const exp = (fmt: "ris" | "bib" | "txt") => { if (empty) return; exportBasket(items, fmt); };
  1342 |   return (
  1343 |     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", justifyContent: "flex-end", zIndex: 60 }}>
-```
-
-<!-- ─── страница 722 ─── -->
-
-```tsx
  1344 |       <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Корзина отбора"
  1345 |         style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", width: "min(440px, 96vw)", height: "100%", boxShadow: "var(--shadow-lg, -10px 0 40px rgba(0,0,0,.25))", display: "flex", flexDirection: "column" }}>
  1346 |         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
@@ -43911,15 +45185,15 @@
     9 | //
    10 | // Данные замера: POST /api/admin/benchmark/run (super-admin) либо GET /api/admin/
    11 | // benchmark (последний кэш). Контракт ответа:
+```
+
+<!-- ─── страница 744 ─── -->
+
+```tsx
    12 | //   { query:{irbis_ms, biblio_ms},
    13 | //     circulation:{irbis_ms?, biblio_ms},
    14 | //     migration:{records_per_sec, total?},
    15 | //     ts }
-```
-
-<!-- ─── страница 723 ─── -->
-
-```tsx
    16 | // Мягкая деградация: эндпойнт ещё не развёрнут (404/501) или недоступен → показываем
    17 | // демо-плейсхолдеры с явной плашкой «демо-значения», чтобы панель красиво выглядела
    18 | // на пилоте даже без бэкенда.
@@ -43971,15 +45245,15 @@
    64 |   --irb-biblio:var(--accent,#c2410c);
    65 | }
    66 | @media (prefers-color-scheme:dark){
+```
+
+<!-- ─── страница 745 ─── -->
+
+```tsx
    67 |   .irb-bench{
    68 |     --irb-glass-bg:rgba(38,34,30,.46);
    69 |     --irb-glass-brd:rgba(255,255,255,.14);
    70 |     --irb-glass-hi:rgba(255,255,255,.22);
-```
-
-<!-- ─── страница 724 ─── -->
-
-```tsx
    71 |     --irb-glass-sh:0 10px 34px rgba(0,0,0,.42),0 1px 2px rgba(0,0,0,.3);
    72 |     --irb-irbis:#8ea0c4;
    73 |   }
@@ -44031,15 +45305,15 @@
   119 |   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
   120 | .irb-bench__demo i{width:7px;height:7px;border-radius:50%;background:var(--irb-biblio);flex:none;
   121 |   box-shadow:0 0 0 3px color-mix(in srgb,var(--irb-biblio) 22%,transparent);}
+```
+
+<!-- ─── страница 746 ─── -->
+
+```tsx
   122 | .irb-bench__ts{font-size:12px;color:var(--irb-ink-soft);}
   123 | 
   124 | /* Сетка стеклянных метрик-карточек */
   125 | .irb-bench__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;}
-```
-
-<!-- ─── страница 725 ─── -->
-
-```tsx
   126 | .irb-bench__card{position:relative;border-radius:20px;padding:20px 20px 18px;overflow:hidden;
   127 |   background:var(--irb-glass-bg);border:1px solid var(--irb-glass-brd);
   128 |   backdrop-filter:blur(20px) saturate(1.35);-webkit-backdrop-filter:blur(20px) saturate(1.35);
@@ -44091,15 +45365,15 @@
   174 |   .irb-bench__head{flex-direction:column;}
   175 |   .irb-bench__big-num{font-size:34px;}
   176 | }
+```
+
+<!-- ─── страница 747 ─── -->
+
+```tsx
   177 | `;
   178 | if (typeof document !== "undefined" && !document.getElementById("irb-bench-css")) {
   179 |   const s = document.createElement("style"); s.id = "irb-bench-css"; s.textContent = CSS; document.head.appendChild(s);
   180 | }
-```
-
-<!-- ─── страница 726 ─── -->
-
-```tsx
   181 | 
   182 | // --- Утилиты округления / ускорения -----------------------------------------
   183 | function round(n: number): number {
@@ -44151,15 +45425,15 @@
   229 |   const [data, setData] = React.useState<BenchResult>(DEMO);
   230 |   const [state, setState] = React.useState<LoadState>("demo");
   231 |   const [running, setRunning] = React.useState(false);
+```
+
+<!-- ─── страница 748 ─── -->
+
+```tsx
   232 | 
   233 |   // При открытии — пробуем подтянуть последний кэш замера (GET). Если эндпойнта
   234 |   // ещё нет (404/501) или сеть недоступна — тихо остаёмся в демо-режиме.
   235 |   React.useEffect(() => {
-```
-
-<!-- ─── страница 727 ─── -->
-
-```tsx
   236 |     let alive = true;
   237 |     (async () => {
   238 |       try {
@@ -44211,15 +45485,15 @@
   284 |   }
   285 | 
   286 |   const demo = state === "demo";
+```
+
+<!-- ─── страница 749 ─── -->
+
+```tsx
   287 |   const focusClass = focus === "irbis" ? " irb-bench--focus-irbis" : focus === "biblio" ? " irb-bench--focus-biblio" : "";
   288 | 
   289 |   return (
   290 |     <div className={"irb-bench" + focusClass}>
-```
-
-<!-- ─── страница 728 ─── -->
-
-```tsx
   291 |       <div className="irb-bench__bg" aria-hidden="true" />
   292 |       <div className="irb-bench__inner">
   293 |         {/* ===== Шапка: заголовок + тоггл + запуск ===== */}
@@ -44271,15 +45545,15 @@
   339 |             focus={focus}
   340 |           />
   341 |           <DurationCard
+```
+
+<!-- ─── страница 750 ─── -->
+
+```tsx
   342 |             icon="package"
   343 |             cap="Скорость выдачи"
   344 |             hint="выдача / возврат"
   345 |             irbis={data.circulation.irbis_ms}
-```
-
-<!-- ─── страница 729 ─── -->
-
-```tsx
   346 |             biblio={data.circulation.biblio_ms}
   347 |             focus={focus}
   348 |           />
@@ -44331,15 +45605,15 @@
   394 |         </div>
   395 |         <div className="irb-bench__side" data-side="biblio">
   396 |           <span className="irb-bench__side-lab"><i aria-hidden="true" />Biblio</span>
+```
+
+<!-- ─── страница 751 ─── -->
+
+```tsx
   397 |           <span className="irb-bench__track"><span className="irb-bench__fill" style={{ width: pct(biblio, hasBiblio) + "%" }} /></span>
   398 |           <span className="irb-bench__side-val">{hasBiblio ? fmtInt(biblio) : "—"}</span>
   399 |         </div>
   400 |       </div>
-```
-
-<!-- ─── страница 730 ─── -->
-
-```tsx
   401 |       <span className={"irb-bench__speedup" + (su == null ? " irb-bench__speedup--flat" : "")}>
   402 |         <Icon name="trending-up" size={14} />
   403 |         {su == null ? "сравнение недоступно" : "быстрее в " + fmtSpeedup(su) + " раз"}
@@ -44396,15 +45670,15 @@
     7 | //   /api/bp/discipline и /api/bp/specialty.
     8 | // Мягкая деградация: нет /api/bp/* (404/501) — информер, приложение не падает.
     9 | import React from "react";
+```
+
+<!-- ─── страница 752 ─── -->
+
+```tsx
    10 | import { api } from "./api";
    11 | import type { BpFaculty, BpSpecialty, BpDiscipline, BpDisciplineCard, BpSpecialtyCard, BpKko } from "./api";
    12 | import type { ToastVariant } from "../components/feedback/Toast.jsx";
    13 | import { Button } from "../components/forms/Button.jsx";
-```
-
-<!-- ─── страница 731 ─── -->
-
-```tsx
    14 | import { Icon } from "../components/icon/Icon.jsx";
    15 | import { EmptyState } from "../components/feedback/EmptyState.jsx";
    16 | 
@@ -44456,15 +45730,15 @@
    62 | @media (max-width:920px){.bp__grid{grid-template-columns:1fr;}}
    63 | `;
    64 | if (typeof document !== "undefined" && !document.getElementById("bp-css")) {
+```
+
+<!-- ─── страница 753 ─── -->
+
+```tsx
    65 |   const s = document.createElement("style"); s.id = "bp-css"; s.textContent = CSS; document.head.appendChild(s);
    66 | }
    67 | 
    68 | // Цвет/класс блока Кко по флагу недообеспеченности.
-```
-
-<!-- ─── страница 732 ─── -->
-
-```tsx
    69 | function kkoClass(k?: BpKko): string { return k && k.underProvided ? "bad" : "ok"; }
    70 | function fmtKko(v?: number): string { return v == null ? "—" : v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
    71 | 
@@ -44516,15 +45790,15 @@
   117 |     const r = await api.bpDisciplineCard(id, normalize);
   118 |     if (r.json?.ok && r.json.data) setDiscCard(r.json.data);
   119 |     else if (down404(r)) return;
+```
+
+<!-- ─── страница 754 ─── -->
+
+```tsx
   120 |     else setDiscCard(null);
   121 |   }
   122 |   async function refreshSpecCard(id: string | number) {
   123 |     const r = await api.bpSpecialtyCard(id, normalize);
-```
-
-<!-- ─── страница 733 ─── -->
-
-```tsx
   124 |     if (r.json?.ok && r.json.data) setSpecCard(r.json.data);
   125 |     else if (down404(r)) return;
   126 |     else setSpecCard(null);
@@ -44576,15 +45850,15 @@
   172 |       setDisciplines((xs) => xs.concat([d])); setDiscId(d.id);
   173 |       void refreshDiscCard(d.id); if (specId != null) void refreshSpecCard(specId);
   174 |       setDDiscId(""); setDName(""); setDSem(""); setDStud("");
+```
+
+<!-- ─── страница 755 ─── -->
+
+```tsx
   175 |       toast({ variant: "success", title: "Дисциплина добавлена", message: name });
   176 |     } else if (r.status === 401 || r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант на правку справочников." });
   177 |     else toast({ variant: "error", title: "Не добавлено", message: "Повторите попытку." });
   178 |   }
-```
-
-<!-- ─── страница 734 ─── -->
-
-```tsx
   179 | 
   180 |   // --- контингент + привязка литературы ------------------------------------
   181 |   async function setContingent() {
@@ -44636,15 +45910,15 @@
   227 |     <div className="bp">
   228 |       {head}
   229 |       <div className="bp__card" style={{ padding: 4 }}>
+```
+
+<!-- ─── страница 756 ─── -->
+
+```tsx
   230 |         <EmptyState icon="bar-chart" title="Книгообеспеченность подключается отдельным модулем"
   231 |           description="Рабочий стол книгообеспеченности (факультет → специальность → дисциплина, привязка литературы, расчёт Кко) свёрстан в Стиле A и работает поверх движка (#186). На текущем сервере эндпойнты /api/bp/* ещё не развёрнуты — данные появятся после их публикации." />
   232 |       </div>
   233 |     </div>
-```
-
-<!-- ─── страница 735 ─── -->
-
-```tsx
   234 |   );
   235 | 
   236 |   const dk = discCard?.kko;
@@ -44696,15 +45970,15 @@
   282 |               <div className="bp__fld"><label className="bp__fld-lab">Вид</label><input className="bp__in" value={sVid} onChange={(e) => setSVid(e.target.value)} placeholder="бакалавриат…" disabled={facId == null} /></div>
   283 |               <div className="bp__fld"><label className="bp__fld-lab">Форма</label>
   284 |                 <select className="bp__sel" value={sForm} onChange={(e) => setSForm(e.target.value)} disabled={facId == null}>
+```
+
+<!-- ─── страница 757 ─── -->
+
+```tsx
   285 |                   {SPEC_FORMS.map((f) => <option key={f} value={f}>{f}</option>)}
   286 |                 </select>
   287 |               </div>
   288 |             </div>
-```
-
-<!-- ─── страница 736 ─── -->
-
-```tsx
   289 |             <div className="bp__fld"><label className="bp__fld-lab">Наименование</label><input className="bp__in" value={sName} onChange={(e) => setSName(e.target.value)} placeholder="Наименование специальности" disabled={facId == null} /></div>
   290 |             <Button block variant="secondary" size="sm" iconLeft="plus" onClick={addSpecialty} disabled={facId == null}>Добавить специальность</Button>
   291 |           </div>
@@ -44756,15 +46030,15 @@
   337 | 
   338 |                 {/* контингент */}
   339 |                 <div className="bp__row2" style={{ alignItems: "end", marginBottom: 12 }}>
+```
+
+<!-- ─── страница 758 ─── -->
+
+```tsx
   340 |                   <div className="bp__fld" style={{ marginBottom: 0 }}>
   341 |                     <label className="bp__fld-lab">Изменить контингент</label>
   342 |                     <input className="bp__in" type="number" min={0} value={contStud} onChange={(e) => setContStud(e.target.value)} placeholder={dk?.students != null ? String(dk.students) : "студентов"} />
   343 |                   </div>
-```
-
-<!-- ─── страница 737 ─── -->
-
-```tsx
   344 |                   <Button variant="secondary" iconLeft="users" onClick={setContingent}>Задать</Button>
   345 |                 </div>
   346 | 
@@ -44816,15 +46090,15 @@
   392 |                 </div>
   393 |               </div>
   394 |               {specCard.disciplines && specCard.disciplines.length > 0 && (
+```
+
+<!-- ─── страница 759 ─── -->
+
+```tsx
   395 |                 <div>
   396 |                   {specCard.disciplines.map((dc, i) => (
   397 |                     <div className="bp__disc" key={(dc.discipline.id ?? i) + ":" + dc.discipline.name}>
   398 |                       <span style={{ fontWeight: 600, fontSize: 13, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{dc.discipline.name}</span>
-```
-
-<!-- ─── страница 738 ─── -->
-
-```tsx
   399 |                       <KkoFlag k={dc.kko} />
   400 |                       <span className="bp__disc-kko" style={{ color: dc.kko?.underProvided ? "var(--status-issued,#B0791C)" : "var(--status-available,#3C7D3F)" }}>{fmtKko(dc.kko?.value)}</span>
   401 |                     </div>
@@ -44881,15 +46155,15 @@
    36 | .cdesk__rdr-name{font-family:var(--font-display);font-weight:600;font-size:16px;line-height:1.2;}
    37 | .cdesk__rdr-sub{font-size:12px;color:var(--text-subtle);}
    38 | .cdesk__blocks{display:flex;flex-direction:column;gap:7px;padding:12px 16px;border-bottom:1px solid var(--border-subtle);}
+```
+
+<!-- ─── страница 760 ─── -->
+
+```tsx
    39 | .cdesk__block{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;border-radius:var(--radius-md);padding:8px 10px;}
    40 | .cdesk__block--warn{background:var(--status-issued-bg,#FBEFD8);color:var(--status-issued,#B0791C);}
    41 | .cdesk__block--info{background:var(--accent-weak);color:var(--accent-press);}
    42 | .cdesk__loans{padding:4px 0;}
-```
-
-<!-- ─── страница 739 ─── -->
-
-```tsx
    43 | .cdesk__loan{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:11px 16px;border-bottom:1px solid var(--border-subtle);}
    44 | .cdesk__loan:last-child{border-bottom:none;}
    45 | .cdesk__loan-title{font-weight:600;font-size:13.5px;line-height:1.3;}
@@ -44941,15 +46215,15 @@
    91 |   return n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₽";
    92 | }
    93 | 
+```
+
+<!-- ─── страница 761 ─── -->
+
+```tsx
    94 | const CIRC_DB = "IBIS";
    95 | 
    96 | export function CirculationDesk({ toast }: { toast: ToastFn }) {
    97 |   const [ticket, setTicket] = React.useState("");
-```
-
-<!-- ─── страница 740 ─── -->
-
-```tsx
    98 |   const [item, setItem] = React.useState("");
    99 |   const [form, setForm] = React.useState<CircFormular | null>(null);
   100 |   const [fines, setFines] = React.useState<CircFine[] | null>(null);
@@ -45001,15 +46275,15 @@
   146 |   async function refresh() {
   147 |     if (activeTicket) await loadFormular(activeTicket);
   148 |   }
+```
+
+<!-- ─── страница 762 ─── -->
+
+```tsx
   149 | 
   150 |   async function issue() {
   151 |     const it = item.trim();
   152 |     if (!it || !activeTicket) return;
-```
-
-<!-- ─── страница 741 ─── -->
-
-```tsx
   153 |     setIssuing(true);
   154 |     const r = await api.circIssue(activeTicket, CIRC_DB, it);
   155 |     setIssuing(false);
@@ -45061,15 +46335,15 @@
   201 |     }
   202 |   }
   203 | 
+```
+
+<!-- ─── страница 763 ─── -->
+
+```tsx
   204 |   // --- массовый возврат ----------------------------------------------------
   205 |   const loanList = form?.loans || [];
   206 |   const toggleSel = (item: string) =>
   207 |     setSelected((s) => { const n = new Set(s); n.has(item) ? n.delete(item) : n.add(item); return n; });
-```
-
-<!-- ─── страница 742 ─── -->
-
-```tsx
   208 |   const allSelected = loanList.length > 0 && selected.size === loanList.length;
   209 |   const toggleAll = () =>
   210 |     setSelected(() => allSelected ? new Set() : new Set(loanList.map((l) => l.item)));
@@ -45121,15 +46395,15 @@
   256 |   const overdueCount = (form?.loans || []).filter((l) => l.overdue).length;
   257 |   // Типизированные баннеры: должник (danger), штрафы (danger), просрочка (warn),
   258 |   // бронь/удержание (hold), служебные блоки (warn), сообщения сервера (info).
+```
+
+<!-- ─── страница 764 ─── -->
+
+```tsx
   259 |   // Распознаём бронь по ключевым словам в тексте служебного блока.
   260 |   type BannerKind = "danger" | "warn" | "hold" | "info";
   261 |   const blocks: { kind: BannerKind; icon: "alert-octagon" | "alert-triangle" | "bookmark-check" | "info"; text: string; strong?: boolean }[] = [];
   262 |   if (reader?.debtor) blocks.push({ kind: "danger", icon: "alert-octagon", strong: true, text: "Читатель — должник. Выдача ограничена до погашения задолженности." });
-```
-
-<!-- ─── страница 743 ─── -->
-
-```tsx
   263 |   if (reader?.finesTotal) blocks.push({ kind: "danger", icon: "alert-octagon", text: "Непогашенные штрафы: " + money(reader.finesTotal) + "." });
   264 |   if (overdueCount > 0) blocks.push({ kind: "warn", icon: "alert-triangle", text: "Просрочено экземпляров: " + overdueCount + " — примите возврат или продлите." });
   265 |   (reader?.blocks || []).forEach((b) => {
@@ -45181,15 +46455,15 @@
   311 |         <div className="cdesk__grid">
   312 |           {/* ===== Формуляр: карточка + блоки + выдачи ===== */}
   313 |           <div className="cdesk__card">
+```
+
+<!-- ─── страница 765 ─── -->
+
+```tsx
   314 |             <div className="cdesk__rdr">
   315 |               <span className="cdesk__av" aria-hidden="true">{rdrInitials(reader?.name, reader?.ticket)}</span>
   316 |               <div style={{ minWidth: 0 }}>
   317 |                 <div className="cdesk__rdr-name">{reader?.name || "Читатель"}</div>
-```
-
-<!-- ─── страница 744 ─── -->
-
-```tsx
   318 |                 <div className="cdesk__rdr-sub">
   319 |                   билет {reader?.ticket}
   320 |                   {reader?.category ? " · " + reader.category : ""}
@@ -45241,15 +46515,15 @@
   366 |                     aria-label={"Выбрать для возврата: " + (ln.title || ln.item)} />
   367 |                   <div style={{ minWidth: 0 }}>
   368 |                     <div className="cdesk__loan-title">{ln.title || "Издание"}</div>
+```
+
+<!-- ─── страница 766 ─── -->
+
+```tsx
   369 |                     <div className="cdesk__loan-meta">
   370 |                       <span className="cdesk__inv">{ln.item}</span>
   371 |                       {ln.author && <span>{ln.author}</span>}
   372 |                       {ln.issued && <span>выдано {ln.issued}</span>}
-```
-
-<!-- ─── страница 745 ─── -->
-
-```tsx
   373 |                       {ln.due && <span className={"cdesk__due" + (ln.overdue ? " cdesk__due--over" : "")}>
   374 |                         <Icon name={ln.overdue ? "alert-triangle" : "clock"} size={12} /> до {ln.due}{ln.overdue ? " · просрочено" : ""}
   375 |                       </span>}
@@ -45303,6 +46577,11 @@
   423 | }
 ```
 
+<!-- ─── страница 767 ─── -->
+
+```tsx
+```
+
 ### Файл: `irbis-web/frontend/src/MigrationWizard.tsx`  · строк: 605
 
 ```tsx
@@ -45310,11 +46589,6 @@
     2 | // установки ИРБИС64 в арендатора Biblio, по шагам:
     3 | //   1. Источник   — режим «Сеть» (хост/порт/логин/пароль/рабочая станция) ИЛИ
     4 | //                   «Локальный путь» (каталог данных ИРБИС, напр. C:\IRBIS64\Datai).
-```
-
-<!-- ─── страница 746 ─── -->
-
-```tsx
     5 | //                   Креды живут только в форме: не сохраняются и не логируются.
     6 | //   2. Изучение   — «Изучить источник» → /inspect БЕЗ dbs → МГНОВЕННО таблица
     7 | //                   обнаруженных БД (код / название / тип / записей / читателей).
@@ -45366,15 +46640,15 @@
    53 | .irb-mig__mode-desc{font-size:11.5px;color:var(--text-subtle);line-height:1.45;}
    54 | .irb-mig__form{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;}
    55 | .irb-mig__fld{display:flex;flex-direction:column;gap:5px;}
+```
+
+<!-- ─── страница 768 ─── -->
+
+```tsx
    56 | .irb-mig__fld-lab{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-subtle);}
    57 | .irb-mig__in{width:100%;box-sizing:border-box;padding:8px 11px;border-radius:var(--radius-md);border:1px solid var(--border-default);background:var(--surface-card);color:var(--text-body);font-family:var(--font-ui);font-size:13px;}
    58 | .irb-mig__in:focus{outline:none;border-color:var(--accent);}
    59 | .irb-mig__note{font-size:11.5px;color:var(--text-subtle);line-height:1.5;margin-top:12px;display:flex;gap:7px;align-items:flex-start;}
-```
-
-<!-- ─── страница 747 ─── -->
-
-```tsx
    60 | .irb-mig__actions{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap;padding:14px 16px;border-top:1px solid var(--border-subtle);}
    61 | .irb-mig__tbl{width:100%;border-collapse:collapse;font-size:13px;}
    62 | .irb-mig__tbl th{text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);padding:10px 14px;border-bottom:1px solid var(--border-subtle);background:var(--surface-sunken);white-space:nowrap;}
@@ -45426,15 +46700,15 @@
   108 |   const s = document.createElement("style"); s.id = "irb-mig-css"; s.textContent = CSS; document.head.appendChild(s);
   109 | }
   110 | 
+```
+
+<!-- ─── страница 769 ─── -->
+
+```tsx
   111 | // Человекочитаемые подписи типов баз (kind). Неизвестный код показываем как есть.
   112 | const KIND_RU: Record<string, string> = {
   113 |   bibliographic: "Библиографическая",
   114 |   biblio: "Библиографическая",
-```
-
-<!-- ─── страница 748 ─── -->
-
-```tsx
   115 |   reader: "Читатели (RDR)",
   116 |   readers: "Читатели (RDR)",
   117 |   authority: "Авторитетная",
@@ -45486,15 +46760,15 @@
   163 | 
   164 |   // Собрать источник из формы (креды — транзитом, не сохраняем).
   165 |   function buildSource(): MigrateSource {
+```
+
+<!-- ─── страница 770 ─── -->
+
+```tsx
   166 |     return mode === "network"
   167 |       ? { host: host.trim(), port: Number(port) || 0, user: user.trim(), pass, workstation: workstation.trim() || undefined }
   168 |       : { path: path.trim() };
   169 |   }
-```
-
-<!-- ─── страница 749 ─── -->
-
-```tsx
   170 |   function sourceReady(): boolean {
   171 |     return mode === "network" ? !!host.trim() : !!path.trim();
   172 |   }
@@ -45546,15 +46820,15 @@
   218 |     }
   219 |   }
   220 | 
+```
+
+<!-- ─── страница 771 ─── -->
+
+```tsx
   221 |   const head = (
   222 |     <div className="stf__pagehead">
   223 |       <div className="stf__h1">
   224 |         <h2>Миграция</h2>
-```
-
-<!-- ─── страница 750 ─── -->
-
-```tsx
   225 |         <span className="stf__pill">ИРБИС64 → Biblio · мастер</span>
   226 |       </div>
   227 |     </div>
@@ -45606,15 +46880,15 @@
   273 |       {step === 3 && <SelectStep
   274 |         databases={databases || []} selected={selected} setSelected={setSelected}
   275 |         tenant={tenant} setTenant={setTenant} dryRun={dryRun} setDryRun={setDryRun}
+```
+
+<!-- ─── страница 772 ─── -->
+
+```tsx
   276 |         selectedCount={selectedCodes.length} running={running} onRun={run} onBack={() => setStep(2)} />}
   277 |       {step === 4 && (down
   278 |         ? <MigDown title="Запуск миграции подключается отдельно" />
   279 |         : <RunStep report={report} dry={ranDry} running={running}
-```
-
-<!-- ─── страница 751 ─── -->
-
-```tsx
   280 |             onRestart={() => { setReport(null); setStep(1); }} onBackToSelect={() => setStep(3)} />)}
   281 |     </div>
   282 |   );
@@ -45666,15 +46940,15 @@
   328 |           </div>
   329 |         ) : (
   330 |           <div className="irb-mig__form" style={{ gridTemplateColumns: "1fr" }}>
+```
+
+<!-- ─── страница 773 ─── -->
+
+```tsx
   331 |             <div className="irb-mig__fld"><label className="irb-mig__fld-lab">Путь к каталогу данных ИРБИС</label>
   332 |               <input className="irb-mig__in" value={props.path} onChange={(e) => props.setPath(e.target.value)} placeholder="C:\\IRBIS64\\Datai" autoComplete="off" /></div>
   333 |           </div>
   334 |         )}
-```
-
-<!-- ─── страница 752 ─── -->
-
-```tsx
   335 | 
   336 |         <div className="irb-mig__note">
   337 |           <Icon name="shield" size={14} style={{ flex: "none", marginTop: 1, color: "var(--text-subtle)" }} />
@@ -45726,15 +47000,15 @@
   383 |         <table className="irb-mig__tbl">
   384 |           <thead><tr><th style={{ width: 28 }} aria-label="Раскрыть" /><th>Код</th><th>Название</th><th>Тип</th><th style={{ textAlign: "right" }}>Записей</th><th style={{ textAlign: "right" }}>Читателей</th><th>Поля</th></tr></thead>
   385 |           <tbody>
+```
+
+<!-- ─── страница 774 ─── -->
+
+```tsx
   386 |             {databases.map((db) => <DbRow key={db.code} db={db} mode={mode} buildSource={buildSource} />)}
   387 |           </tbody>
   388 |         </table>
   389 |       </div>
-```
-
-<!-- ─── страница 753 ─── -->
-
-```tsx
   390 |       <div className="irb-mig__note" style={{ padding: "0 16px 12px" }}>
   391 |         <Icon name="info" size={14} style={{ flex: "none", marginTop: 1, color: "var(--text-subtle)" }} />
   392 |         <span>Список баз получен мгновенно. Состав полей (с пометкой «допполе») подгружается по каждой базе отдельно — раскройте строку или нажмите «Показать поля».</span>
@@ -45786,15 +47060,15 @@
   438 |   function toggle() {
   439 |     const next = !open;
   440 |     setOpen(next);
+```
+
+<!-- ─── страница 775 ─── -->
+
+```tsx
   441 |     if (next) void loadFields(); // грузим поля при раскрытии (если ещё не в кэше)
   442 |   }
   443 | 
   444 |   const count = fields !== null ? fields.length : null;
-```
-
-<!-- ─── страница 754 ─── -->
-
-```tsx
   445 |   return (
   446 |     <>
   447 |       <tr className="irb-mig__db" onClick={toggle} aria-expanded={open}>
@@ -45846,15 +47120,15 @@
   493 |                       <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(f.freq)}</td>
   494 |                     </tr>
   495 |                   ))}
+```
+
+<!-- ─── страница 776 ─── -->
+
+```tsx
   496 |                 </tbody>
   497 |               </table>
   498 |             )}
   499 |           </td>
-```
-
-<!-- ─── страница 755 ─── -->
-
-```tsx
   500 |         </tr>
   501 |       )}
   502 |     </>
@@ -45906,15 +47180,15 @@
   548 |     </div>
   549 |   );
   550 | }
+```
+
+<!-- ─── страница 777 ─── -->
+
+```tsx
   551 | 
   552 | // ===== Шаг 4: Запуск / Отчёт ===============================================
   553 | function RunStep({ report, dry, running, onRestart, onBackToSelect }: {
   554 |   report: MigrateReport | null; dry: boolean; running: boolean; onRestart: () => void; onBackToSelect: () => void;
-```
-
-<!-- ─── страница 756 ─── -->
-
-```tsx
   555 | }) {
   556 |   if (running && !report) {
   557 |     return (
@@ -45968,6 +47242,11 @@
   605 | }
 ```
 
+<!-- ─── страница 778 ─── -->
+
+```tsx
+```
+
 ### Файл: `irbis-web/frontend/src/PlatformDesk.tsx`  · строк: 440
 
 ```tsx
@@ -45975,11 +47254,6 @@
     2 | // SaaS. Read-heavy, две вкладки:
     3 | //   • Арендаторы — таблица (слаг / наименование / тариф / создан) + форма
     4 | //     провизионирования нового арендатора (слаг, наименование, логин админа,
-```
-
-<!-- ─── страница 757 ─── -->
-
-```tsx
     5 | //     тариф) → POST /api/admin/tenant → обновление списка.
     6 | //   • Тариф и лимиты — для выбранного арендатора: текущий тариф + переключатель,
     7 | //     лимиты vs потребление (записи / читатели / хранилище — прогресс-бары) и
@@ -46031,15 +47305,15 @@
    53 | .irb-plat__meter{display:flex;flex-direction:column;gap:7px;padding:14px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-card);}
    54 | .irb-plat__meter-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
    55 | .irb-plat__meter-name{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--text-strong);}
+```
+
+<!-- ─── страница 779 ─── -->
+
+```tsx
    56 | .irb-plat__meter-val{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);}
    57 | .irb-plat__track{height:8px;border-radius:var(--radius-full);background:var(--surface-hover);overflow:hidden;}
    58 | .irb-plat__fill{height:100%;border-radius:var(--radius-full);transition:width .3s ease;}
    59 | .irb-plat__meter-pct{font-size:11px;color:var(--text-subtle);}
-```
-
-<!-- ─── страница 758 ─── -->
-
-```tsx
    60 | .irb-plat__mods{display:flex;flex-direction:column;gap:2px;}
    61 | .irb-plat__mod{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border-bottom:1px solid var(--border-subtle);}
    62 | .irb-plat__mod:last-child{border-bottom:none;}
@@ -46091,15 +47365,15 @@
   108 |   return (
   109 |     <div className="irb-plat__card" style={{ padding: 4 }}>
   110 |       <EmptyState icon={icon} title={title}
+```
+
+<!-- ─── страница 780 ─── -->
+
+```tsx
   111 |         description="Раздел свёрстан в Стиле A и работает поверх движка платформы (#207/#209). На текущем сервере соответствующий эндпойнт /api/admin/* ещё не развёрнут — данные появятся после его публикации. Остальные разделы продолжают работать." />
   112 |     </div>
   113 |   );
   114 | }
-```
-
-<!-- ─── страница 759 ─── -->
-
-```tsx
   115 | 
   116 | export function PlatformDesk({ toast }: { toast: ToastFn }) {
   117 |   const [tab, setTab] = React.useState<Tab>("tenants");
@@ -46151,15 +47425,15 @@
   163 |   const [creating, setCreating] = React.useState(false);
   164 | 
   165 |   async function load() {
+```
+
+<!-- ─── страница 781 ─── -->
+
+```tsx
   166 |     const r = await api.adminTenants();
   167 |     if (r.status === 404 || r.status === 501) { setDown(true); return; }
   168 |     if (r.json?.ok && r.json.data) setTenants(r.json.data.tenants || []);
   169 |     else setTenants([]);
-```
-
-<!-- ─── страница 760 ─── -->
-
-```tsx
   170 |   }
   171 |   React.useEffect(() => { void load(); }, []);
   172 | 
@@ -46211,15 +47485,15 @@
   218 |         <div style={{ padding: 4 }}><EmptyState icon="layers" title="Арендаторов нет" description="Создайте первого арендатора контура — отдельное пространство с собственными базами, учётками и тарифом." /></div>
   219 |       ) : (
   220 |         <div className="irb-plat__scroll">
+```
+
+<!-- ─── страница 782 ─── -->
+
+```tsx
   221 |           <table className="irb-plat__tbl">
   222 |             <thead><tr><th>Слаг</th><th>Наименование</th><th>Тариф</th><th>Тип</th><th style={{ textAlign: "right" }}>Действия</th></tr></thead>
   223 |             <tbody>
   224 |               {tenants.map((t) => (
-```
-
-<!-- ─── страница 761 ─── -->
-
-```tsx
   225 |                 <tr key={t.slug} aria-selected={selected === t.slug}>
   226 |                   <td className="irb-plat__mono">{t.slug}</td>
   227 |                   <td>{t.name || "—"}</td>
@@ -46271,15 +47545,15 @@
   273 |   }
   274 |   React.useEffect(() => { if (selected) void loadBilling(selected); else setBilling(null); }, [selected]);
   275 | 
+```
+
+<!-- ─── страница 783 ─── -->
+
+```tsx
   276 |   async function changePlan(plan: string) {
   277 |     if (!selected || !billing || plan === billing.plan) return;
   278 |     setBusyPlan(plan);
   279 |     const r = await api.adminSetPlan(selected, plan);
-```
-
-<!-- ─── страница 762 ─── -->
-
-```tsx
   280 |     setBusyPlan(null);
   281 |     if (r.status === 200 && r.json?.ok && r.json.data) {
   282 |       // Ответ /plan несёт {plan,modules,limits,applied}, но НЕ usage/plans.
@@ -46331,15 +47605,15 @@
   328 |   } else if (billingDown) {
   329 |     content = <div style={{ padding: 4 }}><EmptyState icon="credit-card" title="Тариф арендатора подключается отдельно" description="Раздел свёрстан в Стиле A и работает поверх движка платформы (#209). На текущем сервере /api/admin/billing ещё не развёрнут — данные появятся после публикации." /></div>;
   330 |   } else if (loading && !billing) {
+```
+
+<!-- ─── страница 784 ─── -->
+
+```tsx
   331 |     content = <div style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка тарифа…</div>;
   332 |   } else if (!billing) {
   333 |     content = <div style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Нет данных по тарифу.</div>;
   334 |   } else {
-```
-
-<!-- ─── страница 763 ─── -->
-
-```tsx
   335 |     // Выбор тарифа: имена из каталога `plans` (backend billing.PLANS), плюс
   336 |     // текущий план и запасной список, на случай если каталог не пришёл.
   337 |     const catalogPlans = (billing.plans || []).map((p) => p.plan);
@@ -46391,15 +47665,15 @@
   383 |                 return (
   384 |                   <div className="irb-plat__mod" key={code}>
   385 |                     <div style={{ minWidth: 0 }}>
+```
+
+<!-- ─── страница 785 ─── -->
+
+```tsx
   386 |                       <div className="irb-plat__mod-name">{moduleLabel(code)}</div>
   387 |                       <div className="irb-plat__mod-code">{code}</div>
   388 |                     </div>
   389 |                     <button type="button" role="switch" aria-checked={on}
-```
-
-<!-- ─── страница 764 ─── -->
-
-```tsx
   390 |                       aria-label={(on ? "Отключить" : "Включить") + " модуль " + moduleLabel(code)}
   391 |                       className="irb-plat__sw" disabled={busyModule === code}
   392 |                       onClick={() => toggleModule(code, !on)}><i /></button>
@@ -46453,6 +47727,11 @@
   440 | }
 ```
 
+<!-- ─── страница 786 ─── -->
+
+```tsx
+```
+
 ### Файл: `irbis-web/frontend/src/Staff.tsx`  · строк: 1052
 
 ```tsx
@@ -46460,11 +47739,6 @@
     2 | import { api } from "./api";
     3 | import type { Grant, ResultItem, WorklistField, FlkViolation, FlkRecord } from "./api";
     4 | import { Button } from "../components/forms/Button.jsx";
-```
-
-<!-- ─── страница 765 ─── -->
-
-```tsx
     5 | import { Icon } from "../components/icon/Icon.jsx";
     6 | import type { IconName } from "../components/icon/Icon.jsx";
     7 | import { EmptyState } from "../components/feedback/EmptyState.jsx";
@@ -46516,15 +47790,15 @@
    53 |       if (fd.subfields) { if (occ && typeof occ === "object") str = fd.subfields.map((sf) => { const t = (occ[sf.code] || "").trim(); return t ? "^" + sf.code + t : ""; }).join(""); }
    54 |       else str = (occ || "").toString().trim();
    55 |       if (str) out.push({ tag: fd.code, value: str });
+```
+
+<!-- ─── страница 787 ─── -->
+
+```tsx
    56 |     });
    57 |   });
    58 |   return out;
    59 | }
-```
-
-<!-- ─── страница 766 ─── -->
-
-```tsx
    60 | // values → запись для ФЛК (flk.py): карта поле→значение. Скалярное поле — строка;
    61 | // поле с подполями — {подполе:значение}; повторяемое — массив таких. Пустые
    62 | // вхождения/подполя отбрасываем, чтобы mandatory-правила не путались.
@@ -46576,15 +47850,15 @@
   108 | .stf{display:grid;grid-template-columns:208px 1fr;gap:0;min-height:560px;
   109 |   background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);overflow:hidden;
   110 |   box-shadow:var(--shadow-sm);font-family:var(--font-ui);}
+```
+
+<!-- ─── страница 788 ─── -->
+
+```tsx
   111 | .stf--compact{--row-py:8px;--cell-fs:13px;}
   112 | .stf--comfortable{--row-py:13px;--cell-fs:14px;}
   113 | .stf__side{background:var(--surface-sunken);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;min-width:0;}
   114 | .stf__brand{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border-subtle);}
-```
-
-<!-- ─── страница 767 ─── -->
-
-```tsx
   115 | .stf__brand-badge{width:30px;height:30px;border-radius:var(--radius-md);background:var(--accent);color:var(--accent-fg);
   116 |   display:flex;align-items:center;justify-content:center;flex:none;}
   117 | .stf__brand-name{font-family:var(--font-display);font-weight:600;font-size:15px;line-height:1.1;}
@@ -46636,15 +47910,15 @@
   163 |    оставляя контрол, подсказку и ФЛК-сообщение. */
   164 | .stf__row .irb-dyn__head{display:none;}
   165 | .stf__row .irb-dyn{gap:6px;}
+```
+
+<!-- ─── страница 789 ─── -->
+
+```tsx
   166 | .stf__row--bad .stf__row-name{color:var(--danger-500);}
   167 | 
   168 | /* search-to-edit — поиск записи в базе и список результатов */
   169 | .stf__search{display:grid;grid-template-columns:150px 1fr auto;gap:8px;align-items:center;
-```
-
-<!-- ─── страница 768 ─── -->
-
-```tsx
   170 |   background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:12px;}
   171 | .stf__results{border:1px solid var(--border-subtle);border-radius:var(--radius-md);overflow:hidden;margin-bottom:14px;max-height:260px;overflow-y:auto;}
   172 | .stf__res{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:none;cursor:pointer;background:var(--surface-card);
@@ -46696,15 +47970,15 @@
   218 | .stf__cc-tag{display:inline-block;font-size:11px;color:#888;font-family:var(--font-mono);background:#f3efe6;border-radius:3px;padding:0 5px;margin-right:6px;}
   219 | 
   220 | /* быстрые действия в шапке строки рабочего листа */
+```
+
+<!-- ─── страница 790 ─── -->
+
+```tsx
   221 | .stf__row-lab .stf__row-q{margin-left:auto;opacity:0;transition:opacity .12s;}
   222 | .stf__row:hover .stf__row-q,.stf__row:focus-within .stf__row-q{opacity:1;}
   223 | .stf__row-q{border:none;background:transparent;cursor:pointer;color:var(--text-subtle);padding:2px;border-radius:var(--radius-sm);display:inline-flex;}
   224 | .stf__row-q:hover{color:var(--danger-500);background:var(--surface-hover);}
-```
-
-<!-- ─── страница 769 ─── -->
-
-```tsx
   225 | 
   226 | /* счётчики/мета шапки секции */
   227 | .stf__metarow{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--text-subtle);margin:-6px 0 14px;}
@@ -46756,15 +48030,15 @@
   273 |   return "stub";
   274 | }
   275 | 
+```
+
+<!-- ─── страница 791 ─── -->
+
+```tsx
   276 | export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSession; route: any; setRoute: (r: any) => void; toast: ToastFn }) {
   277 |   const [density, setDensity] = React.useState<"compact" | "comfortable">("compact");
   278 |   const tiles = DOMAINS.filter((d) => hasGrant(staff.grants, d.grant));
   279 |   const current = routeId(route);
-```
-
-<!-- ─── страница 770 ─── -->
-
-```tsx
   280 |   const stubTitle = route && route.name === "stub" ? route.title : "";
   281 |   const open = (d: typeof DOMAINS[number]) => setRoute(d.route === "stub" ? { name: "stub", title: d.label } : d.route);
   282 | 
@@ -46816,15 +48090,15 @@
   328 |         </div>
   329 |       </nav>
   330 | 
+```
+
+<!-- ─── страница 792 ─── -->
+
+```tsx
   331 |       {/* ===== Main: topbar + routed content ===== */}
   332 |       <div className="stf__main">
   333 |         <header className="stf__top">
   334 |           <div className="stf__crumb">
-```
-
-<!-- ─── страница 771 ─── -->
-
-```tsx
   335 |             <span>Рабочее пространство</span>
   336 |             <Icon name="chevron-right" size={13} />
   337 |             <b>{crumbLeaf}</b>
@@ -46876,15 +48150,15 @@
   383 |             <span style={{ minWidth: 0 }}>
   384 |               <span style={{ display: "block", fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{d.label}</span>
   385 |               <span style={{ display: "block", color: "var(--text-subtle)", fontSize: 12.5, lineHeight: 1.45 }}>{d.desc}</span>
+```
+
+<!-- ─── страница 793 ─── -->
+
+```tsx
   386 |             </span>
   387 |           </button>
   388 |         ))}
   389 |       </div>
-```
-
-<!-- ─── страница 772 ─── -->
-
-```tsx
   390 |       <div style={{ marginTop: 16, fontSize: 11.5, color: "var(--text-subtle)", lineHeight: 1.6 }}>
   391 |         Запись/удаление — под грантами уровня write/admin; действия пишутся в аудит.
   392 |       </div>
@@ -46936,15 +48210,15 @@
   438 |         <text x={6} y={H - 3.5} fontSize={8} fill="var(--text-subtle)">вход</text>
   439 |         {racks.map((r: any, i: number) => (
   440 |           <g key={i} onClick={() => onPick(r)} style={{ cursor: "pointer" }}>
+```
+
+<!-- ─── страница 794 ─── -->
+
+```tsx
   441 |             <rect x={r.gx} y={r.gy} width={r.gw} height={r.gh} rx={4} fill={rackFill(r)} stroke={selId === r.id ? "var(--text-primary)" : "var(--border-strong)"} strokeWidth={selId === r.id ? 2 : 1} />
   442 |             <text x={r.gx + r.gw / 2} y={r.gy + r.gh / 2 + 3.5} fontSize={11} fontWeight={700} fill="#fff" textAnchor="middle" pointerEvents="none">{r.code}</text>
   443 |           </g>
   444 |         ))}
-```
-
-<!-- ─── страница 773 ─── -->
-
-```tsx
   445 |       </svg>
   446 |     </div>
   447 |   );
@@ -46996,15 +48270,15 @@
   493 | function CellMap() {
   494 |   const [data, setData] = React.useState<any>(null);
   495 |   const [err, setErr] = React.useState(false);
+```
+
+<!-- ─── страница 795 ─── -->
+
+```tsx
   496 |   React.useEffect(() => { (async () => { const r = await api.storage("IBIS"); if (r.json && r.json.ok && r.json.data) setData(r.json.data); else setErr(true); })(); }, []);
   497 | 
   498 |   const legend: [string, string][] = [
   499 |     ["В ячейке", "var(--status-available)"],
-```
-
-<!-- ─── страница 774 ─── -->
-
-```tsx
   500 |     ["В постамате", "var(--status-postamat)"],
   501 |     ["Книгоприём", "var(--status-return)"],
   502 |     ["Свободно", "var(--surface-hover)"],
@@ -47056,15 +48330,15 @@
   548 | 
   549 | // Строка экземпляра (поле 910): инвентарный номер (^b), штрих-код/RFID (^h),
   550 | // место хранения (^d). Базовый ввод — MVP, расширяется статусом/КСУ позже.
+```
+
+<!-- ─── страница 796 ─── -->
+
+```tsx
   551 | type Exemplar = { b: string; h: string; d: string };
   552 | const emptyExemplar = (): Exemplar => ({ b: "", h: "", d: "" });
   553 | 
   554 | // Ключ строки рабочего листа для нарушения ФЛК: совпадает с кодом поля; саб-поле
-```
-
-<!-- ─── страница 775 ─── -->
-
-```tsx
   555 | // здесь не разводим по отдельным контролам (DynamicField рисует подполя внутри),
   556 | // поэтому подсвечиваем всю строку поля.
   557 | const flkKey = (v: FlkViolation): string => (v.field || v.path || "").toString();
@@ -47116,15 +48390,15 @@
   603 |   const title = t200 ? sub(t200, "a") || t200 : "";
   604 |   const subtitle = t200 ? sub(t200, "e") : "";
   605 |   const respons = t200 ? sub(t200, "f") : "";
+```
+
+<!-- ─── страница 797 ─── -->
+
+```tsx
   606 | 
   607 |   const i210 = first("210");
   608 |   const imprint = i210
   609 |     ? [sub(i210, "a"), sub(i210, "c"), sub(i210, "d")].filter(Boolean).join(", ") || i210
-```
-
-<!-- ─── страница 776 ─── -->
-
-```tsx
   610 |     : "";
   611 | 
   612 |   const p215 = first("215");
@@ -47176,15 +48450,15 @@
   658 |     setValues(emptyValues(wl!)); setExemplars([]); setMfn(0); setSaved(null);
   659 |     setErrors({}); setViolations([]); setChecked(false); setSrcMfn(null); setView("sheet");
   660 |     if (!keepResults) setResults(null);
+```
+
+<!-- ─── страница 798 ─── -->
+
+```tsx
   661 |   }
   662 |   const newRecord = () => resetEditor();
   663 | 
   664 |   // Очистить одно поле рабочего листа (быстрое действие в шапке строки).
-```
-
-<!-- ─── страница 777 ─── -->
-
-```tsx
   665 |   function clearField(fd: WLField) {
   666 |     set(fd.code, fd.repeatable ? [] : (fd.subfields ? {} : ""));
   667 |   }
@@ -47236,15 +48510,15 @@
   713 |     (wl || []).forEach((fd) => {
   714 |       if (fd.required) {
   715 |         const v = values[fd.code];
+```
+
+<!-- ─── страница 799 ─── -->
+
+```tsx
   716 |         const ok = fd.subfields ? (v && typeof v === "object" && Object.values(v).some(Boolean)) : !!(v && v.toString().trim());
   717 |         if (!ok) errs[fd.code] = "ФЛК: обязательное поле не заполнено";
   718 |       }
   719 |     });
-```
-
-<!-- ─── страница 778 ─── -->
-
-```tsx
   720 |     return errs;
   721 |   }
   722 | 
@@ -47296,15 +48570,15 @@
   768 | 
   769 |   async function save() {
   770 |     setChecked(true);
+```
+
+<!-- ─── страница 800 ─── -->
+
+```tsx
   771 |     const res = await runFlk();
   772 |     if (res.hardBlocked) {
   773 |       toast({ variant: "warning", title: "Сохранение заблокировано (ФЛК)", message: res.serverUp ? "Есть непреодолимые нарушения — исправьте отмеченные поля." : "Заполните обязательные поля." });
   774 |       return; // severity-1 блокирует
-```
-
-<!-- ─── страница 779 ─── -->
-
-```tsx
   775 |     }
   776 |     if (res.soft) {
   777 |       const okSoft = typeof window === "undefined" ? true : window.confirm("ФЛК: есть преодолимые замечания. Сохранить запись всё равно?");
@@ -47356,15 +48630,15 @@
   823 | 
   824 |   // нет рабочего листа → информер (движок каталогизации не развёрнут).
   825 |   if (wlMissing) return (
+```
+
+<!-- ─── страница 801 ─── -->
+
+```tsx
   826 |     <div>
   827 |       {head}
   828 |       <div className="stf__card" style={{ padding: 4 }}>
   829 |         <EmptyState icon="file-text" title="Рабочий лист каталогизации подключается отдельно"
-```
-
-<!-- ─── страница 780 ─── -->
-
-```tsx
   830 |           description="Редактор библиографической записи свёрстан в Стиле A и работает поверх движка каталогизации (#183/#188). На текущем сервере /api/worklist ещё не опубликован — поле/подполе появятся после его развёртывания." />
   831 |       </div>
   832 |     </div>
@@ -47416,15 +48690,15 @@
   878 |         <div className="stf__metarow">
   879 |           <span>{srcMfn ? <>Правка на основе <b>{SEARCH_DB} · MFN {srcMfn}</b></> : mfn ? <>Сохранено как <b>MFN {mfn}</b></> : <>Новая запись (черновик)</>}</span>
   880 |           <span className="stf__metarow-dot" aria-hidden="true" />
+```
+
+<!-- ─── страница 802 ─── -->
+
+```tsx
   881 |           <span>Песочница <b>{SANDBOX}</b> — правка не на боевой</span>
   882 |           <span className="stf__metarow-dot" aria-hidden="true" />
   883 |           <span>Заполнено полей: <b>{filledCount}</b> из {wl.length}</span>
   884 |           <span className="stf__metarow-dot" aria-hidden="true" />
-```
-
-<!-- ─── страница 781 ─── -->
-
-```tsx
   885 |           <span>Экземпляров: <b>{exemplars.length}</b></span>
   886 |         </div>
   887 |       )}
@@ -47476,15 +48750,15 @@
   933 |                   </div>
   934 |                   {cardData.author && <div className="stf__cc-author">{cardData.author}</div>}
   935 |                   {(cardData.title || cardData.subtitle || cardData.respons) ? (
+```
+
+<!-- ─── страница 803 ─── -->
+
+```tsx
   936 |                     <div className="stf__cc-title">
   937 |                       {cardData.title || <i style={{ color: "#999" }}>[без заглавия]</i>}
   938 |                       {cardData.subtitle ? " : " + cardData.subtitle : ""}
   939 |                       {cardData.respons ? " / " + cardData.respons : ""}
-```
-
-<!-- ─── страница 782 ─── -->
-
-```tsx
   940 |                     </div>
   941 |                   ) : <div className="stf__cc-title"><i style={{ color: "#999" }}>[заглавие не заполнено]</i></div>}
   942 |                   {cardData.imprint && <div className="stf__cc-imprint">{cardData.imprint}</div>}
@@ -47536,15 +48810,15 @@
   988 |               {saved && <span style={{ color: "var(--success)", fontSize: 13 }}><Icon name="check" size={13} /> сохранено в {saved.db}, MFN {saved.mfn} (код {saved.returnCode})</span>}
   989 |             </div>
   990 |           </div>
+```
+
+<!-- ─── страница 804 ─── -->
+
+```tsx
   991 |           )}
   992 | 
   993 |           {/* ФЛК сводка */}
   994 |           <aside className="stf__card" style={{ padding: 16, position: "sticky", top: 64 }} aria-label="Сводка проверки ФЛК">
-```
-
-<!-- ─── страница 783 ─── -->
-
-```tsx
   995 |             <span className="stf__card-cap">Проверка ФЛК</span>
   996 |             {violations.length > 0 ? (
   997 |               <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12 }}>
@@ -47596,15 +48870,15 @@
  1043 |         <input value={p} onChange={(e) => setP(e.target.value)} type="password" placeholder="Пароль" aria-label="Пароль" onKeyDown={(e) => { if (e.key === "Enter") onSubmit(l, p); }} style={inp} />
  1044 |         <div style={{ fontSize: 11.5, color: "var(--text-subtle)", marginBottom: 12 }}>демо: <b>admin / admin</b> · <b>librarian / librarian</b></div>
  1045 |         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+```
+
+<!-- ─── страница 805 ─── -->
+
+```tsx
  1046 |           <Button variant="ghost" onClick={onClose}>Отмена</Button>
  1047 |           <Button onClick={() => onSubmit(l, p)}>Войти</Button>
  1048 |         </div>
  1049 |       </div>
-```
-
-<!-- ─── страница 784 ─── -->
-
-```tsx
  1050 |     </div>
  1051 |   );
  1052 | }
@@ -47661,15 +48935,15 @@
    46 | export interface ShowcaseItem { mfn: number; title: string; author?: string; year?: string; cover?: boolean; }
    47 | // Reader cabinet «Заказы» (G12) — an order with a cancel-before-issue affordance.
    48 | export interface OrderItem {
+```
+
+<!-- ─── страница 806 ─── -->
+
+```ts
    49 |   id?: string | number; mfn: number; db?: string; title?: string; author?: string;
    50 |   status?: string; statusLabel?: string; created?: string; place?: string; cancelable?: boolean;
    51 | }
    52 | // Бронирование (#222) — заявка на удержание экземпляра с позицией в очереди.
-```
-
-<!-- ─── страница 785 ─── -->
-
-```ts
    53 | //   status: 'ready' — готов к получению; 'queued' — в очереди (position — ваш номер).
    54 | export interface Hold {
    55 |   holdId: string; db: string; mfn: number; title?: string;
@@ -47721,15 +48995,15 @@
   101 |   overallSeverity: 0 | 1 | 2; canSave: boolean;
   102 |   violations: FlkViolation[];
   103 | }
+```
+
+<!-- ─── страница 807 ─── -->
+
+```ts
   104 | // Запись для ФЛК — карта поле→значение: скаляр, {подполе:значение} или массив
   105 | // (повторяемое). Совпадает с record-draft движка flk.py.
   106 | export type FlkRecord = Record<string, string | Record<string, string> | Array<string | Record<string, string>>>;
   107 | 
-```
-
-<!-- ─── страница 786 ─── -->
-
-```ts
   108 | // --- Книговыдача (#185) ----------------------------------------------------
   109 | // Формуляр читателя: карточка + активные выдачи. blocks/messages — служебные
   110 | // сообщения (должник, превышен лимит, бронеблок), debtor/fine — флаги/сумма.
@@ -47781,15 +49055,15 @@
   156 |   napr?: string; spec?: string; vid?: string; form?: string; name: string;
   157 | }
   158 | export interface BpDiscipline {
+```
+
+<!-- ─── страница 808 ─── -->
+
+```ts
   159 |   id: string | number; specialtyId?: string | number;
   160 |   discId?: string; name: string; semester?: number; students?: number;
   161 | }
   162 | // Привязанная к дисциплине литература: вид (осн./доп.), число экземпляров.
-```
-
-<!-- ─── страница 787 ─── -->
-
-```ts
   163 | //   kind: 'main' — основная, 'extra' — дополнительная.
   164 | export interface BpBinding {
   165 |   id?: string | number; title: string; kind: "main" | "extra";
@@ -47841,15 +49115,15 @@
   211 | export interface PlanLimits {
   212 |   max_records: number | null;
   213 |   max_readers: number | null;
+```
+
+<!-- ─── страница 809 ─── -->
+
+```ts
   214 |   max_storage_mb: number | null;
   215 | }
   216 | // Потребление — ЧАСТИЧНАЯ карта тех же ресурсов (billing.tenant_usage). Ресурс,
   217 | // который сервер не смог посчитать, просто отсутствует (трактуем как «—»/0).
-```
-
-<!-- ─── страница 788 ─── -->
-
-```ts
   218 | export interface PlanUsage {
   219 |   max_records?: number;
   220 |   max_readers?: number;
@@ -47901,15 +49175,15 @@
   266 | // Сетевые реквизиты подключения к серверу ИРБИС64 (логин/пароль — транзитом).
   267 | export interface MigrateNetworkSource { host: string; port: number; user: string; pass: string; workstation?: string; }
   268 | // Локальный источник — путь к каталогу данных ИРБИС.
+```
+
+<!-- ─── страница 810 ─── -->
+
+```ts
   269 | export interface MigrateLocalSource { path: string; }
   270 | export type MigrateSource = MigrateNetworkSource | MigrateLocalSource;
   271 | // Поле обнаруженной БД: MARC-тег, метка, состав подполей, частота встречаемости
   272 | // и флаг «допполе» (custom:true) — поле вне штатной схемы РУСМАРК (локальное
-```
-
-<!-- ─── страница 789 ─── -->
-
-```ts
   273 | // расширение библиотеки), которое мастер помечает оператору при изучении.
   274 | export interface MigrateField {
   275 |   tag: string; label?: string; subfields: string[];
@@ -47961,15 +49235,15 @@
   321 | 
   322 | export const api = {
   323 |   hasToken: () => !!token,
+```
+
+<!-- ─── страница 811 ─── -->
+
+```ts
   324 |   async initGuest() {
   325 |     const r = await fetch("/api/auth/guest", { method: "POST" });
   326 |     const j = await r.json();
   327 |     token = j.data.token;
-```
-
-<!-- ─── страница 790 ─── -->
-
-```ts
   328 |     return j.data as { token: string; kind: string };
   329 |   },
   330 |   health: () => jget<Health>("/api/health"),
@@ -48021,15 +49295,15 @@
   376 |     const r = await jpost<{ token: string; login: string; name?: string; grants: Grant[] }>("/api/auth/staff", { login, password });
   377 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
   378 |     return r;
+```
+
+<!-- ─── страница 812 ─── -->
+
+```ts
   379 |   },
   380 |   // --- Бронирование (#222) -------------------------------------------------
   381 |   // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
   382 |   hold: (db: string, mfn: number) => jpost<HoldResult>("/api/hold", { db, mfn }),
-```
-
-<!-- ─── страница 791 ─── -->
-
-```ts
   383 |   // Список активных броней читателя с позицией в очереди.
   384 |   holds: () => jget<{ items: Hold[] }>("/api/holds"),
   385 |   // Снять бронь по её идентификатору.
@@ -48081,15 +49355,15 @@
   431 |   deleteReview: (id: string | number) => jpost("/api/review/delete", { id }),
   432 |   // --- Рекомендации (#133) -------------------------------------------------
   433 |   // «Похожие издания» к конкретной записи.
+```
+
+<!-- ─── страница 813 ─── -->
+
+```ts
   434 |   recommendations: (db: string, mfn: number) =>
   435 |     jget<{ items: Recommendation[] }>("/api/recommendations?" + qs({ db, mfn })),
   436 |   // «Для вас» — персональная подборка на главной (по истории/интересам).
   437 |   recommendationsForYou: () =>
-```
-
-<!-- ─── страница 792 ─── -->
-
-```ts
   438 |     jget<{ items: Recommendation[] }>("/api/recommendations/foryou"),
   439 |   // --- История просмотров (#134) -------------------------------------------
   440 |   history: () => jget<{ items: HistoryItem[] }>("/api/history"),
@@ -48141,15 +49415,15 @@
   486 | 
   487 |   // --- Администрирование (#187) -------------------------------------------
   488 |   // Список учётных записей сотрудников.
+```
+
+<!-- ─── страница 814 ─── -->
+
+```ts
   489 |   adminUsers: () => jget<{ items: AdminUser[] }>("/api/admin/users"),
   490 |   // Создать учётную запись (логин, ФИО, пароль, опц. роли).
   491 |   adminCreateUser: (u: { login: string; fullName: string; password: string; roles?: string[] }) =>
   492 |     jpost<AdminUser>("/api/admin/users", u),
-```
-
-<!-- ─── страница 793 ─── -->
-
-```ts
   493 |   // Назначить набор ролей пользователю.
   494 |   adminSetRoles: (userId: string | number, roles: string[]) =>
   495 |     jpost<AdminUser>("/api/admin/users/roles", { userId, roles }),
@@ -48201,15 +49475,15 @@
   541 |   // --- Миграция данных из ИРБИС64 (#225; epic #223) ------------------------
   542 |   // Изучить источник (сетевой сервер ИРБИС64 / локальный каталог данных):
   543 |   // обнаружить базы, число записей и состав полей (с пометкой «допполе» для
+```
+
+<!-- ─── страница 815 ─── -->
+
+```ts
   544 |   // кастомных). dbs — опц. сужение перечня изучаемых баз. 404/501 → degrade.
   545 |   migrateInspect: (mode: MigrateMode, source: MigrateSource, dbs?: string[]) =>
   546 |     jpost<MigrateInspect>("/api/admin/migrate/inspect", { mode, source, dbs }),
   547 |   // Запустить миграцию выбранных баз в арендатора. dryRun:true — пробный прогон
-```
-
-<!-- ─── страница 794 ─── -->
-
-```ts
   548 |   // (ничего не записывается). → отчёт {records_read, records_loaded,
   549 |   // readers_loaded, skipped, errors} (+ опц. jobId фоновой задачи). 404/501 → degrade.
   550 |   migrateRun: (params: { mode: MigrateMode; source: MigrateSource; tenant: string; dbs: string[]; dryRun: boolean }) =>
@@ -48266,15 +49540,15 @@
    36 | [data-theme="working"],
    37 | [data-theme="theatrical"] {
    38 |   /* Surfaces — app alias  =  Biblio token */
+```
+
+<!-- ─── страница 816 ─── -->
+
+```css
    39 |   --bg-page:        var(--bg);
    40 |   --surface-card:   var(--surface-1);
    41 |   --surface-sunken: var(--surface-2);
    42 |   --surface-hover:  var(--surface-3);
-```
-
-<!-- ─── страница 795 ─── -->
-
-```css
    43 |   --surface-active: var(--surface-3);
    44 | 
    45 |   /* Text (–-text-subtle / –-border-strong share names → straight from Biblio) */
@@ -48326,15 +49600,15 @@
    91 |   --font-display:      var(--font-serif);
    92 |   --font-record-title: var(--font-serif);
    93 | 
+```
+
+<!-- ─── страница 817 ─── -->
+
+```css
    94 |   /* Radii — softer Style A corners (app keeps --radius-sm / -pill / -round) */
    95 |   --radius-md: 9px;
    96 |   --radius-lg: 13px;
    97 | }
-```
-
-<!-- ─── страница 796 ─── -->
-
-```css
    98 | 
    99 | /* Dark mode: Biblio redefines the underlying tokens under data-mode="dark";
   100 |    aliases above resolve to them at use-time, so the app inherits warm-dark.
@@ -48391,15 +49665,15 @@
    42 |   return {
    43 |     mfn: d.mfn,
    44 |     title: [titleA, titleE].filter(Boolean).join(" : "),
+```
+
+<!-- ─── страница 818 ─── -->
+
+```ts
    45 |     responsibility: sf(f200, "F"),
    46 |     authors: ["700", "701"].flatMap(F).map(authorName).filter(Boolean),
    47 |     place: sf(f210, "A"),
    48 |     publisher: sf(f210, "C"),
-```
-
-<!-- ─── страница 797 ─── -->
-
-```ts
    49 |     year: sf(f210, "D"),
    50 |     extent: [sf(f215, "A"), sf(f215, "C"), sf(f215, "E")].filter(Boolean).join(" : "),
    51 |     isbn: sf(F1("10"), "A"),
@@ -48451,15 +49725,15 @@
    97 | // ГОСТ Р 7.0.100-2018 — упрощённое библиографическое описание (одна ссылка).
    98 | // Заголовок (1 автор) . Заглавие : сведения / ответственность. — Место : Издательство, Год. — Объём. — ISBN.
    99 | export function toGOST(c: CiteFields): string {
+```
+
+<!-- ─── страница 819 ─── -->
+
+```ts
   100 |   const parts: string[] = [];
   101 |   let head = "";
   102 |   if (c.authors.length === 1) head = c.authors[0] + ". ";
   103 |   let area = c.title || "[Без заглавия]";
-```
-
-<!-- ─── страница 798 ─── -->
-
-```ts
   104 |   // сведения об ответственности
   105 |   const resp = c.responsibility || (c.authors.length ? c.authors.join(", ") : "");
   106 |   if (resp) area += " / " + resp;
@@ -48511,15 +49785,15 @@
   152 |   else downloadText("record_" + c.mfn + ".txt", toGOST(c), "txt");
   153 | }
   154 | 
+```
+
+<!-- ─── страница 820 ─── -->
+
+```ts
   155 | // --- Корзина (отбор) -------------------------------------------------------
   156 | // Basket items carry only brief search-result data (нет полной записи), поэтому
   157 | // CiteFields строится из заглавия/автора/года.
   158 | export function citeFromItem(it: ResultItem): CiteFields {
-```
-
-<!-- ─── страница 799 ─── -->
-
-```ts
   159 |   return {
   160 |     mfn: it.mfn,
   161 |     title: it.title || "",
@@ -48576,15 +49850,15 @@
    19 |   fullName: "", email: "", phone: "", institution: "", position: "", consent: false,
    20 | };
    21 | 
+```
+
+<!-- ─── страница 821 ─── -->
+
+```tsx
    22 | const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
    23 | 
    24 | type Status = "idle" | "sending" | "ok" | "error";
    25 | 
-```
-
-<!-- ─── страница 800 ─── -->
-
-```tsx
    26 | const field: React.CSSProperties = {
    27 |   width: "100%", boxSizing: "border-box",
    28 |   height: "var(--control-h-md, 40px)",
@@ -48636,15 +49910,15 @@
    74 |   const fullNameOk = f.fullName.trim().length > 0;
    75 |   const emailOk = EMAIL_RE.test(f.email.trim());
    76 |   const canSubmit = fullNameOk && emailOk && f.consent && status !== "sending";
+```
+
+<!-- ─── страница 822 ─── -->
+
+```tsx
    77 | 
    78 |   async function submit(e: React.FormEvent) {
    79 |     e.preventDefault();
    80 |     if (!canSubmit) return;
-```
-
-<!-- ─── страница 801 ─── -->
-
-```tsx
    81 |     setStatus("sending");
    82 |     setErrorMsg("");
    83 |     try {
@@ -48696,15 +49970,15 @@
   129 |         <button
   130 |           type="button"
   131 |           onClick={() => setStatus("idle")}
+```
+
+<!-- ─── страница 823 ─── -->
+
+```tsx
   132 |           style={{
   133 |             marginTop: "var(--space-4, 16px)",
   134 |             height: "var(--control-h-md, 40px)", padding: "0 var(--space-4, 16px)",
   135 |             borderRadius: "var(--radius-md, 8px)", cursor: "pointer",
-```
-
-<!-- ─── страница 802 ─── -->
-
-```tsx
   136 |             background: "var(--surface-card, #fff)", color: "var(--text-strong, #241C16)",
   137 |             border: "1px solid var(--border-default, #D6D1C4)", fontWeight: 600,
   138 |           }}
@@ -48756,15 +50030,15 @@
   184 |           style={{
   185 |             marginBottom: "var(--space-4, 16px)", padding: "var(--space-3, 12px)",
   186 |             borderRadius: "var(--radius-md, 8px)",
+```
+
+<!-- ─── страница 824 ─── -->
+
+```tsx
   187 |             background: "var(--danger-bg, #F7E4E1)",
   188 |             border: "1px solid var(--danger-500, #C0392B)",
   189 |             color: "var(--text-strong, #241C16)", fontSize: "var(--text-sm, 13px)",
   190 |           }}
-```
-
-<!-- ─── страница 803 ─── -->
-
-```tsx
   191 |         >
   192 |           {errorMsg}
   193 |         </div>
@@ -48821,15 +50095,15 @@
    23 | const wrap: React.CSSProperties = {
    24 |   maxWidth: maxw, margin: "0 auto", padding: "0 var(--space-5, 20px)",
    25 | };
+```
+
+<!-- ─── страница 825 ─── -->
+
+```tsx
    26 | 
    27 | const card: React.CSSProperties = {
    28 |   background: "var(--surface-card, #FBF6EC)",
    29 |   border: "1px solid var(--border-default, #D6D1C4)",
-```
-
-<!-- ─── страница 804 ─── -->
-
-```tsx
    30 |   borderRadius: "var(--radius-lg, 10px)",
    31 |   padding: "var(--space-6, 24px)",
    32 | };
@@ -48881,15 +50155,15 @@
    78 |           </ul>
    79 |         </div>
    80 |       ))}
+```
+
+<!-- ─── страница 826 ─── -->
+
+```tsx
    81 |     </>
    82 |   );
    83 | }
    84 | 
-```
-
-<!-- ─── страница 805 ─── -->
-
-```tsx
    85 | const NAV = [
    86 |   { id: "functional", label: "Функции" },
    87 |   { id: "guide", label: "Руководство" },
@@ -48941,15 +50215,15 @@
   133 |           <p style={{ ...lead, maxWidth: 760 }}>{PRODUCT.lead}</p>
   134 |           <div style={{ display: "flex", gap: "var(--space-2, 8px)", flexWrap: "wrap", marginTop: "var(--space-5, 20px)" }}>
   135 |             {PRODUCT.facts.map((fct) => (
+```
+
+<!-- ─── страница 827 ─── -->
+
+```tsx
   136 |               <span key={fct} style={{
   137 |                 display: "inline-flex", alignItems: "center",
   138 |                 background: "var(--accent-weak, #F6E7DF)",
   139 |                 border: "1px solid var(--accent-weak-border, #ECC9B9)",
-```
-
-<!-- ─── страница 806 ─── -->
-
-```tsx
   140 |                 color: "var(--accent, #C96442)", borderRadius: "var(--radius-pill, 999px)",
   141 |                 padding: "5px 12px", fontSize: "var(--text-xs, 12px)", fontWeight: 600,
   142 |               }}>{fct}</span>
@@ -49001,15 +50275,15 @@
   188 |           </div>
   189 |         </Section>
   190 | 
+```
+
+<!-- ─── страница 828 ─── -->
+
+```tsx
   191 |         {/* Руководство */}
   192 |         <Section id={GUIDE.id} title={GUIDE.title}>
   193 |           <div style={card}><BulletDoc doc={GUIDE} /></div>
   194 |         </Section>
-```
-
-<!-- ─── страница 807 ─── -->
-
-```tsx
   195 | 
   196 |         {/* Установка */}
   197 |         <Section id={INSTALL.id} title={INSTALL.title}>
@@ -49061,15 +50335,15 @@
   243 |                   <a href={d.href} target="_blank" rel="noopener noreferrer"
   244 |                     style={{ color: "var(--text-link, var(--accent, #C96442))", fontWeight: 600 }}>
   245 |                     {d.label}
+```
+
+<!-- ─── страница 829 ─── -->
+
+```tsx
   246 |                   </a>
   247 |                 </li>
   248 |               ))}
   249 |             </ul>
-```
-
-<!-- ─── страница 808 ─── -->
-
-```tsx
   250 |           </div>
   251 |         </Section>
   252 |       </main>
@@ -49126,15 +50400,15 @@
    35 |     "Назначение — комплексная автоматизация библиотеки. Функции подключаются " +
    36 |     "по тенанту/тарифу (модульность). Ниже — состав по функциональным модулям.",
    37 |   bullets: [
+```
+
+<!-- ─── страница 830 ─── -->
+
+```ts
    38 |     {
    39 |       heading: "Каталогизация (ядро)",
    40 |       items: [
    41 |         "ведение библиографических записей (поля/подполя), рабочий лист каталогизатора",
-```
-
-<!-- ─── страница 809 ─── -->
-
-```ts
    42 |         "формально-логический контроль ввода (ФЛК) по декларативным правилам",
    43 |         "управление экземплярами фонда (поле 910)",
    44 |         "авторитетные файлы и словари; глобальная корректировка (.gbl), в т.ч. cross-DB",
@@ -49186,15 +50460,15 @@
    90 |         "мультиарендность; тарифные планы → права (entitlements) per tenant → лимиты использования",
    91 |         "синхронизация edge ↔ облако; уведомления; (опц.) аналитика/BI",
    92 |       ],
+```
+
+<!-- ─── страница 831 ─── -->
+
+```ts
    93 |     },
    94 |   ],
    95 | };
    96 | 
-```
-
-<!-- ─── страница 810 ─── -->
-
-```ts
    97 | // Технические характеристики (таблица §3 из 04_*).
    98 | export const TECH: { param: string; value: string }[] = [
    99 |   { param: "Языки программирования", value: "Python (бэкенд), JavaScript/TypeScript — React (фронтенд)" },
@@ -49246,15 +50520,15 @@
   145 | 
   146 | // Провижининг первого арендатора (§5 руководства).
   147 | export const PROVISION_STEP =
+```
+
+<!-- ─── страница 832 ─── -->
+
+```ts
   148 |   'docker compose exec backend python -m access.provision <slug> \\\n' +
   149 |   '  --name "Имя библиотеки" --admin admin --password \'<пароль>\' --plan standard';
   150 | 
   151 | // Системные требования (минимальные).
-```
-
-<!-- ─── страница 811 ─── -->
-
-```ts
   152 | export const REQUIREMENTS: string[] = [
   153 |   "Сервер: Linux (доверенные ОС — Astra Linux и др.); Docker + docker-compose",
   154 |   "Клиент: современный веб-браузер (Chromium/Firefox актуальных версий)",
@@ -49311,15 +50585,15 @@
    10 | // что монтировать: лендинг продукта или читательский портал. Лендинг публичен
    11 | // (без логина) и самодостаточен.
    12 | const isProduct = window.location.pathname.replace(/\/+$/, "") === "/product";
+```
+
+<!-- ─── страница 833 ─── -->
+
+```tsx
    13 | 
    14 | createRoot(document.getElementById("root")!).render(
    15 |   <React.StrictMode>
    16 |     {isProduct ? <Landing /> : <App />}
-```
-
-<!-- ─── страница 812 ─── -->
-
-```tsx
    17 |   </React.StrictMode>,
    18 | );
 ```
@@ -49376,15 +50650,15 @@
    47 |         <p className="irb-about__name">{about.name}</p>
    48 |         <p className="irb-about__blurb">{about.blurb}</p>
    49 |       </div>
+```
+
+<!-- ─── страница 834 ─── -->
+
+```tsx
    50 | 
    51 |       {/* Часы работы */}
    52 |       <div className="irb-about__col">
    53 |         <div className="irb-about__title"><Icon name="clock" size={16} /> Часы работы</div>
-```
-
-<!-- ─── страница 813 ─── -->
-
-```tsx
    54 |         <dl className="irb-about__rows">
    55 |           {about.hours.map((h, i) => (
    56 |             <div key={i} className="irb-about__row"><dt>{h.label}</dt><dd>{h.value}</dd></div>
@@ -49441,15 +50715,15 @@
    29 |   color:var(--text-body);cursor:pointer;}
    30 | .irb-arch__check--on{background:var(--accent);border-color:var(--accent);color:var(--accent-fg,#fff);}
    31 | .irb-arch__check:focus-visible{outline:2px solid var(--focus-ring-color,var(--accent));outline-offset:1px;}
+```
+
+<!-- ─── страница 835 ─── -->
+
+```tsx
    32 | @media (max-width:560px){.irb-arch__no{display:none;}}
    33 | `;
    34 | 
    35 | if (typeof document !== "undefined" && !document.getElementById("irb-arch-css")) {
-```
-
-<!-- ─── страница 814 ─── -->
-
-```tsx
    36 |   const s = document.createElement("style"); s.id = "irb-arch-css"; s.textContent = CSS; document.head.appendChild(s);
    37 | }
    38 | 
@@ -49506,15 +50780,15 @@
     2 | // году (извлекается из поля year, напр. «М. : Изд, 2019» → 2019; иначе «Без даты»).
     3 | // Внутри года — компактные карточки выпусков с заглавием/автором и статусом.
     4 | // Те же данные ResultItem, что у списка/галереи; переключается мульти-лейаутом.
+```
+
+<!-- ─── страница 836 ─── -->
+
+```tsx
     5 | import React from "react";
     6 | import type { ResultItem } from "../api";
     7 | import { Icon } from "../../components/icon/Icon.jsx";
     8 | import { StatusBadge } from "../../components/catalog/StatusBadge.jsx";
-```
-
-<!-- ─── страница 815 ─── -->
-
-```tsx
     9 | 
    10 | const CSS = `
    11 | .irb-cal{display:flex;flex-direction:column;gap:22px;}
@@ -49566,15 +50840,15 @@
    57 |     const map = new Map<string, ResultItem[]>();
    58 |     for (const it of items) {
    59 |       const key = yearOf(it.year) || "Без даты";
+```
+
+<!-- ─── страница 837 ─── -->
+
+```tsx
    60 |       const bucket = map.get(key);
    61 |       if (bucket) bucket.push(it); else map.set(key, [it]);
    62 |     }
    63 |     const entries = Array.from(map.entries());
-```
-
-<!-- ─── страница 816 ─── -->
-
-```tsx
    64 |     // Годы по убыванию; «Без даты» — в конец.
    65 |     entries.sort((a, b) => {
    66 |       if (a[0] === "Без даты") return 1;
@@ -49631,15 +50905,15 @@
 ```tsx
     1 | // Тематические подборки (G1+) — горизонтальная полка крупных плиток-витрин по
     2 | // театральным темам (Театр, Драматургия, Сценография, История театра, …). Каждая
+```
+
+<!-- ─── страница 838 ─── -->
+
+```tsx
     3 | // плитка ведёт в поиск каталога: onSearch(prefix, query). Определения подборок —
     4 | // из tenantContent (конфиг арендатора, для пилота — театральная специфика СПб ГТБ).
     5 | // Каталожных вызовов нет → блок устойчив и всегда рендерится при наличии подборок.
     6 | import React from "react";
-```
-
-<!-- ─── страница 817 ─── -->
-
-```tsx
     7 | import { Icon } from "../../components/icon/Icon.jsx";
     8 | import { getTenantContent, COVER_TINTS } from "./tenantContent";
     9 | 
@@ -49691,15 +50965,15 @@
    55 |             style={{ background: "linear-gradient(150deg," + COVER_TINTS[c.tint % COVER_TINTS.length] + ",rgba(0,0,0,.5))" }}
    56 |           >
    57 |             <span className="irb-coll__ic"><Icon name={c.icon} size={20} /></span>
+```
+
+<!-- ─── страница 839 ─── -->
+
+```tsx
    58 |             <span className="irb-coll__name">{c.title}</span>
    59 |             <span className="irb-coll__desc">{c.subtitle}</span>
    60 |             <span className="irb-coll__go">Смотреть подборку <Icon name="arrow-right" size={12} /></span>
    61 |           </button>
-```
-
-<!-- ─── страница 818 ─── -->
-
-```tsx
    62 |         ))}
    63 |       </div>
    64 |     </section>
@@ -49756,15 +51030,15 @@
    44 | .irb-consent-toggle__meta{font-size:var(--text-xs);color:var(--text-subtle);margin-top:3px;line-height:1.5;}
    45 | .irb-consent-state{display:inline-flex;align-items:center;gap:6px;font-size:var(--text-xs);font-weight:600;
    46 |   padding:3px 10px;border-radius:999px;white-space:nowrap;}
+```
+
+<!-- ─── страница 840 ─── -->
+
+```tsx
    47 | .irb-consent-state--on{background:var(--status-available-bg,#E4F0E8);color:var(--status-available,#2E7D52);}
    48 | .irb-consent-state--off{background:var(--surface-sunken,#f0eee6);color:var(--text-subtle);}
    49 | .irb-erase__list{margin:10px 0 4px;padding:0;list-style:none;display:flex;flex-direction:column;gap:7px;}
    50 | .irb-erase__li{display:flex;align-items:center;gap:9px;font-size:var(--text-sm);color:var(--text-body);}
-```
-
-<!-- ─── страница 819 ─── -->
-
-```tsx
    51 | .irb-erase__li i{flex:none;display:flex;color:var(--error,var(--danger-500));}
    52 | .irb-erase__note{font-size:var(--text-xs);color:var(--text-subtle);line-height:1.55;
    53 |   background:var(--surface-sunken,#f5f4ee);border-radius:10px;padding:10px 12px;margin-top:12px;
@@ -49816,15 +51090,15 @@
    99 |   async function accept() {
   100 |     setBusy(true);
   101 |     const r = await api.setReaderConsent(true);
+```
+
+<!-- ─── страница 841 ─── -->
+
+```tsx
   102 |     setBusy(false);
   103 |     if (r.status === 200 && r.json?.ok) {
   104 |       setState((s) => ({ given: true, ts: new Date().toISOString(), version: s?.version }));
   105 |       toast({ variant: "success", title: "Согласие сохранено", message: "Спасибо! Изменить решение можно в кабинете." });
-```
-
-<!-- ─── страница 820 ─── -->
-
-```tsx
   106 |     } else if (r.status === 404 || r.status === 501) {
   107 |       setDismissed(true);
   108 |       toast({ variant: "info", title: "Согласие недоступно", message: "Модуль обработки согласий ещё подключается." });
@@ -49876,15 +51150,15 @@
   154 |       toast({ variant: "info", title: "Недоступно", message: "Модуль обработки согласий ещё подключается." });
   155 |     } else {
   156 |       toast({ variant: "error", title: "Не сохранено", message: "Повторите попытку позже." });
+```
+
+<!-- ─── страница 842 ─── -->
+
+```tsx
   157 |     }
   158 |   }
   159 | 
   160 |   if (unavailable) return null;
-```
-
-<!-- ─── страница 821 ─── -->
-
-```tsx
   161 |   const given = !!state?.given;
   162 | 
   163 |   return (
@@ -49936,15 +51210,15 @@
   209 |     } else if (r.status === 401 || r.status === 403) {
   210 |       toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." });
   211 |     } else if (r.status === 404 || r.status === 501) {
+```
+
+<!-- ─── страница 843 ─── -->
+
+```tsx
   212 |       toast({ variant: "info", title: "Удаление недоступно", message: "Модуль права на забвение ещё подключается." });
   213 |     } else {
   214 |       toast({ variant: "error", title: "Не удалось удалить", message: "Повторите попытку позже." });
   215 |     }
-```
-
-<!-- ─── страница 822 ─── -->
-
-```tsx
   216 |   }
   217 | 
   218 |   return (
@@ -49996,15 +51270,15 @@
   264 |               <Icon name="info" size={15} style={{ flex: "none", color: "var(--text-subtle)", marginTop: 1 }} />
   265 |               <span>Каталог библиотеки и сведения о выданных экземплярах (формуляр) <b>не затрагиваются</b> —
   266 |                 это учётные данные библиотеки. Удаляются только данные, созданные вами на портале.</span>
+```
+
+<!-- ─── страница 844 ─── -->
+
+```tsx
   267 |             </div>
   268 |             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
   269 |               <Button variant="ghost" onClick={() => setConfirmOpen(false)}>Отмена</Button>
   270 |               <Button variant="danger" iconLeft="trash" loading={busy} onClick={erase}>Удалить безвозвратно</Button>
-```
-
-<!-- ─── страница 823 ─── -->
-
-```tsx
   271 |             </div>
   272 |           </div>
   273 |         </div>
@@ -50061,15 +51335,15 @@
    33 |   background:rgba(0,0,0,.32);border-bottom:1px solid rgba(255,255,255,.12);flex-wrap:wrap;}
    34 | .irb-doc__title{font-family:var(--font-display,var(--font-serif));font-weight:600;font-size:var(--text-base,15.5px);
    35 |   min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw;}
+```
+
+<!-- ─── страница 845 ─── -->
+
+```tsx
    36 | .irb-doc__count{font-size:var(--text-sm);color:rgba(255,255,255,.8);font-variant-numeric:tabular-nums;white-space:nowrap;}
    37 | .irb-doc__spacer{flex:1;}
    38 | .irb-doc__btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:rgba(255,255,255,.12);
    39 |   color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:9px;padding:7px 11px;cursor:pointer;
-```
-
-<!-- ─── страница 824 ─── -->
-
-```tsx
    40 |   font-size:var(--text-sm);font-family:var(--font-ui,inherit);}
    41 | .irb-doc__btn:hover:not(:disabled){background:rgba(255,255,255,.22);}
    42 | .irb-doc__btn:disabled{opacity:.4;cursor:not-allowed;}
@@ -50121,15 +51395,15 @@
    88 |   }, [total]);
    89 | 
    90 |   // Клавиатура: листание, зум, закрытие.
+```
+
+<!-- ─── страница 846 ─── -->
+
+```tsx
    91 |   React.useEffect(() => {
    92 |     const onKey = (e: KeyboardEvent) => {
    93 |       if (e.key === "Escape") onClose();
    94 |       else if (e.key === "ArrowRight") go(idx + 1);
-```
-
-<!-- ─── страница 825 ─── -->
-
-```tsx
    95 |       else if (e.key === "ArrowLeft") go(idx - 1);
    96 |       else if (e.key === "+" || e.key === "=") setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)));
    97 |       else if (e.key === "-" || e.key === "_") setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)));
@@ -50181,15 +51455,15 @@
   143 |         )}
   144 | 
   145 |         {isImage && page.url && !imgError ? (
+```
+
+<!-- ─── страница 847 ─── -->
+
+```tsx
   146 |           <img className="irb-doc__img" src={page.url} alt={page.name || "Страница " + (idx + 1)}
   147 |             style={{ transform: "scale(" + zoom + ")", maxWidth: zoom <= 1 ? "100%" : "none", maxHeight: zoom <= 1 ? "100%" : "none" }}
   148 |             onError={() => setImgError(true)} />
   149 |         ) : (
-```
-
-<!-- ─── страница 826 ─── -->
-
-```tsx
   150 |           <div className="irb-doc__file">
   151 |             <span className="irb-doc__file-ic" aria-hidden="true">
   152 |               <Icon name={imgError ? "image" : "file-text"} size={40} />
@@ -50246,15 +51520,15 @@
     7 | import { api } from "../api";
     8 | import { Icon } from "../../components/icon/Icon.jsx";
     9 | import { StatusBadge } from "../../components/catalog/StatusBadge.jsx";
+```
+
+<!-- ─── страница 848 ─── -->
+
+```tsx
    10 | 
    11 | const COVER_TINTS = [
    12 |   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
    13 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
-```
-
-<!-- ─── страница 827 ─── -->
-
-```tsx
    14 | ];
    15 | 
    16 | const CSS = `
@@ -50306,15 +51580,15 @@
    62 |   // Действия #222 (необязательны): бронь и меню «В список» на карточке-обложке.
    63 |   onHold?: (it: ResultItem) => void;
    64 |   renderShelf?: (it: ResultItem) => React.ReactNode;
+```
+
+<!-- ─── страница 849 ─── -->
+
+```tsx
    65 | }) {
    66 |   return (
    67 |     <div className="irb-gal" role="list">
    68 |       {items.map((it, i) => {
-```
-
-<!-- ─── страница 828 ─── -->
-
-```tsx
    69 |         const on = inBasket(it.mfn);
    70 |         const tint = "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.42))";
    71 |         return (
@@ -50371,15 +51645,15 @@
     4 | // не падает.
     5 | import React from "react";
     6 | import { api } from "../api";
+```
+
+<!-- ─── страница 850 ─── -->
+
+```tsx
     7 | import type { HistoryItem } from "../api";
     8 | import { Icon } from "../../components/icon/Icon.jsx";
     9 | import { EmptyState } from "../../components/feedback/EmptyState.jsx";
    10 | 
-```
-
-<!-- ─── страница 829 ─── -->
-
-```tsx
    11 | const COVER_TINTS = [
    12 |   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
    13 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
@@ -50431,15 +51705,15 @@
    59 |           <EmptyState icon="clock" title="История пока недоступна" description="Модуль истории просмотров ещё подключается. Загляните позже." />
    60 |         </div>
    61 |       </section>
+```
+
+<!-- ─── страница 851 ─── -->
+
+```tsx
    62 |     );
    63 |   }
    64 | 
    65 |   return (
-```
-
-<!-- ─── страница 830 ─── -->
-
-```tsx
    66 |     <section aria-labelledby="cab-history">
    67 |       <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
    68 |         <h2 id="cab-history" style={h2Sx}>История просмотров</h2>
@@ -50496,15 +51770,15 @@
    12 | import { EmptyState } from "../../components/feedback/EmptyState.jsx";
    13 | 
    14 | const COVER_TINTS = [
+```
+
+<!-- ─── страница 852 ─── -->
+
+```tsx
    15 |   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
    16 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
    17 | ];
    18 | 
-```
-
-<!-- ─── страница 831 ─── -->
-
-```tsx
    19 | function readyChip(): React.CSSProperties {
    20 |   return { display: "inline-flex", alignItems: "center", gap: 6, background: "var(--status-available-bg,#E4F0E8)", color: "var(--status-available-strong,#2E7D52)", borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
    21 | }
@@ -50556,15 +51830,15 @@
    67 |       toast({ variant: "error", title: "Не удалось снять бронь", message: "Повторите попытку позже." });
    68 |     }
    69 |   }
+```
+
+<!-- ─── страница 853 ─── -->
+
+```tsx
    70 | 
    71 |   // Эндпойнта брони ещё нет → секцию не показываем (мягкая деградация).
    72 |   if (unavailable) return null;
    73 | 
-```
-
-<!-- ─── страница 832 ─── -->
-
-```tsx
    74 |   return (
    75 |     <section aria-labelledby="cab-holds">
    76 |       <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
@@ -50621,15 +51895,15 @@
     1 | // Главная-лендинг читательского портала (G1) — «фасад» discovery перед любым
     2 | // поиском: hero со слоганом и крупным полем поиска по центру, ряд примеров-чипов
     3 | // запросов (G3), витрина новых поступлений (G2, компонент Showcase) и богатый
+```
+
+<!-- ─── страница 854 ─── -->
+
+```tsx
     4 | // селектор баз с названием/счётчиком (G17, компонент DatabaseSelector).
     5 | //
     6 | // Экран НЕ дублирует поисковую логику App.tsx: он лишь собирает запрос и зовёт
     7 | // onSearch(prefix, query) / onPickDb(code) / onOpen(mfn, db). Стиль — Biblio-токены.
-```
-
-<!-- ─── страница 833 ─── -->
-
-```tsx
     8 | import React from "react";
     9 | import type { DbItem } from "../api";
    10 | import { api } from "../api";
@@ -50681,15 +51955,15 @@
    56 | `;
    57 | 
    58 | if (typeof document !== "undefined" && !document.getElementById("irb-home-css")) {
+```
+
+<!-- ─── страница 855 ─── -->
+
+```tsx
    59 |   const s = document.createElement("style"); s.id = "irb-home-css"; s.textContent = CSS; document.head.appendChild(s);
    60 | }
    61 | 
    62 | const PREFIX_OPTS = [
-```
-
-<!-- ─── страница 834 ─── -->
-
-```tsx
    63 |   { code: "K", label: "Везде" }, { code: "A", label: "Автор" },
    64 |   { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
    65 | ];
@@ -50741,15 +52015,15 @@
   111 |     <div className="irb-home">
   112 |       {/* ===== Hero + поиск ===== */}
   113 |       <section className="irb-hero" aria-label="Поиск по каталогу">
+```
+
+<!-- ─── страница 856 ─── -->
+
+```tsx
   114 |         <div className="irb-hero__inner">
   115 |           <span className="irb-hero__eyebrow"><Icon name="book-open" size={14} /> Электронный каталог</span>
   116 |           <h1 className="irb-hero__title">Найдите нужное издание в библиотеке</h1>
   117 |           <p className="irb-hero__lead">Книги, статьи, электронные версии и архивные материалы — поиск по всему фонду в одном окне.</p>
-```
-
-<!-- ─── страница 835 ─── -->
-
-```tsx
   118 | 
   119 |           <div className="irb-hero__search">
   120 |             <div className="irb-hero__field">
@@ -50801,15 +52075,15 @@
   166 |               const next = ids.find((id) => id !== db) || ids[0];
   167 |               if (next && next !== db) onPickDb(next);
   168 |             }}
+```
+
+<!-- ─── страница 857 ─── -->
+
+```tsx
   169 |           />
   170 |         </div>
   171 |       )}
   172 | 
-```
-
-<!-- ─── страница 836 ─── -->
-
-```tsx
   173 |       {/* ===== Новости + события (редактируемый per-tenant контент) ===== */}
   174 |       <LibraryNews />
   175 |       <LibraryEvents />
@@ -50866,15 +52140,15 @@
    40 | .irb-ev__card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);}
    41 | .irb-ev__day{flex:none;width:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;
    42 |   border-radius:var(--radius-lg,12px);background:linear-gradient(155deg,var(--accent),var(--accent-hover));color:var(--accent-fg,#fff);
+```
+
+<!-- ─── страница 858 ─── -->
+
+```tsx
    43 |   padding:8px 4px;text-align:center;box-shadow:var(--shadow-sm);}
    44 | .irb-ev__d{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-bold,700);font-size:1.35rem;line-height:1;font-variant-numeric:tabular-nums;}
    45 | .irb-ev__m{font-size:var(--text-2xs,11px);text-transform:uppercase;letter-spacing:.04em;opacity:.92;margin-top:2px;}
    46 | .irb-ev__body{min-width:0;flex:1;display:flex;flex-direction:column;gap:5px;}
-```
-
-<!-- ─── страница 837 ─── -->
-
-```tsx
    47 | .irb-ev__kind{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;font-size:var(--text-2xs,11px);font-weight:600;
    48 |   color:var(--text-subtle);text-transform:uppercase;letter-spacing:.03em;}
    49 | .irb-ev__name{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-semibold,600);
@@ -50926,15 +52200,15 @@
    95 |   );
    96 | }
    97 | 
+```
+
+<!-- ─── страница 859 ─── -->
+
+```tsx
    98 | // --- События и выставки -----------------------------------------------------
    99 | const EVENT_KIND: Record<EventItem["kind"], { label: string; icon: IconName }> = {
   100 |   exhibition: { label: "Выставка", icon: "image" },
   101 |   lecture: { label: "Лекция", icon: "book-open" },
-```
-
-<!-- ─── страница 838 ─── -->
-
-```tsx
   102 |   tour: { label: "Экскурсия", icon: "map-pin" },
   103 |   concert: { label: "Концерт", icon: "music" },
   104 |   meeting: { label: "Встреча", icon: "users" },
@@ -50991,15 +52265,15 @@
     1 | // Почтовый ящик уведомлений читателя (#222). Колокольчик с бейджем непрочитанных
     2 | // в шапке; по клику открывается панель с лентой уведомлений (тема/текст/относительное
     3 | // время, отметка прочитано/непрочитано), действиями «прочитать» и «прочитать все».
+```
+
+<!-- ─── страница 860 ─── -->
+
+```tsx
     4 | // Данные — GET /api/notifications; при 404/501/сети деградируем мягко (панель
     5 | // показывает «нет уведомлений», бейдж скрыт). Только для вошедшего читателя.
     6 | import React from "react";
     7 | import { api } from "../api";
-```
-
-<!-- ─── страница 839 ─── -->
-
-```tsx
     8 | import type { Notification } from "../api";
     9 | import { Icon } from "../../components/icon/Icon.jsx";
    10 | 
@@ -51051,15 +52325,15 @@
    56 |   if (isNaN(d.getTime())) { const n = Number(ts); if (!isNaN(n) && n > 0) d = new Date(n * (n < 1e12 ? 1000 : 1)); }
    57 |   if (isNaN(d.getTime())) return "";
    58 |   const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+```
+
+<!-- ─── страница 861 ─── -->
+
+```tsx
    59 |   if (sec < 0) return "только что";
    60 |   if (sec < 60) return "только что";
    61 |   const min = Math.floor(sec / 60);
    62 |   if (min < 60) return min + " " + plural(min, "минуту", "минуты", "минут") + " назад";
-```
-
-<!-- ─── страница 840 ─── -->
-
-```tsx
    63 |   const hr = Math.floor(min / 60);
    64 |   if (hr < 24) return hr + " " + plural(hr, "час", "часа", "часов") + " назад";
    65 |   const day = Math.floor(hr / 24);
@@ -51111,15 +52385,15 @@
   111 |     if (!open) return;
   112 |     const onDoc = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false); };
   113 |     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+```
+
+<!-- ─── страница 862 ─── -->
+
+```tsx
   114 |     document.addEventListener("mousedown", onDoc);
   115 |     document.addEventListener("keydown", onKey);
   116 |     return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
   117 |   }, [open]);
-```
-
-<!-- ─── страница 841 ─── -->
-
-```tsx
   118 | 
   119 |   function toggle() {
   120 |     const next = !open;
@@ -51171,15 +52445,15 @@
   166 |             ) : (
   167 |               items.map((n) => (
   168 |                 <div key={String(n.id)} className={"irb-nitem" + (n.read ? "" : " irb-nitem--unread")}>
+```
+
+<!-- ─── страница 863 ─── -->
+
+```tsx
   169 |                   <span className="irb-nitem__dot" aria-hidden="true" />
   170 |                   <div className="irb-nitem__body">
   171 |                     <div className="irb-nitem__subj">{n.subject || "Уведомление"}</div>
   172 |                     {n.body && <div className="irb-nitem__text">{n.body}</div>}
-```
-
-<!-- ─── страница 842 ─── -->
-
-```tsx
   173 |                     {relTime(n.ts) && <div className="irb-nitem__time">{relTime(n.ts)}</div>}
   174 |                   </div>
   175 |                   {!n.read && (
@@ -51236,15 +52510,15 @@
    33 | export function OrdersTab({ toast, cardSx }: {
    34 |   toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
    35 |   cardSx: React.CSSProperties;
+```
+
+<!-- ─── страница 864 ─── -->
+
+```tsx
    36 | }) {
    37 |   const [orders, setOrders] = React.useState<OrderItem[] | null>(null);
    38 |   const [stub, setStub] = React.useState(false);
    39 |   const [busy, setBusy] = React.useState<string | number | null>(null);
-```
-
-<!-- ─── страница 843 ─── -->
-
-```tsx
    40 | 
    41 |   const load = React.useCallback(async () => {
    42 |     const r = await api.orders();
@@ -51296,15 +52570,15 @@
    88 |     <div>
    89 |       {stub && (
    90 |         <p style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", background: "var(--surface-sunken)", borderRadius: 999, padding: "3px 10px", margin: "0 0 12px", fontWeight: 600 }}>
+```
+
+<!-- ─── страница 865 ─── -->
+
+```tsx
    91 |           <Icon name="info" size={12} /> демонстрационные данные — модуль заказов ещё подключается
    92 |         </p>
    93 |       )}
    94 |       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-```
-
-<!-- ─── страница 844 ─── -->
-
-```tsx
    95 |         {orders.map((o) => {
    96 |           const st = o.status || "queued";
    97 |           const cfg = ORDER_STATUS[st] || ORDER_STATUS.queued;
@@ -51361,15 +52635,15 @@
    19 | .irb-recs--rec{margin-top:26px;border-top:1px solid var(--border-subtle);padding-top:18px;}
    20 | .irb-recs__head{display:flex;align-items:baseline;gap:10px;margin:0 0 12px;}
    21 | .irb-recs__title{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-semibold,600);
+```
+
+<!-- ─── страница 866 ─── -->
+
+```tsx
    22 |   font-size:var(--text-xl,1.25rem);letter-spacing:-.01em;margin:0;color:var(--text-strong);}
    23 | .irb-recs__sub{font-size:var(--text-sm);color:var(--text-subtle);}
    24 | .irb-recs__rail{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 10px;scroll-snap-type:x mandatory;scrollbar-width:thin;}
    25 | .irb-recs__card{flex:none;width:184px;scroll-snap-align:start;display:flex;gap:10px;text-align:left;
-```
-
-<!-- ─── страница 845 ─── -->
-
-```tsx
    26 |   background:var(--surface-card,#fff);border:1px solid var(--border-subtle);border-radius:var(--radius-lg,12px);
    27 |   padding:12px;cursor:pointer;font-family:inherit;box-shadow:var(--shadow-sm);
    28 |   transition:transform var(--dur,.18s) var(--ease-standard,ease),box-shadow var(--dur,.18s) var(--ease-standard,ease),border-color var(--dur,.18s) var(--ease-standard,ease);}
@@ -51421,15 +52695,15 @@
    74 | }
    75 | 
    76 | // «Похожие издания» — на карточке записи.
+```
+
+<!-- ─── страница 867 ─── -->
+
+```tsx
    77 | export function SimilarRecommendations({ db, mfn, onOpen }: {
    78 |   db: string; mfn: number; onOpen: (mfn: number, db: string) => void;
    79 | }) {
    80 |   const [items, setItems] = React.useState<Recommendation[] | null>(null);
-```
-
-<!-- ─── страница 846 ─── -->
-
-```tsx
    81 |   React.useEffect(() => {
    82 |     let alive = true; setItems(null);
    83 |     (async () => {
@@ -51486,15 +52760,15 @@
    15 |   { key: "title", label: "По заглавию" },
    16 | ];
    17 | 
+```
+
+<!-- ─── страница 868 ─── -->
+
+```tsx
    18 | const CSS = `
    19 | .irb-rtoolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px;font-family:var(--font-ui);}
    20 | .irb-rtoolbar__count{font-size:var(--text-sm);color:var(--text-subtle);font-variant-numeric:tabular-nums;}
    21 | .irb-rtoolbar__spacer{margin-left:auto;}
-```
-
-<!-- ─── страница 847 ─── -->
-
-```tsx
    22 | .irb-rtoolbar__group{display:flex;align-items:center;gap:8px;}
    23 | .irb-rtoolbar__lbl{font-size:var(--text-xs);color:var(--text-subtle);}
    24 | .irb-rtoolbar__sort{padding:7px 10px;border-radius:var(--radius-md,8px);border:1px solid var(--border-strong,#cdd3da);
@@ -51546,15 +52820,15 @@
    70 |   return (
    71 |     <div className="irb-rtoolbar">
    72 |       <span className="irb-rtoolbar__count">Найдено: <b>{total.toLocaleString("ru-RU")}</b> · страница {page} из {pageCount}</span>
+```
+
+<!-- ─── страница 869 ─── -->
+
+```tsx
    73 | 
    74 |       <div className="irb-rtoolbar__spacer" />
    75 | 
    76 |       <div className="irb-rtoolbar__group">
-```
-
-<!-- ─── страница 848 ─── -->
-
-```tsx
    77 |         <label className="irb-rtoolbar__lbl" htmlFor="irb-sort">Сортировка</label>
    78 |         <select id="irb-sort" className="irb-rtoolbar__sort" value={sort} onChange={(e) => onSort(e.target.value as SortKey)} aria-label="Сортировка результатов">
    79 |           {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
@@ -51611,15 +52885,15 @@
    28 | .irb-stars--btns button{background:none;border:none;padding:1px;cursor:pointer;line-height:0;color:inherit;}
    29 | .irb-stars--btns button:focus-visible{outline:2px solid var(--focus-ring-color,var(--accent));outline-offset:1px;border-radius:3px;}
    30 | .irb-rev__star-on{color:var(--accent);}
+```
+
+<!-- ─── страница 870 ─── -->
+
+```tsx
    31 | .irb-rev__star-off{color:var(--border-strong,#cdd3da);}
    32 | .irb-rev__list{display:flex;flex-direction:column;gap:14px;}
    33 | .irb-rev__item{display:flex;gap:12px;}
    34 | .irb-rev__ava{width:36px;height:36px;flex:none;border-radius:999px;background:var(--accent-weak,var(--accent-tint));
-```
-
-<!-- ─── страница 849 ─── -->
-
-```tsx
    35 |   color:var(--accent);display:flex;align-items:center;justify-content:center;font:600 14px var(--font-ui,inherit);}
    36 | .irb-rev__body{flex:1;min-width:0;}
    37 | .irb-rev__by{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
@@ -51671,15 +52945,15 @@
    83 |         <Icon key={n} name="star" size={size}
    84 |           className={n <= Math.round(value) ? "irb-rev__star-on" : "irb-rev__star-off"}
    85 |           style={n <= Math.round(value) ? { fill: "currentColor" } : undefined} />
+```
+
+<!-- ─── страница 871 ─── -->
+
+```tsx
    86 |       ))}
    87 |     </span>
    88 |   );
    89 | }
-```
-
-<!-- ─── страница 850 ─── -->
-
-```tsx
    90 | 
    91 | // Интерактивный выбор звёзд (форма отзыва).
    92 | function StarInput({ value, onChange }: { value: number; onChange: (n: number) => void }) {
@@ -51731,15 +53005,15 @@
   138 | 
   139 |   async function submit() {
   140 |     if (rating < 1) { toast({ variant: "warning", title: "Поставьте оценку", message: "Выберите от 1 до 5 звёзд." }); return; }
+```
+
+<!-- ─── страница 872 ─── -->
+
+```tsx
   141 |     setBusy(true);
   142 |     const r = await api.postReview(db, mfn, rating, text.trim() || undefined);
   143 |     setBusy(false);
   144 |     if (r.status === 200 && r.json?.ok) {
-```
-
-<!-- ─── страница 851 ─── -->
-
-```tsx
   145 |       setEditing(false);
   146 |       toast({ variant: "success", title: mine ? "Отзыв обновлён" : "Спасибо за отзыв" });
   147 |       load();
@@ -51791,15 +53065,15 @@
   193 |         ) : (
   194 |           <span className="irb-rev__count">Пока нет отзывов</span>
   195 |         )}
+```
+
+<!-- ─── страница 873 ─── -->
+
+```tsx
   196 |         {loggedIn && !editing && (
   197 |           <Button size="sm" variant="secondary" iconLeft={mine ? "edit" : "star"} onClick={openForm} style={{ marginLeft: "auto" }}>
   198 |             {mine ? "Изменить отзыв" : "Оценить"}
   199 |           </Button>
-```
-
-<!-- ─── страница 852 ─── -->
-
-```tsx
   200 |         )}
   201 |       </div>
   202 | 
@@ -51851,15 +53125,15 @@
   248 |       {others.length > 0 ? (
   249 |         <div className="irb-rev__list">
   250 |           {others.map((rv) => (
+```
+
+<!-- ─── страница 874 ─── -->
+
+```tsx
   251 |             <div key={rv.id} className="irb-rev__item">
   252 |               <span className="irb-rev__ava" aria-hidden="true">{initials(rv.readerName)}</span>
   253 |               <div className="irb-rev__body">
   254 |                 <div className="irb-rev__by">
-```
-
-<!-- ─── страница 853 ─── -->
-
-```tsx
   255 |                   <span className="irb-rev__name">{rv.readerName || "Читатель"}</span>
   256 |                   <Stars value={rv.rating} size={14} />
   257 |                   {rv.ts && <span className="irb-rev__ts">{fmtTs(rv.ts)}</span>}
@@ -51916,15 +53190,15 @@
    32 | if (typeof document !== "undefined" && !document.getElementById("irb-rubr-css")) {
    33 |   const s = document.createElement("style"); s.id = "irb-rubr-css"; s.textContent = CSS; document.head.appendChild(s);
    34 | }
+```
+
+<!-- ─── страница 875 ─── -->
+
+```tsx
    35 | 
    36 | interface Section { term: string; count: number; }
    37 | 
    38 | function plural(n: number, one: string, few: string, many: string): string {
-```
-
-<!-- ─── страница 854 ─── -->
-
-```tsx
    39 |   const m10 = n % 10, m100 = n % 100;
    40 |   if (m10 === 1 && m100 !== 11) return one;
    41 |   if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
@@ -51976,15 +53250,15 @@
    87 |       <div className="irb-rubr__grid" role="list">
    88 |         {sections.map((s) => (
    89 |           <button
+```
+
+<!-- ─── страница 876 ─── -->
+
+```tsx
    90 |             key={s.term} type="button" role="listitem" className="irb-rubr__tile"
    91 |             onClick={() => onSearch("K", s.term)}
    92 |             aria-label={"Раздел «" + s.term + "»" + (s.count ? ", " + s.count + " " + plural(s.count, "запись", "записи", "записей") : "")}
    93 |           >
-```
-
-<!-- ─── страница 855 ─── -->
-
-```tsx
    94 |             <span className="irb-rubr__ic" aria-hidden="true"><Icon name="folder-tree" size={18} /></span>
    95 |             <span className="irb-rubr__body">
    96 |               <span className="irb-rubr__name">{s.term}</span>
@@ -52041,15 +53315,15 @@
    38 |   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
    39 | .irb-ssrow__meta{display:block;font-size:var(--text-xs);color:var(--text-subtle);margin-top:1px;
    40 |   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+```
+
+<!-- ─── страница 877 ─── -->
+
+```tsx
    41 | .irb-ssrow__del{background:none;border:none;cursor:pointer;color:var(--text-subtle);flex:none;padding:2px;}
    42 | .irb-ssrow__del:hover{color:var(--error,var(--danger-500));}
    43 | `;
    44 | if (typeof document !== "undefined" && !document.getElementById("irb-ss-css")) {
-```
-
-<!-- ─── страница 856 ─── -->
-
-```tsx
    45 |   const s = document.createElement("style"); s.id = "irb-ss-css"; s.textContent = CSS; document.head.appendChild(s);
    46 | }
    47 | 
@@ -52101,15 +53375,15 @@
    93 |   return (
    94 |     <div className="irb-ssmenu" ref={wrapRef}>
    95 |       <button type="button" style={btnSx} onClick={toggle} aria-expanded={open} title="Сохранить текущий запрос">
+```
+
+<!-- ─── страница 878 ─── -->
+
+```tsx
    96 |         <Icon name="save" size={compact ? 14 : 15} /> Сохранить запрос
    97 |       </button>
    98 |       {open && (
    99 |         <div className="irb-ssmenu__pop" role="dialog" aria-label="Сохранить запрос" onClick={(e) => e.stopPropagation()}>
-```
-
-<!-- ─── страница 857 ─── -->
-
-```tsx
   100 |           <div className="irb-ssmenu__hd">Название запроса</div>
   101 |           <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
   102 |             <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Например: книги по Python"
@@ -52161,15 +53435,15 @@
   148 |   const { items, setItems, unavailable } = useSavedSearches(refreshKey);
   149 |   const wrapRef = React.useRef<HTMLDivElement>(null);
   150 | 
+```
+
+<!-- ─── страница 879 ─── -->
+
+```tsx
   151 |   React.useEffect(() => {
   152 |     if (!open) return;
   153 |     const onDoc = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false); };
   154 |     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-```
-
-<!-- ─── страница 858 ─── -->
-
-```tsx
   155 |     document.addEventListener("mousedown", onDoc); document.addEventListener("keydown", onKey);
   156 |     return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
   157 |   }, [open]);
@@ -52221,15 +53495,15 @@
   203 |   const { items, setItems, unavailable } = useSavedSearches(refreshKey);
   204 |   React.useEffect(() => { if (unavailable) onUnavailable?.(); }, [unavailable, onUnavailable]);
   205 | 
+```
+
+<!-- ─── страница 880 ─── -->
+
+```tsx
   206 |   if (unavailable) {
   207 |     if (!standalone) return null;
   208 |     return (
   209 |       <section aria-labelledby="cab-saved">
-```
-
-<!-- ─── страница 859 ─── -->
-
-```tsx
   210 |         <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
   211 |           <h2 id="cab-saved" style={h2Sx}>Сохранённые запросы</h2>
   212 |         </div>
@@ -52286,15 +53560,15 @@
 
 ```tsx
     1 | // Полки / списки чтения читателя (#222). Два экспорта:
+```
+
+<!-- ─── страница 881 ─── -->
+
+```tsx
     2 | //   ShelvesPanel — раздел кабинета: реальные списки из GET /api/shelves, создание
     3 | //     нового списка, разворачивание со списком изданий и удалением позиции;
     4 | //   ShelfMenu — выпадающий контрол «В список ▾» на карточке записи/результата:
     5 | //     добавляет издание в «Хочу прочитать»/«Избранное»/пользовательский список.
-```
-
-<!-- ─── страница 860 ─── -->
-
-```tsx
     6 | // Оптимистичный UI с reconcile (на ошибке откатываем и показываем тост). При 404/501
     7 | // эндпойнтов полок ещё нет → ShelvesPanel прячется (onUnavailable), ShelfMenu тихо тостит.
     8 | import React from "react";
@@ -52346,15 +53620,15 @@
    54 | }
    55 | 
    56 | // «В список ▾» — выпадающий список полок с добавлением издания (#222).
+```
+
+<!-- ─── страница 882 ─── -->
+
+```tsx
    57 | export function ShelfMenu({
    58 |   db, mfn, title, toast, compact = false,
    59 | }: {
    60 |   db: string; mfn: number; title?: string; toast: Toast; compact?: boolean;
-```
-
-<!-- ─── страница 861 ─── -->
-
-```tsx
    61 | }) {
    62 |   const [open, setOpen] = React.useState(false);
    63 |   const [lists, setLists] = React.useState<Shelf[] | null>(null);
@@ -52406,15 +53680,15 @@
   109 |       await add(created);
   110 |     } else {
   111 |       toast({ variant: "info", title: "Списки недоступны", message: "Не удалось создать список — повторите позже." });
+```
+
+<!-- ─── страница 883 ─── -->
+
+```tsx
   112 |     }
   113 |   }
   114 | 
   115 |   const btnSx: React.CSSProperties = compact
-```
-
-<!-- ─── страница 862 ─── -->
-
-```tsx
   116 |     ? { display: "inline-flex", alignItems: "center", gap: 5, background: "rgba(20,16,14,.4)", color: "#fff", border: "1px solid rgba(255,255,255,.7)", borderRadius: "var(--radius-sm,7px)", padding: "4px 8px", cursor: "pointer", fontSize: "var(--text-2xs,11px)", backdropFilter: "blur(2px)" }
   117 |     : { display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" };
   118 | 
@@ -52466,15 +53740,15 @@
   164 |   refreshKey?: number;
   165 |   onOpenRecord?: (db: string, mfn: number) => void;
   166 | }) {
+```
+
+<!-- ─── страница 884 ─── -->
+
+```tsx
   167 |   const [lists, setLists] = React.useState<Shelf[] | null>(null);
   168 |   const [unavailable, setUnavailable] = React.useState(false);
   169 |   const [openId, setOpenId] = React.useState<string | null>(null);
   170 |   const [creating, setCreating] = React.useState(false);
-```
-
-<!-- ─── страница 863 ─── -->
-
-```tsx
   171 |   const [newName, setNewName] = React.useState("");
   172 | 
   173 |   const load = React.useCallback(async () => {
@@ -52526,15 +53800,15 @@
   219 |               <Button size="sm" variant="ghost" onClick={() => { setCreating(false); setNewName(""); }}>Отмена</Button>
   220 |             </span>
   221 |           ) : (
+```
+
+<!-- ─── страница 885 ─── -->
+
+```tsx
   222 |             <Button size="sm" variant="secondary" iconLeft="plus" onClick={() => setCreating(true)}>Новый список</Button>
   223 |           )}
   224 |         </div>
   225 |       </div>
-```
-
-<!-- ─── страница 864 ─── -->
-
-```tsx
   226 | 
   227 |       {lists === null ? (
   228 |         <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)", padding: "4px 2px" }}>Загрузка полок…</div>
@@ -52586,6 +53860,11 @@
   274 |         </div>
   275 |       )}
   276 |     </section>
+```
+
+<!-- ─── страница 886 ─── -->
+
+```tsx
   277 |   );
   278 | }
 ```
@@ -52595,11 +53874,6 @@
 ```tsx
     1 | // Витрина новых поступлений (G2) — горизонтальный ряд обложек-карточек на
     2 | // главной. Данные из GET /api/showcase?db&kind=new&limit. Если эндпойнт ещё не
-```
-
-<!-- ─── страница 865 ─── -->
-
-```tsx
     3 | // готов (404) или пуст — блок не рендерится (graceful degrade). Стиль строго на
     4 | // Biblio-токенах; обложки берём из /api/cover, плейсхолдер — тонированная подложка.
     5 | import React from "react";
@@ -52651,15 +53925,15 @@
    51 | }
    52 | 
    53 | export function Showcase({ db, onOpen }: { db: string; onOpen: (mfn: number, db: string) => void }) {
+```
+
+<!-- ─── страница 887 ─── -->
+
+```tsx
    54 |   const [items, setItems] = React.useState<ShowcaseItem[] | null>(null);
    55 | 
    56 |   React.useEffect(() => {
    57 |     let alive = true;
-```
-
-<!-- ─── страница 866 ─── -->
-
-```tsx
    58 |     setItems(null);
    59 |     (async () => {
    60 |       const r = await api.showcase(db, "new", 12);
@@ -52711,15 +53985,15 @@
   106 |             </span>
   107 |             <span className="irb-showcase__meta">
   108 |               <span className="irb-showcase__name">{it.title || "Без заглавия"}</span>
+```
+
+<!-- ─── страница 888 ─── -->
+
+```tsx
   109 |               {(it.author || it.year) && <span className="irb-showcase__by">{[it.author, it.year].filter(Boolean).join(" · ")}</span>}
   110 |             </span>
   111 |           </button>
   112 |         ))}
-```
-
-<!-- ─── страница 867 ─── -->
-
-```tsx
   113 |       </div>
   114 |     </section>
   115 |   );
@@ -52778,6 +54052,11 @@
    47 | }
 ```
 
+<!-- ─── страница 889 ─── -->
+
+```ts
+```
+
 ### Файл: `irbis-web/frontend/src/reader/tenantContent.ts`  · строк: 177
 
 ```ts
@@ -52785,11 +54064,6 @@
     2 | //
     3 | // Это «сид»-контент для пилота: блоки «Новости библиотеки», «События и выставки»,
     4 | // «О библиотеке» и определения тематических подборок. В отличие от каталожных
-```
-
-<!-- ─── страница 868 ─── -->
-
-```ts
     5 | // данных (новинки/рубрики приходят из ИРБИС через /api), этот контент
     6 | // конфигурируется библиотекой и в пилоте задаётся статически, помечен как
     7 | // «редактируемый» (флаг editable у блоков-обёрток). В дальнейшем заменяется на
@@ -52841,15 +54115,15 @@
    53 |   site?: string;
    54 | }
    55 | 
+```
+
+<!-- ─── страница 890 ─── -->
+
+```ts
    56 | export interface TenantContent {
    57 |   // editable=true → блоки показывают пометку «редактируется библиотекой».
    58 |   editable: boolean;
    59 |   collections: CollectionDef[];
-```
-
-<!-- ─── страница 869 ─── -->
-
-```ts
    60 |   news: NewsItem[];
    61 |   events: EventItem[];
    62 |   about: AboutInfo;
@@ -52901,15 +54175,15 @@
   108 |   },
   109 |   {
   110 |     id: "e2", date: "2026-06-27", dateLabel: "27 июня, 18:00",
+```
+
+<!-- ─── страница 891 ─── -->
+
+```ts
   111 |     title: "Лекция «Режиссёрский театр XX века»",
   112 |     place: "Читальный зал",
   113 |     kind: "lecture",
   114 |     excerpt: "Обзор ключевых режиссёрских школ и их отражение в книжном фонде.",
-```
-
-<!-- ─── страница 870 ─── -->
-
-```ts
   115 |   },
   116 |   {
   117 |     id: "e3", date: "2026-07-04", dateLabel: "4 июля, 12:00",
@@ -52961,15 +54235,15 @@
   163 | export const COVER_TINTS = [
   164 |   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
   165 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
+```
+
+<!-- ─── страница 892 ─── -->
+
+```ts
   166 | ];
   167 | 
   168 | const RU_MONTH_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
   169 | 
-```
-
-<!-- ─── страница 871 ─── -->
-
-```ts
   170 | // ISO YYYY-MM-DD → «18 июня 2026». Пустую/некорректную дату возвращает как есть.
   171 | export function fmtNewsDate(iso: string): string {
   172 |   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
