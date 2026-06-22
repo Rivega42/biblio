@@ -1,16 +1,16 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-22**
-- Версия кода (git): **`8e76dd1`**
-- Файлов: **143** · строк: **45491** · условных страниц: **828**
-- **SHA-256 всего листинга:** `7922cd5b26eba60b9b1915aba8754dea9c50c5c11d9610eba13687e5880585e1`
+- Версия кода (git): **`75ce9ff`**
+- Файлов: **146** · строк: **46196** · условных страниц: **840**
+- **SHA-256 всего листинга:** `25186ae4c6bf463d502c0a4d51ce3e8f437c59feef4e628ceb3a1ed95a1be69d`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
 
 | Файл | Строк | SHA-256 |
 |---|---:|---|
-| `irbis-web/backend/server.py` | 98 | `fbec91f1929ae6b141bbb1c0fe2d9d73ca8af0e5ee0598216d256eef4ddccd90` |
+| `irbis-web/backend/server.py` | 114 | `a01cef21d45f79d5051b35c0a7c0a2b22d647c85ebff748be0e37f0d0efdfab8` |
 | `irbis-web/backend/core.py` | 3133 | `c80e7e9b1e4cae3c41212eb7895f110fd70b32abd49ba8d4d65c509d7db97f5c` |
 | `irbis-web/backend/config.py` | 80 | `7efde203d1db15388de3c74d032991991d0e74ea2bb04bc60cbd72eb338cddee` |
 | `irbis-web/backend/access/catalog.py` | 836 | `9122afcb157874f5b2e57cc33ee4424f0da95366e48b839bd0def011a9bd1141` |
@@ -40,7 +40,7 @@
 | `irbis-web/backend/access/seed_vocab.py` | 135 | `06b6f2a85cc0c7d07689363397a5e088e6d9e6bc1e83cfe34a0c9288c61b5d41` |
 | `irbis-web/backend/access/shelves.py` | 98 | `a0d2a6129f28b36d310166a5f33ba5af41b24791ad0362ef18a845f718ca836a` |
 | `irbis-web/backend/access/social.py` | 334 | `647433d8c516e0f07434c2ee3e464c3cb0a4a95560ef03683771ab4b6c39dfe3` |
-| `irbis-web/backend/app_aiohttp.py` | 71 | `fa5eac505b7459fb4eded91760ea632e43da8ae22a784cc094a2888e66d89bc3` |
+| `irbis-web/backend/app_aiohttp.py` | 84 | `e468ef00dc5c2648287a1f1ba111ae7397e0a0f8dacba89bbfc28a1139771926` |
 | `irbis-web/backend/disasm_dll.py` | 72 | `9d17c3654d3efeccc93e5faca1829f3bff647c9b12df6175298164393757ac57` |
 | `irbis-web/backend/irbis/__init__.py` | 7 | `d77d6a8a0a8beedff99ed5a3b78e58fff150354a398eeca7d6245a11ff30e9be` |
 | `irbis-web/backend/irbis/client.py` | 163 | `ed6b0a16cdd4fa2a14e69ea4c1fb8ef88802feb8cf28373742ae6aeb797c34f3` |
@@ -130,7 +130,10 @@
 | `irbis-web/frontend/src/api.ts` | 560 | `31801308bd4a93d3e2985960ed3b2c618c0483177c7741edb23bd308c2fbf349` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 188 | `b364926e1a4282a688eff2a9e07101820e16bfad8f68e12b7a137aad82d2685f` |
-| `irbis-web/frontend/src/main.tsx` | 11 | `d7130f76cb0d10b06b105080797ef037c9cfd03dc79dbc2df85fda93b04a74c4` |
+| `irbis-web/frontend/src/landing/DemoRequestForm.tsx` | 216 | `c6e175d56b6b7d09346db0b72f38ec47cf8389396e1be97524d5dba17cd505e3` |
+| `irbis-web/frontend/src/landing/Landing.tsx` | 263 | `0987c928bf39382b674705446406f910cbdfe6f310e186c6df23714a0764a71e` |
+| `irbis-web/frontend/src/landing/content.ts` | 190 | `c469997245bd1ec3ffb729d77d294799238316787416711777f8e373407cca2a` |
+| `irbis-web/frontend/src/main.tsx` | 18 | `fe62e0037c01cbec9b2450cb074164eea32590d3331020b709c4daa6dcd52aa2` |
 | `irbis-web/frontend/src/reader/AboutLibrary.tsx` | 73 | `208be68681f90e256da091e7044f8091c66b5c176f2ede8d3e24642ef83364f0` |
 | `irbis-web/frontend/src/reader/ArchiveList.tsx` | 82 | `26326624faf6e469519f621795417564dfeb75a68a6da70dde8c69a8dcba1a24` |
 | `irbis-web/frontend/src/reader/CalendarGrid.tsx` | 112 | `2ed431df8aea463865def31d5e95a39893b124982e4ae89ad141a505e9a7bd1b` |
