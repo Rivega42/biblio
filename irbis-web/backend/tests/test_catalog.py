@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from access import flk
 from access import seed_vocab
-from access.catalog import CatalogStore, parse_expr, SEARCH_PREFIXES
+from access.catalog import CatalogStore, parse_expr, SEARCH_PREFIXES, INDEX_SPEC
 from access.store import AccessStore
 
 PASS = [0]
@@ -301,8 +301,10 @@ def unit_checks():
     check('parse_expr unknown prefix -> title',
           parse_expr('ZZ=x')[0] == 'T')
     check('parse_expr trims whitespace', parse_expr('  IN = 12  ') == ('IN', '12'))
-    check('SEARCH_PREFIXES are the documented four',
-          set(SEARCH_PREFIXES) == {'T', 'A', 'K', 'IN'})
+    # The original four prefixes are still present (back-compat); the set has been
+    # expanded with the high-frequency §3.2 prefixes (asserted in extra_prefix_*).
+    check('SEARCH_PREFIXES still carries the original four',
+          {'T', 'A', 'K', 'IN'} <= set(SEARCH_PREFIXES))
 
     # index_terms extracts the right prefixes from a record.
     terms = dict(((p, t) for p, t in st.index_terms(_good_book())))
@@ -319,6 +321,140 @@ def unit_checks():
           'Петров П.П.' in a_terms and 'Соавтор А.А.' in a_terms)
 
 
+# --------------------------------------------------------------------------- #
+# 8. Расширенная индексация словарного поиска (§3.2): высокочастотные префиксы
+#    помимо исходных T=/A=/K=/IN=. Сохраняем запись со всеми полями и находим её
+#    по каждому новому префиксу; исходные четыре префикса не сломаны.
+# --------------------------------------------------------------------------- #
+def _rich_book():
+    """Валидная книга (проходит ФЛК save) со ВСЕМИ полями, питающими расширенный
+    набор префиксов §3.2. Поля/подполя сверены по FIELD_DICTIONARY (колонка
+    «Словарь»): 225^a→TS=, 710/711^a→M=, 606/605^a→S=, 607^a→GEO=, 675/621→U=,
+    900^b→V=, 10/11^a→B=, 903→I=, 210^d→G=, 910^d→MHR=."""
+    return {
+        '920': 'PAZK',
+        '200': [{'a': 'Расширенный поиск в каталоге', 'f': 'Иванова И.И.'}],
+        '225': [{'a': 'Библиотечная серия'}],            # TS=
+        '700': [{'a': 'Петров П.П.'}],                    # A=
+        '710': [{'a': 'Институт информации'}],            # M= (и A= back-compat)
+        '711': [{'a': 'Конференция ИРБИС'}],              # M=
+        '606': [{'a': 'каталогизация'}],                  # S=
+        '605': [{'a': 'библиотечное дело'}],              # S=
+        '607': [{'a': 'Россия'}],                         # GEO=
+        '675': '004.65',                                  # U= (целое поле, УДК)
+        '621': '32.973',                                  # U= (целое поле, ББК)
+        '900': [{'b': '05'}],                             # V= (вид документа)
+        '10': [{'a': '978-5-7654-0001-7'}],               # B= (ISBN)
+        '11': [{'a': '0869-6020'}],                       # B= (ISSN)
+        '903': 'Ш1/И-99',                                 # I= (шифр, целое поле)
+        '210': [{'a': 'Москва', 'c': 'Наука', 'd': '2024'}],  # G= (год = ^d)
+        '101': 'rus',
+        '610': [{'': 'информатика'}],                     # K= (исходный префикс)
+        '910': [{'a': '0', 'b': '2099001', 'd': 'ЧЗ'}],   # IN=910^b, MHR=910^d
+        '907': [{'a': 'Сидорова С.С.'}],
+    }
+
+
+def extra_prefix_index_checks():
+    print('-- расширенная индексация (§3.2): index_terms / SEARCH_PREFIXES')
+    st = _store()
+    terms = st.index_terms(_rich_book())
+    by_prefix = {}
+    for p, t in terms:
+        by_prefix.setdefault(p, set()).add(t)
+
+    # каждый новый префикс присутствует в инверсии записи.
+    for pre in ('TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR'):
+        check('index_terms covers %s=' % pre, pre in by_prefix)
+    # исходные четыре по-прежнему индексируются.
+    for pre in ('T', 'A', 'K', 'IN'):
+        check('index_terms still covers %s= (back-compat)' % pre, pre in by_prefix)
+
+    # точные значения по сверенным полям.
+    check('TS= <- 225^a', 'Библиотечная серия' in by_prefix.get('TS', set()))
+    check('M= <- 710^a + 711^a',
+          {'Институт информации', 'Конференция ИРБИС'} <= by_prefix.get('M', set()))
+    check('S= <- 606^a + 605^a',
+          {'каталогизация', 'библиотечное дело'} <= by_prefix.get('S', set()))
+    check('GEO= <- 607^a', 'Россия' in by_prefix.get('GEO', set()))
+    check('U= <- 675 + 621 (whole field)',
+          {'004.65', '32.973'} <= by_prefix.get('U', set()))
+    check('V= <- 900^b', '05' in by_prefix.get('V', set()))
+    check('B= <- 10^a + 11^a',
+          {'978-5-7654-0001-7', '0869-6020'} <= by_prefix.get('B', set()))
+    check('I= <- 903 (whole field)', 'Ш1/И-99' in by_prefix.get('I', set()))
+    check('G= <- 210^d (year)', '2024' in by_prefix.get('G', set()))
+    check('MHR= <- 910^d', 'ЧЗ' in by_prefix.get('MHR', set()))
+    # 710^a остаётся и под A= (формат записи/привязки не сломаны).
+    check('A= still carries 710^a (back-compat)',
+          'Институт информации' in by_prefix.get('A', set()))
+
+    # все объявленные SEARCH_PREFIXES реально присутствуют в INDEX_SPEC.
+    spec_prefixes = {p for p, _f, _s in INDEX_SPEC}
+    check('every SEARCH_PREFIX is indexable',
+          set(SEARCH_PREFIXES) <= spec_prefixes)
+    check('SEARCH_PREFIXES adds the §3.2 high-freq set',
+          {'TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR'} <= set(SEARCH_PREFIXES))
+
+
+def extra_prefix_search_checks():
+    print('-- расширенный словарный поиск (§3.2): найти по каждому новому префиксу')
+    st = _store()
+    res = st.save('IBIS', _rich_book())
+    check('rich record saved (saved True)', res['saved'] is True)
+    mfn = res['mfn']
+
+    cases = [
+        ('TS=Библиотечная серия', 'TS= серия (225^a)'),
+        ('M=Институт информации', 'M= коллектив (710^a)'),
+        ('M=Конференция ИРБИС', 'M= мероприятие (711^a)'),
+        ('S=каталогизация', 'S= предметная рубрика (606^a)'),
+        ('S=библиотечное дело', 'S= рубрика (605^a)'),
+        ('GEO=Россия', 'GEO= географ. рубрика (607^a)'),
+        ('U=004.65', 'U= УДК (675)'),
+        ('U=32.973', 'U= ББК (621)'),
+        ('V=05', 'V= вид документа (900^b)'),
+        ('B=978-5-7654-0001-7', 'B= ISBN (10^a)'),
+        ('B=0869-6020', 'B= ISSN (11^a)'),
+        ('I=Ш1/И-99', 'I= шифр документа (903)'),
+        ('G=2024', 'G= год издания (210^d)'),
+        ('MHR=ЧЗ', 'MHR= место хранения (910^d)'),
+    ]
+    for expr, label in cases:
+        hits = st.search('IBIS', expr)
+        check('%s finds the record' % label,
+              hits['total'] == 1 and hits['items'][0]['mfn'] == mfn)
+
+    # parse_expr корректно разбирает многосимвольные/новые префиксы.
+    check('parse_expr GEO=', parse_expr('GEO=Россия') == ('GEO', 'Россия'))
+    check('parse_expr MHR= (multichar)', parse_expr('MHR=ЧЗ') == ('MHR', 'ЧЗ'))
+    check('parse_expr lowercase mhr=', parse_expr('mhr=чз') == ('MHR', 'чз'))
+
+    # регистронезависимость для нового префикса.
+    ci = st.search('IBIS', 'M=институт информации')
+    check('extended prefix search is case-insensitive', ci['total'] == 1)
+
+    # промах по новому префиксу -> пусто (а не ошибка).
+    miss = st.search('IBIS', 'U=999.999')
+    check('extended-prefix miss -> total 0', miss['total'] == 0 and miss['items'] == [])
+
+    # исходные четыре префикса по-прежнему находят ту же запись.
+    for expr, label in (('T=Расширенный поиск в каталоге', 'T='),
+                        ('A=Петров П.П.', 'A='),
+                        ('K=информатика', 'K='),
+                        ('IN=2099001', 'IN=')):
+        hits = st.search('IBIS', expr)
+        check('original prefix %s still works' % label, hits['total'] == 1)
+
+    # удаление прячет запись из расширенного поиска; undelete возвращает.
+    st.delete('IBIS', mfn)
+    check('extended prefix hidden after delete',
+          st.search('IBIS', 'U=004.65')['total'] == 0)
+    st.undelete('IBIS', mfn)
+    check('extended prefix findable after undelete',
+          st.search('IBIS', 'U=004.65')['total'] == 1)
+
+
 def main():
     schema_checks()
     save_get_checks()
@@ -328,6 +464,8 @@ def main():
     delete_checks()
     render_checks()
     unit_checks()
+    extra_prefix_index_checks()
+    extra_prefix_search_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 

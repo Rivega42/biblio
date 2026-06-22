@@ -2551,6 +2551,18 @@ def sf(f, code):
     return d.get(code) or d.get(code.lower()) or d.get(code.upper()) or ''
 
 
+# Textual «heading» prefixes that take ИРБИС right-truncation (`$`) so a search
+# matches the whole inverted term from its leading words (e.g. ``A=Толстой$``,
+# ``T=Война$``). These are the словарь видов where the user types a leading
+# fragment of a name/title and expects the dictionary entry to match from the
+# left (CATALOGER_FUNCTIONS §3.1.8 усечение). Code prefixes (IN=/B=/I=/V=/G=/U=)
+# and exact codes are matched verbatim — never auto-truncated. Mirrors the
+# catalog inverted-index prefixes (access/catalog.py SEARCH_PREFIXES) for the
+# textual subset:
+#   A=  автор · T=  заглавие · TS= заглавие серии · M=  коллектив · S= рубрика
+_TRUNCATED_PREFIXES = ('A', 'T', 'TS', 'M', 'S')
+
+
 def build_expr(query):
     if query.get('expr'):
         return query['expr'][0]
@@ -2558,6 +2570,6 @@ def build_expr(query):
     if not q:
         return None
     prefix = (query.get('prefix', ['K'])[0] or 'K').strip().upper()
-    if prefix in ('A', 'T') and not q.endswith('$'):
+    if prefix in _TRUNCATED_PREFIXES and not q.endswith('$'):
         q += '$'
     return '"%s=%s"' % (prefix, q)

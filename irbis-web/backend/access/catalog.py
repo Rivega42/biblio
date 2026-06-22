@@ -14,8 +14,27 @@ What this module is
 -------------------
 A self-contained record store. Records live as JSON blobs (the engines' I1
 field/subfield dict) plus a denormalized inverted index (``record_index``) so the
-catalog can answer ``PREFIX=term`` queries (``T=`` title, ``A=`` author, ``K=``
-keyword, ``IN=`` inventory number) without re-scanning every blob.
+catalog can answer ``PREFIX=term`` queries without re-scanning every blob.
+
+Indexed prefixes (the ИРБИС inverted-file словарь, CATALOGER_FUNCTIONS §3.2).
+The first slice carried only ``T=``/``A=``/``K=``/``IN=`` (4 of the 63 видов
+словарного поиска); this store now also inverts the highest-frequency catalog
+prefixes confirmed against ``docs/recon/deep/reference/format/FIELD_DICTIONARY``:
+
+  * ``T=``   заглавие              <- 200^a
+  * ``TS=``  заглавие серии        <- 225^a
+  * ``A=``   автор (физ. лицо)     <- 700^a / 701^a / 702^a
+  * ``M=``   коллектив/мероприятие <- 710^a / 711^a
+  * ``K=``   ключевые слова        <- 610 (целое поле)
+  * ``S=``   предметная рубрика    <- 606^a / 605^a
+  * ``GEO=`` географ. рубрика      <- 607^a
+  * ``U=``   индекс УДК/ББК        <- 675 / 621 (целое поле)
+  * ``V=``   вид документа         <- 900^b
+  * ``G=``   год издания           <- 210^d
+  * ``B=``   ISBN / ISSN           <- 10^a / 11^a
+  * ``I=``   шифр документа        <- 903 (целое поле)
+  * ``IN=``  инв. № / штрих-код    <- 910^b
+  * ``MHR=`` место хранения        <- 910^d
 
 Record shape (the engines' I1 draft — same as ``access/flk.py`` / ``access/pft.py``)::
 
@@ -99,23 +118,60 @@ CREATE INDEX IF NOT EXISTS record_index_record_idx ON record_index(record_id);
 # --------------------------------------------------------------------------- #
 # Indexing specification. Each entry: (prefix, field, subfield) — which record
 # field/subfield feeds which search prefix. subfield=None => whole-field value.
-# Mirrors the ИРБИС inverted-file prefixes:
-#   T=  title      <- 200^a
-#   A=  author     <- 700^a (and 701^a / 710^a personal/corporate added)
-#   K=  keyword    <- 610  (whole field; ИРБИС unstructured keywords)
-#   IN= inventory# <- 910^b
+# Mirrors the ИРБИС inverted-file словарь (CATALOGER_FUNCTIONS §3.2); each
+# field/subfield mapping is confirmed against FIELD_DICTIONARY (the «Словарь»
+# column there names the prefix per field). The original four prefixes
+# (T=/A=/K=/IN=) keep their exact field bindings — back-compat preserved.
+#   T=   заглавие              <- 200^a
+#   TS=  заглавие серии        <- 225^a
+#   A=   автор (физ. лицо)     <- 700^a / 701^a / 702^a (710 kept for back-compat)
+#   M=   коллектив/мероприятие <- 710^a / 711^a
+#   K=   ключевые слова        <- 610  (whole field; ИРБИС unstructured keywords)
+#   S=   предметная рубрика    <- 606^a / 605^a
+#   GEO= географ. рубрика      <- 607^a
+#   U=   индекс УДК/ББК        <- 675 / 621 (whole field)
+#   V=   вид документа         <- 900^b
+#   G=   год издания           <- 210^d
+#   B=   ISBN / ISSN           <- 10^a / 11^a
+#   I=   шифр документа        <- 903 (whole field)
+#   IN=  инв. № / штрих-код    <- 910^b
+#   MHR= место хранения экз.   <- 910^d
 # --------------------------------------------------------------------------- #
 INDEX_SPEC = [
+    # --- original four (unchanged bindings) ---
     ('T', '200', 'a'),
     ('A', '700', 'a'),
     ('A', '701', 'a'),
-    ('A', '710', 'a'),
+    ('A', '702', 'a'),
+    ('A', '710', 'a'),       # back-compat: 710 stayed under A= in the first slice
     ('K', '610', None),
     ('IN', '910', 'b'),
+    # --- заглавие серии ---
+    ('TS', '225', 'a'),
+    # --- коллектив / мероприятие (corporate author heading) ---
+    ('M', '710', 'a'),
+    ('M', '711', 'a'),
+    # --- тематика ---
+    ('S', '606', 'a'),
+    ('S', '605', 'a'),
+    ('GEO', '607', 'a'),
+    ('U', '675', None),
+    ('U', '621', None),
+    # --- коды ---
+    ('V', '900', 'b'),
+    ('B', '10', 'a'),
+    ('B', '11', 'a'),
+    ('I', '903', None),
+    # --- выходные данные ---
+    ('G', '210', 'd'),
+    # --- экземпляр ---
+    ('MHR', '910', 'd'),
 ]
 
 # The prefixes a caller may search by (used to validate / document expressions).
-SEARCH_PREFIXES = ('T', 'A', 'K', 'IN')
+# Order: the four original prefixes first, then the expanded set (§3.2 high-freq).
+SEARCH_PREFIXES = ('T', 'A', 'K', 'IN',
+                   'TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR')
 
 # Default brief / full display formats (PFT). Overridable per save db or per call.
 # Brief: "Author. Title / responsibility . — Lang" with graceful omission of
