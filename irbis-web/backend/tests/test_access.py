@@ -236,7 +236,8 @@ def main():
     flk_checks()
     for _m in ('test_pft', 'test_authority', 'test_authority_seam', 'test_notifications',
                'test_notifications_dispatch', 'test_gbl',
-               'test_catalog', 'test_record_links', 'test_circulation', 'test_rdr40', 'test_circ_notify',
+               'test_catalog', 'test_record_links', 'test_circulation', 'test_circ_resolve',
+               'test_rdr40', 'test_circ_notify',
                'test_discovery', 'test_integration', 'test_resilience',
                'test_portal222', 'test_acquisition', 'test_tocat', 'test_bookprovision', 'test_ko',
                'test_acq_bp_routes', 'test_circ_routes', 'test_social',
