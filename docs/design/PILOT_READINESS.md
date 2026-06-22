@@ -1,99 +1,100 @@
-# Pilot readiness — go-live checklist (post-MVP, epic #223)
+# Готовность к пилоту — чек-лист go-live (post-MVP, эпик #223)
 
-> Concrete checklist to take the `deploy/` stack from a local MVP demo to a **real
-> pilot** at a single library (e.g. СПб ГТБ / first tenant). It is deliberately
-> **honest** about what is pilot-ready and what is *not* yet production-grade.
+> Конкретный чек-лист, как довести стек `deploy/` от локального MVP-демо до **реального
+> пилота** в одной библиотеке (напр. СПб ГТБ / первый арендатор). Документ намеренно
+> **честен** в том, что готово к пилоту, а что ещё **не** промышленного уровня.
 >
-> Scope: the single-node Docker stack in [`deploy/`](../../deploy/) —
-> `proxy` (nginx, TLS) → `backend` (Python, API + built SPA) → `db`
-> (`postgres:16`). The full multi-region IaC/fleet topology
-> ([`SPEC_iac_fleet.md`](specs/platform/SPEC_iac_fleet.md)) is a later phase.
+> Область: одноузловой Docker-стек из [`deploy/`](../../deploy/) —
+> `proxy` (nginx, TLS) → `backend` (Python, API + собранный SPA) → `db`
+> (`postgres:16`). Полная мультирегиональная IaC/флот-топология
+> ([`SPEC_iac_fleet.md`](specs/platform/SPEC_iac_fleet.md)) — более поздняя фаза.
 >
-> Reliability targets and DR policy referenced here are the **single-node /
-> on-prem tier** of [`SPEC_sre.md`](specs/platform/SPEC_sre.md) (D4): one node = no
-> HA, RPO up to the last nightly dump, RTO in minutes-to-hours — to be stated
-> explicitly in the pilot SLA (SPEC_sre §1.3 "Tiering", §3.1 note).
+> Цели надёжности и политика аварийного восстановления здесь — **одноузловой /
+> on-prem уровень** из [`SPEC_sre.md`](specs/platform/SPEC_sre.md) (D4): один узел = нет
+> HA, RPO до последнего ночного дампа, RTO в минуты-часы — это надо явно указать
+> в SLA пилота (SPEC_sre §1.3 «Tiering», §3.1).
 
 ---
 
-## TL;DR — pilot-ready vs not
+## Кратко — готово к пилоту vs нет
 
-| Area | Pilot-ready? | Notes |
+| Область | Готово к пилоту? | Примечание |
 |---|---|---|
-| One-command stack (proxy/backend/db) | ✅ Yes | `docker compose up --build`; healthchecks gate orchestration |
-| TLS termination | ✅ Yes (with a real cert) | nginx terminates TLS; dev uses self-signed → **replace for pilot** |
-| Env-only secrets | ✅ Yes | nothing sensitive in images or git; `.env` gitignored |
-| Multi-tenant Access store on PostgreSQL | ✅ Yes | schema-per-tenant; provision via `python -m access.provision` |
-| Backups + tested restore | ✅ Yes (nightly logical) | `deploy/backup/*`; RPO ≈ up to 24h — **acceptable for pilot, state in SLA** |
-| Healthchecks / readiness | ⚠️ Partial | container healthchecks present; no `/readyz` split, no external monitoring stack |
-| High availability / failover | ❌ No | single node; PG failover, replicas, multi-AZ are D3/IaC (post-pilot) |
-| Observability (metrics/traces/alerts) | ❌ No | no Prometheus/OTel collector/dashboards yet (SPEC_sre §2 — post-pilot) |
-| Certified СКЗИ / ФСТЭК-attested crypto | ❌ No | TLS + app crypto are standard OpenSSL, **not** certified СКЗИ |
-| Live-ИРБИС64 bridge | ⚙️ Optional | works if you point `IRBIS_*` at a running server; stack boots without it |
+| Стек одной командой (proxy/backend/db) | ✅ Да | `docker compose up --build`; healthcheck'и управляют порядком запуска |
+| Терминация TLS | ✅ Да (с реальным сертификатом) | TLS терминирует nginx; в dev — самоподписанный → **заменить для пилота** |
+| Секреты только в env | ✅ Да | ничего чувствительного в образах/git; `.env` в gitignore |
+| Мультиарендный Access-стор на PostgreSQL | ✅ Да | схема-на-арендатора; провижининг `python -m access.provision` |
+| Бэкапы + проверенный restore | ✅ Да (ночной логический) | `deploy/backup/*`; RPO ≈ до 24ч — **приемлемо для пилота, указать в SLA** |
+| Healthcheck'и / readiness | ⚠️ Частично | healthcheck'и контейнеров есть; нет отдельного `/readyz`, нет внешнего мониторинга |
+| Высокая доступность / failover | ❌ Нет | один узел; PG-failover, реплики, multi-AZ — это D3/IaC (после пилота) |
+| Наблюдаемость (метрики/трейсы/алерты) | ❌ Нет | пока нет Prometheus/OTel-коллектора/дашбордов (SPEC_sre §2 — после пилота) |
+| Сертифицированные СКЗИ / крипта по ФСТЭК | ❌ Нет | TLS + крипта приложения — стандартный OpenSSL, **не** сертифицированные СКЗИ |
+| Мост к живому ИРБИС64 | ⚙️ Опционально | работает, если указать `IRBIS_*` на запущенный сервер; стек стартует и без него |
 
-Legend: ✅ ready · ⚠️ partial / manual · ❌ not in this phase · ⚙️ optional.
+Легенда: ✅ готово · ⚠️ частично / вручную · ❌ не в этой фазе · ⚙️ опционально.
 
 ---
 
-## Go-live checklist
+## Чек-лист go-live
 
-### 1. Secrets — set real values in `.env`
-- [ ] `cp deploy/.env.example deploy/.env` (this file is gitignored — never commit it).
-- [ ] Set a strong **`POSTGRES_PASSWORD`** (long random, not `devpassword`).
-- [ ] Set a strong **`APP_SECRET`** — `openssl rand -hex 32` (signs sessions/JWT).
-- [ ] If using the live-ИРБИС bridge, set **`IRBIS_PASS`** (service-account password).
-- [ ] Confirm no `CHANGE IN PROD` placeholder values remain in `deploy/.env`.
-- [ ] For a real deployment, source secrets from a manager (Vault/SOPS), not a
-      plaintext file left on disk. (Pilot: a locked-down `.env` with `chmod 600`
-      on a single trusted host is acceptable; document who has access.)
+### 1. Секреты — задать реальные значения в `.env`
+- [ ] `cp deploy/.env.example deploy/.env` (файл в gitignore — никогда не коммитить).
+- [ ] Сильный **`POSTGRES_PASSWORD`** (длинный случайный, не `devpassword`).
+- [ ] Сильный **`APP_SECRET`** — `openssl rand -hex 32` (подпись сессий/JWT).
+- [ ] Если используется мост к живому ИРБИС — **`IRBIS_PASS`** (пароль сервис-аккаунта).
+- [ ] Убедиться, что в `deploy/.env` не осталось плейсхолдеров `CHANGE IN PROD`.
+- [ ] Для реального развёртывания брать секреты из менеджера (Vault/SOPS), а не из
+      плейнтекст-файла на диске. (Пилот: закрытый `.env` с `chmod 600` на одном
+      доверенном хосте допустим; задокументировать, у кого доступ.)
 
-### 2. TLS — real certificate, not self-signed
-- [ ] **Dev/self-signed (default):** `sh deploy/proxy/gen-cert.sh` writes
-      `deploy/proxy/certs/{server.crt,server.key}` (gitignored). Browsers warn —
-      expected for dev only. (This script is cross-platform: Linux/macOS **and**
-      Windows git-bash — see the header note about MSYS path-mangling.)
-- [ ] **Pilot:** replace those two files with a certificate from your CA
-      (internal CA / certbot / Let's Encrypt). The nginx `:80` server already
-      exposes the ACME `http-01` webroot (`/.well-known/acme-challenge/`).
-- [ ] Once a **real** cert is in place, enable **HSTS** — uncomment the
-      `Strict-Transport-Security` header in `deploy/proxy/nginx.conf`. Do **not**
-      enable HSTS with a self-signed cert.
-- [ ] Confirm `ssl_protocols TLSv1.2 TLSv1.3` only (already set in `nginx.conf`).
-- [ ] ⚠️ **Honest limit:** this is standard OpenSSL TLS, **not** a certified
-      СКЗИ / ГОСТ-TLS. If the pilot site requires attested crypto, that is a
-      separate gov-segment task ([`SPEC_sre.md` §3.6](specs/platform/SPEC_sre.md),
-      I6/§E) and is **out of scope for this pilot**.
+### 2. TLS — реальный сертификат, не самоподписанный
+- [ ] **Dev/самоподписанный (по умолчанию):** `sh deploy/proxy/gen-cert.sh` пишет
+      `deploy/proxy/certs/{server.crt,server.key}` (в gitignore). Браузеры предупреждают
+      — это нормально только для dev. (Скрипт кросс-платформенный: Linux/macOS **и**
+      Windows git-bash — см. заметку в шапке про MSYS path-mangling.)
+- [ ] **Пилот:** заменить эти два файла сертификатом от вашего CA
+      (внутренний CA / certbot / Let's Encrypt). Сервер nginx на `:80` уже отдаёт
+      ACME `http-01` webroot (`/.well-known/acme-challenge/`).
+- [ ] После установки **реального** сертификата включить **HSTS** — раскомментировать
+      заголовок `Strict-Transport-Security` в `deploy/proxy/nginx.conf`. **Не**
+      включать HSTS с самоподписанным сертификатом.
+- [ ] Проверить, что только `ssl_protocols TLSv1.2 TLSv1.3` (уже задано в `nginx.conf`).
+- [ ] ⚠️ **Честное ограничение:** это стандартный OpenSSL-TLS, **не** сертифицированные
+      СКЗИ / ГОСТ-TLS. Если площадка пилота требует аттестованную крипту — это
+      отдельная задача госсегмента ([`SPEC_sre.md` §3.6](specs/platform/SPEC_sre.md),
+      I6/§E) и **вне области этого пилота**.
 
-### 3. First tenant — provision via CLI
-The Access store is multi-tenant (control schema + per-tenant schema `t_<slug>`).
-After the stack is up:
-- [ ] Provision the pilot library:
+### 3. Первый арендатор — провижининг через CLI
+Access-стор мультиарендный (control-схема + схема-на-арендатора `t_<slug>`).
+После подъёма стека:
+- [ ] Провижининг библиотеки пилота:
       ```sh
       docker compose -f deploy/docker-compose.yml exec backend \
         python -m access.provision <slug> --name "Имя библиотеки" \
-        --admin admin --password '<strong-admin-password>' --plan standard
+        --admin admin --password '<надёжный-пароль-админа>' --plan standard
       ```
-- [ ] List tenants to confirm: `… exec backend python -m access.provision --list`.
-- [ ] Change the admin password from any default; `ADMIN_DEFAULT_PASSWORD`/
-      `changeme` must **not** survive into the pilot.
-- [ ] (Teardown a mistaken tenant: `… python -m access.provision --deprovision <slug>`.)
+- [ ] Проверить список: `… exec backend python -m access.provision --list`.
+- [ ] Сменить пароль админа с любого дефолтного; `ADMIN_DEFAULT_PASSWORD`/
+      `changeme` **не должны** дожить до пилота.
+- [ ] (Снести ошибочного арендатора: `… python -m access.provision --deprovision <slug>`.)
 
-### 4. Data migration — via the migrator
-- [ ] Bibliographic / catalog data: import from the existing ИРБИС64 fund using
-      the project's migration path (bulk IBIS import — a **throughput/freshness**
-      job, not a latency-SLO path; [`SPEC_sre.md` §1.5](specs/platform/SPEC_sre.md)).
-- [ ] Run a **dry-run on a staging tenant first**; verify record counts and a
-      sample of records before importing into the pilot tenant.
-- [ ] Take a backup (step 5) **immediately before** the migration so you can roll
-      back the data load if it goes wrong.
+### 4. Миграция данных — через мигратор
+- [ ] Библиографические/каталожные данные: импорт из существующего фонда ИРБИС64
+      через миграционный путь проекта (`python -m tools.migrate_irbis …` — массовый
+      импорт IBIS — это задача **пропускной способности/свежести**, не latency-SLO;
+      [`SPEC_sre.md` §1.5](specs/platform/SPEC_sre.md)).
+- [ ] Сначала **dry-run на staging-арендаторе**; сверить число записей и выборку
+      записей до импорта в арендатора пилота.
+- [ ] Сделать бэкап (шаг 5) **прямо перед** миграцией, чтобы откатить загрузку данных,
+      если что-то пойдёт не так.
 
-### 5. Backups — schedule + tested restore
-- [ ] Backups land in the `backups` named volume via
+### 5. Бэкапы — расписание + проверенный restore
+- [ ] Бэкапы складываются в именованный том `backups` через
       [`deploy/backup/pg_backup.sh`](../../deploy/backup/pg_backup.sh)
-      (`pg_dump`, timestamped, custom format).
-- [ ] **Schedule a nightly dump** (single-node pilot baseline,
+      (`pg_dump`, с таймстампом, custom-формат).
+- [ ] **Запланировать ночной дамп** (базовый уровень одноузлового пилота,
       [`SPEC_sre.md` §3.2](specs/platform/SPEC_sre.md)):
-      - Linux/macOS cron (02:30, keep 14 days):
+      - Linux/macOS cron (02:30, хранить 14 дней):
         ```
         30 2 * * *  KEEP=14 /path/to/repo/deploy/backup/pg_backup.sh >> /var/log/biblio-backup.log 2>&1
         ```
@@ -102,114 +103,112 @@ After the stack is up:
         schtasks /Create /SC DAILY /ST 02:30 /TN "biblio-pg-backup" \
           /TR "\"C:\Program Files\Git\bin\sh.exe\" C:\IRBIS64\_recon\deploy\backup\pg_backup.sh"
         ```
-- [ ] **3-2-1 (SPEC_sre §3.2):** copy the `backups` volume off-box to a second
-      location (and ideally one offline/immutable copy). Inspect/export:
+- [ ] **3-2-1 (SPEC_sre §3.2):** копировать том `backups` за пределы хоста во второе
+      место (и желательно одну офлайн/неизменяемую копию). Просмотр/выгрузка:
       ```sh
       docker compose -f deploy/docker-compose.yml exec db ls -lh /backups
       docker run --rm -v deploy_backups:/b -v "$PWD":/out alpine cp -r /b /out/backups-copy
       ```
-- [ ] **TEST the restore — a backup is only trustworthy once restored**
-      ([`SPEC_sre.md` §3.4](specs/platform/SPEC_sre.md): "бэкап рабочий только
-      после restore"). Rehearse into a throwaway DB without touching live data:
+- [ ] **ПРОВЕРИТЬ restore — бэкап надёжен только после восстановления**
+      ([`SPEC_sre.md` §3.4](specs/platform/SPEC_sre.md): «бэкап рабочий только
+      после restore»). Прогон в throwaway-БД без касания живых данных:
       ```sh
       FORCE=1 RESTORE_DB=irbis_restore_test \
-        sh deploy/backup/pg_restore.sh <dump-file>
+        sh deploy/backup/pg_restore.sh <файл-дампа>
       docker compose -f deploy/docker-compose.yml exec db \
-        psql -U postgres -d irbis_restore_test -c "\dn"   # schemas present?
+        psql -U postgres -d irbis_restore_test -c "\dn"   # схемы на месте?
       docker compose -f deploy/docker-compose.yml exec db \
-        dropdb -U postgres irbis_restore_test             # clean up
+        dropdb -U postgres irbis_restore_test             # убрать
       ```
-- [ ] Do this restore-test **before go-live** and then **monthly** (record the
-      run; SPEC_sre §3.4 per-tenant/monthly cadence).
-- [ ] ⚠️ **Honest limit:** this is a **nightly logical dump only**. There is **no
-      continuous WAL archiving / PITR** in the single-node pilot, so worst-case
-      data loss (RPO) is up to ~24h (whatever changed since the last nightly
-      dump). State this RPO in the pilot SLA. PITR + replicas come with the
-      multi-node IaC phase (D3 / SPEC_sre §3.1–§3.2).
+- [ ] Делать этот restore-тест **до go-live**, затем **ежемесячно** (фиксировать
+      прогон; SPEC_sre §3.4, периодичность на арендатора/ежемесячно).
+- [ ] ⚠️ **Честное ограничение:** это **только ночной логический дамп**. **Нет**
+      непрерывного WAL-архивирования / PITR в одноузловом пилоте, поэтому худший
+      случай потери данных (RPO) — до ~24ч (всё, что изменилось с последнего ночного
+      дампа). Указать RPO в SLA пилота. PITR + реплики появятся в многоузловой
+      IaC-фазе (D3 / SPEC_sre §3.1–§3.2).
 
-### 6. Monitoring & log access
-- [ ] Container health is visible: `docker compose -f deploy/docker-compose.yml ps`
-      shows `db`, `backend`, `proxy` as **healthy** (healthchecks added — §below).
-- [ ] Logs: `docker compose -f deploy/docker-compose.yml logs -f <service>`.
-      Decide who has shell access to the host and how logs are retained.
-- [ ] Set Docker log rotation on the host (e.g. `max-size`/`max-file` in the
-      daemon config or a `logging:` block) so logs don't fill the disk over a pilot.
-- [ ] ⚠️ **Honest limit:** there is **no metrics/traces/alerting stack** in this
-      phase — no Prometheus/OTel collector, no SLO dashboards, no burn-rate
-      alerts (all defined in [`SPEC_sre.md` §2](specs/platform/SPEC_sre.md) for a
-      later phase). Pilot monitoring is **manual** (`ps`/`logs` + the synthetic
-      check below). Assign a person to eyeball it daily during the pilot.
-- [ ] Minimal external check: a cron/uptime probe hitting `https://<host>/api/health`
-      (returns 200 with an `ok` envelope; never 500, even when ИРБИС is down).
+### 6. Мониторинг и доступ к логам
+- [ ] Здоровье контейнеров видно: `docker compose -f deploy/docker-compose.yml ps`
+      показывает `db`, `backend`, `proxy` как **healthy** (healthcheck'и — см. ниже).
+- [ ] Логи: `docker compose -f deploy/docker-compose.yml logs -f <сервис>`.
+      Решить, у кого shell-доступ к хосту и как хранятся логи.
+- [ ] Настроить ротацию Docker-логов на хосте (напр. `max-size`/`max-file` в конфиге
+      демона или блок `logging:`), чтобы логи не забили диск за пилот.
+- [ ] ⚠️ **Честное ограничение:** в этой фазе **нет стека метрик/трейсов/алертов**
+      — нет Prometheus/OTel-коллектора, нет SLO-дашбордов, нет burn-rate-алертов
+      (всё описано в [`SPEC_sre.md` §2](specs/platform/SPEC_sre.md) для поздней фазы).
+      Мониторинг пилота **ручной** (`ps`/`logs` + синтетическая проверка ниже).
+      Назначить человека смотреть за этим ежедневно во время пилота.
+- [ ] Минимальная внешняя проверка: cron/uptime-проба на `https://<host>/api/health`
+      (возвращает 200 с конвертом `ok`; никогда 500, даже когда ИРБИС недоступен).
 
-### 7. Rollback plan
-- [ ] **App/config rollback:** the app is rebuilt from this repo. To roll back a
-      bad deploy, check out the previous good commit and
-      `docker compose up -d --build`. Pin the deployed git SHA somewhere visible.
-- [ ] **Data rollback:** restore the most recent good dump into the live DB
-      (step 5; the custom-format restore runs `pg_restore --clean --if-exists`).
-      Always take a fresh backup *before* a risky change so you have a recovery point.
-- [ ] **Image/base rollback:** `db` is `postgres:16`, `proxy` is `nginx:1.27-alpine`.
-      Avoid surprise upgrades on the maintenance window: prefer
-      `docker compose pull && docker compose up -d` only in an announced window;
-      keep volumes (do **not** use `down -v`).
-- [ ] **Stack down/up without data loss:** `docker compose down` keeps volumes
-      (`pgdata`, `backups`, `backend-data`); `docker compose down -v` **wipes**
-      them — never run `-v` against a pilot.
-- [ ] Keep this checklist + the DR steps **off the box too** (a copy outside the
-      restored system) — SPEC_sre §3.3 ("runbook вне восстанавливаемой системы").
+### 7. План отката
+- [ ] **Откат приложения/конфига:** приложение пересобирается из этого репозитория.
+      Чтобы откатить плохой деплой — чекаут предыдущего хорошего коммита и
+      `docker compose up -d --build`. Зафиксировать развёрнутый git-SHA на видном месте.
+- [ ] **Откат данных:** восстановить последний хороший дамп в живую БД
+      (шаг 5; custom-restore выполняет `pg_restore --clean --if-exists`).
+      Всегда делать свежий бэкап *перед* рискованным изменением — это точка восстановления.
+- [ ] **Откат образа/базы:** `db` = `postgres:16`, `proxy` = `nginx:1.27-alpine`.
+      Избегать внезапных апгрейдов в окно обслуживания: `docker compose pull &&
+      docker compose up -d` только в анонсированное окно; тома сохранять
+      (**не** использовать `down -v`).
+- [ ] **Down/up стека без потери данных:** `docker compose down` сохраняет тома
+      (`pgdata`, `backups`, `backend-data`); `docker compose down -v` их **стирает**
+      — никогда не запускать `-v` на пилоте.
+- [ ] Держать этот чек-лист + DR-шаги **и вне хоста** (копия снаружи восстанавливаемой
+      системы) — SPEC_sre §3.3 («runbook вне восстанавливаемой системы»).
 
-### 8. Network & exposure
-- [ ] Only the `proxy` publishes host ports (`80`/`443`). Keep the `db` and
-      `backend` host-port mappings **commented out** (the default) — they talk
-      over the compose network only.
-- [ ] Put the host behind the site firewall; expose only 80/443 externally
-      (80 only for the ACME challenge + redirect to 443).
-- [ ] Confirm reader PII stays out of operational logs (152-ФЗ; SPEC_sre §2.5).
+### 8. Сеть и доступность извне
+- [ ] Только `proxy` публикует порты хоста (`80`/`443`). Маппинги портов `db` и
+      `backend` держать **закомментированными** (по умолчанию) — они общаются
+      только по compose-сети.
+- [ ] Поставить хост за межсетевой экран площадки; наружу открыть только 80/443
+      (80 — только для ACME-челленджа + редирект на 443).
+- [ ] Убедиться, что ПДн читателей не попадают в операционные логи (152-ФЗ; SPEC_sre §2.5).
 
 ---
 
-## Healthchecks (added in this hardening pass)
+## Healthcheck'и (добавлены в этом проходе хардненинга)
 
-`docker compose ps` reports each service's health, and orchestration waits on
-dependencies (`proxy` starts only once `backend` is healthy; `backend` only once
-`db` is healthy):
+`docker compose ps` показывает здоровье каждого сервиса, оркестрация ждёт зависимости
+(`proxy` стартует только когда `backend` healthy; `backend` — только когда `db` healthy):
 
-| Service | Probe | Why this form |
+| Сервис | Проба | Почему так |
 |---|---|---|
-| `db` | `pg_isready -U … -d …` | already present (`postgres:16`) |
-| `backend` | `python -c "urllib.request.urlopen('http://127.0.0.1:8080/api/health')"` | the `python:3.12-slim` image has **no curl/wget** — probe with the app's own interpreter (stdlib, no image bloat); `/api/health` is unauthenticated and returns 200 even when ИРБИС is down |
-| `proxy` | `curl -fsk https://localhost/` | `nginx:alpine` ships curl; `-k` because the dev cert is self-signed — we assert TLS terminates + the proxy answers, not cert validity |
+| `db` | `pg_isready -U … -d …` | уже было (`postgres:16`) |
+| `backend` | `python -c "urllib.request.urlopen('http://127.0.0.1:8080/api/health')"` | в образе `python:3.12-slim` **нет curl/wget** — проба интерпретатором приложения (stdlib, без раздувания образа); `/api/health` без авторизации и возвращает 200 даже при недоступном ИРБИС |
+| `proxy` | `curl -fsk https://localhost/` | `nginx:alpine` несёт curl; `-k` — самоподписанный dev-сертификат: проверяем терминацию TLS + ответ прокси, а не валидность сертификата |
 
-Verify after `up`:
+Проверить после `up`:
 ```sh
-docker compose -f deploy/docker-compose.yml ps        # all three → "healthy"
+docker compose -f deploy/docker-compose.yml ps        # все три → "healthy"
 ```
 
 ---
 
-## Known limits for the pilot (be explicit with the customer)
+## Известные ограничения пилота (явно проговорить заказчику)
 
-1. **Single node = no HA.** One host; if it dies, the service is down until it is
-   restored from backup (RTO minutes-to-hours). No automatic PG failover, no
-   replicas, no multi-AZ. (Comes with the D3 IaC phase.)
-2. **RPO ≈ up to 24h.** Nightly logical dump only; no continuous WAL/PITR yet.
-   Worst case you lose changes since the last nightly backup. State in SLA.
-3. **No certified СКЗИ / ФСТЭК-attested crypto.** TLS and app crypto use standard
-   OpenSSL. A gov-segment / attested-contour deployment is a separate effort
-   (SPEC_sre §3.6, I6/§E) and is **not** part of this pilot.
-4. **No metrics/traces/alerting stack.** Monitoring is manual (`ps`/`logs` +
-   `/api/health`). SLO dashboards + burn-rate alerts (SPEC_sre §2) are post-pilot.
-5. **Live-ИРБИС64 bridge is optional.** OPAC features that need the native ИРБИС
-   server require `IRBIS_*` pointing at a running server (on Docker Desktop, use
-   `host.docker.internal`). Without it, the stack still boots; ИРБИС-dependent
-   features are unavailable.
-6. **Self-signed cert by default.** A real cert must be installed before go-live
-   (step 2); otherwise every browser warns and HSTS cannot be enabled.
+1. **Один узел = нет HA.** Один хост; если он умер — сервис недоступен до восстановления
+   из бэкапа (RTO минуты-часы). Нет автоматического PG-failover, реплик, multi-AZ.
+   (Появится в фазе D3 IaC.)
+2. **RPO ≈ до 24ч.** Только ночной логический дамп; пока нет непрерывного WAL/PITR.
+   В худшем случае теряются изменения с последнего ночного бэкапа. Указать в SLA.
+3. **Нет сертифицированных СКЗИ / крипты по ФСТЭК.** TLS и крипта приложения — стандартный
+   OpenSSL. Развёртывание в госсегменте / аттестованном контуре — отдельная работа
+   (SPEC_sre §3.6, I6/§E) и **не** часть этого пилота.
+4. **Нет стека метрик/трейсов/алертов.** Мониторинг ручной (`ps`/`logs` + `/api/health`).
+   SLO-дашборды + burn-rate-алерты (SPEC_sre §2) — после пилота.
+5. **Мост к живому ИРБИС64 опционален.** OPAC-функции, которым нужен нативный сервер
+   ИРБИС, требуют `IRBIS_*` на запущенный сервер (на Docker Desktop — `host.docker.internal`).
+   Без него стек всё равно стартует; ИРБИС-зависимые функции недоступны.
+6. **Самоподписанный сертификат по умолчанию.** Реальный сертификат надо поставить
+   до go-live (шаг 2); иначе каждый браузер предупреждает и HSTS включить нельзя.
 
 ---
 
-## References
-- [`deploy/README.md`](../../deploy/README.md) — stack topology, env model, prod hardening checklist.
-- [`SPEC_sre.md`](specs/platform/SPEC_sre.md) (D4) — SLO/SLI, RPO/RTO, backup policy, restore-rehearsal cadence, graceful degradation, runbooks.
-- [`SPEC_iac_fleet.md`](specs/platform/SPEC_iac_fleet.md) (D3) — multi-node / multi-region IaC: replication, geo-backups, failover (the post-pilot phase).
+## Ссылки
+- [`deploy/README.md`](../../deploy/README.md) — топология стека, модель env, чек-лист prod-хардненинга.
+- [`SPEC_sre.md`](specs/platform/SPEC_sre.md) (D4) — SLO/SLI, RPO/RTO, политика бэкапов, периодичность restore-репетиций, graceful degradation, runbook'и.
+- [`SPEC_iac_fleet.md`](specs/platform/SPEC_iac_fleet.md) (D3) — многоузловой / мультирегиональный IaC: репликация, гео-бэкапы, failover (фаза после пилота).
