@@ -262,12 +262,14 @@ export interface MigrateField {
   freq?: number; custom?: boolean;
 }
 // Обнаруженная при изучении источника база: код, наименование, тип (kind —
-// напр. bibliographic/reader/authority), число записей, состав полей и (для
-// читательских БД) число читателей.
+// напр. bibliographic/reader/authority), число записей и (для читательских БД)
+// число читателей. Инвентарь полей (fields) грузится ЛЕНИВО — отдельным
+// вызовом migrateInspect(mode, source, [code]) при раскрытии конкретной БД,
+// поэтому в быстром списке баз он отсутствует (поле опциональное).
 export interface MigrateDatabase {
   code: string; name: string; kind?: string;
   recordCount?: number; readerCount?: number;
-  fields: MigrateField[];
+  fields?: MigrateField[];
 }
 // Результат изучения источника (POST /api/admin/migrate/inspect).
 export interface MigrateInspect { databases: MigrateDatabase[]; }

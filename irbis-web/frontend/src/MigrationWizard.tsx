@@ -3,9 +3,12 @@
 //   1. Источник   — режим «Сеть» (хост/порт/логин/пароль/рабочая станция) ИЛИ
 //                   «Локальный путь» (каталог данных ИРБИС, напр. C:\IRBIS64\Datai).
 //                   Креды живут только в форме: не сохраняются и не логируются.
-//   2. Изучение   — «Изучить источник» → /inspect → таблица обнаруженных БД
-//                   (код / название / число записей) + раскрываемый по каждой
+//   2. Изучение   — «Изучить источник» → /inspect БЕЗ dbs → МГНОВЕННО таблица
+//                   обнаруженных БД (код / название / тип / записей / читателей).
+//                   Инвентарь полей не грузится сразу: при раскрытии строки БД
+//                   делается ленивый /inspect С dbs=[код] именно по этой базе →
 //                   список полей с пометкой «допполе» для кастомных и частотами.
+//                   Результат кэшируется в строке (повторно не запрашивается).
 //   3. Выбор      — чекбоксы каких БД мигрировать, целевой арендатор, тумблер
 //                   «Пробный прогон (dry-run)».
 //   4. Запуск     — «Мигрировать» → /run → отчёт {прочитано, загружено,
@@ -72,6 +75,13 @@ const CSS = `
 .irb-mig__ftag{font-family:var(--font-mono);font-size:11.5px;font-weight:600;color:var(--text-muted);}
 .irb-mig__sub{font-family:var(--font-mono);font-size:11px;color:var(--text-subtle);}
 .irb-mig__custom{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:1px 7px;border-radius:var(--radius-full);background:var(--status-issued-bg,#FBEFD8);color:var(--status-issued,#B5710E);text-transform:uppercase;letter-spacing:.04em;}
+.irb-mig__floading{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-subtle);}
+.irb-mig__spin{display:inline-block;width:13px;height:13px;border:2px solid var(--border-strong);border-top-color:var(--accent);border-radius:var(--radius-full);animation:irb-mig-spin .6s linear infinite;flex:none;}
+@keyframes irb-mig-spin{to{transform:rotate(360deg);}}
+.irb-mig__ferr{display:flex;gap:7px;align-items:flex-start;font-size:12px;color:var(--danger-500,#B42318);line-height:1.45;}
+.irb-mig__flink{background:none;border:none;padding:0;margin-left:6px;font:inherit;font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;}
+.irb-mig__showf{background:none;border:none;padding:0;font:inherit;font-size:11.5px;color:var(--accent);cursor:pointer;}
+.irb-mig__showf:hover{text-decoration:underline;}
 .irb-mig__chk{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border-subtle);cursor:pointer;}
 .irb-mig__chk:last-child{border-bottom:none;}
 .irb-mig__chk:hover{background:var(--surface-hover);}
@@ -258,6 +268,7 @@ export function MigrationWizard({ toast }: { toast: ToastFn }) {
       {step === 2 && (down
         ? <MigDown title="Изучение источника подключается отдельно" />
         : <InspectStep databases={databases} inspecting={inspecting}
+            mode={mode} buildSource={buildSource}
             onReinspect={inspect} onNext={() => setStep(3)} />)}
       {step === 3 && <SelectStep
         databases={databases || []} selected={selected} setSelected={setSelected}
@@ -335,8 +346,10 @@ function SourceStep(props: {
 }
 
 // ===== Шаг 2: Изучение =====================================================
-function InspectStep({ databases, inspecting, onReinspect, onNext }: {
-  databases: MigrateDatabase[] | null; inspecting: boolean; onReinspect: () => void; onNext: () => void;
+function InspectStep({ databases, inspecting, mode, buildSource, onReinspect, onNext }: {
+  databases: MigrateDatabase[] | null; inspecting: boolean;
+  mode: MigrateMode; buildSource: () => MigrateSource;
+  onReinspect: () => void; onNext: () => void;
 }) {
   if (databases === null) {
     return (
@@ -368,11 +381,15 @@ function InspectStep({ databases, inspecting, onReinspect, onNext }: {
       </div>
       <div style={{ overflowX: "auto" }}>
         <table className="irb-mig__tbl">
-          <thead><tr><th style={{ width: 28 }} aria-label="Раскрыть" /><th>Код</th><th>Название</th><th>Тип</th><th style={{ textAlign: "right" }}>Записей</th><th style={{ textAlign: "right" }}>Читателей</th><th style={{ textAlign: "right" }}>Полей</th></tr></thead>
+          <thead><tr><th style={{ width: 28 }} aria-label="Раскрыть" /><th>Код</th><th>Название</th><th>Тип</th><th style={{ textAlign: "right" }}>Записей</th><th style={{ textAlign: "right" }}>Читателей</th><th>Поля</th></tr></thead>
           <tbody>
-            {databases.map((db) => <DbRow key={db.code} db={db} />)}
+            {databases.map((db) => <DbRow key={db.code} db={db} mode={mode} buildSource={buildSource} />)}
           </tbody>
         </table>
+      </div>
+      <div className="irb-mig__note" style={{ padding: "0 16px 12px" }}>
+        <Icon name="info" size={14} style={{ flex: "none", marginTop: 1, color: "var(--text-subtle)" }} />
+        <span>Список баз получен мгновенно. Состав полей (с пометкой «допполе») подгружается по каждой базе отдельно — раскройте строку или нажмите «Показать поля».</span>
       </div>
       <div className="irb-mig__actions">
         <Button iconLeft="chevron-right" onClick={onNext}>К выбору баз</Button>
@@ -381,26 +398,85 @@ function InspectStep({ databases, inspecting, onReinspect, onNext }: {
   );
 }
 
-// Строка БД с раскрываемым списком полей (тег / метка / подполя / частота /
-// пометка «допполе» для кастомных полей вне штатной схемы).
-function DbRow({ db }: { db: MigrateDatabase }) {
+// Строка БД с ЛЕНИВО подгружаемым списком полей. Сам список баз приходит быстрым
+// /inspect без dbs (полей нет), поэтому инвентарь полей конкретной базы
+// (тег / метка / подполя / частота / пометка «допполе» для кастомных полей вне
+// штатной схемы) добирается отдельным /inspect с dbs=[код] — только при первом
+// раскрытии строки. Результат кэшируется в состоянии строки: повторное
+// раскрытие не перезапрашивает сервер. Спиннер на время запроса; ошибка/404 —
+// информер по строке со ссылкой «Повторить», приложение не падает.
+function DbRow({ db, mode, buildSource }: {
+  db: MigrateDatabase; mode: MigrateMode; buildSource: () => MigrateSource;
+}) {
   const [open, setOpen] = React.useState(false);
-  const fields: MigrateField[] = db.fields || [];
+  // Кэш полей именно этой базы: null — ещё не грузили; массив — загружено.
+  const [fields, setFields] = React.useState<MigrateField[] | null>(db.fields ?? null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  // Ленивая загрузка полей этой БД (один раз). Повторный вызов после ошибки —
+  // через «Повторить». force=true перезапрашивает после неудачи.
+  async function loadFields(force = false) {
+    if (loading) return;
+    if (fields !== null && !force) return; // уже в кэше — не перезапрашиваем
+    setLoading(true); setError(null);
+    const r = await api.migrateInspect(mode, buildSource(), [db.code]);
+    setLoading(false);
+    if (r.status === 404 || r.status === 501) {
+      setError("Инвентарь полей этой базы пока недоступен на сервере.");
+      return;
+    }
+    if (r.status === 403) { setError("Недостаточно прав для разбора полей (нужен грант admin.db)."); return; }
+    if (r.json?.ok && r.json.data) {
+      const found = (r.json.data.databases || []).find((d) => d.code === db.code) || (r.json.data.databases || [])[0];
+      setFields(found?.fields || []);
+    } else {
+      setError("Не удалось разобрать состав полей. Повторите попытку.");
+    }
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next) void loadFields(); // грузим поля при раскрытии (если ещё не в кэше)
+  }
+
+  const count = fields !== null ? fields.length : null;
   return (
     <>
-      <tr className="irb-mig__db" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+      <tr className="irb-mig__db" onClick={toggle} aria-expanded={open}>
         <td><span className={"irb-mig__caret" + (open ? " irb-mig__caret--open" : "")}><Icon name="chevron-right" size={15} /></span></td>
         <td className="irb-mig__mono">{db.code}</td>
         <td>{db.name || "—"}</td>
         <td><span className="irb-mig__kind">{kindLabel(db.kind)}</span></td>
         <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(db.recordCount)}</td>
         <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fmtNum(db.readerCount)}</td>
-        <td className="irb-mig__mono" style={{ textAlign: "right" }}>{fields.length}</td>
+        <td>
+          {loading ? (
+            <span className="irb-mig__floading"><span className="irb-mig__spin" aria-hidden="true" />Загрузка…</span>
+          ) : count !== null ? (
+            <span className="irb-mig__mono">{count}</span>
+          ) : (
+            <button type="button" className="irb-mig__showf"
+              onClick={(e) => { e.stopPropagation(); if (!open) setOpen(true); void loadFields(); }}>
+              Показать поля
+            </button>
+          )}
+        </td>
       </tr>
       {open && (
         <tr className="irb-mig__fields">
           <td colSpan={7} style={{ padding: "8px 14px 12px 40px" }}>
-            {fields.length === 0 ? (
+            {loading ? (
+              <span className="irb-mig__floading"><span className="irb-mig__spin" aria-hidden="true" />Загрузка полей…</span>
+            ) : error ? (
+              <span className="irb-mig__ferr">
+                <Icon name="alert-triangle" size={14} style={{ flex: "none", marginTop: 1 }} />
+                <span>{error}<button type="button" className="irb-mig__flink" onClick={() => void loadFields(true)}>Повторить</button></span>
+              </span>
+            ) : fields === null ? (
+              <span style={{ fontSize: 12, color: "var(--text-subtle)" }}>Поля ещё не загружены.</span>
+            ) : fields.length === 0 ? (
               <span style={{ fontSize: 12, color: "var(--text-subtle)" }}>Состав полей не определён.</span>
             ) : (
               <table className="irb-mig__ftbl">
@@ -445,7 +521,7 @@ function SelectStep({ databases, selected, setSelected, tenant, setTenant, dryRu
             <input type="checkbox" checked={!!selected[db.code]} onChange={() => toggle(db.code)} aria-label={"Мигрировать базу " + db.code} />
             <span className="irb-mig__chk-main">
               <span className="irb-mig__chk-name" style={{ display: "block" }}>{db.name || db.code} <span className="irb-mig__mono" style={{ color: "var(--text-subtle)", fontWeight: 400 }}>({db.code})</span></span>
-              <span className="irb-mig__chk-sub" style={{ display: "block" }}>{kindLabel(db.kind)} · записей {fmtNum(db.recordCount)}{typeof db.readerCount === "number" ? " · читателей " + fmtNum(db.readerCount) : ""} · полей {(db.fields || []).length}</span>
+              <span className="irb-mig__chk-sub" style={{ display: "block" }}>{kindLabel(db.kind)} · записей {fmtNum(db.recordCount)}{typeof db.readerCount === "number" ? " · читателей " + fmtNum(db.readerCount) : ""}{db.fields && db.fields.length ? " · полей " + db.fields.length : ""}</span>
             </span>
           </label>
         ))}
