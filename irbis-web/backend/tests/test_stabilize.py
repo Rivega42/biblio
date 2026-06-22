@@ -187,8 +187,15 @@ def provision_auth_sqlite_checks():
 
 
 def _pg_reachable(dsn):
+    # Gate on the PG intent. NB: a sibling suite (test_platform / the sqlite checks
+    # in THIS module) mutates os.environ['ACCESS_BACKEND'] to 'sqlite' before this
+    # leg runs in the test_access.py runner, so we must NOT rely on ACCESS_BACKEND
+    # alone — we also honour an explicit ACCESS_PG_DSN (set by the CI postgres job)
+    # and ACCESS_TEST_PG, mirroring test_compliance.pg_parity_checks, so the
+    # regression actually runs on CI's postgres backend.
     want = os.environ.get('ACCESS_BACKEND', '').lower() in ('postgres', 'pg') \
-        or os.environ.get('ACCESS_TEST_PG') == '1'
+        or os.environ.get('ACCESS_TEST_PG') == '1' \
+        or bool(os.environ.get('ACCESS_PG_DSN'))
     if not want:
         return False
     try:
@@ -202,11 +209,17 @@ def _pg_reachable(dsn):
         return False
 
 
-def run_pg():
+def pg_regression_checks():
     """THE regression for the container-smoke bug: provision the DEFAULT tenant on
     PG (admin lands in t_public) and assert the very next POST /api/auth/staff
     succeeds. This 401'd before the _store_for fix (it read the bare public schema)
-    and 200s after. Skips cleanly when postgres/psycopg unavailable."""
+    and 200s after. Skips cleanly when postgres/psycopg unavailable.
+
+    Named ``*_checks`` (not ``run_pg``) so the test_access.py runner's
+    ``module_checks`` — which invokes every ``*_checks()`` — actually exercises
+    this PG leg on CI's postgres backend (a plain ``run_pg`` would be skipped by
+    the runner and only run standalone). Gated on a reachable PG; restores
+    ACCESS_BACKEND so it never leaks env into a later module."""
     from access import pgstore
     dsn = pgstore.default_pg_dsn()
     if not _pg_reachable(dsn):
@@ -295,7 +308,7 @@ def main():
     metrics_counters_checks()
     metrics_auth_posture_checks()
     provision_auth_sqlite_checks()
-    run_pg()
+    pg_regression_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
