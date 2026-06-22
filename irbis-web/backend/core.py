@@ -2136,13 +2136,22 @@ class Api:
         return None, err('bad_request', 'mode должен быть network|local')
 
     def admin_migrate_inspect(self, session, body):
-        """POST /api/admin/migrate/inspect — интроспекция источника ИРБИС.
+        """POST /api/admin/migrate/inspect — интроспекция источника ИРБИС (ДВУХФАЗНАЯ, #225).
 
         Тело ``{mode:'network'|'local', source:{host,port,user,pass}|{path}, dbs?}``.
-        Перечисляет БД источника и для каждой отдаёт число записей и инвентарь полей
-        с флагом ``custom`` на нештатных допполях. Super-admin only (403 прочим).
-        Креды транзиентны: в ответ/аудит уходит только redacted-описание (без
-        пароля)."""
+        Две фазы (выбор по ``dbs``), чтобы большой источник (десятки БД) не упирался
+        в HTTP-таймаут:
+
+          * **без ``dbs`` — быстрый список:** перечисляет БД и на каждую отдаёт лишь
+            дешёвые метаданные ``{code, name, kind, recordCount, readerCount?}`` БЕЗ
+            инвентаря полей (число записей берётся из управляющей записи, без
+            сканирования). Проходит быстро даже на ~50 БД.
+          * **с ``dbs:[коды]`` — инвентарь полей:** разбирает ТОЛЬКО эти БД, добавляя
+            на каждую ``fields:[{tag,label?,subfields,freq,custom}]`` (тяжёлое
+            сэмплирование записей, выборка ограничена сверху).
+
+        Super-admin only (403 прочим). Креды транзиентны: в ответ/аудит уходит
+        только redacted-описание (без пароля)."""
         self._require_super_admin(session)
         from tools import migrate_irbis as _mig
         mode = (body.get('mode') or 'network').strip()

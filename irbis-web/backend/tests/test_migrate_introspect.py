@@ -34,9 +34,10 @@ from access.store import AccessStore
 from access.catalog import CatalogStore
 
 from tools.migrate_irbis import (
-    Migrator, Targets, introspect, introspect_database, enumerate_databases,
-    db_kind, is_custom_field, is_custom_subfield, parse_menu_pairs,
-    canonical_to_parsed, LocalSource, LocalAdapterUnavailable,
+    Migrator, Targets, introspect, introspect_database, database_summary,
+    enumerate_databases, db_kind, is_custom_field, is_custom_subfield,
+    parse_menu_pairs, canonical_to_parsed, LocalSource, LocalAdapterUnavailable,
+    INSPECT_SAMPLE_SIZE,
 )
 
 PASS = [0]
@@ -113,6 +114,25 @@ class FakeIrbis:
         pass
 
 
+class _CountingSource(FakeIrbis):
+    """FakeIrbis, считающий обращения: ``reads`` = число read_record,
+    ``maxmfn_calls`` = число max_mfn. Так фаза 1 проверяется на «ноль чтений
+    записей», а фаза 2 — на верхний предел выборки."""
+
+    def __init__(self, dbs, names=None):
+        super().__init__(dbs, names)
+        self.reads = 0
+        self.maxmfn_calls = 0
+
+    def max_mfn(self, db):
+        self.maxmfn_calls += 1
+        return super().max_mfn(db)
+
+    def read_record(self, db, mfn):
+        self.reads += 1
+        return super().read_record(db, mfn)
+
+
 def _fresh_targets():
     access = AccessStore(':memory:')
     catalog = CatalogStore(':memory:', access_store=access)
@@ -121,16 +141,18 @@ def _fresh_targets():
 
 
 # --------------------------------------------------------------------------- #
-# 1. Интроспекция: перечисление БД + инвентарь полей + флаг custom.
+# 1. Интроспекция — ДВУХФАЗНАЯ (#225):
+#    фаза 1 (без dbs) = быстрый список БД с числом записей, БЕЗ инвентаря полей;
+#    фаза 2 (с dbs)   = инвентарь полей с флагом custom только для этих БД.
 # --------------------------------------------------------------------------- #
-def introspect_plan_checks():
-    print('-- интроспекция: перечисление БД + инвентарь полей + флаг custom')
+def introspect_fast_list_checks():
+    print('-- интроспекция фаза 1 (без dbs): быстрый список БД, БЕЗ инвентаря полей')
     src = FakeIrbis(
         {'IBIS': [_bib_with_custom(1, 'Первая'), _bib_with_custom(2, 'Вторая')],
          'RDR': [_reader(1, '111', 'Иванов'), _reader(2, '222', 'Петров')]},
         names={'IBIS': 'Электронный каталог', 'RDR': 'Читатели'})
 
-    plan = introspect(src)
+    plan = introspect(src)                 # без dbs -> фаза 1
     check('план содержит databases', isinstance(plan.get('databases'), list))
     codes = {d['code'] for d in plan['databases']}
     check('перечислены обе БД (IBIS, RDR)', codes == {'IBIS', 'RDR'})
@@ -140,6 +162,41 @@ def introspect_plan_checks():
     check('IBIS: вид bib', ibis['kind'] == 'bib')
     check('IBIS: recordCount == 2', ibis['recordCount'] == 2)
     check('IBIS: нет readerCount', 'readerCount' not in ibis)
+    # БЫСТРЫЙ ПУТЬ: инвентарь полей НЕ снимается (поля не читаются).
+    check('IBIS: фаза 1 НЕ содержит fields',
+          not ibis.get('fields'))           # ключа нет или он пуст
+    # сводка отдаёт ровно дешёвые ключи (никаких fields/subfields).
+    check('IBIS: фаза 1 — только дешёвые ключи',
+          set(ibis) == {'code', 'name', 'kind', 'recordCount'})
+
+    rdr = next(d for d in plan['databases'] if d['code'] == 'RDR')
+    check('RDR: вид rdr', rdr['kind'] == 'rdr')
+    check('RDR: readerCount == 2', rdr.get('readerCount') == 2)
+    check('RDR: фаза 1 НЕ содержит fields', not rdr.get('fields'))
+
+    # фаза 1 НЕ должна вообще читать записи (только max_mfn) — проверяем по счётчику.
+    counting = _CountingSource(
+        {'IBIS': [_bib_with_custom(1, 'A'), _bib_with_custom(2, 'B')]},
+        names={'IBIS': 'Каталог'})
+    introspect(counting)
+    check('фаза 1: ни одного read_record (только max_mfn)',
+          counting.reads == 0)
+    check('фаза 1: max_mfn вызван (число записей дешёвым путём)',
+          counting.maxmfn_calls >= 1)
+
+
+def introspect_inventory_checks():
+    print('-- интроспекция фаза 2 (с dbs): инвентарь полей + флаг custom')
+    src = FakeIrbis(
+        {'IBIS': [_bib_with_custom(1, 'Первая'), _bib_with_custom(2, 'Вторая')],
+         'RDR': [_reader(1, '111', 'Иванов'), _reader(2, '222', 'Петров')]},
+        names={'IBIS': 'Электронный каталог', 'RDR': 'Читатели'})
+
+    plan = introspect(src, dbs=['IBIS'])   # с dbs -> фаза 2
+    check('фаза 2: разобрана только запрошенная БД',
+          [d['code'] for d in plan['databases']] == ['IBIS'])
+    ibis = plan['databases'][0]
+    check('IBIS: recordCount по-прежнему == 2', ibis['recordCount'] == 2)
 
     by_tag = {f['tag']: f for f in ibis['fields']}
     check('инвентарь нашёл поле 200', '200' in by_tag)
@@ -159,8 +216,9 @@ def introspect_plan_checks():
     check('996^q НЕ помечено custom (поле уже custom целиком)',
           sub996['q']['custom'] is False)
 
-    # RDR: вид rdr, readerCount, нештатное читательское поле помечено custom.
-    rdr = next(d for d in plan['databases'] if d['code'] == 'RDR')
+    # RDR через фазу 2: вид rdr, readerCount, нештатное поле помечено custom.
+    rdr_plan = introspect(src, dbs=['RDR'])
+    rdr = rdr_plan['databases'][0]
     check('RDR: вид rdr', rdr['kind'] == 'rdr')
     check('RDR: readerCount == 2', rdr.get('readerCount') == 2)
     rdr_by_tag = {f['tag']: f for f in rdr['fields']}
@@ -169,15 +227,51 @@ def introspect_plan_checks():
 
 
 def introspect_filter_checks():
-    print('-- интроспекция: фильтр dbs ограничивает разбор подмножеством')
+    print('-- интроспекция фаза 2: фильтр dbs ограничивает разбор подмножеством')
     src = FakeIrbis({'IBIS': [_bib_with_custom(1, 'X')],
                      'RDR': [_reader(1, '111', 'И')]})
     plan = introspect(src, dbs=['IBIS'])
     check('dbs=[IBIS] -> только IBIS в плане',
           [d['code'] for d in plan['databases']] == ['IBIS'])
+    check('dbs=[IBIS] -> у разобранной БД есть fields (фаза 2)',
+          'fields' in plan['databases'][0])
     plan2 = introspect(src, dbs=['rdr'])    # регистронезависимо
     check('dbs=[rdr] (нижний регистр) -> только RDR',
           [d['code'] for d in plan2['databases']] == ['RDR'])
+
+
+def introspect_sample_cap_checks():
+    print('-- интроспекция фаза 2: выборка ограничена сверху INSPECT_SAMPLE_SIZE')
+    # БД крупнее предела выборки: читаться должно НЕ больше INSPECT_SAMPLE_SIZE.
+    big = INSPECT_SAMPLE_SIZE + 50
+    recs = [_bib_with_custom(i, 'Книга %d' % i) for i in range(1, big + 1)]
+    counting = _CountingSource({'IBIS': recs}, names={'IBIS': 'Каталог'})
+    plan = introspect(counting, dbs=['IBIS'])
+    ibis = plan['databases'][0]
+    check('recordCount отражает всю БД (max_mfn)', ibis['recordCount'] == big)
+    check('прочитано НЕ больше INSPECT_SAMPLE_SIZE записей',
+          counting.reads <= INSPECT_SAMPLE_SIZE)
+    check('прочитано ровно INSPECT_SAMPLE_SIZE (выборка заполнена)',
+          counting.reads == INSPECT_SAMPLE_SIZE)
+    # явный sample выше предела всё равно режется до INSPECT_SAMPLE_SIZE.
+    counting2 = _CountingSource({'IBIS': recs}, names={'IBIS': 'Каталог'})
+    introspect_database(counting2, 'IBIS', sample=INSPECT_SAMPLE_SIZE * 10)
+    check('sample выше предела режется до INSPECT_SAMPLE_SIZE',
+          counting2.reads == INSPECT_SAMPLE_SIZE)
+
+
+def database_summary_unit_checks():
+    print('-- юнит: database_summary — дешёвая сводка без чтения записей')
+    counting = _CountingSource(
+        {'IBIS': [_bib_with_custom(1, 'A')], 'RDR': [_reader(1, '111', 'И')]})
+    bib = database_summary(counting, 'IBIS', db_name='Каталог')
+    check('summary: ключи дешёвые (без fields)',
+          set(bib) == {'code', 'name', 'kind', 'recordCount'})
+    check('summary: recordCount из max_mfn', bib['recordCount'] == 1)
+    check('summary: ни одного read_record', counting.reads == 0)
+    rdr = database_summary(counting, 'RDR')
+    check('summary RDR: readerCount присутствует', rdr.get('readerCount') == 1)
+    check('summary RDR: имя по умолчанию = код', rdr['name'] == 'RDR')
 
 
 def introspect_unit_checks():
@@ -270,6 +364,54 @@ def local_source_checks():
     check('LOCAL: 996 помечено custom', by_tag['996']['custom'] is True)
     sub200 = {s['code']: s for s in by_tag['200']['subfields']}
     check('LOCAL: 200^z помечено custom', sub200['z']['custom'] is True)
+
+
+class _CountingMstAdapter:
+    """Адаптер вида tools.irbis_mst, считающий, СКОЛЬКО записей реально вычитано из
+    потока ``read_records`` — так проверяется, что LocalSource.read_records(limit=)
+    прерывает чтение и не материализует всю крупную БД ради выборки."""
+
+    def __init__(self, db, count):
+        self._db = db
+        self._count = count
+        self.yielded = 0
+
+    def list_databases(self, path):
+        return [self._db]
+
+    def max_mfn(self, path, db):
+        return self._count if db == self._db else 0
+
+    def read_records(self, path, db):
+        # «Бесконечно крупная» БД: яркий маркер, что итерация ДОЛЖНА оборваться.
+        for i in range(1, self._count + 1):
+            self.yielded += 1
+            yield i, {'200': [{'a': 'rec %d' % i}], '996': [{'q': 'допполе'}]}
+
+
+def local_source_sample_cap_checks():
+    print('-- локальный адаптер: read_records(limit=) обрывает чтение крупной БД')
+    big = INSPECT_SAMPLE_SIZE + 500
+    adapter = _CountingMstAdapter('BIG', big)
+    src = LocalSource('/любой/путь', adapter=adapter)
+    # потоковый перебор с лимитом отдаёт ровно limit записей и НЕ дочитывает остаток.
+    got = list(src.read_records('BIG', limit=INSPECT_SAMPLE_SIZE))
+    check('read_records(limit) отдаёт ровно limit записей',
+          len(got) == INSPECT_SAMPLE_SIZE)
+    check('read_records(limit) НЕ вычитал всю БД (поток оборван)',
+          adapter.yielded <= INSPECT_SAMPLE_SIZE + 1)
+    check('read_records отдаёт parser-shape', isinstance(got[0].get('fields'), list))
+
+    # фаза 2 через introspect использует потоковый путь => не материализует всю БД.
+    adapter2 = _CountingMstAdapter('BIG', big)
+    src2 = LocalSource('/любой/путь', adapter=adapter2)
+    plan = introspect(src2, dbs=['BIG'])
+    d = plan['databases'][0]
+    check('фаза 2 LOCAL: recordCount = вся БД (max_mfn)', d['recordCount'] == big)
+    check('фаза 2 LOCAL: 996 помечено custom', any(
+        f['tag'] == '996' and f['custom'] for f in d['fields']))
+    check('фаза 2 LOCAL: прочитано НЕ больше выборки (крупная БД не материализована)',
+          adapter2.yielded <= INSPECT_SAMPLE_SIZE + 1)
 
 
 def canonical_bridge_checks():
@@ -379,22 +521,36 @@ def inspect_endpoint_checks():
     _mig, orig, captured = _patch_source(api)
     try:
         H = _super(api)
+        # ФАЗА 1 (без dbs): быстрый список БД с числом записей, БЕЗ инвентаря полей.
         body = {'mode': 'network',
                 'source': {'host': 'src.example', 'port': 6666,
                            'user': 'MIGRATE', 'pass': 'СЕКРЕТ-ПАРОЛЬ'}}
         st, p = api.route('POST', '/api/admin/migrate/inspect', {}, body, H)
-        check('inspect -> 200', st == 200)
+        check('inspect фаза 1 -> 200', st == 200)
         dbs = p['data']['databases']
-        check('inspect: перечислены БД', {d['code'] for d in dbs} == {'IBIS', 'RDR'})
+        check('inspect фаза 1: перечислены БД', {d['code'] for d in dbs} == {'IBIS', 'RDR'})
         ibis = next(d for d in dbs if d['code'] == 'IBIS')
-        check('inspect: IBIS recordCount == 2', ibis['recordCount'] == 2)
-        check('inspect: 996 помечено custom',
-              any(f['tag'] == '996' and f['custom'] for f in ibis['fields']))
+        check('inspect фаза 1: IBIS recordCount == 2', ibis['recordCount'] == 2)
+        check('inspect фаза 1: БЕЗ инвентаря полей (быстрый путь)',
+              not ibis.get('fields'))
+
+        # ФАЗА 2 (с dbs): инвентарь полей с флагом custom только для этих БД.
+        body2 = dict(body, dbs=['IBIS'])
+        st, p2 = api.route('POST', '/api/admin/migrate/inspect', {}, body2, H)
+        check('inspect фаза 2 -> 200', st == 200)
+        dbs2 = p2['data']['databases']
+        check('inspect фаза 2: разобрана только IBIS',
+              [d['code'] for d in dbs2] == ['IBIS'])
+        ibis2 = dbs2[0]
+        check('inspect фаза 2: IBIS recordCount == 2', ibis2['recordCount'] == 2)
+        check('inspect фаза 2: есть инвентарь полей', bool(ibis2.get('fields')))
+        check('inspect фаза 2: 996 помечено custom',
+              any(f['tag'] == '996' and f['custom'] for f in ibis2['fields']))
         # КРЕДЫ: дошли до открытия сессии, но НЕ эхо-отражены в ответе.
         check('inspect: пароль реально использован (дошёл до open_source)',
               captured.get('password') == 'СЕКРЕТ-ПАРОЛЬ')
         import json as _json
-        blob = _json.dumps(p, ensure_ascii=False)
+        blob = _json.dumps(p, ensure_ascii=False) + _json.dumps(p2, ensure_ascii=False)
         check('inspect: пароль НЕ в ответе', 'СЕКРЕТ-ПАРОЛЬ' not in blob)
 
         # КРЕДЫ: не попали в аудит (только redacted host/port/user, без пароля).
@@ -514,11 +670,15 @@ def migrate_auth_checks():
 
 
 def main():
-    introspect_plan_checks()
+    introspect_fast_list_checks()
+    introspect_inventory_checks()
     introspect_filter_checks()
+    introspect_sample_cap_checks()
+    database_summary_unit_checks()
     introspect_unit_checks()
     adaptive_export_checks()
     local_source_checks()
+    local_source_sample_cap_checks()
     canonical_bridge_checks()
     local_adapter_absent_checks()
     inspect_endpoint_checks()

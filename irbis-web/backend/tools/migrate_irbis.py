@@ -73,16 +73,29 @@ Prints a JSON report ``{records_read, records_loaded, readers_loaded, skipped,
 errors}``. ``--dry-run`` connects, reads, and maps every record/reader and reports
 the same counts WITHOUT writing the target (no row touched, no PII persisted).
 
-Интроспекция (онбординг, #225)
-------------------------------
-``introspect(source)`` снимает с источника СТРУКТУРНЫЙ ПЛАН до переноса: список БД
-(меню ``dbnam``), для каждой — число записей и инвентарь полей по выборке записей,
-где каждое поле/подполе помечено флагом ``custom`` (нештатное доппole — то, чего
-нет в эталонном :data:`STANDARD_CATALOG`). Это даёт мастеру онбординга показать
-«что внутри» исходной библиотеки и какие институт-специфичные допполя поедут.
-``--introspect`` в CLI печатает план как JSON. Сетевой режим работает через
-``open_source``; локальный (без сервера, чтение `.mst`/`.xrf`) — через
-:class:`LocalSource` поверх соседнего адаптера ``tools.irbis_mst``.
+Интроспекция (онбординг, #225) — ДВУХФАЗНАЯ
+-------------------------------------------
+``introspect(source)`` снимает с источника СТРУКТУРНЫЙ ПЛАН до переноса. Чтобы
+большой источник (десятки БД) не упирался в HTTP-таймаут, интроспекция разбита на
+две фазы (один и тот же вызов, выбор по аргументу ``dbs``):
+
+  * **Фаза 1 — быстрый список (без ``dbs``).** Перечисляет БД (меню ``dbnam`` /
+    ``list_databases``) и для каждой отдаёт только дешёвые метаданные
+    ``{code, name, kind, recordCount, readerCount?}``. Число записей берётся из
+    управляющей записи (``max_mfn``/NXTMFN-1) — это один round-trip без чтения
+    записей, поэтому фаза проходит быстро даже на ~50 БД. Поля НЕ сэмплируются.
+  * **Фаза 2 — инвентарь полей (с ``dbs=[коды]``).** Только для запрошенных БД
+    строит инвентарь полей по выборке записей (тяжёлая часть), где каждое поле/
+    подполе помечено флагом ``custom`` (нештатное доппole — то, чего нет в
+    эталонном :data:`STANDARD_CATALOG`). Выборка ограничена сверху
+    :data:`INSPECT_SAMPLE_SIZE` записями на БД — достаточно для инвентаря, но не
+    заставляет сканировать всю базу.
+
+Это даёт мастеру онбординга сперва мгновенно показать «какие БД и сколько в них
+записей», а инвентарь полей подгружать по выбранным БД. ``--introspect`` в CLI
+печатает план как JSON (с ``--dbs`` — фаза 2, без — фаза 1). Сетевой режим
+работает через ``open_source``; локальный (без сервера, чтение `.mst`/`.xrf`) —
+через :class:`LocalSource` поверх соседнего адаптера ``tools.irbis_mst``.
 
 Адаптивность экспорта: мигратор копирует ВСЕ поля/подполя (field-agnostic, не
 whitelist) — допполя сохраняются как есть, см. :func:`map_catalog_record`.
@@ -529,6 +542,24 @@ class LocalSource:
             self._maxmfn[db] = top
         return self._cache[db]
 
+    def read_records(self, db, limit=None):
+        """Потоковый перебор живых записей БД в parser-shape, ОСТАНОВКА после
+        ``limit`` штук (фаза 2: инвентарь полей по ограниченной выборке).
+
+        Без этого метода интроспекция читала бы записи по одному MFN через
+        ``read_record``, что для локального источника материализует ВСЮ БД в кэш на
+        первом же обращении (медленно для крупных БД, напр. морфословарь). Здесь же
+        адаптер читает MST потоково, и мы прерываем итерацию, набрав ``limit`` живых
+        записей — поэтому выборка не зависит от размера базы. Удалённые/пустые
+        адаптер уже пропустил. Выдаёт parser-shape записи (без MFN — инвентарю он не
+        нужен)."""
+        n = 0
+        for mfn, record in self._adapter.read_records(self.path, db):
+            if limit is not None and n >= limit:
+                break
+            yield canonical_to_parsed(mfn, record)
+            n += 1
+
     def read_record(self, db, mfn):
         recs = self._records(db)
         rec = recs.get(mfn)
@@ -543,12 +574,17 @@ class LocalSource:
 
 
 # --------------------------------------------------------------------------- #
-# Интроспекция источника. Перечисляет БД, для каждой считает число записей и
-# строит инвентаризацию полей по выборке N записей (плюс — при наличии — рабочий
-# лист `.wss`), помечая нештатные допполя флагом ``custom``. Возвращает
-# структурированный план (тот же shape, что эндпойнт /api/admin/migrate/inspect).
+# Интроспекция источника — ДВУХФАЗНАЯ (см. модульный docstring, #225).
+#   Фаза 1 (быстрая, без dbs): перечислить БД + на каждую дешёвые метаданные
+#     {code,name,kind,recordCount,readerCount?} — БЕЗ чтения записей.
+#   Фаза 2 (тяжёлая, с dbs=[коды]): для запрошенных БД построить инвентарь полей
+#     по выборке записей, помечая нештатные допполя флагом ``custom``.
+# Возвращает структурированный план (тот же shape, что /api/admin/migrate/inspect).
 # --------------------------------------------------------------------------- #
-INSPECT_SAMPLE_SIZE = 200          # сколько записей сэмплировать на БД для инвентаря полей
+# Верхний ПРЕДЕЛ выборки на БД для инвентаря полей (фаза 2). 300 записей с запасом
+# хватает, чтобы увидеть штатные и нештатные поля/подполя, но не заставляет
+# сканировать всю базу — поэтому даже большая БД интроспектируется быстро.
+INSPECT_SAMPLE_SIZE = 300          # сколько записей сэмплировать на БД для инвентаря полей
 
 
 def _accumulate_field_inventory(parsed, inv):
@@ -612,23 +648,94 @@ def _tag_sort_key(tag):
     return (0, int(s)) if s.isdigit() else (1, s)
 
 
+def _record_count(source, db_code):
+    """Дешёвое число записей БД через ``max_mfn`` (NXTMFN-1) — без чтения записей.
+
+    Один round-trip к управляющей записи; сбой сервера/БД мягко даёт 0 (а не
+    падение всей интроспекции)."""
+    try:
+        return max(0, int(source.max_mfn(db_code) or 0))
+    except Exception:                                   # noqa: BLE001 - сервер/БД недоступны
+        return 0
+
+
+def database_summary(source, db_code, db_name=None):
+    """ФАЗА 1 — дешёвая сводка по ОДНОЙ БД (без сэмплирования полей).
+
+    Возвращает ``{code, name, kind, recordCount, readerCount?}`` — только
+    метаданные, которые берутся из управляющей записи (``max_mfn``) одним
+    round-trip'ом. Поля НЕ читаются, поэтому даже большая БД обрабатывается мгновенно
+    (это и есть быстрый путь, чтобы список из ~50 БД не упирался в HTTP-таймаут)."""
+    kind = db_kind(db_code)
+    record_count = _record_count(source, db_code)
+    item = {
+        'code': db_code,
+        'name': db_name or db_code,
+        'kind': kind,
+        'recordCount': record_count,
+    }
+    if kind == 'rdr':
+        item['readerCount'] = record_count              # 1 запись RDR = 1 читатель
+    return item
+
+
 def introspect_database(source, db_code, db_name=None, sample=INSPECT_SAMPLE_SIZE):
-    """Интроспекция ОДНОЙ БД источника -> элемент плана.
+    """ФАЗА 2 — интроспекция ОДНОЙ БД источника с инвентарём полей.
 
     Возвращает ``{code, name, kind, recordCount, fields:[…], readerCount?}``.
     Считает ``recordCount`` через ``max_mfn`` и строит инвентарь полей по выборке
-    первых ``sample`` читаемых записей. Удалённые/пустые/нечитаемые записи в
-    выборке пропускаются (но в recordCount учитывается max_mfn целиком)."""
-    kind = db_kind(db_code)
-    try:
-        top = int(source.max_mfn(db_code) or 0)
-    except Exception:                                   # noqa: BLE001 - сервер/БД недоступны
-        top = 0
-    record_count = max(0, top)
+    первых ``sample`` читаемых записей (``sample`` ограничен сверху
+    :data:`INSPECT_SAMPLE_SIZE`). Удалённые/пустые/нечитаемые записи в выборке
+    пропускаются (но в recordCount учитывается max_mfn целиком)."""
+    item = database_summary(source, db_code, db_name=db_name)
+    record_count = item['recordCount']
+    kind = item['kind']
+    cap = min(int(sample), INSPECT_SAMPLE_SIZE) if sample else INSPECT_SAMPLE_SIZE
     inv = {}
+    for parsed in _sample_records(source, db_code, record_count, cap):
+        _accumulate_field_inventory(parsed, inv)
+    item['fields'] = _inventory_to_fields(kind, inv)
+    return item
+
+
+def _accepts_limit(fn):
+    """True, если у вызываемого ``fn`` есть параметр ``limit`` (или **kwargs).
+
+    Так потоковый путь выбирается только для источников, чей ``read_records``
+    действительно умеет ограничивать выборку (LocalSource), и не подменяет
+    собой посимвольный перебор там, где сигнатура иная."""
+    try:
+        import inspect
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):                     # noqa: BLE001 - C-ускоренные/без сигнатуры
+        return False
+    if 'limit' in params:
+        return True
+    return any(p.kind == p.VAR_KEYWORD for p in params.values())
+
+
+def _sample_records(source, db_code, record_count, cap):
+    """Выдать до ``cap`` живых разобранных записей БД для инвентаря полей.
+
+    Предпочитает ПОТОКОВЫЙ ``source.read_records(db, limit=cap)`` (его даёт
+    :class:`LocalSource` — так крупная БД не материализуется целиком ради выборки);
+    при отсутствии метода падает на перебор по MFN через ``read_record`` (сетевой
+    источник, FakeIrbis в тестах). Удалённые/пустые/нечитаемые записи пропускаются;
+    в обоих случаях читается не больше ``cap`` живых записей."""
+    streamer = getattr(source, 'read_records', None)
+    if callable(streamer) and _accepts_limit(streamer):
+        sampled = 0
+        for parsed in streamer(db_code, limit=cap):
+            if sampled >= cap:
+                break
+            if _status_is_deleted(parsed.get('status')) or not parsed.get('fields'):
+                continue
+            yield parsed
+            sampled += 1
+        return
     sampled = 0
     for mfn in range(1, record_count + 1):
-        if sampled >= sample:
+        if sampled >= cap:
             break
         try:
             parsed = source.read_record(db_code, mfn)
@@ -636,28 +743,26 @@ def introspect_database(source, db_code, db_name=None, sample=INSPECT_SAMPLE_SIZ
             continue
         if _status_is_deleted(parsed.get('status')) or not parsed.get('fields'):
             continue
-        _accumulate_field_inventory(parsed, inv)
+        yield parsed
         sampled += 1
-    item = {
-        'code': db_code,
-        'name': db_name or db_code,
-        'kind': kind,
-        'recordCount': record_count,
-        'fields': _inventory_to_fields(kind, inv),
-    }
-    if kind == 'rdr':
-        item['readerCount'] = record_count              # 1 запись RDR = 1 читатель
-    return item
 
 
 def introspect(source, dbs=None, sample=INSPECT_SAMPLE_SIZE):
-    """Интроспекция источника -> структурированный план миграции.
+    """Интроспекция источника -> структурированный план миграции (ДВУХФАЗНАЯ, #225).
 
-    Перечисляет БД источника (меню `dbnam` / ``list_databases``); для каждой —
-    число записей и инвентарь полей с флагом ``custom`` на нештатных допполях.
-    ``dbs`` (опц.) ограничивает разбор подмножеством кодов (регистронезависимо);
-    БД вне списка пропускаются. Возвращает ``{'databases': [<db-item>, …]}`` —
-    тот же shape, что отдаёт эндпойнт /api/admin/migrate/inspect."""
+    Перечисляет БД источника (меню `dbnam` / ``list_databases``) и в зависимости
+    от ``dbs`` выбирает фазу:
+
+      * **без ``dbs`` (фаза 1, быстрая):** на каждую БД — только дешёвая сводка
+        ``{code, name, kind, recordCount, readerCount?}`` БЕЗ инвентаря полей
+        (поле ``fields`` отсутствует). Поля не читаются, поэтому список из десятков
+        БД отдаётся быстро и не упирается в HTTP-таймаут.
+      * **с ``dbs=[коды]`` (фаза 2, тяжёлая):** разбирает ТОЛЬКО перечисленные БД
+        (регистронезависимо), для каждой добавляя инвентарь полей ``fields:[…]`` с
+        флагом ``custom`` на нештатных допполях. БД вне списка пропускаются.
+
+    Возвращает ``{'databases': [<db-item>, …]}`` — тот же shape, что отдаёт
+    эндпойнт /api/admin/migrate/inspect."""
     wanted = None
     if dbs:
         wanted = {str(d).strip().upper() for d in dbs if str(d).strip()}
@@ -668,8 +773,13 @@ def introspect(source, dbs=None, sample=INSPECT_SAMPLE_SIZE):
             continue
         if wanted is not None and code.strip().upper() not in wanted:
             continue
-        plan.append(introspect_database(source, code, db_name=entry.get('name'),
-                                        sample=sample))
+        if wanted is None:
+            # Фаза 1: быстрая сводка без сэмплирования полей.
+            plan.append(database_summary(source, code, db_name=entry.get('name')))
+        else:
+            # Фаза 2: полный инвентарь полей для запрошенных БД.
+            plan.append(introspect_database(source, code, db_name=entry.get('name'),
+                                            sample=sample))
     return {'databases': plan}
 
 
@@ -929,13 +1039,17 @@ def build_arg_parser():
     p.add_argument('--source-path', help='DataPath к файлам БД (local mode, без сервера)')
     p.add_argument('--workstation', default='A', help='ИРБИС workstation code (default A)')
     p.add_argument('--target-tenant', help='target Biblio tenant slug (нужен для миграции)')
-    p.add_argument('--dbs', default='IBIS,RDR',
-                   help='comma-separated source DBs to migrate (default IBIS,RDR)')
+    p.add_argument('--dbs', default=None,
+                   help='список БД через запятую. Для миграции — что переносить '
+                        '(по умолчанию IBIS,RDR). Для --introspect — фаза 2: '
+                        'инвентарь полей ТОЛЬКО по этим БД; без --dbs --introspect '
+                        'даёт быстрый список БД с числом записей (фаза 1)')
     p.add_argument('--catalog-db', default='IBIS',
                    help='target catalog base name (default IBIS)')
     p.add_argument('--introspect', action='store_true',
-                   help='снять и напечатать план источника (БД + инвентарь полей с '
-                        'флагом custom) и выйти — НИЧЕГО не мигрируя')
+                   help='снять и напечатать план источника и выйти — НИЧЕГО не '
+                        'мигрируя. Без --dbs — быстрый список БД (фаза 1); с --dbs — '
+                        'инвентарь полей с флагом custom по этим БД (фаза 2)')
     p.add_argument('--dry-run', action='store_true',
                    help='read + map + report only; write NOTHING to the target')
     p.add_argument('--limit', type=int, default=None,
@@ -956,12 +1070,20 @@ def _open_source_from_args(args):
                        args.password, workstation=args.workstation)
 
 
+def _parse_dbs_arg(raw):
+    """``--dbs`` -> кортеж кодов (или () если не задано). Разделители ',' и ';'."""
+    if not raw:
+        return ()
+    return tuple(d.strip() for d in raw.replace(';', ',').split(',') if d.strip())
+
+
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
-    dbs = tuple(d.strip() for d in args.dbs.replace(';', ',').split(',') if d.strip())
+    dbs = _parse_dbs_arg(args.dbs)
     source = _open_source_from_args(args)
 
     # Режим интроспекции: печатаем план и выходим (ничего не мигрируем).
+    # Без --dbs -> фаза 1 (быстрый список); с --dbs -> фаза 2 (инвентарь полей).
     if args.introspect:
         try:
             plan = introspect(source, dbs=dbs or None)
@@ -974,11 +1096,12 @@ def main(argv=None):
 
     if not args.target_tenant:
         raise SystemExit('миграция требует --target-tenant (или используйте --introspect)')
+    migrate_dbs = dbs or ('IBIS', 'RDR')        # миграция по умолчанию переносит IBIS,RDR
     targets = Targets.in_memory(catalog_db=args.catalog_db, tenant=args.target_tenant)
     log = (lambda m: print(m, file=sys.stderr)) if args.verbose else None
     migrator = Migrator(source, targets, dry_run=args.dry_run, log=log)
     try:
-        report = migrator.run(dbs=dbs, catalog_db=args.catalog_db, limit=args.limit)
+        report = migrator.run(dbs=migrate_dbs, catalog_db=args.catalog_db, limit=args.limit)
     finally:
         close = getattr(source, 'close', None)
         if callable(close):
