@@ -39,6 +39,9 @@ from access import acquisition as _acquisition
 from access import bookprovision as _bookprovision
 from access import demo_requests as _demo_requests
 from access.catalog import CatalogStore
+from access import fulltext as _fulltext
+from access import rights as _rights
+from access import lich as _lich
 
 # Default tenant slug when running single-tenant / sqlite dev (no control plane).
 DEFAULT_TENANT = os.environ.get('DEFAULT_TENANT', 'public')
@@ -534,6 +537,43 @@ class Api:
                 bp_db, catalog=self.catalog)
         except Exception:
             self.bookprovision = None
+
+        # ---- Полный текст + права + личный кабинет ПТ (кластер 7) ----
+        # Три связанных движка обслуживают эндпойнт /api/fulltext (ребра 7.1/7.2/
+        # 7.3/7.5):
+        #   * fulltext  (FulltextRegistry) — реестр артефактов ПТ записи (951/953/
+        #     955). Резолвит их из СВОЕГО стора (env FULLTEXT_DB) И из каталожной
+        #     записи через тот же catalog-handle (ребро 7.1). Каждый 955-артефакт
+        #     несёт rights_template (955^B) — вход для гейтинга прав.
+        #   * rights    (RightService)  — по категории читателя и шаблону прав
+        #     (резолв 955^B через catalog-handle → стор RightStore, env RIGHT_DB)
+        #     считает уровень доступа deny/view/download и постраничный лимит ^F
+        #     (рёбра 7.2/7.3). Пустой шаблон ⇒ полный доступ (download).
+        #   * lich      (LichService)   — личный кабинет ПТ читателя (env LICH_DB):
+        #     счётчик скачанных страниц (поле 4) и остаток квоты download_budget =
+        #     RIGHT.^F − LICH.v4 (ребро 7.5), привязан к rights-seam.
+        # Все три — СВОИ сторы, отдельные от живого ИРБИС (та же посадка, что у
+        # circulation/holds/bookprovision, #222). Каталог-handle общий (тот же
+        # CatalogStore, что резолвит 955/955^B). Best-effort: сбой сборки не валит
+        # API (эндпойнт тогда деградирует — пустые артефакты / без квоты).
+        try:
+            ft_db = os.environ.get('FULLTEXT_DB', os.path.join(here, 'fulltext.db'))
+            self.fulltext = _fulltext.FulltextRegistry(
+                store=_fulltext.FulltextStore(ft_db), catalog=self.catalog)
+        except Exception:
+            self.fulltext = None
+        try:
+            right_db = os.environ.get('RIGHT_DB', os.path.join(here, 'right.db'))
+            self.rights = _rights.RightService(
+                store=_rights.RightStore(right_db), catalog=self.catalog)
+        except Exception:
+            self.rights = None
+        try:
+            lich_db = os.environ.get('LICH_DB', os.path.join(here, 'lich.db'))
+            self.lich = _lich.LichService(
+                _lich.LichStore(lich_db), rights=self.rights)
+        except Exception:
+            self.lich = None
 
         # ---- Заявки на демодоступ (публичная страница продукта, #226) ----
         # Свой стор заявок (env DEMO_DB; по умолчанию файл рядом с access.db,
@@ -1928,6 +1968,197 @@ class Api:
         except _bookprovision.BookProvisionError as e:
             return 404, err('not_found', str(e))
 
+    # ---- Готовые движки связности: linked / fulltext / bp-provision -------- #
+    # Три эндпойнта поверх УЖЕ landed движков (их сами не правим):
+    #   * /api/linked    — обход связи иерархии записей (catalog.linked_records);
+    #   * /api/fulltext  — артефакты ПТ + уровень доступа (fulltext × rights × lich);
+    #   * /api/bp/provision — быстрый отчёт ККО (bookprovision.*_provision).
+    # Первые два — ПУБЛИЧНЫЕ (как /api/record): тот же search/record.read-грант +
+    # public-db guard, чтобы гость/читатель не дотянулся до служебной/ПДн БД.
+    # /api/bp/provision — STAFF-grant (КО-функция, не публичный).
+
+    def linked(self, session, db, mfn, kind):
+        """GET /api/linked/{db}/{mfn}?kind=children|host — обход связи иерархии
+        издания (статья↔журнал/сборник, номер↔журнал, том↔сводная).
+
+        Публичный (как /api/record): ``record.read``-грант + public-db guard, так
+        что гость/читатель не обойдёт связь по непубличной/ПДн БД. Делегирует в
+        ``catalog.linked_records(db, mfn, kind)`` и проецирует результат на контракт
+        фронта ``{db, mfn, kind, total, items:[{mfn, brief}]}`` (служебное поле
+        ``keys`` движка наружу не отдаём). Мягкая деградация: нет каталог-движка /
+        нет записи / нет ключей связи → ``{total:0, items:[]}`` (никогда не 500)."""
+        self._guard(session, 'record.read', db, 'read')
+        self._public_db_guard(session, db)
+        kind = (kind or 'children').strip().lower()
+        if kind not in ('children', 'host', 'parent'):
+            kind = 'children'
+        result = {'total': 0, 'items': [], 'kind': kind}
+        if self.catalog is not None:
+            try:
+                result = self.catalog.linked_records(db, mfn, kind)
+            except Exception:
+                result = {'total': 0, 'items': [], 'kind': kind}
+        items = [{'mfn': it.get('mfn'), 'brief': it.get('brief', '')}
+                 for it in (result.get('items') or [])]
+        return 200, ok({'db': db, 'mfn': mfn, 'kind': result.get('kind', kind),
+                        'total': result.get('total', 0), 'items': items})
+
+    def _reader_category(self, session):
+        """Категория читателя (RDR поле 50, код по 50.mnu) для текущей сессии, или
+        None. Берётся ТОЛЬКО для читательской сессии — по её ``rdr_mfn`` читаем
+        живую запись RDR и достаём поле 50. Гость/staff → None (категории нет; для
+        прав это значит «правило категории не совпало»). Никогда не бросает: сбой
+        чтения RDR деградирует к None (rights трактует как deny по шаблону / full
+        при пустом шаблоне)."""
+        if not session or session.get('kind') != 'reader':
+            return None
+        mfn = session.get('rdr_mfn')
+        if not mfn:
+            return None
+        try:
+            rec = self.irbis.read_record('RDR', mfn)
+        except (IrbisError, OSError, socket.error):
+            return None
+        f = field(rec, '50')
+        if not f:
+            return None
+        val = (f.get('value') or '').strip()
+        if not val:
+            # категория могла лечь в подполе (редкий РЛ) — первое непустое
+            for sub in (f.get('subfields') or {}).values():
+                if sub and str(sub).strip():
+                    val = str(sub).strip()
+                    break
+        return val or None
+
+    def fulltext_record(self, session, db, mfn):
+        """GET /api/fulltext/{db}/{mfn} — артефакты полного текста записи + уровень
+        доступа категории текущего пользователя.
+
+        Публичный (как /api/record): ``record.read``-грант + public-db guard.
+
+        ``artifacts`` — из ``fulltext.artifacts_for(db, mfn)`` (стор + каталог),
+        спроецированы на контракт фронта ``{kind, ref, pages, rightsTemplate}``.
+
+        ``access`` собирается из связки rights×lich (ребра 7.2/7.3/7.5):
+          * ``level``  = ``rights.access_level(категория, db, mfn)`` —
+            deny/view/download по 955^B-шаблону (пустой шаблон ⇒ download);
+          * ``pageLimit`` = ``rights.page_limit(категория, db, mfn)`` (None ⇒ опущен);
+          * ``downloadBudget`` = ``lich.download_budget(билет, "db/mfn", категория,
+            db, mfn)`` — остаток квоты скачивания ТОЛЬКО для читательской сессии
+            (квота персональна, привязана к билету). Гость — уровень по rights без
+            квоты (downloadBudget опущен). ПДн: чужой LICH-счётчик не светим —
+            бюджет считается строго по билету текущего читателя.
+
+        Мягкая деградация: нет движков / нет данных → пустые ``artifacts`` и
+        безопасный ``access`` (level из rights, иначе download), никогда не 500."""
+        self._guard(session, 'record.read', db, 'read')
+        self._public_db_guard(session, db)
+        # 1) Артефакты ПТ (ребро 7.1) — проекция на контракт фронта.
+        artifacts = []
+        if self.fulltext is not None:
+            try:
+                for art in self.fulltext.artifacts_for(db, mfn):
+                    artifacts.append({
+                        'kind': art.get('kind'),
+                        'ref': art.get('ref'),
+                        'pages': art.get('pages'),
+                        'rightsTemplate': art.get('rights_template'),
+                    })
+            except Exception:
+                artifacts = []
+        # 2) Уровень доступа (рёбра 7.2/7.3) — по категории читателя и 955^B-шаблону.
+        category = self._reader_category(session)
+        level = 'download'          # пустой шаблон ⇒ полный доступ (безопасный дефолт)
+        page_limit = None
+        if self.rights is not None:
+            try:
+                level = self.rights.access_level(category, db=db, mfn=mfn)
+            except Exception:
+                level = 'download'
+            try:
+                page_limit = self.rights.page_limit(category, db=db, mfn=mfn)
+            except Exception:
+                page_limit = None
+        access = {'level': level}
+        if page_limit is not None:
+            access['pageLimit'] = page_limit
+        # 3) Остаток квоты скачивания (ребро 7.5) — ТОЛЬКО для читателя (по билету).
+        if session and session.get('kind') == 'reader' and self.lich is not None:
+            ticket = (session.get('actor') or '')[3:]   # 'RI=<ticket>' → '<ticket>'
+            if ticket:
+                try:
+                    budget = self.lich.download_budget(
+                        ticket, '%s/%s' % (db, mfn),
+                        reader_category=category, db=db, mfn=mfn)
+                except Exception:
+                    budget = None
+                if budget is not None:
+                    access['downloadBudget'] = budget
+        return 200, ok({'db': db, 'mfn': mfn, 'artifacts': artifacts,
+                        'access': access})
+
+    @staticmethod
+    def _bp_provision_report(raw, *, scope, subject):
+        """Спроецировать сырой отчёт движка (discipline/specialty/aggregate
+        provision) на лёгкий контракт фронта ``BpProvisionReport``.
+
+        Возвращает СУПЕРСЕТ: исходные поля движка (для деска) + лёгкие синонимы,
+        которые читает информер фронта: ``scope`` (discipline|specialty|faculty),
+        ``subject`` (запрошенный id), ``coefficient`` (= average_kko), ``norm``
+        (kko_norm, если есть), ``status`` (ok|deficit), ``copies`` (total_exemplars,
+        если есть), ``shortfall``, ``bindings``. ``status`` — ``deficit`` при
+        under-provisioned (bool для дисциплины; непустой список для специальности/
+        агрегата), иначе ``ok``."""
+        out = dict(raw or {})
+        out['scope'] = scope
+        out['subject'] = subject
+        avg = raw.get('average_kko')
+        out['coefficient'] = avg
+        if raw.get('kko_norm') is not None:
+            out['norm'] = raw.get('kko_norm')
+        if 'total_exemplars' in raw:
+            out['copies'] = raw.get('total_exemplars')
+        under = raw.get('under_provisioned')
+        is_deficit = bool(under) if isinstance(under, bool) else bool(under)
+        out['status'] = 'deficit' if is_deficit else 'ok'
+        return out
+
+    def bp_provision(self, session, discipline=None, specialty=None,
+                     faculty=None, normalize=False):
+        """GET /api/bp/provision?discipline=|specialty=|faculty= — быстрый отчёт
+        ККО для деска Книгообеспеченности. STAFF-grant (КО-функция, не публичный).
+
+        Ровно один параметр scope:
+          * ``discipline=<id>`` → ``bookprovision.discipline_provision``;
+          * ``specialty=<id>``  → ``bookprovision.specialty_provision``;
+          * ``faculty=<id>``    → ``bookprovision.provision_aggregate(faculty_id=)``.
+        Результат проецируется на ``BpProvisionReport`` (см. ``_bp_provision_report``).
+        Неизвестный id → 404 (не 500). Нет ни одного параметра → 400."""
+        self._require_staff(session)
+        self._guard(session, 'bp.read', self.cfg.db_default, 'read')
+        if self.bookprovision is None:
+            return 503, err('unavailable', 'book-provision engine unavailable')
+        try:
+            if discipline:
+                raw = self.bookprovision.discipline_provision(
+                    int(discipline), normalize=normalize)
+                return 200, ok(self._bp_provision_report(
+                    raw, scope='discipline', subject=str(discipline)))
+            if specialty:
+                raw = self.bookprovision.specialty_provision(
+                    int(specialty), normalize=normalize)
+                return 200, ok(self._bp_provision_report(
+                    raw, scope='specialty', subject=str(specialty)))
+            if faculty:
+                raw = self.bookprovision.provision_aggregate(
+                    faculty_id=int(faculty), normalize=normalize)
+                return 200, ok(self._bp_provision_report(
+                    raw, scope='faculty', subject=str(faculty)))
+        except _bookprovision.BookProvisionError as e:
+            return 404, err('not_found', str(e))
+        return 400, err('bad_request', 'discipline, specialty or faculty required')
+
     # ---- Циркуляция / выдача (circulation desk) — staff-only (#185) -------- #
     # The circulation workstation over the existing CirculationEngine. State lives
     # in the engine's OWN sqlite store (loan/hold/fine, field-40 formulary model);
@@ -2999,6 +3230,15 @@ class Api:
                 norm = query.get('normalize', ['0'])[0] in ('1', 'true', 'yes')
                 return self.bp_specialty_provision(
                     session, int(query.get('id', ['0'])[0]), norm)
+            # Быстрый отчёт ККО для деска (discipline|specialty|faculty). Staff-only.
+            if method == 'GET' and path == '/api/bp/provision':
+                norm = query.get('normalize', ['0'])[0] in ('1', 'true', 'yes')
+                return self.bp_provision(
+                    session,
+                    discipline=(query.get('discipline', [''])[0] or '').strip(),
+                    specialty=(query.get('specialty', [''])[0] or '').strip(),
+                    faculty=(query.get('faculty', [''])[0] or '').strip(),
+                    normalize=norm)
             # ---- АРМ Администратор — staff-only, admin.users/admin.db (#187) ----
             if method == 'GET' and path == '/api/admin/users':
                 return self.admin_users(session)
@@ -3079,6 +3319,14 @@ class Api:
                 if parts[1] == 'cover':
                     return self.cover(session, db, mfn)
                 return self.render(session, db, mfn, query.get('fmt', ['@brief'])[0])
+            # ---- Готовые движки связности: linked / fulltext (публичные) ----
+            # /api/linked/{db}/{mfn}?kind=children|host — обход связи иерархии.
+            if method == 'GET' and len(parts) == 4 and parts[0] == 'api' and parts[1] == 'linked':
+                return self.linked(session, parts[2], int(parts[3]),
+                                   query.get('kind', ['children'])[0])
+            # /api/fulltext/{db}/{mfn} — артефакты ПТ + уровень доступа.
+            if method == 'GET' and len(parts) == 4 and parts[0] == 'api' and parts[1] == 'fulltext':
+                return self.fulltext_record(session, parts[2], int(parts[3]))
             if len(parts) == 4 and parts[0] == 'api' and parts[1] == 'resource':
                 return self.resource(session, parts[2], parts[3])
             return 404, err('not_found', 'unknown route')
