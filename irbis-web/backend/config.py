@@ -74,6 +74,12 @@ class Config:
         # that HAS a password is always checked, regardless of the flag.
         self.require_reader_password = _envbool(
             os.environ.get('REQUIRE_READER_PASSWORD'), default=True)
+        # Demo/QA reader (OFF by default). When BOTH are set, a reader may sign in to
+        # the portal with this ticket+password WITHOUT an RDR record — never touches
+        # IRBIS and never relaxes real-reader auth above. For pilots/demos only;
+        # leave unset in a hardened deployment.
+        self.test_reader_ticket = os.environ.get('TEST_READER_TICKET', '').strip()
+        self.test_reader_pass = os.environ.get('TEST_READER_PASS', '')
         # App
         self.app_host = os.environ.get('APP_HOST', '127.0.0.1')
         self.app_port = int(os.environ.get('APP_PORT', '8080'))
