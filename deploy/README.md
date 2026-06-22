@@ -107,6 +107,52 @@ docker compose exec backend python -m access.provision <slug>
   `http-01` webroot). Then enable HSTS (uncomment the `Strict-Transport-Security`
   header in `proxy/nginx.conf`).
 
+## Backups & restore
+
+`pg_dump`-based backup/restore of the `db` service, writing into a `backups`
+named volume (survives container recreate, stays out of git/host):
+
+```sh
+sh deploy/backup/pg_backup.sh                 # one timestamped dump → backups volume
+KEEP=14 sh deploy/backup/pg_backup.sh         # + prune all but the newest 14
+sh deploy/backup/pg_restore.sh                # list available dumps
+sh deploy/backup/pg_restore.sh <dump-file>    # restore (prompts; FORCE=1 to skip)
+```
+
+Test a restore without touching live data (rehearse into a throwaway DB):
+
+```sh
+FORCE=1 RESTORE_DB=irbis_restore_test sh deploy/backup/pg_restore.sh <dump-file>
+docker compose exec db psql -U postgres -d irbis_restore_test -c "\dn"   # verify
+docker compose exec db dropdb -U postgres irbis_restore_test             # clean up
+```
+
+Scheduling (cron / Task Scheduler), 3-2-1 off-box copies, and the monthly
+restore-test cadence are documented in `pg_backup.sh` and in
+[`docs/design/PILOT_READINESS.md`](../docs/design/PILOT_READINESS.md) → "Backups".
+> Single-node pilot = nightly logical dump (RPO up to ~24h, no PITR yet); see
+> [`SPEC_sre.md` §3.2](../docs/design/specs/platform/SPEC_sre.md).
+
+## Healthchecks
+
+All three services report health (`docker compose ps` → `healthy`), and
+orchestration waits on dependencies (`proxy` waits for `backend` healthy;
+`backend` waits for `db` healthy):
+
+- `db` — `pg_isready` (postgres:16).
+- `backend` — GET `/api/health` via the image's own `python` (the slim image has
+  no curl/wget); unauthenticated, returns 200 even when ИРБИС is down.
+- `proxy` — `curl -fsk https://localhost/` (nginx:alpine ships curl; `-k` for the
+  self-signed dev cert).
+
+## Going to a real pilot
+
+See [`docs/design/PILOT_READINESS.md`](../docs/design/PILOT_READINESS.md) — a
+concrete go-live checklist (real secrets, real TLS cert, first-tenant
+provisioning, backup schedule + tested restore, monitoring/log access, data
+migration, rollback plan) that is honest about what is pilot-ready vs not (no HA,
+no PITR, no certified СКЗИ, optional live-ИРБИС bridge).
+
 ## Prod hardening checklist
 
 - [ ] **Secrets:** set strong `POSTGRES_PASSWORD` + `APP_SECRET`; source `.env`
@@ -128,11 +174,13 @@ docker compose exec backend python -m access.provision <slug>
 
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | The stack: `db` + `backend` + `proxy`, volumes, healthcheck |
+| `docker-compose.yml` | The stack: `db` + `backend` + `proxy`, volumes, healthchecks (all 3 services) |
 | `Dockerfile.backend` | Multi-stage: build SPA → Python runtime serving API + dist |
 | `Dockerfile.frontend` | SPA artifact build (alternative proxy-serves-dist topology; not in default `up`) |
 | `proxy/nginx.conf` | TLS termination + reverse proxy to backend |
-| `proxy/gen-cert.sh` | Generate a dev self-signed cert |
+| `proxy/gen-cert.sh` | Generate a dev self-signed cert (cross-platform: Linux/macOS + Windows git-bash) |
+| `backup/pg_backup.sh` | `pg_dump` the `db` service to a timestamped file in the `backups` volume |
+| `backup/pg_restore.sh` | Restore a dump (live DB or a throwaway DB for restore-tests) |
 | `.env.example` | Every env var with safe dev defaults + CHANGE IN PROD markers |
 | `.dockerignore` | Keep secrets / state / build output out of image layers |
 ```

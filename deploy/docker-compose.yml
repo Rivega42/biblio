@@ -19,6 +19,7 @@
 #   pgdata        — PostgreSQL data (persists across recreate)
 #   backend-data  — runtime sqlite stores for engines that still use sqlite
 #                   (notify/catalog/circ/acq/bp); access goes to Postgres.
+#   backups       — pg_dump output (see deploy/backup/pg_backup.sh + pg_restore.sh)
 #
 # Secrets are env-driven only (.env, gitignored). Nothing sensitive is committed.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +34,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-irbis_access}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # pg_dump output lands here (deploy/backup/pg_backup.sh writes /backups/*.dump).
+      # A named volume keeps dumps off the host filesystem and out of git.
+      - backups:/backups
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-irbis_access}"]
       interval: 10s
@@ -81,19 +85,38 @@ services:
     # network. Uncomment to hit the backend directly during dev:
     # ports:
     #   - "127.0.0.1:8080:8080"
+    healthcheck:
+      # GET /api/health (unauthenticated; returns 200 even when ИРБИС is down).
+      # The python:3.12-slim runtime has neither curl nor wget, so probe with the
+      # app's own interpreter (stdlib urllib) — no extra packages baked into the image.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=4).status==200 else 1)\""]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 40s
 
   proxy:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./proxy/certs:/etc/nginx/certs:ro
+    healthcheck:
+      # curl is present in nginx:alpine. -k: self-signed dev cert is expected;
+      # we assert TLS terminates + the proxy answers, not cert validity.
+      test: ["CMD-SHELL", "curl -fsk https://localhost/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 15s
 
 volumes:
   pgdata:
   backend-data:
+  backups:
