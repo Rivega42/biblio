@@ -211,6 +211,23 @@ CREATE TABLE IF NOT EXISTS acq_inventory (
   UNIQUE(inv_no)
 );
 CREATE INDEX IF NOT EXISTS acq_inventory_receipt_idx ON acq_inventory(receipt_id);
+-- КСУ выбытия (книга суммарного учёта — часть «исключение»). Списание ставит
+-- №КСУ выбытия (910^V), кол-во (910^X) и статус «списан» 910^A=6 на экземпляр
+-- (INTEGRATION_MAP ребро 5.2 / кластер 1.5). Каждая строка — один выбывший экз.
+-- с причиной (reason: lost/worn/…) и обратной ссылкой на КСУ поступления, если
+-- инв.№ известен в acq_inventory (cross-link «партия поступления ↔ выбытие»).
+CREATE TABLE IF NOT EXISTS acq_disposal (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  inv_no TEXT NOT NULL,                -- 910^b выбывшего экземпляра
+  ksu_disp_no TEXT NOT NULL,           -- 910^V № КСУ выбытия (акт списания)
+  reason TEXT NOT NULL DEFAULT 'lost', -- причина (lost/worn/transfer/…)
+  ksu_recv_no TEXT,                    -- КСУ поступления (если инв.№ известен)
+  amount REAL NOT NULL DEFAULT 1,      -- 910^X кол-во (1 экз. на строку)
+  ref TEXT,                            -- внешняя ссылка (loan_id / акт)
+  created REAL NOT NULL,
+  UNIQUE(inv_no, ksu_disp_no)          -- идемпотентность: один экз. на акт один раз
+);
+CREATE INDEX IF NOT EXISTS acq_disposal_ksu_idx ON acq_disposal(ksu_disp_no);
 """
 
 
@@ -341,6 +358,51 @@ class AcquisitionStore:
             'SELECT 1 FROM acq_inventory WHERE inv_no=?',
             (inv_no,)).fetchone() is not None
 
+    def receipt_ksu_for_inv(self, inv_no):
+        """КСУ поступления (910^U) of the inventory number, or None if unknown.
+
+        The cross-link a disposal uses to tie an выбытие back to the партия
+        поступления (acq_inventory.ksu_no)."""
+        r = self._conn().execute(
+            'SELECT ksu_no FROM acq_inventory WHERE inv_no=?',
+            (inv_no,)).fetchone()
+        return r['ksu_no'] if r else None
+
+    # ---- disposals (КСУ выбытия / списание) ------------------------------- #
+    def add_disposal(self, inv_no, ksu_disp_no, reason='lost',
+                     ksu_recv_no=None, amount=1, ref=None):
+        """Record one выбывший экземпляр in the КСУ выбытия (idempotent per
+        ``(inv_no, ksu_disp_no)``). Returns the disposal row dict, or the existing
+        one if this exact (экз., акт) pair was already written."""
+        c = self._conn()
+        existing = c.execute(
+            'SELECT * FROM acq_disposal WHERE inv_no=? AND ksu_disp_no=?',
+            (inv_no, ksu_disp_no)).fetchone()
+        if existing is not None:
+            return dict(existing)
+        cur = c.execute(
+            'INSERT INTO acq_disposal(inv_no,ksu_disp_no,reason,ksu_recv_no,'
+            'amount,ref,created) VALUES(?,?,?,?,?,?,?)',
+            (inv_no, ksu_disp_no, reason, ksu_recv_no, amount, ref, time.time()))
+        c.commit()
+        r = c.execute('SELECT * FROM acq_disposal WHERE id=?',
+                      (cur.lastrowid,)).fetchone()
+        return dict(r)
+
+    def disposal_for_inv(self, inv_no):
+        """All КСУ-выбытия rows for an inventory number (creation order)."""
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM acq_disposal WHERE inv_no=? ORDER BY id',
+            (inv_no,)).fetchall()]
+
+    def disposal_summary(self, ksu_disp_no):
+        """Aggregate of one акт списания: copies + total amount (88^F/^X rollup)."""
+        r = self._conn().execute(
+            'SELECT COUNT(*) AS copies, COALESCE(SUM(amount),0) AS amount '
+            'FROM acq_disposal WHERE ksu_disp_no=?', (ksu_disp_no,)).fetchone()
+        return {'ksu_disp_no': ksu_disp_no, 'copies': r['copies'],
+                'amount': float(r['amount'])}
+
 
 # --------------------------------------------------------------------------- #
 # Title key — the new-vs-existing resolver (ToCat dedup).
@@ -375,15 +437,29 @@ class AcquisitionEngine:
     ``catalog_db`` is the base (БД) whose ЭК ToCat writes into (default ``IBIS``).
     ``inv_prefix`` seeds auto-generated inventory numbers when a receipt doesn't
     supply explicit ones (910^b = MIN+1 auto-number, ACQUISITION_FUNCTIONS P-13).
+
+    ``circulation`` (optional) is an :class:`access.circulation.CirculationEngine`
+    handle — the cluster-1 «поступление → выдаётся» seam (INTEGRATION_MAP, ребро
+    Комплектование↔Книговыдача). When wired, :meth:`receive` confirms each freshly
+    received inventory number is **lendable now** through circulation
+    (``circulation.register_acquired_item``): a copy that lands in the фонд is
+    immediately available for checkout, closing the gap between поступление and
+    книговыдача. The handle is used best-effort and only for the post-receipt
+    confirmation — with no handle the engine is fully standalone (back-compat,
+    mirrors the ``catalog=`` seam).
     """
 
     def __init__(self, store=None, catalog=None, catalog_db=CATALOG_DB,
-                 worklist=DEFAULT_WORKLIST, inv_prefix='INV-'):
+                 worklist=DEFAULT_WORKLIST, inv_prefix='INV-', circulation=None):
         self.store = store or AcquisitionStore(':memory:')
         self.catalog = catalog
         self.catalog_db = catalog_db
         self.worklist = worklist
         self.inv_prefix = inv_prefix
+        # Optional Circulation seam (INTEGRATION_MAP ребро Комплектование↔Книговыдача).
+        # When wired, a received copy is confirmed lendable through circulation so
+        # поступление → книговыдача is closed. Never a hard dependency.
+        self.circulation = circulation
 
     # ---- order (заказ) ---------------------------------------------------- #
     def create_order(self, title, author=None, supplier=None, copies=1,
@@ -451,6 +527,7 @@ class AcquisitionEngine:
               'sum': <batch sum>,
               'catalog_mfn': <bib mfn or None>,      # None when standalone
               'catalog_action': 'created'|'updated'|None,
+              'lendable': [inv_no, ...],             # copies circ confirms lendable
             }
         """
         order = self.store.get_order(order_id)
@@ -494,6 +571,10 @@ class AcquisitionEngine:
             self.store.set_receipt_catalog_mfn(receipt['id'], catalog_mfn)
             receipt = self.store.get_receipt(receipt['id'])
 
+        # 7. Поступление → книговыдача: confirm each received copy is lendable now
+        # through circulation (cluster-1 seam). Best-effort, optional handle.
+        lendable = self._confirm_lendable(inv_numbers)
+
         return {
             'receipt': receipt,
             'ksu': ksu,
@@ -502,7 +583,32 @@ class AcquisitionEngine:
             'sum': batch_sum,
             'catalog_mfn': catalog_mfn,
             'catalog_action': catalog_action,
+            'lendable': lendable,
         }
+
+    def _confirm_lendable(self, inv_numbers):
+        """Confirm each received inventory number is lendable through circulation.
+
+        The Комплектование↔Книговыдача seam: a copy that just landed in the фонд
+        must be checkout-ready immediately. When a ``circulation`` handle is wired,
+        ask it to register/confirm each ``inv_no`` (``register_acquired_item``);
+        the engine collects the inv-numbers circulation accepted as lendable.
+        Best-effort: with no handle (standalone) — or any circulation error — the
+        receipt still stands; we just report an empty (or partial) lendable list."""
+        if self.circulation is None:
+            return []
+        confirmed = []
+        reg = getattr(self.circulation, 'register_acquired_item', None)
+        if reg is None:
+            return []
+        for inv in inv_numbers:
+            try:
+                if reg(inv, catalog_db=self.catalog_db):
+                    confirmed.append(inv)
+            except Exception:
+                # one bad copy must not break the receipt or the rest of the batch
+                continue
+        return confirmed
 
     def _resolve_inventory(self, inv_numbers, copies):
         """Return ``copies`` inventory numbers — explicit ones, or auto MIN+1.
@@ -644,6 +750,34 @@ class AcquisitionEngine:
     def ksu_summary(self, ksu_no):
         """The КСУ summary row (88^E titles / 88^F copies / 88^G sum + act)."""
         return self.store.get_ksu(ksu_no)
+
+    # ---- disposal / списание (cluster 5.2: Книговыдача → КСУ выбытия) ------ #
+    def record_disposal(self, inv_no, ksu_disp_no, reason='lost', ref=None,
+                        amount=1):
+        """Record a выбытие (списание) of one inventory number into the КСУ выбытия.
+
+        The Книговыдача→Комплектование (КСУ) seam (INTEGRATION_MAP ребро 5.2):
+        circulation, on a confirmed loss / write-off, calls this so the lost copy
+        is reflected in the acquisition выбытие ledger (910^V № КСУ выбытия, 910^X
+        кол-во, status «списан»). The original поступление КСУ (910^U) is
+        cross-linked automatically when the inventory number is known to
+        acquisition's inventory ledger (re-supply traceability партия↔выбытие).
+
+        Idempotent per ``(inv_no, ksu_disp_no)``: re-recording the same copy on the
+        same акт returns the existing row (no double count). Returns the disposal
+        row dict."""
+        if not inv_no or not str(inv_no).strip():
+            raise AcquisitionError('disposal requires an inventory number')
+        if not ksu_disp_no or not str(ksu_disp_no).strip():
+            raise AcquisitionError('disposal requires a КСУ выбытия number')
+        ksu_recv = self.store.receipt_ksu_for_inv(str(inv_no))
+        return self.store.add_disposal(
+            str(inv_no), str(ksu_disp_no), reason=reason, ksu_recv_no=ksu_recv,
+            amount=amount, ref=ref)
+
+    def disposal_summary(self, ksu_disp_no):
+        """Rollup of one акт списания (copies + total amount). See store method."""
+        return self.store.disposal_summary(ksu_disp_no)
 
 
 # --------------------------------------------------------------------------- #

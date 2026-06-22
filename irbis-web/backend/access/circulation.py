@@ -334,6 +334,17 @@ class CirculationStore:
             'SELECT COUNT(*) AS n FROM loan WHERE reader=? AND returned=0 '
             'AND lost_status!=?', (reader_id, 'lost')).fetchone()['n']
 
+    def item_on_hand_count(self, item):
+        """Number of on-hand (not returned, not lost) loans of ``item`` (910^b).
+
+        The read book-provision uses to decide whether an issued copy still
+        belongs to the фонд (INTEGRATION_MAP ребро 4.4/4.7): a copy on a reader's
+        hands is provisioned, just in use. A confirmed-lost copy has left the фонд
+        (``lost_status='lost'``) and is excluded."""
+        return self._conn().execute(
+            'SELECT COUNT(*) AS n FROM loan WHERE item=? AND returned=0 '
+            'AND lost_status!=?', (item, 'lost')).fetchone()['n']
+
     def open_overdue_loans(self, today_epoch, grace_days=0):
         """On-hand loans past ``due + grace`` (basis for accrual / lost scan)."""
         cutoff = today_epoch - grace_days * SECONDS_PER_DAY
@@ -474,7 +485,7 @@ class CirculationEngine:
 
     def __init__(self, store=None, policy=None, notifier=None, tenant='public',
                  catalog=None, catalog_db='IBIS', notifications=None,
-                 staff_recipient='staff'):
+                 staff_recipient='staff', acquisition=None):
         self.store = store or CirculationStore(':memory:')
         self.policy = policy or default_policy(tenant)
         # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
@@ -497,6 +508,44 @@ class CirculationEngine:
         # no handle the engine stays fully standalone (back-compat).
         self.catalog = catalog
         self.catalog_db = catalog_db
+        # Optional Acquisition (КСУ) seam (INTEGRATION_MAP ребро 5.2:
+        # Книговыдача→Комплектование). When an ``acquisition``
+        # (access.acquisition.AcquisitionEngine) handle is wired, a confirmed loss
+        # (``mark_lost(confirm=True)``) is reflected into the acquisition КСУ
+        # выбытия: the lost copy is written off as выбытие (910^V/^X, статус
+        # «списан»). Best-effort, optional — with no handle circulation stays fully
+        # standalone (back-compat, mirrors the ``catalog=`` seam).
+        self.acquisition = acquisition
+
+    # ---- acquisition-driven seams (поступление → выдача · выдача → КСУ) ---- #
+    def register_acquired_item(self, item, catalog_db=None):
+        """Confirm a freshly-acquired copy (``item`` = 910^b) is lendable now.
+
+        The Комплектование↔Книговыдача seam (called by
+        :meth:`access.acquisition.AcquisitionEngine.receive` through its
+        ``circulation`` handle). A received copy that has been reflected into the
+        catalog as a free 910 exemplar is checkout-ready: this returns True iff the
+        copy is free per the catalog (``910^A=0``). When no catalog is wired the
+        copy is accepted as lendable by default (circulation keeps no inventory of
+        its own — the loan only references the item shifr). Read-only: it asserts
+        lendability, it does not create a loan."""
+        db = catalog_db or self.catalog_db
+        if self.catalog is None:
+            return True  # no catalog opinion — circulation lends against the shifr
+        try:
+            found = self.catalog.find_exemplar(db, item)
+            if found is None:
+                return False  # not in the catalog ⇒ not yet a known lendable copy
+            return self.catalog.is_available(db, item)
+        except Exception:
+            return False
+
+    def item_on_hand(self, item):
+        """True iff ``item`` (910^b) is on an on-hand loan (not returned, not lost).
+
+        The read-only probe book-provision uses to count a checked-out copy as
+        still-provisioned фонд (INTEGRATION_MAP ребро 4.4/4.7)."""
+        return self.store.item_on_hand_count(item) > 0
 
     # ---- event emission --------------------------------------------------- #
     # Events that are addressed to library staff (not the reader): they describe
@@ -949,7 +998,8 @@ class CirculationEngine:
                                'kind': 'lost_candidate'}))
         return Decision(ALLOW, [], {'candidates': flagged}, events)
 
-    def mark_lost(self, loan_id, today, confirm=False, override_grant=False):
+    def mark_lost(self, loan_id, today, confirm=False, override_grant=False,
+                  ksu_disp_no=None):
         """Lost workflow (§4): without ``confirm`` ⇒ ``lost_candidate`` (fail-safe,
         no auto-debt); with ``confirm`` ⇒ ``lost`` + replacement charge.
 
@@ -958,6 +1008,13 @@ class CirculationEngine:
         with a fallback when the item price is empty/0. ``lost_supersedes_fine``
         waives the accrued overdue fine so the reader isn't billed twice (§4.2).
         Emits ``lost_confirmed`` (→ ws2 write-off signal) + ``fine_charged`` (A6).
+
+        Книговыдача→Комплектование (INTEGRATION_MAP ребро 5.2): when an
+        ``acquisition`` handle is wired, a confirmed loss is also reflected into the
+        acquisition КСУ выбытия — the lost copy is written off as выбытие
+        (``record_disposal``). ``ksu_disp_no`` is the акт списания number to book it
+        under (defaults to a per-day ``LOST-<YYYY-MM-DD>`` акт). The write-off is
+        best-effort: an acquisition error never blocks the loss confirmation.
         """
         loan = self.store.get_loan(loan_id)
         if loan is None:
@@ -995,6 +1052,10 @@ class CirculationEngine:
         self.store.upsert_fine(loan['reader'], loan_id, replacement,
                                kind='lost_replacement', status='charged')
 
+        # Книговыдача→Комплектование (ребро 5.2): write the lost copy off into the
+        # acquisition КСУ выбытия (910^V/^X, статус «списан»). Best-effort.
+        disposal = self._record_disposal(loan, today, ksu_disp_no)
+
         events = [
             self._emit('lost_confirmed', loan['reader'],
                        {'ref': loan_id, 'item': loan['item'], 'price': replacement}),
@@ -1003,8 +1064,30 @@ class CirculationEngine:
                         'currency': self.policy['fine']['currency'],
                         'kind': 'lost_replacement'}),
         ]
-        return Decision(ALLOW, [], {'lost_status': 'lost',
-                                    'replacement_value': replacement}, events)
+        computed = {'lost_status': 'lost', 'replacement_value': replacement}
+        if disposal is not None:
+            computed['disposal'] = disposal
+        return Decision(ALLOW, [], computed, events)
+
+    def _record_disposal(self, loan, today, ksu_disp_no=None):
+        """Reflect a confirmed loss into the acquisition КСУ выбытия (ребро 5.2).
+
+        When an ``acquisition`` handle is wired, write the lost copy off as выбытие
+        under the акт списания ``ksu_disp_no`` (default ``LOST-<YYYY-MM-DD>``),
+        keyed by the loan's item (910^b), reason ``lost``, ref = loan id. Returns
+        the disposal row dict, or None when no handle is wired / the write-off
+        degrades (the loss confirmation still stands — best-effort, mirrors ToCat).
+        """
+        if self.acquisition is None:
+            return None
+        record = getattr(self.acquisition, 'record_disposal', None)
+        if record is None:
+            return None
+        act = ksu_disp_no or ('LOST-' + self._fmt_date(today))
+        try:
+            return record(loan['item'], act, reason='lost', ref=str(loan['id']))
+        except Exception:
+            return None  # acquisition write is best-effort; the loss still stands
 
     # ---- debt summary (GET /api/circ/reader/{id}/debt) -------------------- #
     def reader_debt(self, reader_id, today):

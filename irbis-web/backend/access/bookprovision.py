@@ -204,15 +204,28 @@ class BookProvisionEngine:
         ``copies``. The handle is used READ-ONLY — this engine never writes to
         the catalog. When ``None`` the engine is fully standalone (uses the
         recorded ``copies``).
+    circulation : object | None
+        Optional read-only :class:`access.circulation.CirculationEngine` handle —
+        the Книгообеспеченность↔Книговыдача seam (INTEGRATION_MAP ребро 4.4/4.7).
+        Кко counts the фонд, not just what is on the shelf: a copy currently **on
+        loan** (on a student's hands) still belongs to the фонд and must count as
+        provisioned. The catalog read alone undercounts it — an issued copy reads
+        ``910^A=1`` (not free) → 0. With this handle wired, a bound holding the
+        catalog marks issued is re-checked against circulation: if it is on an
+        on-hand loan it is counted as 1 provisioned copy (not 0). The handle is
+        READ-ONLY (asks ``circulation.item_on_hand``); without it the catalog read
+        stands unchanged (back-compat).
     kko_norm : dict | None
         Per-kind provision norm (основная/дополнительная). Defaults to
         :data:`DEFAULT_KKO_NORM` (0.5 / 0.25, SPEC E1 §2.6/§3.4). A fresh copy is
         taken so a caller mutating one engine's norms never leaks into another.
     """
 
-    def __init__(self, db_path=':memory:', catalog=None, kko_norm=None):
+    def __init__(self, db_path=':memory:', catalog=None, kko_norm=None,
+                 circulation=None):
         self.db_path = db_path
         self.catalog = catalog
+        self.circulation = circulation
         self.kko_norm = dict(kko_norm) if kko_norm else dict(DEFAULT_KKO_NORM)
         self._local = threading.local()
         self.ensure_schema()
@@ -363,25 +376,56 @@ class BookProvisionEngine:
     # Exemplar count — from the catalog (910) when wired, else recorded copies.
     # ------------------------------------------------------------------- #
     def _binding_exemplars(self, binding_row):
-        """Available exemplars of one binding's literature.
+        """Provisioned exemplars of one binding's literature (фонд count, not shelf).
 
         With a catalog handle and an ``inv_key``, read the live 910 holding by
-        inventory number (``910^b``) from the catalog (READ ONLY) and count it as
-        available iff its ``910^A`` is free; without a handle (or key) fall back
-        to the binding's recorded ``copies``. The catalog read is best-effort:
-        any catalog error degrades to the recorded ``copies`` so the engine never
-        crashes on a missing / out-of-sync catalog."""
+        inventory number (``910^b``) from the catalog (READ ONLY). A copy counts
+        as **provisioned** if it belongs to the фонд — that is *broader* than
+        "free on the shelf":
+
+          * free in the catalog (``910^A=0``)            -> provisioned (1);
+          * issued (``910^A=1``) **but on an on-hand loan** in circulation
+            -> still фонд, still provisioned (1) — when a ``circulation`` handle
+            is wired (INTEGRATION_MAP ребро 4.4/4.7: Кко учитывает выданные);
+          * otherwise (issued with no circulation opinion, списан, lost, …) -> 0.
+
+        Without the circulation handle the read is the plain free/not-free check
+        (back-compat). Without a catalog handle (or key) fall back to the binding's
+        recorded ``copies``. Both reads are best-effort: any error degrades to the
+        recorded ``copies`` so the engine never crashes on an out-of-sync catalog."""
         db = binding_row['catalog_db']
         key = binding_row['inv_key']
         if self.catalog is not None and db and key:
             try:
-                # is_available reads 910^A for the copy keyed by 910^b and is
-                # True iff it is free — the same availability read circulation
-                # uses (INTEGRATION_MAP edges 2.1/2.2). One holding == 1 copy.
-                return 1 if self.catalog.is_available(db, key) else 0
+                # Free on the shelf → provisioned. One holding == 1 copy.
+                if self.catalog.is_available(db, key):
+                    return 1
+                # Issued copy: still фонд if circulation has it on an on-hand loan.
+                # Кко must not drop a checked-out book to 0 — it IS provided, just
+                # currently in use (INTEGRATION_MAP ребро 4.4/4.7).
+                if self._on_hand_in_circulation(key):
+                    return 1
+                return 0
             except Exception:
                 pass
         return max(0, int(binding_row['copies'] or 0))
+
+    def _on_hand_in_circulation(self, inv_key):
+        """Is the copy keyed by ``inv_key`` (910^b) on an on-hand loan in circulation?
+
+        Read-only probe of the optional circulation handle (the
+        Книгообеспеченность↔Книговыдача seam). Returns False when no handle is
+        wired or circulation has no opinion / errors — so the catalog read stays
+        authoritative in standalone mode."""
+        if self.circulation is None:
+            return False
+        probe = getattr(self.circulation, 'item_on_hand', None)
+        if probe is None:
+            return False
+        try:
+            return bool(probe(inv_key))
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------- #
     # Reports — per-discipline / per-specialty provision summary.

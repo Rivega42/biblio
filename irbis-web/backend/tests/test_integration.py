@@ -41,6 +41,8 @@ from access.circulation import (
     CirculationStore, CirculationEngine, default_policy,
     ALLOW, SECONDS_PER_DAY,
 )
+from access.acquisition import AcquisitionEngine, AcquisitionStore
+from access.bookprovision import BookProvisionEngine, KIND_MAIN
 from access.store import AccessStore
 
 PASS = [0]
@@ -332,6 +334,270 @@ def combined_seam_checks():
     check('return flips it back 1->0', cat.exemplar_status('IBIS', inv) == EXEMPLAR_FREE)
 
 
+# --------------------------------------------------------------------------- #
+# Edge A — Комплектование → Книговыдача (поступление → экземпляр выдаётся).
+#
+# AcquisitionEngine получает опциональный ``circulation`` handle. После receive()
+# (ToCat создаёт 910-экземпляр со статусом «свободен») комплектование
+# подтверждает через circulation, что поступивший инв.№ доступен к выдаче, и сам
+# экземпляр реально выдаётся.
+# --------------------------------------------------------------------------- #
+def acq_to_circulation_checks():
+    print('-- edge A: поступление (acq) → экземпляр сразу выдаётся (circ)')
+    cat = CatalogStore(':memory:', access_store=_seeded_access_store())
+    circ = CirculationEngine(store=CirculationStore(':memory:'),
+                             policy=default_policy(), catalog=cat,
+                             catalog_db='IBIS')
+    acq = AcquisitionEngine(catalog=cat, catalog_db='IBIS', circulation=circ)
+
+    order = acq.create_order('Алгоритмы', author='Кормен Т.', copies=2,
+                             price=1000.0)
+    inv = ['ACQ-A-1', 'ACQ-A-2']
+    res = acq.receive(order['id'], 'KSU-2026-001', 2, inv_numbers=inv)
+
+    # ToCat created the bib record + free 910 exemplars.
+    check('receipt created catalog record', res['catalog_mfn'] is not None)
+    check('both copies free in catalog after receipt',
+          cat.is_available('IBIS', inv[0]) and cat.is_available('IBIS', inv[1]))
+
+    # Invariant: комплектование подтвердило выдаваемость обоих экземпляров через
+    # circulation (register_acquired_item → catalog.is_available).
+    check('acquisition reports both copies lendable',
+          sorted(res['lendable']) == sorted(inv))
+
+    # And the copy really lends through circulation, flipping 910^A 0->1.
+    circ.store.add_reader('S1', category='STD')
+    d = circ.checkout('S1', inv[0], T0)
+    check('received copy checks out', d.decision == ALLOW)
+    check('checkout flipped the acquired copy 0->1 in catalog',
+          cat.exemplar_status('IBIS', inv[0]) == EXEMPLAR_ISSUED)
+    # the second, untouched copy is still free
+    check('untouched acquired copy still free',
+          cat.is_available('IBIS', inv[1]) is True)
+
+
+def acq_to_circulation_backcompat_checks():
+    print('-- edge A back-compat: acquisition standalone (no circulation)')
+    # No circulation handle → receive() works exactly as before; lendable empty.
+    cat = CatalogStore(':memory:', access_store=_seeded_access_store())
+    acq = AcquisitionEngine(catalog=cat, catalog_db='IBIS')  # no circulation
+    order = acq.create_order('Без выдачи', copies=1, price=10.0)
+    res = acq.receive(order['id'], 'KSU-BC-1', 1, inv_numbers=['ACQ-BC-1'])
+    check('standalone receipt still succeeds', res['receipt'] is not None)
+    check('standalone lendable list is empty', res['lendable'] == [])
+    check('standalone КСУ still accumulated',
+          acq.ksu_summary('KSU-BC-1')['copies'] == 1)
+
+    # Circulation wired but with NO catalog → register defaults to lendable=True
+    # (circulation lends against the shifr, keeps no inventory of its own).
+    circ = CirculationEngine(store=CirculationStore(':memory:'),
+                             policy=default_policy())  # no catalog
+    acq2 = AcquisitionEngine(circulation=circ)         # no catalog either
+    o2 = acq2.create_order('Шифр', copies=1, price=5.0)
+    r2 = acq2.receive(o2['id'], 'KSU-BC-2', 1, inv_numbers=['ACQ-BC-2'])
+    check('circ-without-catalog accepts copy as lendable',
+          r2['lendable'] == ['ACQ-BC-2'])
+
+
+# --------------------------------------------------------------------------- #
+# Edge B — Книгообеспеченность → Книговыдача (Кко учитывает выданные/на руках).
+#
+# BookProvisionEngine получает опциональный ``circulation`` handle. Выданный
+# экземпляр (910^A=1) по-прежнему принадлежит фонду — Кко не должна ронять его
+# в 0. С circulation-хендлом такой экземпляр считается обеспеченным, если он на
+# руках (on-hand loan).
+# --------------------------------------------------------------------------- #
+def _bp_one_disc_one_binding(cat, circ, inv):
+    """A book-provision engine with one discipline (1 student) bound to one
+    catalog holding keyed by ``inv``."""
+    bp = BookProvisionEngine(catalog=cat, circulation=circ)
+    fac = bp.add_faculty('F1', 'Факультет')
+    spec = bp.add_specialty(fac, napr='09.03.01', name='Информатика')
+    disc = bp.add_discipline(spec, '3001', name='Алгоритмы', students=1)
+    bp.bind_literature(disc, 'Алгоритмы', kind=KIND_MAIN,
+                       catalog_db='IBIS', inv_key=inv)
+    return bp, disc
+
+
+def bp_counts_issued_copies_checks():
+    print('-- edge B: Кко учитывает выданный (на руках) экземпляр')
+    cat = CatalogStore(':memory:', access_store=_seeded_access_store())
+    inv = 'BP-1'
+    cat.save('IBIS', _book_with_copy(inv, EXEMPLAR_FREE))
+    circ = CirculationEngine(store=CirculationStore(':memory:'),
+                             policy=default_policy(), catalog=cat,
+                             catalog_db='IBIS')
+    bp, disc = _bp_one_disc_one_binding(cat, circ, inv)
+
+    # Free copy, 1 student → Кко = 1/1 = 1.0 (обеспечено).
+    rep = bp.discipline_provision(disc)
+    check('free copy: exemplars=1', rep['bindings'][0]['exemplars'] == 1)
+    check('free copy: Кко = 1.0', rep['average_kko'] == 1.0)
+
+    # Now issue the copy through circulation (910^A 0->1) to a student.
+    circ.store.add_reader('S1', category='STD')
+    d = circ.checkout('S1', inv, T0)
+    check('copy checked out', d.decision == ALLOW)
+    check('catalog now marks the copy issued',
+          cat.is_available('IBIS', inv) is False)
+
+    # Invariant (ребро 4.4/4.7): the copy is on a reader's hands but STILL фонд —
+    # Кко must keep counting it as 1 provisioned copy, not drop to 0.
+    rep2 = bp.discipline_provision(disc)
+    check('issued-but-on-hand copy still counts as provisioned',
+          rep2['bindings'][0]['exemplars'] == 1)
+    check('Кко unchanged at 1.0 while copy on loan',
+          rep2['average_kko'] == 1.0)
+    check('discipline NOT under-provisioned while copy on loan',
+          rep2['under_provisioned'] is False)
+
+    # After return, the copy is free again — still 1 (sanity).
+    circ.return_item(d.computed['loan']['id'], T0 + DAY)
+    rep3 = bp.discipline_provision(disc)
+    check('returned copy still provisioned', rep3['bindings'][0]['exemplars'] == 1)
+
+
+def bp_lost_copy_not_counted_checks():
+    print('-- edge B: подтверждённая утрата покидает фонд (Кко падает)')
+    cat = CatalogStore(':memory:', access_store=_seeded_access_store())
+    inv = 'BP-2'
+    cat.save('IBIS', _book_with_copy(inv, EXEMPLAR_FREE))
+    circ = CirculationEngine(store=CirculationStore(':memory:'),
+                             policy=default_policy(), catalog=cat,
+                             catalog_db='IBIS')
+    bp, disc = _bp_one_disc_one_binding(cat, circ, inv)
+
+    circ.store.add_reader('S1', category='STD')
+    d = circ.checkout('S1', inv, T0)
+    # Confirm the loss: lost_status='lost' ⇒ the copy has LEFT the фонд, so
+    # item_on_hand is now False and Кко drops to 0 (не обеспечено).
+    circ.mark_lost(d.computed['loan']['id'], T0 + 100 * DAY, confirm=True,
+                   override_grant=True)
+    check('lost copy no longer on-hand in circulation',
+          circ.item_on_hand(inv) is False)
+    rep = bp.discipline_provision(disc)
+    check('lost copy not counted as provisioned',
+          rep['bindings'][0]['exemplars'] == 0)
+    check('Кко drops to 0 after confirmed loss', rep['average_kko'] == 0.0)
+    check('discipline under-provisioned after loss',
+          rep['under_provisioned'] is True)
+
+
+def bp_backcompat_checks():
+    print('-- edge B back-compat: book-provision without circulation handle')
+    cat = CatalogStore(':memory:', access_store=_seeded_access_store())
+    inv = 'BP-BC'
+    cat.save('IBIS', _book_with_copy(inv, EXEMPLAR_FREE))
+    # No circulation handle: an issued copy reads as NOT provisioned (the original
+    # free/not-free behaviour) — proving the new branch is opt-in.
+    bp = BookProvisionEngine(catalog=cat)  # no circulation
+    fac = bp.add_faculty('F1')
+    spec = bp.add_specialty(fac, napr='09.03.01')
+    disc = bp.add_discipline(spec, '3001', students=1)
+    bp.bind_literature(disc, 'Алгоритмы', catalog_db='IBIS', inv_key=inv)
+    check('free copy provisioned (no circ handle)',
+          bp.discipline_provision(disc)['bindings'][0]['exemplars'] == 1)
+    cat.set_exemplar_status('IBIS', inv, EXEMPLAR_ISSUED)
+    check('issued copy NOT counted without circulation handle',
+          bp.discipline_provision(disc)['bindings'][0]['exemplars'] == 0)
+
+
+# --------------------------------------------------------------------------- #
+# Edge C — Книговыдача → Комплектование (списание/утрата → КСУ выбытия).
+#
+# CirculationEngine получает опциональный ``acquisition`` handle. Подтверждённая
+# утрата (mark_lost confirm=True) пишет проводку в КСУ выбытия комплектования
+# (910^V № акта, 910^X кол-во), с кросс-ссылкой на КСУ поступления, если инв.№
+# известен комплектованию.
+# --------------------------------------------------------------------------- #
+def circ_lost_to_acq_disposal_checks():
+    print('-- edge C: подтверждённая утрата (circ) → КСУ выбытия (acq)')
+    cat = CatalogStore(':memory:', access_store=_seeded_access_store())
+    acq = AcquisitionEngine(catalog=cat, catalog_db='IBIS')
+    # Receive a copy first so acquisition KNOWS the inv.№ (cross-link to its КСУ
+    # поступления).
+    order = acq.create_order('Утрата', copies=1, price=500.0)
+    inv = 'DISP-1'
+    acq.receive(order['id'], 'KSU-RECV-9', 1, inv_numbers=[inv])
+
+    circ = CirculationEngine(store=CirculationStore(':memory:'),
+                             policy=default_policy(), catalog=cat,
+                             catalog_db='IBIS', acquisition=acq)
+    circ.store.add_reader('R1', category='В01')
+    d = circ.checkout('R1', inv, T0)
+    res = circ.mark_lost(d.computed['loan']['id'], T0 + 100 * DAY, confirm=True,
+                         override_grant=True, ksu_disp_no='KSU-DISP-2026-1')
+
+    # Invariant: a disposal row exists in acquisition's КСУ выбытия for the copy.
+    check('mark_lost reports a disposal', res.computed.get('disposal') is not None)
+    disp = res.computed['disposal']
+    check('disposal keyed by the lost inv.№', disp['inv_no'] == inv)
+    check('disposal booked under the акт списания',
+          disp['ksu_disp_no'] == 'KSU-DISP-2026-1')
+    check('disposal reason is lost', disp['reason'] == 'lost')
+    # cross-link to the original КСУ поступления (inv.№ known to acquisition).
+    check('disposal cross-links the КСУ поступления',
+          disp['ksu_recv_no'] == 'KSU-RECV-9')
+    check('disposal ref carries the loan id',
+          disp['ref'] == str(d.computed['loan']['id']))
+
+    # acquisition's выбытие rollup sees one copy written off.
+    summ = acq.disposal_summary('KSU-DISP-2026-1')
+    check('acq disposal summary counts 1 copy', summ['copies'] == 1)
+
+    # Idempotent: re-confirming the same loss doesn't double the disposal row.
+    circ.mark_lost(d.computed['loan']['id'], T0 + 100 * DAY, confirm=True,
+                   override_grant=True, ksu_disp_no='KSU-DISP-2026-1')
+    check('disposal stays idempotent on re-confirm',
+          acq.disposal_summary('KSU-DISP-2026-1')['copies'] == 1)
+
+
+def circ_lost_default_act_checks():
+    print('-- edge C: default акт списания when none supplied')
+    acq = AcquisitionEngine()  # standalone acquisition store
+    circ = CirculationEngine(store=CirculationStore(':memory:'),
+                             policy=default_policy(), acquisition=acq)
+    circ.store.add_reader('R1', category='В01')
+    inv = 'DISP-DEF'
+    d = circ.checkout('R1', inv, T0)
+    res = circ.mark_lost(d.computed['loan']['id'], T0 + 100 * DAY, confirm=True,
+                         override_grant=True)  # no ksu_disp_no
+    disp = res.computed['disposal']
+    check('default акт списания is LOST-<date>',
+          disp['ksu_disp_no'].startswith('LOST-'))
+    # inv.№ unknown to acquisition (no receipt) → no cross-link, still booked.
+    check('disposal of unknown inv has no recv cross-link',
+          disp['ksu_recv_no'] is None)
+    check('disposal still records the copy', disp['inv_no'] == inv)
+
+
+def circ_lost_backcompat_checks():
+    print('-- edge C back-compat: circulation lost without acquisition handle')
+    # No acquisition handle → mark_lost works exactly as before; no disposal key.
+    circ = CirculationEngine(store=CirculationStore(':memory:'),
+                             policy=default_policy())  # no acquisition
+    circ.store.add_reader('R1', category='В01')
+    d = circ.checkout('R1', 'NOACQ-1', T0)
+    res = circ.mark_lost(d.computed['loan']['id'], T0 + 100 * DAY, confirm=True,
+                         override_grant=True)
+    check('standalone mark_lost still ALLOW', res.decision == ALLOW)
+    check('standalone mark_lost still charges replacement',
+          res.computed.get('replacement_value') is not None)
+    check('standalone mark_lost reports no disposal',
+          'disposal' not in res.computed)
+    # An unconfirmed candidate never writes a disposal even with a handle wired.
+    acq = AcquisitionEngine()
+    circ2 = CirculationEngine(store=CirculationStore(':memory:'),
+                              policy=default_policy(), acquisition=acq)
+    circ2.store.add_reader('R2', category='В01')
+    d2 = circ2.checkout('R2', 'CAND-1', T0)
+    res2 = circ2.mark_lost(d2.computed['loan']['id'], T0 + 100 * DAY,
+                           confirm=False)  # candidate only
+    check('lost_candidate writes no disposal', 'disposal' not in res2.computed)
+    check('acq disposal ledger empty for unconfirmed candidate',
+          acq.store.disposal_for_inv('CAND-1') == [])
+
+
 def main():
     checkout_return_flip_checks()
     availability_read_checks()
@@ -340,6 +606,17 @@ def main():
     apply_authority_helper_checks()
     authority_backcompat_checks()
     combined_seam_checks()
+    # Edge A — Комплектование → Книговыдача.
+    acq_to_circulation_checks()
+    acq_to_circulation_backcompat_checks()
+    # Edge B — Книгообеспеченность → Книговыдача.
+    bp_counts_issued_copies_checks()
+    bp_lost_copy_not_counted_checks()
+    bp_backcompat_checks()
+    # Edge C — Книговыдача → Комплектование (КСУ выбытия).
+    circ_lost_to_acq_disposal_checks()
+    circ_lost_default_act_checks()
+    circ_lost_backcompat_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
