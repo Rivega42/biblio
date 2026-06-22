@@ -35,6 +35,8 @@ prefixes confirmed against ``docs/recon/deep/reference/format/FIELD_DICTIONARY``
   * ``I=``   шифр документа        <- 903 (целое поле)
   * ``IN=``  инв. № / штрих-код    <- 910^b
   * ``MHR=`` место хранения        <- 910^d
+  * ``AR=``  № авторитетной записи <- 700/701/710/606/607 ^3 (поиск каталога ПО
+             авторитету — обратное ребро INTEGRATION_MAP 6.4 / 11.1)
 
 Record shape (the engines' I1 draft — same as ``access/flk.py`` / ``access/pft.py``)::
 
@@ -136,6 +138,9 @@ CREATE INDEX IF NOT EXISTS record_index_record_idx ON record_index(record_id);
 #   I=   шифр документа        <- 903 (whole field)
 #   IN=  инв. № / штрих-код    <- 910^b
 #   MHR= место хранения экз.   <- 910^d
+#   AR=  № авторитетной записи <- 700/701/710/606/607 ^3 (поиск каталога ПО
+#        авторитету: обратное ребро 6.4/11.1 — найти все БО, ссылающиеся на данную
+#        авторитетную запись по её номеру `^3`; ср. навигаторы WnLink / `H=`).
 # --------------------------------------------------------------------------- #
 INDEX_SPEC = [
     # --- original four (unchanged bindings) ---
@@ -166,12 +171,24 @@ INDEX_SPEC = [
     ('G', '210', 'd'),
     # --- экземпляр ---
     ('MHR', '910', 'd'),
+    # --- авторитетная ссылка ^3 (поиск каталога ПО авторитету, ребро 6.4) ---
+    # Каждое поле-заголовок, несущее ^3 = номер авторитетной записи, индексируется
+    # под AR=, чтобы найти все БО, ссылающиеся на эту авторитетную запись.
+    ('AR', '700', '3'),
+    ('AR', '701', '3'),
+    ('AR', '702', '3'),
+    ('AR', '710', '3'),
+    ('AR', '711', '3'),
+    ('AR', '600', '3'),
+    ('AR', '601', '3'),
+    ('AR', '606', '3'),
+    ('AR', '607', '3'),
 ]
 
 # The prefixes a caller may search by (used to validate / document expressions).
 # Order: the four original prefixes first, then the expanded set (§3.2 high-freq).
 SEARCH_PREFIXES = ('T', 'A', 'K', 'IN',
-                   'TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR')
+                   'TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR', 'AR')
 
 # Default brief / full display formats (PFT). Overridable per save db or per call.
 # Brief: "Author. Title / responsibility . — Lang" with graceful omission of
@@ -281,6 +298,15 @@ class CatalogStore:
         an ``_authority_ref`` subfield) through ``authority.substitute`` — filling
         ``^a/^b/^g`` + the ``^3`` link before ФЛК / index (INTEGRATION_MAP edge
         6.1). When None, save is unchanged: the client must supply ``^3`` itself.
+
+        The same handle drives two further seams (both opt-in / back-compatible):
+          * autoin (edge 6.2): ``save(..., autoin=True)`` auto-creates/links an
+            authority record for a heading saved WITHOUT ``^3`` and threads the
+            ``^3`` back in (``authority.autoin``);
+          * ФЛК ``^3`` (edge 6.3): ``validate`` passes the handle to ``flk`` so a
+            broken ``^3`` (id absent from the authority base) raises a severity-2
+            violation.
+        When ``authority`` is None all three seams no-op (full back-compat).
     """
 
     def __init__(self, db_path=':memory:', access_store=None,
@@ -313,16 +339,20 @@ class CatalogStore:
     # {overallSeverity, canSave, violations:[...]}.
     # ------------------------------------------------------------------- #
     def validate(self, record, *, phase='save', current_mfn=None,
-                 tenant_overrides=None):
+                 tenant_overrides=None, authority=None):
         """Run ФЛК over ``record`` for ``phase`` (default the full ``save`` run).
 
         The A5 vocabulary store is threaded through so dictionary rules resolve
         against the seeded vocabularies; the inverted index is wired as the ФЛК
-        ``dup_index`` so the (carried) duplicate-inventory rule can fire."""
+        ``dup_index`` so the (carried) duplicate-inventory rule can fire. The
+        authority handle (per-call arg or the store default) is wired as the ФЛК
+        ``authority`` resolver so the ``^3``-integrity rule (edge 6.3) can verify
+        each heading's ``^3`` against the authority base."""
+        auth = authority if authority is not None else self.authority
         return flk.validate(
             record, phase=phase, store=self.access_store,
             current_mfn=current_mfn, dup_index=self._dup_index,
-            tenant_overrides=tenant_overrides)
+            tenant_overrides=tenant_overrides, authority=auth)
 
     def _dup_index(self, index, value, current_mfn):
         """ФЛК duplicate-predicate hook: does another ACTIVE record carry this
@@ -384,38 +414,51 @@ class CatalogStore:
         return r
 
     def save(self, db, record, *, mfn=None, skip_warnings=False,
-             tenant_overrides=None, authority=None):
+             tenant_overrides=None, authority=None, autoin=False):
         """Validate then upsert a record.
 
         Pipeline:
-          0. (edge 6.1) if an ``authority`` handle is available (per-call arg or
+          0a. (edge 6.1) if an ``authority`` handle is available (per-call arg or
              the store default), resolve any pending authority reference into the
              record IN PLACE — filling ``^a/^b/^g`` + the ``^3`` link — BEFORE
              validation/index, so the saved record + index already carry ``^3``.
+          0b. (edge 6.2, opt-in via ``autoin=True``) for every heading field
+             (700/710/606/…) that carries a non-empty heading but NO ``^3``,
+             auto-create/link an authority record (``authority.autoin``) and write
+             the resulting ``^3`` back into the field — replenish the authority
+             base from cataloguing. Off by default (it mutates the authority store).
           1. run ФЛК (A2) — if ANY severity-1 (непреодолимая) violation, REJECT:
              return ``{id:None, mfn:None, saved:False, violations:[...]}`` and
-             touch no row.
+             touch no row. The authority handle is threaded so the ``^3``-integrity
+             rule (edge 6.3) flags a broken link.
           2. otherwise upsert (insert with a fresh sequential mfn, or update the
-             existing row when ``mfn`` is given) and (re)build the inverted index.
+             existing row when ``mfn`` is given) and (re)build the inverted index
+             (now including ``AR=`` over ``^3`` — edge 6.4).
 
         ``skip_warnings`` is accepted for the warning-acknowledgement workflow:
         severity-2 violations never block a save in either case here (they're
         преодолимые), but the flag is surfaced in the result for the caller/UI.
 
-        Returns ``{id, mfn, saved, violations, overallSeverity, canSave}``.
+        Returns ``{id, mfn, saved, violations, overallSeverity, canSave}`` plus,
+        when autoin ran, ``autoin`` = the list of ``(field, instance, id, created)``
+        applied.
         """
         conn = self._conn()
         target_mfn = mfn
 
         # Edge 6.1: pull authority subfields + ^3 before validation/index.
         auth = authority if authority is not None else self.authority
+        autoin_applied = []
         if auth is not None:
             self.resolve_authority_refs(record, authority=auth)
+            # Edge 6.2: autoin — replenish ATHR* from headings saved without ^3.
+            if autoin:
+                autoin_applied = self.autoin_authority(record, authority=auth)
 
         existing = self._row(db, mfn, include_deleted=True) if mfn is not None else None
 
         res = self.validate(record, current_mfn=target_mfn,
-                            tenant_overrides=tenant_overrides)
+                            tenant_overrides=tenant_overrides, authority=auth)
         violations = res['violations']
         if not res['canSave']:                         # severity-1 present -> reject
             return {
@@ -448,6 +491,7 @@ class CatalogStore:
             'overallSeverity': res['overallSeverity'],
             'canSave': True,
             'skippedWarnings': bool(skip_warnings and violations),
+            'autoin': autoin_applied,
         }
 
     # ------------------------------------------------------------------- #
@@ -526,6 +570,54 @@ class CatalogStore:
                     self.apply_authority(record, field, aid, instance=i,
                                          authority=authority)
                     applied.append((str(field), i, aid))
+        return applied
+
+    # ------------------------------------------------------------------- #
+    # autoin — replenish ATHR* from cataloguing (INTEGRATION_MAP edge 6.2).
+    #
+    # The reverse of edge 6.1: instead of pulling subfields from a chosen
+    # authority, we PUSH a heading typed straight into the catalog (700/710/606/…)
+    # into the authority base. For every heading instance that carries a real
+    # heading (^a/…) but NO ``^3`` link, ``authority.autoin`` either links it to an
+    # existing authority record (same fold-key) or materialises a fresh
+    # ``needs_review`` one; we write the returned id back as ``^3`` so the saved
+    # record + index already carry the link. Port of ``autoin.gbl`` (SPEC §3.4).
+    # ------------------------------------------------------------------- #
+    def autoin_authority(self, record, *, authority=None):
+        """Sweep ``record`` for headings WITHOUT ``^3`` and autoin each in place.
+
+        For every fill-mappable field whose instance has a non-empty heading
+        (some fill-map subfield present) but no ``^3``, call ``authority.autoin``
+        and set the returned id as ``^3``. Index-only fields without a ``^3`` link
+        (675/621 — ``link=False``) are skipped (they carry no ``^3``). Instances
+        that already carry ``^3`` (operator- or 6.1-supplied) are left untouched.
+        Returns the list of ``(field, instance, authority_id, created)`` applied."""
+        auth = authority if authority is not None else self.authority
+        if auth is None:
+            raise CatalogError(
+                'autoin_authority called without an authority handle wired')
+        applied = []
+        for field in list(record.keys()):
+            tag = str(field)
+            spec = _authority.FILL_MAP.get(tag)
+            if spec is None or not spec.get('link', True):
+                continue                      # no ^3 link on this field => skip
+            insts = record[field]
+            if not isinstance(insts, list):
+                insts = [insts]
+            for i, inst in enumerate(insts):
+                if not isinstance(inst, dict):
+                    continue
+                if inst.get('3') or inst.get('_authority_ref') is not None:
+                    continue                  # already linked / pending ref
+                # does this instance carry an actual heading to push?
+                has_heading = any(inst.get(ck) or inst.get(ck.upper())
+                                  for ck, _ak in spec['pairs'])
+                if not has_heading:
+                    continue
+                aid, created = auth.autoin(tag, inst)
+                inst['3'] = str(aid)
+                applied.append((tag, i, aid, created))
         return applied
 
     # ------------------------------------------------------------------- #

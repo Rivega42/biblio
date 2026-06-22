@@ -40,6 +40,9 @@ Predicate kinds implemented in THIS slice
   * ``duplicate``   — against the catalog inverted index. No catalog store exists
                       yet → evaluated as a clearly-marked STUB (never fires, the
                       violation list records ``stub=True`` only if a store is wired).
+  * ``authority_ref`` — ``^3`` link integrity (edge 6.3): each heading's ``^3`` must
+                      resolve in the bound authority base; a dangling link is a
+                      severity-2 violation. STUB without an ``authority`` handle.
 
 Complex predicates (``&unifor`` / full PFT expressions, БО-свёртка dup keys) are
 NOT in this slice: any rule needing them is loaded with ``enabled=False`` and
@@ -243,7 +246,7 @@ def evaluate_rule(rule, record, ctx):
             return None
         if not fired:
             return None
-        return _make_violation(rule, record)
+        return _make_violation(rule, record, ctx)
     except KeyError:
         # unknown predicate kind == not buildable in this slice -> soft engineError
         return _engine_error(rule, 'unknown predicate: %s' % rule.get('predicate'))
@@ -304,6 +307,70 @@ def _pred_duplicate(rule, record, ctx):
     return bool(other)
 
 
+# --------------------------------------------------------------------------- #
+# Authority-link (^3) integrity — INTEGRATION_MAP edge 6.3, SPEC_service_authority
+# §0/§4.3. Each heading field (700/701/710/606/607/…) may carry ``^3`` = the
+# authority record number; ФЛК checks the link resolves against the authority
+# base. A non-empty ``^3`` that the authority store can't find is a DANGLING link
+# (DB_AUTHORITY §5.2) → severity-2 violation (преодолимо: the operator may be
+# importing or the authority is pending review). Self-contained map (kept local
+# so flk does not import authority): catalog field tag → authority db + kind.
+# --------------------------------------------------------------------------- #
+AUTHORITY_LINK_FIELDS = {
+    '700': ('athra', 'personal'),
+    '701': ('athra', 'personal'),
+    '702': ('athra', 'personal'),
+    '600': ('athra', 'personal'),
+    '710': ('athrc', 'corporate'),
+    '711': ('athrc', 'corporate'),
+    '601': ('athrc', 'corporate'),
+    '606': ('athrs', 'subject'),
+    '607': ('athrg', 'geographic'),
+}
+
+
+def _authref_broken(record, authority):
+    """Return the list of ``(field, instance, ^3)`` whose ``^3`` does NOT resolve.
+
+    ``authority`` exposes ``get(db, id) -> record|None`` (AuthorityStore). For each
+    authority-linked field instance carrying a non-empty ``^3``, resolve it in the
+    bound authority db; a None result == dangling link. A ``^3`` that isn't an
+    integer-coercible id is also reported as broken (malformed reference)."""
+    broken = []
+    for tag, (db, _kind) in AUTHORITY_LINK_FIELDS.items():
+        for i, inst in enumerate(_instances(record, tag)):
+            ref = _inst_value(inst, '3')
+            if not ref:
+                continue
+            try:
+                rid = int(str(ref))
+            except (TypeError, ValueError):
+                broken.append((tag, i, ref))
+                continue
+            try:
+                hit = authority.get(db, rid)
+            except Exception:                 # store can't answer -> don't fabricate
+                continue
+            if hit is None:
+                broken.append((tag, i, str(ref)))
+    return broken
+
+
+def _pred_authority_ref(rule, record, ctx):
+    """ФЛК ``^3``-integrity (edge 6.3). Fires (records the broken list on ctx) iff
+    at least one heading ``^3`` is dangling. No authority handle wired => STUB
+    (carried, never fires) — full back-compat with a catalog without authorities."""
+    authority = ctx.get('authority')
+    if authority is None:
+        return _STUB
+    broken = _authref_broken(record, authority)
+    if not broken:
+        return False
+    # stash for the message formatter (which broken refs, for the operator).
+    ctx['_authref_broken'] = broken
+    return True
+
+
 _PREDICATES = {
     'mandatory': _pred_mandatory,
     'dictionary': _pred_dictionary,
@@ -311,14 +378,15 @@ _PREDICATES = {
     'issn_checksum': _pred_issn_checksum,
     'regex': _pred_regex,
     'duplicate': _pred_duplicate,
+    'authority_ref': _pred_authority_ref,
 }
 
 
-def _make_violation(rule, record):
+def _make_violation(rule, record, ctx=None):
     return {
         'ruleId': rule['id'],
         'severity': rule['severity'],
-        'message': _format_message(rule, record),
+        'message': _format_message(rule, record, ctx),
         'path': rule.get('path', rule.get('field', '')),
         'field': rule.get('field'),
         'subfield': rule.get('subfield'),
@@ -340,14 +408,23 @@ def _engine_error(rule, detail):
 _TEMPLATE = re.compile(r'\{\{\s*([0-9]+)(?:\^([a-zA-Z]))?\s*\}\}')
 
 
-def _format_message(rule, record):
+def _format_message(rule, record, ctx=None):
     """Substitute ``{{NNN^x}}`` / ``{{NNN}}`` tokens from the record (thin local
-    version of SPEC's A1.format; full templating is A1)."""
+    version of SPEC's A1.format; full templating is A1).
+
+    Special token ``{{authref}}`` expands to the list of dangling ``^3`` links the
+    authority-ref predicate stashed on ctx (edge 6.3), so the operator sees which
+    references are broken (e.g. ``700#0=^3:999``)."""
     msg = rule.get('message', '')
 
     def repl(m):
         return value(record, m.group(1), m.group(2)) or ''
-    return _TEMPLATE.sub(repl, msg)
+    msg = _TEMPLATE.sub(repl, msg)
+    if '{{authref}}' in msg:
+        broken = (ctx or {}).get('_authref_broken') or []
+        detail = ', '.join('%s#%d=^3:%s' % (tag, i, ref) for tag, i, ref in broken)
+        msg = msg.replace('{{authref}}', detail)
+    return msg
 
 
 # --------------------------------------------------------------------------- #
@@ -462,6 +539,21 @@ SYSTEM_RULES = [
         'path': '907/a', 'phase': 'save',
         'enabled': False, 'blocked_on': 'A1',
     },
+    # (9) целостность авторитетной ссылки ^3 — !700/!606/!964 ↔ authority-сервис
+    #     (INTEGRATION_MAP 6.3, SPEC_service_authority §0/§4.3, DB_AUTHORITY §5.2).
+    #     Каждое поле-заголовок (700/701/710/606/607/…) с непустым ^3 проверяется:
+    #     авторитетная запись с этим номером должна существовать в привязанной БД
+    #     ATHRx. Битая (висячая) ссылка → нарушение severity-2 (преодолимо: импорт
+    #     RUSMARC / запись на ревизии). STUB без authority-хендла (back-compat: ФЛК
+    #     каталога без авторитетов не падает и ничего не выдумывает).
+    {
+        'id': 'rec.authref.integrity', 'source': '!700/!606',
+        'scope': 'record', 'field': None, 'subfield': '3',
+        'predicate': 'authority_ref',
+        'severity': SEV_SOFT,
+        'message': 'Битая ссылка на авторитетную запись (^3): {{authref}}',
+        'path': '^3', 'phase': 'save', 'enabled': True,
+    },
 ]
 
 
@@ -508,7 +600,7 @@ def load_ruleset(tenant_overrides=None, allow_hardening=False):
 # --------------------------------------------------------------------------- #
 def validate(record, ruleset=None, phase='save', field=None,
              store=None, current_mfn=None, dup_index=None,
-             tenant_overrides=None):
+             tenant_overrides=None, authority=None):
     """Validate ``record`` for ``phase`` and aggregate worst-severity (SPEC §2).
 
     Pipeline (SPEC §2.1–2.4):
@@ -523,7 +615,8 @@ def validate(record, ruleset=None, phase='save', field=None,
     if ruleset is None:
         ruleset = load_ruleset(tenant_overrides)
     record_type = value(record, '920') or ''
-    ctx = {'store': store, 'current_mfn': current_mfn, 'dup_index': dup_index}
+    ctx = {'store': store, 'current_mfn': current_mfn, 'dup_index': dup_index,
+           'authority': authority}
 
     # SPEC §2.1: the `save` phase is a FULL run — it also includes the field-level
     # `!NNN` (fieldExit) rules, not only record-scope `save` rules. `fieldExit` on

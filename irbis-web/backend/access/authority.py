@@ -8,7 +8,8 @@ Self-contained sqlite store + lookup + substitution pipeline for the six
 ``docs/recon/deep/reference/databases/DB_AUTHORITY.md``.
 
 What this module ships (SPEC §9 critical path, steps 1-3 — the search +
-substitution core, minus autoin/merge/trees which are later slices):
+substitution core; plus the autoin hook of step 4, edge 6.2; merge/trees remain
+later slices):
 
   * ``AuthorityStore`` — own sqlite tables ``authority_record`` (id, kind, db,
     data_json) + ``authority_term`` (authority_id, term) created on init.
@@ -21,6 +22,12 @@ substitution core, minus autoin/merge/trees which are later slices):
     substitution pipeline (SPEC §3.1 step [4]/[5], §3.2 table): returns the subfield
     patch ``{'a':…,'b':…,'g':…,'3':authority_id}`` to write into the catalog field,
     always carrying the ``^3`` link = the authority record id (DB_AUTHORITY §5.2).
+  * ``AuthorityStore.autoin(catalog_field_tag, subfields)`` — the autoin hook
+    (SPEC §3.4, port of ``autoin.gbl``) for the REVERSE edge «catalog → ATHR*»
+    (INTEGRATION_MAP 6.2): a catalog heading (700/710/606/…) saved WITHOUT ``^3``
+    is folded to an alcode, linked to an existing authority record by that alcode
+    or, failing that, materialised as a fresh ``needs_review`` record. Returns
+    ``(authority_id, created)`` — the id to thread into ``^3``.
 
 Design notes (paritet with ground truth):
   * ``db`` ∈ {athra, athrc, athrs, athrg, athru, athrb} ↔ ``kind`` ∈
@@ -136,6 +143,43 @@ def _norm(s):
     """Normalisation for the search projection (SPEC §1.3 term_norm): lower-case,
     collapsed whitespace.  Diacritic folding is out of scope for this slice."""
     return ' '.join(str(s).lower().split())
+
+
+# --------------------------------------------------------------------------- #
+# Алкод свёртки заголовка (SPEC §3.4 / §4.1 слой 1 — детерминированный
+# дублетный ключ).  Минимальный порт `normalizer.fold(subfields) → alcode`:
+# конкатенация значимых подполей заголовка в нормализованную строку.  Это ключ,
+# по которому autoin (§3.4) находит уже существующую авторитетную запись либо
+# заводит новую — точное совпадение алкода == точный дубль.
+#
+# `pairs` берётся из FILL_MAP[catalog_tag] (каталог-подполе ⇆ авторитет-подполе),
+# поэтому свёртка считается по тем же подполям, что и подстановка — заголовок,
+# собранный из БО, сворачивается так же, как заголовок из авторитета.
+# --------------------------------------------------------------------------- #
+def fold_heading(heading, auth_keys):
+    """Свернуть подполя заголовка (по ключам авторитета ``auth_keys``) в алкод.
+
+    ``heading`` — словарь подполей (значения авторитет-подполей: 'a','b','g',…);
+    ``auth_keys`` — упорядоченный список авторитет-подполей, участвующих в свёртке.
+    Возвращает нормализованную строку-ключ ('' если ни одно значимое подполе не
+    заполнено).  Порядок ключей фиксирован, поэтому ключ детерминирован."""
+    parts = []
+    for k in auth_keys:
+        v = heading.get(k)
+        if v:
+            parts.append(_norm(v))
+    return ' | '.join(p for p in parts if p)
+
+
+def _auth_fold_keys_for_kind(kind):
+    """Авторитет-подполя свёртки для данного ``kind``: берём ``pairs`` первого
+    каталог-поля FILL_MAP с этим kind (например personal → 700 → a/b/g/f/9).
+    Так свёртка записи-авторитета и свёртка заголовка из БО считаются по одному
+    набору подполей.  Неизвестный kind → пустой список (алкод == '')."""
+    for spec in FILL_MAP.values():
+        if spec.get('kind') == kind:
+            return [auth_key for _ck, auth_key in spec['pairs']]
+    return []
 
 
 class AuthorityStore:
@@ -259,6 +303,80 @@ class AuthorityStore:
             rec['fill_hint'] = dict(rec.get('heading_210', {}))
             hits.append(rec)
         return hits
+
+    # ---- autoin (SPEC §3.4, порт autoin.gbl — обратное ребро 6.2) --------- #
+    def find_by_alcode(self, db, alcode):
+        """Найти id принятой авторитетной записи по алкоду свёртки в ``db``.
+
+        Сканирует записи базы и сравнивает их собственный алкод (свёртка
+        heading_210 по подполям FILL_MAP) с ``alcode``.  Возвращает id первого
+        совпадения или None.  Это слой-1 дедупликации (SPEC §4.1): точное
+        совпадение алкода == уже существующая запись."""
+        if not alcode:
+            return None
+        db = db.lower()
+        kind = DB_TO_KIND.get(db)
+        # авторитет-подполя свёртки берём по первому каталог-полю этого kind.
+        auth_keys = _auth_fold_keys_for_kind(kind)
+        rows = self._conn().execute(
+            'SELECT id, data_json FROM authority_record WHERE db=?',
+            (db,)).fetchall()
+        for r in rows:
+            rec = json.loads(r['data_json'])
+            if fold_heading(rec.get('heading_210', {}), auth_keys) == alcode:
+                return r['id']
+        return None
+
+    def autoin(self, catalog_field_tag, subfields, *, status='needs_review',
+               worklist=None):
+        """Авто-создать/привязать авторитетную запись по заголовку из БО.
+
+        Порт `autoin.gbl` для **обратного** ребра «каталог → пополнение ATHR*»
+        (INTEGRATION_MAP 6.2, SPEC §3.4): когда в БО сохраняется поле-заголовок
+        (700/710/606/…) БЕЗ ``^3``, мы по его подполям
+
+          1) считаем алкод свёртки (``fold_heading`` по подполям FILL_MAP);
+          2) ищем существующую принятую запись с тем же алкодом →
+             привязываемся к ней (без новой записи, паритет AC-S5/T9);
+          3) иначе заводим новую запись (``status='needs_review'``, паритет
+             autoin — «требует ревизии каталогизатором») и берём её id.
+
+        Возвращает ``(authority_id, created)``: ``authority_id`` — номер для
+        протяжки в ``^3``; ``created`` — True если создана новая запись, False
+        если привязка к существующей.  Поднимает ``UnknownCatalogField`` для
+        каталог-поля без fill-map и ``ValueError`` если из подполей нечего
+        свернуть (пустой заголовок — нечего пополнять)."""
+        tag = str(catalog_field_tag)
+        spec = FILL_MAP.get(tag)
+        if spec is None:
+            raise UnknownCatalogField(
+                'no fill-map for catalog field %r (known: %s)'
+                % (tag, ', '.join(sorted(FILL_MAP))))
+        db = spec['db']
+        # каталог-подполе -> авторитет-подполе по fill-map: собираем heading_210
+        # авторитета из подполей каталог-поля.
+        heading = {}
+        for catalog_key, auth_key in spec['pairs']:
+            v = subfields.get(catalog_key) if isinstance(subfields, dict) else None
+            if not v and isinstance(subfields, dict):
+                v = subfields.get(catalog_key.upper())
+            if v:
+                heading[auth_key] = v
+        auth_keys = [auth_key for _ck, auth_key in spec['pairs']]
+        alcode = fold_heading(heading, auth_keys)
+        if not alcode:
+            raise ValueError(
+                'autoin: пустой заголовок для поля %s — нечего пополнять' % tag)
+
+        hit = self.find_by_alcode(db, alcode)
+        if hit is not None:
+            return (hit, False)
+
+        new_id = self.add_record(
+            db, heading,
+            worklist=worklist or spec['kind'].upper(),
+            status=status, source={'origin': 'autoin', 'catalog_field': tag})
+        return (new_id, True)
 
 
 # --------------------------------------------------------------------------- #
