@@ -72,6 +72,20 @@ CLI
 Prints a JSON report ``{records_read, records_loaded, readers_loaded, skipped,
 errors}``. ``--dry-run`` connects, reads, and maps every record/reader and reports
 the same counts WITHOUT writing the target (no row touched, no PII persisted).
+
+Интроспекция (онбординг, #225)
+------------------------------
+``introspect(source)`` снимает с источника СТРУКТУРНЫЙ ПЛАН до переноса: список БД
+(меню ``dbnam``), для каждой — число записей и инвентарь полей по выборке записей,
+где каждое поле/подполе помечено флагом ``custom`` (нештатное доппole — то, чего
+нет в эталонном :data:`STANDARD_CATALOG`). Это даёт мастеру онбординга показать
+«что внутри» исходной библиотеки и какие институт-специфичные допполя поедут.
+``--introspect`` в CLI печатает план как JSON. Сетевой режим работает через
+``open_source``; локальный (без сервера, чтение `.mst`/`.xrf`) — через
+:class:`LocalSource` поверх соседнего адаптера ``tools.irbis_mst``.
+
+Адаптивность экспорта: мигратор копирует ВСЕ поля/подполя (field-agnostic, не
+whitelist) — допполя сохраняются как есть, см. :func:`map_catalog_record`.
 """
 import argparse
 import json
@@ -83,6 +97,131 @@ from access import crypto
 from access.catalog import CatalogStore
 from access.circulation import CirculationStore
 from access.store import AccessStore
+
+
+# --------------------------------------------------------------------------- #
+# Стандартный каталог полей/подполей (для детекции «допполей»).
+#
+# `STANDARD_CATALOG` — это эталонный набор тегов и тегов^подполей штатной САБ
+# ИРБИС64+, сгруппированный по «виду» БД. Источник: справочник проекта
+# (docs/recon/deep/reference/databases/DB_*.md + format/FIELD_CATALOG — извлечён
+# машинно из 1605 рабочих листов `.wss`). Здесь зафиксирован компактный,
+# самодостаточный срез (без зависимости от путей docs во время выполнения / в
+# тестах) штатных полей двух базовых видов БД: `bib` (электронный каталог IBIS и
+# его варианты) и `rdr` (база читателей / циркуляция).
+#
+# Правило «custom»: тег (или тег^подполе) помечается ``custom=True``, если он НЕ
+# входит в эталонный набор соответствующего вида БД, т.е. это институт-специфичное
+# доппole, добавленное конкретной библиотекой сверх штатной схемы. Детектор
+# работает на двух уровнях:
+#   * тег целиком отсутствует в эталоне  -> всё поле кастомное;
+#   * тег штатный, но встретилось подполе, которого нет в эталоне поля -> кастомным
+#     помечается это подполе (а тег — нет).
+# Сравнение регистронезависимое; коды подполей нормализуются в нижний регистр.
+# --------------------------------------------------------------------------- #
+STANDARD_CATALOG = {
+    # Электронный каталог (IBIS / PAZK / NJ …) — штатные библиографические поля.
+    # tag -> множество штатных кодов подполей (нижний регистр). Пустое множество =
+    # поле штатное, но без выделенных подполей (значение в «голове»).
+    'bib': {
+        '10': {'a', 'b', 'd', 'z'},                     # ISBN / цена
+        '101': set(),                                   # язык текста
+        '102': set(),                                   # страна
+        '200': {'a', 'b', 'c', 'e', 'f', 'g', 'h', 'i', 'v'},   # заглавие
+        '205': {'a', 'b', 'f'},                         # сведения об издании
+        '210': {'a', 'b', 'c', 'd', 'e', 'g', 'h'},     # выходные данные
+        '215': {'a', 'c', 'd', 'e'},                    # количеств. характеристики
+        '300': {'a'}, '330': {'a'}, '331': {'a'},       # примечания / аннотация
+        '423': {'a'}, '454': {'a'}, '461': {'a'}, '463': {'a'}, '481': {'a'},
+        '600': {'a', 'b', 'c', 'f', 'g'},               # имя как предмет
+        '606': {'a', 'b', 'c', 'x', 'y', 'z'},          # предметная рубрика
+        '607': {'a', 'b', 'c'},                         # геогр. рубрика
+        '610': set(),                                   # неуправляемые ключевые слова
+        '621': set(), '675': set(), '686': {'a'},       # ББК / УДК / др. индексы
+        '691': {'a', 'b', 'c'},
+        '700': {'a', 'b', 'c', 'f', 'g'},               # первый автор
+        '701': {'a', 'b', 'c', 'f', 'g'}, '702': {'a', 'b', 'c', 'f', 'g', '4'},
+        '710': {'a', 'b', 'c', 'g'}, '711': {'a', 'b', 'c', 'g'}, '712': {'a', 'b'},
+        '900': {'a', 'b', 'c', 't'},                    # коды назначения/типа
+        '901': {'a'}, '902': {'a'}, '903': set(),
+        '907': {'a', 'b', 'c'},                         # каталогизатор / служебное
+        '908': set(),                                   # шифр
+        '910': {'a', 'b', 'c', 'd', 'e', 'f', 'h', 'u', 'x', 'y'},   # экземпляры
+        '920': set(),                                   # тип/рабочий лист записи
+        '922': {'a', 'b'}, '923': {'a'}, '938': {'a'}, '941': {'a'},
+        '951': {'a', 'h', 'i', 't'}, '964': set(), '965': set(),
+        '999': set(),
+    },
+    # База читателей (RDR) / циркуляция — штатные поля читательской записи.
+    'rdr': {
+        '10': set(), '11': set(), '12': set(),          # фамилия / имя / отчество
+        '13': set(), '14': set(), '15': set(),
+        '17': set(), '18': set(),                       # телефоны
+        '19': set(), '20': set(), '21': set(), '22': set(), '23': set(),
+        '24': set(), '25': set(), '26': set(), '27': set(), '28': set(), '29': set(),
+        '30': set(),                                    # № читательского билета (RI=)
+        '31': set(), '32': set(),                       # пароль / e-mail
+        '33': set(), '40': set(), '41': set(),
+        '50': set(), '51': set(), '54': set(), '56': set(),
+        '60': set(), '67': set(), '90': set(),
+        '100': set(), '102': set(), '112': set(),
+        '140': set(), '200': set(), '301': set(),
+        '691': {'a', 'b', 'c'},
+        '903': set(), '907': {'a', 'b', 'c'},
+        '910': {'a', 'b', 'c', 'd', 'h'},
+        '911': {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'k', 'v'},  # выдача
+        '920': set(), '950': set(), '999': set(),
+    },
+}
+
+# Человекочитаемые метки штатных полей (для подсказки в плане интроспекции).
+# Намеренно компактный набор самых частых тегов обоих видов БД; неизвестный тег
+# просто остаётся без label (None) — детекцию custom это не затрагивает.
+STANDARD_FIELD_LABELS = {
+    '10': 'ISBN / Фамилия читателя', '11': 'Имя читателя', '12': 'Отчество читателя',
+    '30': 'Номер читательского билета', '32': 'Электронная почта',
+    '50': 'Категория читателя',
+    '101': 'Язык основного текста', '102': 'Страна', '200': 'Заглавие',
+    '205': 'Сведения об издании', '210': 'Выходные данные',
+    '215': 'Количественные характеристики', '331': 'Аннотация',
+    '606': 'Предметная рубрика', '607': 'Географическая рубрика',
+    '610': 'Неуправляемые ключевые слова', '621': 'Шифр (ББК)', '675': 'Индекс УДК',
+    '700': 'Первый автор', '701': 'Другой автор', '702': 'Второй ответственный',
+    '710': 'Коллектив-автор', '900': 'Код назначения', '907': 'Каталогизатор',
+    '910': 'Сведения об экземплярах', '911': 'Выдача', '920': 'Тип/рабочий лист записи',
+}
+
+# Виды БД, распознаваемые по коду базы. Любой неизвестный код трактуется как
+# библиографический (`bib`) — это самый частый и самый безопасный дефолт для
+# детекции допполей (эталон шире, поэтому ложноположительных «custom» меньше).
+_RDR_DB_CODES = frozenset(('RDR', 'CIRC', 'CIRCUL', 'RDR_ARH'))
+
+
+def db_kind(db_code):
+    """Вид БД по её коду: ``'rdr'`` для базы читателей/циркуляции, иначе ``'bib'``.
+
+    Используется и для выбора эталона при детекции допполей, и в плане интроспекции
+    (поле ``kind``)."""
+    return 'rdr' if (db_code or '').strip().upper() in _RDR_DB_CODES else 'bib'
+
+
+def is_custom_field(kind, tag):
+    """True, если ``tag`` целиком отсутствует в эталоне вида БД (всё поле кастомное)."""
+    return str(tag) not in STANDARD_CATALOG.get(kind, {})
+
+
+def is_custom_subfield(kind, tag, sub):
+    """True, если ``sub`` — нештатное подполе штатного поля ``tag``.
+
+    Для кастомного поля подполя отдельно НЕ помечаются (поле уже custom целиком —
+    возвращаем False, чтобы не дублировать сигнал). Для штатного поля без
+    выделенных подполей (эталон = пустое множество) любое подполе считается
+    нештатным."""
+    std = STANDARD_CATALOG.get(kind, {})
+    tag = str(tag)
+    if tag not in std:                       # поле целиком кастомное — см. is_custom_field
+        return False
+    return str(sub).lower() not in std[tag]
 
 
 # --------------------------------------------------------------------------- #
@@ -242,6 +381,296 @@ def open_source(host, port, user, password, workstation='A', timeout=8.0):
     inject their own source."""
     from irbis import SessionManager
     return SessionManager(host, port, workstation, user, password, timeout=timeout)
+
+
+# --------------------------------------------------------------------------- #
+# Перечисление БД источника (меню `dbnam`). Сетевой источник (SessionManager)
+# отдаёт список БД через файловый ресурс-меню (пары строк код/имя, терминатор
+# '*****'); тот же формат читает core.databases(). Источник для интроспекции может
+# дополнительно предоставить метод ``list_databases()`` (тогда он используется
+# как есть) — так FakeIrbis в тестах перечисляет БД без файлового ресурса.
+# --------------------------------------------------------------------------- #
+DBNAM_MENU_SPEC = '1.&.dbnam1.mnu'         # ресурс-меню списка БД (как в Config.db_menu)
+
+
+def parse_menu_pairs(text):
+    """Разобрать меню ИРБИС (`.mnu`) в список ``[{'code','name'}]``.
+
+    Формат: чередующиеся строки код/имя, маркер-терминатор '*****'. Пустые строки
+    и терминатор отбрасываются (как в core.databases). Регистр кода сохраняется."""
+    lines = [x.strip() for x in (text or '').splitlines()
+             if x.strip() and x.strip() != '*****']
+    pairs = []
+    for i in range(0, len(lines) - 1, 2):
+        code = lines[i]
+        if code:
+            pairs.append({'code': code, 'name': lines[i + 1]})
+    return pairs
+
+
+def enumerate_databases(source):
+    """Список БД источника: ``[{'code','name'}]``.
+
+    Порядок выбора: (1) если у источника есть ``list_databases()`` — берём его
+    (так тестовый FakeIrbis перечисляет свои БД); (2) иначе читаем меню `dbnam`
+    через ``read_file`` (живой SessionManager). Любой сбой чтения меню -> []
+    (интроспекция деградирует мягко, а не падает)."""
+    lister = getattr(source, 'list_databases', None)
+    if callable(lister):
+        out = []
+        for d in lister():
+            if isinstance(d, dict):
+                out.append({'code': d.get('code'), 'name': d.get('name') or d.get('code')})
+            else:
+                out.append({'code': d, 'name': d})
+        return out
+    reader = getattr(source, 'read_file', None)
+    if callable(reader):
+        try:
+            return parse_menu_pairs(reader(DBNAM_MENU_SPEC))
+        except Exception:                              # noqa: BLE001 - server/permission hiccup
+            return []
+    return []
+
+
+# --------------------------------------------------------------------------- #
+# Адаптер ЛОКАЛЬНОГО режима (чтение MST/XRF напрямую с диска без сервера).
+# Реализуется в соседнем модуле ``tools.irbis_mst`` (его делает другой исполнитель).
+# Контракт, который мы вызываем:
+#     irbis_mst.list_databases(path) -> [{'code','name'} | str, …]
+#     irbis_mst.max_mfn(path, db)    -> int
+#     irbis_mst.read_records(path, db) -> iterable[parsed-record]
+# Импортируем ЛЕНИВО: если модуля ещё нет, сетевой режим работает по-прежнему, а
+# локальный отдаёт понятное уведомление «адаптер не готов» (graceful).
+# --------------------------------------------------------------------------- #
+class LocalAdapterUnavailable(Exception):
+    """Адаптер локального режима (tools.irbis_mst) ещё не готов / не установлен."""
+
+
+def _load_local_adapter():
+    """Лениво импортировать ``tools.irbis_mst`` или поднять LocalAdapterUnavailable."""
+    try:
+        from tools import irbis_mst                     # noqa: WPS433 - lazy by design
+    except ImportError as e:
+        raise LocalAdapterUnavailable(
+            'адаптер локального режима (tools.irbis_mst) ещё не готов: %s' % e)
+    return irbis_mst
+
+
+def canonical_to_parsed(mfn, record, status=''):
+    """Канонический ``{tag: [значение|{подполе: значение}]}`` -> parser-shape запись.
+
+    Локальный адаптер (``tools.irbis_mst``) отдаёт запись в канонической форме
+    CatalogStore. Сетевой путь и интроспекция/мигратор работают с parser-shape
+    (``{mfn,status,fields:[{tag,value,text,subfields}]}``). Эта функция приводит
+    локальную запись к parser-shape, чтобы оба режима шли по одному коду — поля и
+    подполя сохраняются ПОЛНОСТЬЮ (field-agnostic), коды подполей не теряются."""
+    fields = []
+    for tag, instances in (record or {}).items():
+        for inst in (instances if isinstance(instances, list) else [instances]):
+            if isinstance(inst, dict):
+                subs = {}
+                head = ''
+                for code, val in inst.items():
+                    if code == '' or code is None:
+                        head = val
+                    else:
+                        subs[str(code)] = val
+                value = head + ''.join('^%s%s' % (c, v) for c, v in subs.items())
+                fields.append({'tag': str(tag), 'value': value, 'text': head,
+                               'subfields': subs})
+            else:
+                fields.append({'tag': str(tag), 'value': inst, 'text': inst,
+                               'subfields': {}})
+    return {'mfn': mfn, 'status': status, 'version': None, 'guid': None,
+            'fields': fields}
+
+
+class LocalSource:
+    """Обёртка над ``tools.irbis_mst``, дающая тот же интерфейс, что и сетевой
+    источник (``list_databases`` / ``max_mfn`` / ``read_record``), чтобы
+    интроспекция и миграция работали единообразно поверх локальных файлов.
+
+    Адаптер отдаёт записи в канонической форме CatalogStore; ``read_record`` тут
+    приводит их к parser-shape (см. :func:`canonical_to_parsed`), так что оба
+    режима — сетевой и локальный — обрабатываются ОДНИМ кодом. Записи БД
+    материализуются по требованию (адаптер читает MST потоково)."""
+
+    def __init__(self, path, adapter=None):
+        self.path = path
+        self._adapter = adapter or _load_local_adapter()
+        self._cache = {}                                # db -> {mfn: parsed-record}
+        self._maxmfn = {}                               # db -> наибольший MFN в БД
+
+    def list_databases(self):
+        out = []
+        for d in self._adapter.list_databases(self.path):
+            if isinstance(d, dict):
+                out.append({'code': d.get('code'), 'name': d.get('name') or d.get('code')})
+            else:
+                out.append({'code': d, 'name': d})
+        return out
+
+    def max_mfn(self, db):
+        return self._adapter.max_mfn(self.path, db)
+
+    def _records(self, db):
+        """Материализовать живые записи БД как ``{mfn: parser-shape}`` (с кэшем).
+
+        ``read_records`` адаптера — итератор ``(mfn, canonical-record)`` по живым
+        записям; удалённые он уже пропустил, поэтому индекс по реальному MFN."""
+        if db not in self._cache:
+            recs = {}
+            top = 0
+            for mfn, record in self._adapter.read_records(self.path, db):
+                recs[mfn] = canonical_to_parsed(mfn, record)
+                top = max(top, mfn)
+            self._cache[db] = recs
+            self._maxmfn[db] = top
+        return self._cache[db]
+
+    def read_record(self, db, mfn):
+        recs = self._records(db)
+        rec = recs.get(mfn)
+        if rec is None:                                 # удалён/пуст/вне диапазона
+            raise IndexError('mfn %s отсутствует в %s' % (mfn, db))
+        return rec
+
+    def close(self):
+        closer = getattr(self._adapter, 'close', None)
+        if callable(closer):
+            closer()
+
+
+# --------------------------------------------------------------------------- #
+# Интроспекция источника. Перечисляет БД, для каждой считает число записей и
+# строит инвентаризацию полей по выборке N записей (плюс — при наличии — рабочий
+# лист `.wss`), помечая нештатные допполя флагом ``custom``. Возвращает
+# структурированный план (тот же shape, что эндпойнт /api/admin/migrate/inspect).
+# --------------------------------------------------------------------------- #
+INSPECT_SAMPLE_SIZE = 200          # сколько записей сэмплировать на БД для инвентаря полей
+
+
+def _accumulate_field_inventory(parsed, inv):
+    """Подмешать поля одной разобранной записи в накопитель инвентаря ``inv``.
+
+    ``inv`` — dict ``tag -> {'freq':int, 'subfields': {sub: freq}}``. Частота тега
+    считается по записям (один тег в записи = +1, даже если он повторяется),
+    частота подполя — по записям, где это подполе встретилось хотя бы раз."""
+    seen_tags = set()
+    seen_subs = set()                                   # (tag, sub) уже учтённые в ЭТОЙ записи
+    for f in parsed.get('fields', []):
+        tag = str(f.get('tag'))
+        if not tag:
+            continue
+        slot = inv.setdefault(tag, {'freq': 0, 'subfields': {}})
+        if tag not in seen_tags:
+            slot['freq'] += 1
+            seen_tags.add(tag)
+        subs = f.get('subfields') or {}
+        codes = [c for c in subs if c != '_repeats']
+        for rep in subs.get('_repeats', []):
+            codes.extend(rep.keys())
+        for code in codes:
+            sub = str(code).lower()
+            key = (tag, sub)
+            if key not in seen_subs:
+                slot['subfields'][sub] = slot['subfields'].get(sub, 0) + 1
+                seen_subs.add(key)
+
+
+def _inventory_to_fields(kind, inv):
+    """Преобразовать накопитель инвентаря в список полей плана (с флагом custom).
+
+    Каждый элемент: ``{tag, label?, subfields:[…], freq, custom}``. ``label`` —
+    человекочитаемое имя из эталона (если штатное поле известно). Поля
+    сортируются по тегу (числовые сначала, по возрастанию)."""
+    out = []
+    for tag in sorted(inv, key=_tag_sort_key):
+        slot = inv[tag]
+        custom_field = is_custom_field(kind, tag)
+        subfields = []
+        for sub in sorted(slot['subfields']):
+            subfields.append({
+                'code': sub,
+                'freq': slot['subfields'][sub],
+                # подполе кастомное, только если поле штатное, а подполя в эталоне нет
+                'custom': (not custom_field) and is_custom_subfield(kind, tag, sub),
+            })
+        out.append({
+            'tag': tag,
+            'label': STANDARD_FIELD_LABELS.get(tag),
+            'subfields': subfields,
+            'freq': slot['freq'],
+            'custom': custom_field,
+        })
+    return out
+
+
+def _tag_sort_key(tag):
+    s = str(tag)
+    return (0, int(s)) if s.isdigit() else (1, s)
+
+
+def introspect_database(source, db_code, db_name=None, sample=INSPECT_SAMPLE_SIZE):
+    """Интроспекция ОДНОЙ БД источника -> элемент плана.
+
+    Возвращает ``{code, name, kind, recordCount, fields:[…], readerCount?}``.
+    Считает ``recordCount`` через ``max_mfn`` и строит инвентарь полей по выборке
+    первых ``sample`` читаемых записей. Удалённые/пустые/нечитаемые записи в
+    выборке пропускаются (но в recordCount учитывается max_mfn целиком)."""
+    kind = db_kind(db_code)
+    try:
+        top = int(source.max_mfn(db_code) or 0)
+    except Exception:                                   # noqa: BLE001 - сервер/БД недоступны
+        top = 0
+    record_count = max(0, top)
+    inv = {}
+    sampled = 0
+    for mfn in range(1, record_count + 1):
+        if sampled >= sample:
+            break
+        try:
+            parsed = source.read_record(db_code, mfn)
+        except Exception:                               # noqa: BLE001 - удалён/заблокирован MFN
+            continue
+        if _status_is_deleted(parsed.get('status')) or not parsed.get('fields'):
+            continue
+        _accumulate_field_inventory(parsed, inv)
+        sampled += 1
+    item = {
+        'code': db_code,
+        'name': db_name or db_code,
+        'kind': kind,
+        'recordCount': record_count,
+        'fields': _inventory_to_fields(kind, inv),
+    }
+    if kind == 'rdr':
+        item['readerCount'] = record_count              # 1 запись RDR = 1 читатель
+    return item
+
+
+def introspect(source, dbs=None, sample=INSPECT_SAMPLE_SIZE):
+    """Интроспекция источника -> структурированный план миграции.
+
+    Перечисляет БД источника (меню `dbnam` / ``list_databases``); для каждой —
+    число записей и инвентарь полей с флагом ``custom`` на нештатных допполях.
+    ``dbs`` (опц.) ограничивает разбор подмножеством кодов (регистронезависимо);
+    БД вне списка пропускаются. Возвращает ``{'databases': [<db-item>, …]}`` —
+    тот же shape, что отдаёт эндпойнт /api/admin/migrate/inspect."""
+    wanted = None
+    if dbs:
+        wanted = {str(d).strip().upper() for d in dbs if str(d).strip()}
+    plan = []
+    for entry in enumerate_databases(source):
+        code = entry.get('code')
+        if not code:
+            continue
+        if wanted is not None and code.strip().upper() not in wanted:
+            continue
+        plan.append(introspect_database(source, code, db_name=entry.get('name'),
+                                        sample=sample))
+    return {'databases': plan}
 
 
 # --------------------------------------------------------------------------- #
@@ -489,17 +918,24 @@ def _new_report():
 def build_arg_parser():
     p = argparse.ArgumentParser(
         prog='migrate_irbis',
-        description='Migrate an ИРБИС library (catalog + readers) into Biblio.')
-    p.add_argument('--source-host', required=True, help='source ИРБИС host')
+        description='Migrate an ИРБИС library (catalog + readers) into Biblio, '
+                    'or introspect a source (--introspect).')
+    # Источник: сетевой (--source-host/--user/--pass) ИЛИ локальный (--source-path).
+    # required не выставляем — режим/полнота проверяются в main (local ≠ network).
+    p.add_argument('--source-host', help='source ИРБИС host (network mode)')
     p.add_argument('--source-port', type=int, default=6666, help='source ИРБИС port')
-    p.add_argument('--user', required=True, help='source ИРБИС login')
-    p.add_argument('--pass', dest='password', required=True, help='source ИРБИС password')
+    p.add_argument('--user', help='source ИРБИС login (network mode)')
+    p.add_argument('--pass', dest='password', help='source ИРБИС password (network mode)')
+    p.add_argument('--source-path', help='DataPath к файлам БД (local mode, без сервера)')
     p.add_argument('--workstation', default='A', help='ИРБИС workstation code (default A)')
-    p.add_argument('--target-tenant', required=True, help='target Biblio tenant slug')
+    p.add_argument('--target-tenant', help='target Biblio tenant slug (нужен для миграции)')
     p.add_argument('--dbs', default='IBIS,RDR',
                    help='comma-separated source DBs to migrate (default IBIS,RDR)')
     p.add_argument('--catalog-db', default='IBIS',
                    help='target catalog base name (default IBIS)')
+    p.add_argument('--introspect', action='store_true',
+                   help='снять и напечатать план источника (БД + инвентарь полей с '
+                        'флагом custom) и выйти — НИЧЕГО не мигрируя')
     p.add_argument('--dry-run', action='store_true',
                    help='read + map + report only; write NOTHING to the target')
     p.add_argument('--limit', type=int, default=None,
@@ -509,12 +945,35 @@ def build_arg_parser():
     return p
 
 
+def _open_source_from_args(args):
+    """Открыть источник по аргументам CLI: локальный (--source-path) или сетевой."""
+    if args.source_path:
+        return LocalSource(args.source_path)
+    if not args.source_host or not args.user or args.password is None:
+        raise SystemExit('network mode требует --source-host/--user/--pass '
+                         '(или используйте --source-path для local mode)')
+    return open_source(args.source_host, args.source_port, args.user,
+                       args.password, workstation=args.workstation)
+
+
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
     dbs = tuple(d.strip() for d in args.dbs.replace(';', ',').split(',') if d.strip())
+    source = _open_source_from_args(args)
 
-    source = open_source(args.source_host, args.source_port, args.user,
-                         args.password, workstation=args.workstation)
+    # Режим интроспекции: печатаем план и выходим (ничего не мигрируем).
+    if args.introspect:
+        try:
+            plan = introspect(source, dbs=dbs or None)
+        finally:
+            close = getattr(source, 'close', None)
+            if callable(close):
+                close()
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return 0
+
+    if not args.target_tenant:
+        raise SystemExit('миграция требует --target-tenant (или используйте --introspect)')
     targets = Targets.in_memory(catalog_db=args.catalog_db, tenant=args.target_tenant)
     log = (lambda m: print(m, file=sys.stderr)) if args.verbose else None
     migrator = Migrator(source, targets, dry_run=args.dry_run, log=log)

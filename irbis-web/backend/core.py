@@ -2081,6 +2081,148 @@ class Api:
                         'enabled': enabled, 'applied': applied,
                         'modules': entitlements.enabled_modules(tenant)})
 
+    # ---- Миграция из ИРБИС: интроспекция источника + запуск (epic #223, #225) ----
+    # Кросс-тенантные операции онбординга: super-admin подключается к ВНЕШНЕМУ
+    # серверу-источнику ИРБИС (или к локальным файлам БД) и (1) снимает план —
+    # список БД + инвентарь полей с пометкой нештатных допполей, либо (2) запускает
+    # перенос каталога/читателей в целевой tenant. Драйвер — tools.migrate_irbis
+    # (тот же код, что и CLI), импортируется ЛЕНИВО (он не часть рантайма сервера).
+    #
+    # ПДн / секреты (ЖЁСТКО): креды источника ТРАНЗИENTНЫ — живут только в стеке
+    # обработчика, НЕ персистятся в открытом виде и НЕ попадают в ответ / аудит /
+    # лог. В аудит и в эхо-ответ идёт лишь redacted-описание источника (host:port,
+    # user — без пароля; для локального режима — только path). Реальные ПДн читателя
+    # при переносе шифруются на месте (V1-seam, как и в CLI-миграторе).
+    @staticmethod
+    def _migrate_redact_source(mode, source):
+        """Безопасное для лога/ответа описание источника — БЕЗ пароля.
+
+        Сетевой источник -> ``{host, port, user}`` (пароль выброшен); локальный ->
+        ``{path}``. Никогда не возвращает поле пароля ни под каким ключом."""
+        source = source or {}
+        if mode == 'local':
+            return {'path': source.get('path')}
+        return {'host': source.get('host'), 'port': source.get('port'),
+                'user': source.get('user')}
+
+    def _migrate_open_source(self, mode, source):
+        """Открыть источник миграции по режиму. Возвращает (handle, error|None).
+
+        ``network`` -> tools.migrate_irbis.open_source (сессия ИРБИС, креды только
+        в стеке); ``local`` -> LocalSource поверх tools.irbis_mst (если адаптер не
+        готов — мягкая ошибка «адаптер не готов»). Любой иной режим -> ошибка."""
+        from tools import migrate_irbis as _mig
+        source = source or {}
+        if mode == 'network':
+            host = (source.get('host') or '').strip()
+            if not host:
+                return None, err('bad_request', 'source.host обязателен для network')
+            port = int(source.get('port') or 6666)
+            user = source.get('user') or ''
+            password = source.get('pass') or source.get('password') or ''
+            workstation = (source.get('workstation') or 'A').strip() or 'A'
+            handle = _mig.open_source(host, port, user, password,
+                                      workstation=workstation)
+            return handle, None
+        if mode == 'local':
+            path = (source.get('path') or '').strip()
+            if not path:
+                return None, err('bad_request', 'source.path обязателен для local')
+            try:
+                handle = _mig.LocalSource(path)
+            except _mig.LocalAdapterUnavailable as e:
+                return None, err('not_ready', str(e))
+            return handle, None
+        return None, err('bad_request', 'mode должен быть network|local')
+
+    def admin_migrate_inspect(self, session, body):
+        """POST /api/admin/migrate/inspect — интроспекция источника ИРБИС.
+
+        Тело ``{mode:'network'|'local', source:{host,port,user,pass}|{path}, dbs?}``.
+        Перечисляет БД источника и для каждой отдаёт число записей и инвентарь полей
+        с флагом ``custom`` на нештатных допполях. Super-admin only (403 прочим).
+        Креды транзиентны: в ответ/аудит уходит только redacted-описание (без
+        пароля)."""
+        self._require_super_admin(session)
+        from tools import migrate_irbis as _mig
+        mode = (body.get('mode') or 'network').strip()
+        source = body.get('source') or {}
+        dbs = body.get('dbs') or None
+        handle, error = self._migrate_open_source(mode, source)
+        if error is not None:
+            status = 503 if error['error']['code'] == 'not_ready' else 400
+            return status, error
+        try:
+            plan = _mig.introspect(handle, dbs=dbs)
+        except Exception:                              # noqa: BLE001 - источник недоступен
+            return 502, err('source_error', 'не удалось прочитать источник')
+        finally:
+            close = getattr(handle, 'close', None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:                       # noqa: BLE001
+                    pass
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok',
+            {'op': 'migrate.inspect', 'mode': mode,
+             'source': self._migrate_redact_source(mode, source),
+             'databases': [d['code'] for d in plan['databases']]})
+        return 200, ok(plan)
+
+    def admin_migrate_run(self, session, body):
+        """POST /api/admin/migrate/run — выполнить миграцию (синхронно).
+
+        Тело ``{mode, source, tenant, dbs:[], dryRun:bool}``. Читает каталог/
+        читателей из источника и грузит их в целевой tenant (ПДн шифруются на
+        месте). ``dryRun`` читает+мапит+считает, НИЧЕГО не записывая. Возвращает
+        ``{report:{records_read,records_loaded,readers_loaded,skipped,errors}}``.
+        Super-admin only. Креды транзиентны (redacted в аудите/ответе)."""
+        self._require_super_admin(session)
+        from tools import migrate_irbis as _mig
+        mode = (body.get('mode') or 'network').strip()
+        source = body.get('source') or {}
+        dbs = body.get('dbs') or ['IBIS', 'RDR']
+        dbs = [str(d).strip() for d in dbs if str(d).strip()]
+        dry_run = bool(body.get('dryRun'))
+        target_tenant = (body.get('tenant') or session.get('tenant')
+                         or DEFAULT_TENANT).strip() or DEFAULT_TENANT
+        catalog_db = (body.get('catalogDb') or 'IBIS').strip() or 'IBIS'
+        handle, error = self._migrate_open_source(mode, source)
+        if error is not None:
+            status = 503 if error['error']['code'] == 'not_ready' else 400
+            return status, error
+        # Целевые хранилища — РЕАЛЬНЫЕ стора приложения (как у CLI-мигратора, но
+        # внутри сервера): каталог приложения (self.catalog, канонизирует через ФЛК),
+        # циркуляционный стор (читательские строки ticket+категория) и access-store
+        # целевого тенанта (зашифрованные ПДн, аудит). Если каталог/циркуляция не
+        # поднялись (best-effort при старте) — миграция недоступна, а не падает.
+        store = self._store_for(target_tenant)
+        circ_store = getattr(self.circulation, 'store', None)
+        if self.catalog is None or circ_store is None:
+            return 503, err('not_ready', 'целевые хранилища недоступны')
+        targets = _mig.Targets(self.catalog, circ_store, store,
+                               catalog_db=catalog_db, tenant=target_tenant)
+        try:
+            report = _mig.Migrator(handle, targets, dry_run=dry_run).run(
+                dbs=tuple(dbs), catalog_db=catalog_db)
+        except Exception:                              # noqa: BLE001 - источник/загрузка упали
+            return 502, err('migrate_error', 'миграция прервана')
+        finally:
+            close = getattr(handle, 'close', None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:                       # noqa: BLE001
+                    pass
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok',
+            {'op': 'migrate.run', 'mode': mode, 'tenant': target_tenant,
+             'dbs': dbs, 'dryRun': dry_run,
+             'source': self._migrate_redact_source(mode, source),
+             'report': report})
+        return 200, ok({'report': report, 'tenant': target_tenant, 'dryRun': dry_run})
+
     def vocab_list(self, session):
         """List the session tenant's dictionaries (name/title/kind/seed_version).
 
@@ -2330,6 +2472,11 @@ class Api:
                 return self.admin_set_plan(session, body or {})
             if method == 'POST' and path == '/api/admin/billing/module':
                 return self.admin_set_module(session, body or {})
+            # ---- Миграция из ИРБИС: интроспекция + запуск (super-admin, #225) ----
+            if method == 'POST' and path == '/api/admin/migrate/inspect':
+                return self.admin_migrate_inspect(session, body or {})
+            if method == 'POST' and path == '/api/admin/migrate/run':
+                return self.admin_migrate_run(session, body or {})
             # ---- Циркуляция / выдача (circulation desk) — staff-only (#185) ----
             if method == 'GET' and path == '/api/circ/reader':
                 return self.circ_reader(session, (query.get('ticket', [''])[0] or '').strip())
