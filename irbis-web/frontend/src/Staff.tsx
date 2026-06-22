@@ -185,6 +185,55 @@ const SHELL_CSS = `
 .stf__ex input:focus{outline:none;border-color:var(--accent);}
 @media (max-width:880px){.stf__search{grid-template-columns:1fr;}.stf__ex{grid-template-columns:1fr 1fr;}}
 
+/* вкладки представления записи (рабочий лист · MARC · каталожная карточка) */
+.stf__tabs{display:flex;gap:3px;padding:3px;background:var(--surface-sunken);border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);margin-bottom:14px;width:fit-content;max-width:100%;flex-wrap:wrap;}
+.stf__tab{display:inline-flex;align-items:center;gap:6px;border:none;cursor:pointer;font-family:var(--font-ui);
+  font-size:12.5px;font-weight:500;padding:6px 12px;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);}
+.stf__tab:hover{color:var(--text-body);}
+.stf__tab[aria-selected="true"]{background:var(--surface-card);color:var(--text-strong);font-weight:600;box-shadow:var(--shadow-sm);}
+.stf__tab-count{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:var(--radius-full);
+  background:var(--surface-hover);color:var(--text-subtle);}
+
+/* MARC-представление (как хранится: tag ^подполе значение) */
+.stf__marc{font-family:var(--font-mono);font-size:12.5px;line-height:1.7;color:var(--text-body);
+  padding:14px 18px;max-height:560px;overflow:auto;}
+.stf__marc-row{display:grid;grid-template-columns:46px 1fr;gap:12px;padding:3px 0;border-bottom:1px solid var(--border-subtle);align-items:baseline;}
+.stf__marc-row:last-child{border-bottom:none;}
+.stf__marc-tag{font-weight:700;color:var(--accent-press);}
+.stf__marc-sf{color:var(--accent);font-weight:700;}
+.stf__marc-empty{color:var(--text-subtle);font-style:italic;padding:6px 0;}
+
+/* каталожная карточка (предпросмотр печатной формы) */
+.stf__card-preview{padding:24px;display:flex;justify-content:center;background:var(--surface-sunken);}
+.stf__cc{background:#fff;color:#1a1a1a;width:100%;max-width:520px;border:1px solid #d8d2c8;border-radius:2px;
+  box-shadow:0 1px 6px rgba(20,16,14,.12);padding:22px 26px;font-family:Georgia,'Times New Roman',serif;line-height:1.5;}
+.stf__cc-head{font-size:12px;color:#666;border-bottom:1px solid #e3ddd2;padding-bottom:6px;margin-bottom:12px;display:flex;justify-content:space-between;font-family:var(--font-mono);}
+.stf__cc-author{font-weight:700;font-size:15px;margin-bottom:2px;}
+.stf__cc-title{font-size:15px;margin-bottom:8px;}
+.stf__cc-imprint{font-size:13.5px;color:#333;margin-bottom:10px;}
+.stf__cc-block{font-size:12.5px;color:#444;margin-top:6px;}
+.stf__cc-tag{display:inline-block;font-size:11px;color:#888;font-family:var(--font-mono);background:#f3efe6;border-radius:3px;padding:0 5px;margin-right:6px;}
+
+/* быстрые действия в шапке строки рабочего листа */
+.stf__row-lab .stf__row-q{margin-left:auto;opacity:0;transition:opacity .12s;}
+.stf__row:hover .stf__row-q,.stf__row:focus-within .stf__row-q{opacity:1;}
+.stf__row-q{border:none;background:transparent;cursor:pointer;color:var(--text-subtle);padding:2px;border-radius:var(--radius-sm);display:inline-flex;}
+.stf__row-q:hover{color:var(--danger-500);background:var(--surface-hover);}
+
+/* счётчики/мета шапки секции */
+.stf__metarow{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--text-subtle);margin:-6px 0 14px;}
+.stf__metarow b{color:var(--text-body);font-weight:600;}
+.stf__metarow-dot{width:4px;height:4px;border-radius:50%;background:var(--border-strong);}
+
+/* клавиатурные подсказки (kbd) */
+.stf__kbd{display:inline-flex;align-items:center;gap:4px;}
+.stf__kbd kbd{font-family:var(--font-mono);font-size:10.5px;line-height:1;padding:3px 6px;border-radius:var(--radius-sm);
+  background:var(--surface-sunken);border:1px solid var(--border-subtle);border-bottom-width:2px;color:var(--text-muted);}
+.stf__hintbar{display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:9px 14px;margin-bottom:14px;
+  background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-md);
+  font-size:11.5px;color:var(--text-subtle);}
+
 @media (max-width:880px){
   .stf__cat-grid{grid-template-columns:1fr !important;}
 }
@@ -502,6 +551,69 @@ const emptyExemplar = (): Exemplar => ({ b: "", h: "", d: "" });
 // поэтому подсвечиваем всю строку поля.
 const flkKey = (v: FlkViolation): string => (v.field || v.path || "").toString();
 
+// Клавиатурная подсказка: «Enter — выдать» и т.п. Для подсказочной полосы десков.
+function Kbd({ keys, label }: { keys: string[]; label: string }) {
+  return (
+    <span className="stf__kbd">
+      {keys.map((k, i) => <kbd key={i}>{k}</kbd>)}
+      <span style={{ marginLeft: 4 }}>{label}</span>
+    </span>
+  );
+}
+
+// MARC-представление «как хранится»: разбираем строку вхождения поля на
+// подполя (^a, ^b, …). Возвращает массив сегментов для отрисовки.
+function parseMarcOccurrence(s: string): Array<{ sf?: string; text: string }> {
+  if (!s) return [];
+  if (s.indexOf("^") < 0) return [{ text: s }];
+  const out: Array<{ sf?: string; text: string }> = [];
+  // ведущий текст до первого ^ (индикаторы/без подполей)
+  const parts = s.split("^");
+  if (parts[0]) out.push({ text: parts[0] });
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i];
+    if (!p) continue;
+    out.push({ sf: p[0], text: p.slice(1) });
+  }
+  return out;
+}
+
+// Печатная (каталожная) форма записи — простая реконструкция из полей рабочего
+// листа: автор (700^a/^b или 700), заглавие (200^a + ^e + ^f), выходные данные
+// (210), физ. характеристика (215), ISBN (10), серия (225), примечания (300).
+// Это клиентский предпросмотр (на сервере PFT-рендера в api.ts нет) — даёт
+// оператору «как будет выглядеть карточка», без боевого PFT.
+function buildCardPreview(fields: { tag: string; value: string }[], mfn: number) {
+  const sub = (val: string, code: string): string => {
+    const m = parseMarcOccurrence(val).find((p) => p.sf === code);
+    return m ? m.text.trim() : "";
+  };
+  const first = (tag: string) => fields.find((f) => f.tag === tag)?.value || "";
+  const all = (tag: string) => fields.filter((f) => f.tag === tag).map((f) => f.value);
+
+  const a700 = first("700");
+  const author = a700 ? [sub(a700, "a"), sub(a700, "b")].filter(Boolean).join(", ") || a700 : "";
+
+  const t200 = first("200");
+  const title = t200 ? sub(t200, "a") || t200 : "";
+  const subtitle = t200 ? sub(t200, "e") : "";
+  const respons = t200 ? sub(t200, "f") : "";
+
+  const i210 = first("210");
+  const imprint = i210
+    ? [sub(i210, "a"), sub(i210, "c"), sub(i210, "d")].filter(Boolean).join(", ") || i210
+    : "";
+
+  const p215 = first("215");
+  const phys = p215 ? [sub(p215, "a"), sub(p215, "c"), sub(p215, "d")].filter(Boolean).join(" ; ") || p215 : "";
+
+  const isbn = sub(first("10"), "a") || first("10");
+  const series = all("225").map((v) => sub(v, "a") || v).filter(Boolean);
+  const notes = all("300").map((v) => v).filter(Boolean);
+
+  return { mfn, author, title, subtitle, respons, imprint, phys, isbn, series, notes };
+}
+
 function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; toast: ToastFn }) {
   const SANDBOX = "WORK";
   const SEARCH_DB = "IBIS";
@@ -516,6 +628,11 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
   const [violations, setViolations] = React.useState<FlkViolation[]>([]);
   const [checked, setChecked] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  // вкладка представления записи: рабочий лист · MARC-поля · каталожная карточка.
+  const [view, setView] = React.useState<"sheet" | "marc" | "card">("sheet");
+  // источник правки (MFN боевой записи, загруженной в форму) — для подписи «правка
+  // на основе …» и понимания режима «создать копию».
+  const [srcMfn, setSrcMfn] = React.useState<number | null>(null);
   // search-to-edit
   const [query, setQuery] = React.useState("");
   const [prefix, setPrefix] = React.useState("T=");
@@ -534,10 +651,23 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
   };
   function resetEditor(keepResults = true) {
     setValues(emptyValues(wl!)); setExemplars([]); setMfn(0); setSaved(null);
-    setErrors({}); setViolations([]); setChecked(false);
+    setErrors({}); setViolations([]); setChecked(false); setSrcMfn(null); setView("sheet");
     if (!keepResults) setResults(null);
   }
   const newRecord = () => resetEditor();
+
+  // Очистить одно поле рабочего листа (быстрое действие в шапке строки).
+  function clearField(fd: WLField) {
+    set(fd.code, fd.repeatable ? [] : (fd.subfields ? {} : ""));
+  }
+
+  // Создать из текущей записи копию: сохраняем содержимое формы, но сбрасываем
+  // привязку к боевому MFN и экземпляры (инвентарные номера у копии свои).
+  function createAsCopy() {
+    setMfn(0); setSrcMfn(null); setExemplars([]); setSaved(null);
+    setErrors({}); setViolations([]); setChecked(false); setView("sheet");
+    toast({ variant: "info", title: "Создаётся копия", message: "Поля скопированы; экземпляры и MFN очищены — заполните инвентарные единицы." });
+  }
 
   // --- поиск записи в базе → список результатов → выбор для правки ---------
   async function runSearch() {
@@ -557,7 +687,7 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
         b: f.subfields?.b || f.subfields?.B || "", h: f.subfields?.h || f.subfields?.H || "", d: f.subfields?.d || f.subfields?.D || "",
       }));
       setExemplars(ex);
-      setMfn(0); setSaved(null); setErrors({}); setViolations([]); setChecked(false);
+      setMfn(0); setSrcMfn(item.mfn); setSaved(null); setErrors({}); setViolations([]); setChecked(false); setView("sheet");
       toast({ variant: "info", title: "Запись загружена в форму", message: SEARCH_DB + " MFN " + item.mfn + " → сохранится в песочницу " + SANDBOX });
     } else toast({ variant: "warning", title: "Не удалось открыть", message: "MFN " + item.mfn });
   }
@@ -651,6 +781,17 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
   const softCount = violations.filter((v) => v.severity === 2).length;
   const errCount = Object.keys(errors).length;
 
+  // Текущие поля записи (как уйдут на сохранение) — для MARC- и каталожного
+  // представлений. Считаем при наличии рабочего листа.
+  const currentFields = wl ? valuesToFields(wl, values).concat(exemplarFields()) : [];
+  // Счётчик заполненных полей рабочего листа (без 910) — для меты шапки.
+  const filledCount = (wl || []).filter((fd) => {
+    const v = values[fd.code];
+    if (fd.repeatable) return Array.isArray(v) && v.some((occ: any) => fd.subfields ? (occ && Object.values(occ).some(Boolean)) : !!(occ && occ.toString().trim()));
+    return fd.subfields ? (v && typeof v === "object" && Object.values(v).some(Boolean)) : !!(v && v.toString().trim());
+  }).length;
+  const cardData = buildCardPreview(currentFields, mfn || srcMfn || 0);
+
   const exInputs = (i: number, x: Exemplar) => (
     <div className="stf__ex" key={i}>
       <input value={x.b} onChange={(e) => setExemplar(i, { b: e.target.value })} placeholder="Инв. номер (^b)" aria-label={"Инвентарный номер экземпляра " + (i + 1)} />
@@ -668,8 +809,9 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
         <span className="stf__pill" style={{ background: "var(--status-issued-bg)", color: "var(--status-issued)", borderColor: "transparent" }}>{mfn ? "MFN " + mfn : "Черновик"}</span>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Button variant="secondary" size="sm" iconLeft="copy" onClick={createAsCopy} disabled={!wl || filledCount === 0} title="Создать новую запись на основе текущей">Создать копию</Button>
         <Button variant="secondary" size="sm" iconLeft="check-circle" onClick={checkFlk} disabled={!wl}>Проверить ФЛК</Button>
-        <Button size="sm" iconLeft="check-circle" loading={saving} onClick={save} disabled={!wl}>Сохранить</Button>
+        <Button size="sm" iconLeft="save" loading={saving} onClick={save} disabled={!wl}>Сохранить</Button>
       </div>
     </div>
   );
@@ -726,19 +868,101 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
             </div>
       )}
 
+      {/* мета-строка: контекст текущей записи (источник правки, песочница, счётчики) */}
+      {wl && (
+        <div className="stf__metarow">
+          <span>{srcMfn ? <>Правка на основе <b>{SEARCH_DB} · MFN {srcMfn}</b></> : mfn ? <>Сохранено как <b>MFN {mfn}</b></> : <>Новая запись (черновик)</>}</span>
+          <span className="stf__metarow-dot" aria-hidden="true" />
+          <span>Песочница <b>{SANDBOX}</b> — правка не на боевой</span>
+          <span className="stf__metarow-dot" aria-hidden="true" />
+          <span>Заполнено полей: <b>{filledCount}</b> из {wl.length}</span>
+          <span className="stf__metarow-dot" aria-hidden="true" />
+          <span>Экземпляров: <b>{exemplars.length}</b></span>
+        </div>
+      )}
+
+      {/* вкладки представления записи */}
+      {wl && (
+        <div className="stf__tabs" role="tablist" aria-label="Представление записи">
+          <button type="button" role="tab" aria-selected={view === "sheet"} className="stf__tab" onClick={() => setView("sheet")}>
+            <Icon name="list" size={14} /> Рабочий лист
+          </button>
+          <button type="button" role="tab" aria-selected={view === "marc"} className="stf__tab" onClick={() => setView("marc")}>
+            <Icon name="file-text" size={14} /> MARC-поля <span className="stf__tab-count">{currentFields.length}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={view === "card"} className="stf__tab" onClick={() => setView("card")}>
+            <Icon name="book-open" size={14} /> Каталожная карточка
+          </button>
+        </div>
+      )}
+
       {!wl ? <div style={{ color: "var(--text-subtle)", fontSize: 13 }}>Загрузка рабочего листа…</div> : (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 280px", gap: 18, alignItems: "start" }} className="stf__cat-grid">
-          {/* worksheet — labelled field rows + экземпляры */}
-          <div className="stf__card" style={{ padding: "4px 20px" }}>
-            {wl.map((fd) => (
+          {/* ===== Представление записи (рабочий лист / MARC / карточка) ===== */}
+          {view === "marc" ? (
+            <div className="stf__card" role="tabpanel" aria-label="MARC-поля">
+              {currentFields.length === 0
+                ? <div className="stf__marc-empty" style={{ padding: 18 }}>Запись пуста — заполните поля на вкладке «Рабочий лист», и они появятся здесь как хранятся (тег ^подполе значение).</div>
+                : <div className="stf__marc">
+                    {currentFields.map((f, i) => (
+                      <div className="stf__marc-row" key={f.tag + ":" + i}>
+                        <span className="stf__marc-tag">{f.tag}</span>
+                        <span>
+                          {parseMarcOccurrence(f.value).map((seg, j) =>
+                            seg.sf
+                              ? <React.Fragment key={j}><span className="stf__marc-sf">^{seg.sf}</span>{seg.text}{" "}</React.Fragment>
+                              : <React.Fragment key={j}>{seg.text}{" "}</React.Fragment>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>}
+            </div>
+          ) : view === "card" ? (
+            <div className="stf__card" role="tabpanel" aria-label="Каталожная карточка">
+              <div className="stf__card-preview">
+                <div className="stf__cc">
+                  <div className="stf__cc-head">
+                    <span>{SEARCH_DB}</span>
+                    <span>{cardData.mfn ? "MFN " + cardData.mfn : "черновик"}</span>
+                  </div>
+                  {cardData.author && <div className="stf__cc-author">{cardData.author}</div>}
+                  {(cardData.title || cardData.subtitle || cardData.respons) ? (
+                    <div className="stf__cc-title">
+                      {cardData.title || <i style={{ color: "#999" }}>[без заглавия]</i>}
+                      {cardData.subtitle ? " : " + cardData.subtitle : ""}
+                      {cardData.respons ? " / " + cardData.respons : ""}
+                    </div>
+                  ) : <div className="stf__cc-title"><i style={{ color: "#999" }}>[заглавие не заполнено]</i></div>}
+                  {cardData.imprint && <div className="stf__cc-imprint">{cardData.imprint}</div>}
+                  {cardData.phys && <div className="stf__cc-block">{cardData.phys}</div>}
+                  {cardData.series.length > 0 && <div className="stf__cc-block">{cardData.series.map((s) => "(" + s + ")").join(" ")}</div>}
+                  {cardData.notes.length > 0 && <div className="stf__cc-block">{cardData.notes.join(" — ")}</div>}
+                  {cardData.isbn && <div className="stf__cc-block"><span className="stf__cc-tag">ISBN</span>{cardData.isbn}</div>}
+                  {exemplars.length > 0 && <div className="stf__cc-block"><span className="stf__cc-tag">Экз.</span>{exemplars.length} {exemplars.length === 1 ? "единица" : "единиц(ы)"}</div>}
+                </div>
+              </div>
+              <div style={{ padding: "0 18px 16px", fontSize: 11.5, color: "var(--text-subtle)" }}>
+                Предпросмотр печатной формы собран из полей записи на стороне клиента (200/210/215/700/225/300/10). Боевой PFT-рендер подключается движком каталогизации.
+              </div>
+            </div>
+          ) : (
+          /* worksheet — labelled field rows + экземпляры */
+          <div className="stf__card" role="tabpanel" aria-label="Рабочий лист" style={{ padding: "4px 20px" }}>
+            {wl.map((fd) => {
+              const hasVal = fd.repeatable
+                ? (Array.isArray(values[fd.code]) && values[fd.code].length > 0)
+                : (fd.subfields ? (values[fd.code] && Object.values(values[fd.code]).some(Boolean)) : !!(values[fd.code] && values[fd.code].toString().trim()));
+              return (
               <div className={"stf__row" + (errors[fd.code] ? " stf__row--bad" : "")} key={fd.code}>
                 <div className="stf__row-lab">
                   <span className="stf__row-code">{fd.code}</span>
                   <span className="stf__row-name">{fd.label}{fd.required && <span className="stf__row-req" aria-hidden="true">*</span>}</span>
+                  {hasVal && <button type="button" className="stf__row-q" title="Очистить поле" aria-label={"Очистить поле " + fd.label} onClick={() => clearField(fd)}><Icon name="x-circle" size={15} /></button>}
                 </div>
                 <DynamicField field={{ ...fd, code: undefined } as any} value={values[fd.code]} onChange={(v: any) => set(fd.code, v)} error={errors[fd.code]} />
               </div>
-            ))}
+            ); })}
 
             {/* экземпляры (910) */}
             <div className="stf__exh">
@@ -753,11 +977,13 @@ function CatalogingWorksheet({ staff: _staff, toast }: { staff: StaffSession; to
               ? <div style={{ fontSize: 12.5, color: "var(--text-subtle)", paddingBottom: 8 }}>Экземпляров нет. Добавьте инвентарные единицы (инв. номер, штрих-код/RFID, место хранения).</div>
               : exemplars.map((x, i) => exInputs(i, x))}
 
-            <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "14px 0" }}>
-              <Button iconLeft="check-circle" loading={saving} onClick={save}>Сохранить запись</Button>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "14px 0", flexWrap: "wrap" }}>
+              <Button iconLeft="save" loading={saving} onClick={save}>Сохранить запись</Button>
+              {filledCount > 0 && <Button variant="secondary" iconLeft="copy" onClick={createAsCopy}>Создать копию</Button>}
               {saved && <span style={{ color: "var(--success)", fontSize: 13 }}><Icon name="check" size={13} /> сохранено в {saved.db}, MFN {saved.mfn} (код {saved.returnCode})</span>}
             </div>
           </div>
+          )}
 
           {/* ФЛК сводка */}
           <aside className="stf__card" style={{ padding: 16, position: "sticky", top: 64 }} aria-label="Сводка проверки ФЛК">

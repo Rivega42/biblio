@@ -40,7 +40,7 @@ const CSS = `
 .cdesk__block--warn{background:var(--status-issued-bg,#FBEFD8);color:var(--status-issued,#B0791C);}
 .cdesk__block--info{background:var(--accent-weak);color:var(--accent-press);}
 .cdesk__loans{padding:4px 0;}
-.cdesk__loan{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:11px 16px;border-bottom:1px solid var(--border-subtle);}
+.cdesk__loan{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:11px 16px;border-bottom:1px solid var(--border-subtle);}
 .cdesk__loan:last-child{border-bottom:none;}
 .cdesk__loan-title{font-weight:600;font-size:13.5px;line-height:1.3;}
 .cdesk__loan-meta{font-size:12px;color:var(--text-subtle);display:flex;gap:10px;flex-wrap:wrap;margin-top:3px;}
@@ -53,6 +53,27 @@ const CSS = `
 .cdesk__fine:last-child{border-bottom:none;}
 .cdesk__fine-amt{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap;}
 .cdesk__fines-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--border-strong);font-weight:700;font-size:14px;}
+
+/* типизированные баннеры блокировок (должник / штрафы / бронь / просрочка) */
+.cdesk__block--danger{background:var(--status-issued-bg,#FBEFD8);color:var(--danger-500);border:1px solid var(--danger-500);}
+.cdesk__block--hold{background:var(--accent-weak);color:var(--accent-press);}
+.cdesk__block-strong{font-weight:600;}
+
+/* клавиатурные подсказки */
+.cdesk__hints{display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:8px 14px;margin-bottom:14px;
+  background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-md);font-size:11.5px;color:var(--text-subtle);}
+.cdesk__kbd{display:inline-flex;align-items:center;gap:5px;}
+.cdesk__kbd kbd{font-family:var(--font-mono);font-size:10.5px;line-height:1;padding:3px 6px;border-radius:var(--radius-sm);
+  background:var(--surface-card);border:1px solid var(--border-subtle);border-bottom-width:2px;color:var(--text-muted);}
+
+/* панель массовых действий над выдачами */
+.cdesk__bulk{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border-subtle);
+  background:var(--surface-sunken);font-size:12.5px;}
+.cdesk__bulk-info{color:var(--text-muted);}
+.cdesk__loan--sel{background:var(--accent-weak);}
+.cdesk__chk{width:16px;height:16px;flex:none;cursor:pointer;accent-color:var(--accent);}
+.cdesk__loanhead{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border-subtle);}
+.cdesk__loanhead-cap{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);}
 @media (max-width:920px){.cdesk__grid{grid-template-columns:1fr;}.cdesk__scan{grid-template-columns:1fr;}}
 `;
 if (typeof document !== "undefined" && !document.getElementById("cdesk-css")) {
@@ -82,6 +103,9 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
   const [unavailable, setUnavailable] = React.useState(false);
   const [busyItem, setBusyItem] = React.useState<string | null>(null);
   const [issuing, setIssuing] = React.useState(false);
+  // массовый возврат: набор выбранных инв./RFID + флаг идущей операции.
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = React.useState(false);
   const itemRef = React.useRef<HTMLInputElement>(null);
 
   const activeTicket = form?.reader.ticket || "";
@@ -96,6 +120,7 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
     if (r.json?.ok && r.json.data && r.json.data.reader) {
       setForm(r.json.data);
       setUnavailable(false);
+      setSelected(new Set()); // сброс выбора массового возврата под нового читателя
       // штрафы — отдельным запросом (мягко, без блокировки формуляра)
       void loadFines(r.json.data.reader.ticket || t);
       // фокус сразу в поле экземпляра — оператор сканирует книгу
@@ -176,12 +201,42 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
     }
   }
 
+  // --- массовый возврат ----------------------------------------------------
+  const loanList = form?.loans || [];
+  const toggleSel = (item: string) =>
+    setSelected((s) => { const n = new Set(s); n.has(item) ? n.delete(item) : n.add(item); return n; });
+  const allSelected = loanList.length > 0 && selected.size === loanList.length;
+  const toggleAll = () =>
+    setSelected(() => allSelected ? new Set() : new Set(loanList.map((l) => l.item)));
+
+  // Принять возврат всех выбранных экземпляров последовательно (по одному вызову
+  // circReturn на экземпляр — массового эндпойнта нет). Сводный тост по итогу.
+  async function bulkReturn() {
+    const picks = loanList.filter((l) => selected.has(l.item));
+    if (!picks.length || !activeTicket) return;
+    setBulkBusy(true);
+    let ok = 0, fail = 0, unavailable = false;
+    for (const ln of picks) {
+      const r = await api.circReturn(activeTicket, ln.db || CIRC_DB, ln.item);
+      if (r.status === 200 && r.json?.ok) ok++;
+      else if (r.status === 404 || r.status === 501) { unavailable = true; break; }
+      else fail++;
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    if (unavailable) toast({ variant: "info", title: "Возврат недоступен", message: "Модуль книговыдачи ещё не подключён." });
+    else if (fail === 0) toast({ variant: "success", title: "Массовый возврат", message: "Принято экземпляров: " + ok + "." });
+    else toast({ variant: "warning", title: "Массовый возврат — частично", message: "Принято " + ok + ", не принято " + fail + ". Проверьте оставшиеся." });
+    await refresh();
+  }
+
   const head = (
     <div className="stf__pagehead">
       <div className="stf__h1">
         <h2>Книговыдача</h2>
         <span className="stf__pill">Выдача · возврат · продление</span>
         {form && <span className="stf__pill" style={{ background: "var(--status-issued-bg)", color: "var(--status-issued)", borderColor: "transparent" }}>{form.loans.length} на руках</span>}
+        {form && form.loans.some((l) => l.overdue) && <span className="stf__pill" style={{ background: "var(--danger-500)", color: "#fff", borderColor: "transparent" }}>{form.loans.filter((l) => l.overdue).length} просрочено</span>}
       </div>
     </div>
   );
@@ -198,11 +253,20 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
   );
 
   const reader = form?.reader;
-  const blocks: { kind: "warn" | "info"; text: string }[] = [];
-  if (reader?.debtor) blocks.push({ kind: "warn", text: "Читатель — должник. Выдача ограничена до погашения задолженности." });
-  if (reader?.finesTotal) blocks.push({ kind: "warn", text: "Непогашенные штрафы: " + money(reader.finesTotal) + "." });
-  (reader?.blocks || []).forEach((b) => blocks.push({ kind: "warn", text: b }));
-  (form?.messages || []).forEach((m) => blocks.push({ kind: "info", text: m }));
+  const overdueCount = (form?.loans || []).filter((l) => l.overdue).length;
+  // Типизированные баннеры: должник (danger), штрафы (danger), просрочка (warn),
+  // бронь/удержание (hold), служебные блоки (warn), сообщения сервера (info).
+  // Распознаём бронь по ключевым словам в тексте служебного блока.
+  type BannerKind = "danger" | "warn" | "hold" | "info";
+  const blocks: { kind: BannerKind; icon: "alert-octagon" | "alert-triangle" | "bookmark-check" | "info"; text: string; strong?: boolean }[] = [];
+  if (reader?.debtor) blocks.push({ kind: "danger", icon: "alert-octagon", strong: true, text: "Читатель — должник. Выдача ограничена до погашения задолженности." });
+  if (reader?.finesTotal) blocks.push({ kind: "danger", icon: "alert-octagon", text: "Непогашенные штрафы: " + money(reader.finesTotal) + "." });
+  if (overdueCount > 0) blocks.push({ kind: "warn", icon: "alert-triangle", text: "Просрочено экземпляров: " + overdueCount + " — примите возврат или продлите." });
+  (reader?.blocks || []).forEach((b) => {
+    const isHold = /бронь|брон|удержан|hold|заказ/i.test(b);
+    blocks.push({ kind: isHold ? "hold" : "warn", icon: isHold ? "bookmark-check" : "alert-triangle", text: b });
+  });
+  (form?.messages || []).forEach((m) => blocks.push({ kind: "info", icon: "info", text: m }));
 
   return (
     <div className="cdesk">
@@ -215,20 +279,27 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
           <input id="cdesk-ticket" className="cdesk__in cdesk__in--mono" value={ticket} placeholder="скан / номер билета"
             autoComplete="off" autoFocus
             onChange={(e) => setTicket(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") loadFormular(ticket); }} />
+            onKeyDown={(e) => { if (e.key === "Enter") loadFormular(ticket); else if (e.key === "Escape") setTicket(""); }} />
         </div>
         <div className="cdesk__fld">
           <label className="cdesk__fld-lab" htmlFor="cdesk-item">Экземпляр (инв. / RFID)</label>
           <input id="cdesk-item" ref={itemRef} className="cdesk__in cdesk__in--mono" value={item} placeholder={form ? "скан экземпляра → Enter" : "сначала загрузите формуляр"}
             autoComplete="off" disabled={!form}
             onChange={(e) => setItem(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") issue(); }} />
+            onKeyDown={(e) => { if (e.key === "Enter") issue(); else if (e.key === "Escape") setItem(""); }} />
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           {!form
             ? <Button iconLeft="user" loading={loading} onClick={() => loadFormular(ticket)}>Формуляр</Button>
             : <Button iconLeft="log-out" loading={issuing} disabled={!item.trim()} onClick={issue}>Выдать</Button>}
         </div>
+      </div>
+
+      {/* ===== Клавиатурные подсказки оператора ===== */}
+      <div className="cdesk__hints" aria-hidden="true">
+        <span className="cdesk__kbd"><kbd>Enter</kbd> в поле билета — открыть формуляр</span>
+        <span className="cdesk__kbd"><kbd>Enter</kbd> в поле экземпляра — выдать и очистить под след. скан</span>
+        <span className="cdesk__kbd"><kbd>Esc</kbd> — очистить текущее поле</span>
       </div>
 
       {!form ? (
@@ -251,7 +322,7 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
                 </div>
               </div>
               <div style={{ marginLeft: "auto" }}>
-                <Button variant="ghost" size="sm" iconLeft="refresh-cw" onClick={() => { setForm(null); setFines(null); setFinesTotal(null); setTicket(""); setItem(""); }}>Другой читатель</Button>
+                <Button variant="ghost" size="sm" iconLeft="refresh-cw" onClick={() => { setForm(null); setFines(null); setFinesTotal(null); setTicket(""); setItem(""); setSelected(new Set()); }}>Другой читатель</Button>
               </div>
             </div>
 
@@ -259,10 +330,26 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
               <div className="cdesk__blocks">
                 {blocks.map((b, i) => (
                   <div key={i} className={"cdesk__block cdesk__block--" + b.kind}>
-                    <Icon name={b.kind === "warn" ? "alert-triangle" : "info"} size={15} style={{ flex: "none", marginTop: 1 }} />
-                    <span>{b.text}</span>
+                    <Icon name={b.icon} size={15} style={{ flex: "none", marginTop: 1 }} />
+                    <span className={b.strong ? "cdesk__block-strong" : undefined}>{b.text}</span>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* шапка раздела выдач + панель массового возврата */}
+            {form.loans.length > 0 && (
+              <div className="cdesk__loanhead">
+                <input type="checkbox" className="cdesk__chk" checked={allSelected} onChange={toggleAll}
+                  aria-label="Выбрать все выдачи" title="Выбрать все" />
+                <span className="cdesk__loanhead-cap">На руках · {form.loans.length}</span>
+                {selected.size > 0 && (
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+                    <span className="cdesk__bulk-info">Выбрано: {selected.size}</span>
+                    <Button variant="secondary" size="sm" iconLeft="arrow-left" loading={bulkBusy} onClick={bulkReturn}>Принять выбранные</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Снять выбор</Button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -271,8 +358,12 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
                 <div style={{ padding: "18px 16px" }}>
                   <EmptyState icon="check-circle" title="На руках ничего нет" description="У читателя нет активных выдач. Отсканируйте экземпляр выше, чтобы выдать." />
                 </div>
-              ) : form.loans.map((ln, i) => (
-                <div className="cdesk__loan" key={ln.item + ":" + i}>
+              ) : form.loans.map((ln, i) => {
+                const sel = selected.has(ln.item);
+                return (
+                <div className={"cdesk__loan" + (sel ? " cdesk__loan--sel" : "")} key={ln.item + ":" + i}>
+                  <input type="checkbox" className="cdesk__chk" checked={sel} onChange={() => toggleSel(ln.item)}
+                    aria-label={"Выбрать для возврата: " + (ln.title || ln.item)} />
                   <div style={{ minWidth: 0 }}>
                     <div className="cdesk__loan-title">{ln.title || "Издание"}</div>
                     <div className="cdesk__loan-meta">
@@ -291,7 +382,7 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
                     <Button variant="secondary" size="sm" iconLeft="arrow-left" loading={busyItem === ln.item} onClick={() => doReturn(ln)}>Возврат</Button>
                   </div>
                 </div>
-              ))}
+              ); })}
             </div>
           </div>
 
