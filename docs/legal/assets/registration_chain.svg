@@ -1,0 +1,91 @@
+<svg viewBox="0 0 820 484" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif" role="img" aria-label="Путь Biblio в реестр российского ПО">
+<title>Путь Biblio в реестр российского ПО</title>
+<desc>Три этапа: депонирование, госрегистрация программы для ЭВМ в Роспатенте, включение в реестр Минцифры; ниже — готовность по критериям п.5 ПП-1236.</desc>
+<rect x="0" y="0" width="820" height="484" rx="14" fill="#ffffff" stroke="#e5e7eb"/>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0 0 L10 5 L0 10 z" fill="#6b7280"/>
+</marker>
+</defs>
+
+<text x="24" y="32" font-size="17" font-weight="600" fill="#111827">Путь Biblio в реестр российского ПО</text>
+<text x="24" y="51" font-size="12" fill="#6b7280">этап → орган → срок → стоимость</text>
+
+<line x1="267" y1="140" x2="288" y2="140" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+<line x1="532" y1="140" x2="553" y2="140" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+
+<!-- Stage 1 -->
+<rect x="24" y="64" width="243" height="152" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+<circle cx="47" cy="89" r="13" fill="none" stroke="#6b7280"/>
+<text x="47" y="94" font-size="13" font-weight="600" text-anchor="middle" fill="#6b7280">1</text>
+<text x="69" y="86" font-size="14" font-weight="600" fill="#111827">Депонирование</text>
+<text x="69" y="103" font-size="11" fill="#6b7280">исходного кода</text>
+<line x1="40" y1="117" x2="251" y2="117" stroke="#eceff3"/>
+<text x="40" y="137" font-size="12" fill="#6b7280">Орган</text>
+<text x="251" y="137" font-size="12" text-anchor="end" fill="#111827">н'РИС / нотариус</text>
+<text x="40" y="160" font-size="12" fill="#6b7280">Срок</text>
+<text x="251" y="160" font-size="12" text-anchor="end" fill="#111827">минуты – 1 день</text>
+<text x="40" y="183" font-size="12" fill="#6b7280">Стоимость</text>
+<text x="251" y="183" font-size="12" text-anchor="end" fill="#111827">от 1 490 ₽</text>
+<text x="40" y="206" font-size="11" fill="#6b7280">рекомендуется, не обязателен</text>
+
+<!-- Stage 2 -->
+<rect x="289" y="64" width="243" height="152" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+<circle cx="312" cy="89" r="13" fill="none" stroke="#6b7280"/>
+<text x="312" y="94" font-size="13" font-weight="600" text-anchor="middle" fill="#6b7280">2</text>
+<text x="334" y="86" font-size="14" font-weight="600" fill="#111827">Госрегистрация</text>
+<text x="334" y="103" font-size="11" fill="#6b7280">программы для ЭВМ</text>
+<line x1="305" y1="117" x2="516" y2="117" stroke="#eceff3"/>
+<text x="305" y="137" font-size="12" fill="#6b7280">Орган</text>
+<text x="516" y="137" font-size="12" text-anchor="end" fill="#111827">Роспатент / ФИПС</text>
+<text x="305" y="160" font-size="12" fill="#6b7280">Срок</text>
+<text x="516" y="160" font-size="12" text-anchor="end" fill="#111827">62 раб. дня</text>
+<text x="305" y="183" font-size="12" fill="#6b7280">Пошлина</text>
+<text x="516" y="183" font-size="12" text-anchor="end" fill="#111827">5 000 ₽</text>
+<text x="305" y="206" font-size="11" fill="#6b7280">свидетельство = основание прав</text>
+
+<!-- Stage 3 (target) -->
+<rect x="554" y="64" width="242" height="152" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.6"/>
+<circle cx="577" cy="89" r="13" fill="none" stroke="#2563eb"/>
+<text x="577" y="94" font-size="13" font-weight="600" text-anchor="middle" fill="#2563eb">3</text>
+<text x="599" y="86" font-size="14" font-weight="600" fill="#111827">Реестр росПО</text>
+<text x="599" y="103" font-size="11" fill="#2563eb">цель</text>
+<line x1="570" y1="117" x2="780" y2="117" stroke="#eceff3"/>
+<text x="570" y="137" font-size="12" fill="#6b7280">Орган</text>
+<text x="780" y="137" font-size="12" text-anchor="end" fill="#111827">Минцифры</text>
+<text x="570" y="160" font-size="12" fill="#6b7280">Срок</text>
+<text x="780" y="160" font-size="12" text-anchor="end" fill="#111827">≈ 30 раб. дней</text>
+<text x="570" y="183" font-size="12" fill="#6b7280">Стоимость</text>
+<text x="780" y="183" font-size="12" text-anchor="end" fill="#111827">бесплатно</text>
+<text x="570" y="206" font-size="11" fill="#6b7280">льгота НДС + госзакупки</text>
+
+<!-- Eligibility band -->
+<text x="24" y="248" font-size="13" font-weight="600" fill="#111827">Готовность по критериям п.5 ПП-1236</text>
+
+<rect x="24" y="262" width="250" height="200" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+<text x="40" y="286" font-size="12.5" font-weight="600" fill="#15803d">Соответствуем</text>
+<text x="40" y="309" font-size="12" fill="#374151">«б» свободная реализация (SaaS)</text>
+<text x="40" y="330" font-size="12" fill="#374151">«в» выплаты иностр. &lt; 30%</text>
+<text x="40" y="351" font-size="12" fill="#374151">«г» не гостайна</text>
+<text x="40" y="372" font-size="12" fill="#374151">«ж» нет управления из-за рубежа</text>
+<text x="40" y="393" font-size="12" fill="#374151">«з» поддержка рос. лицом</text>
+<text x="40" y="414" font-size="12" fill="#374151">«и», «к» код и ключи в РФ</text>
+<text x="40" y="435" font-size="12" fill="#374151">«л» интерфейс на русском</text>
+
+<rect x="285" y="262" width="250" height="200" rx="10" fill="#ffffff" stroke="#b45309"/>
+<text x="301" y="286" font-size="12.5" font-weight="600" fill="#b45309">В роадмапе (подтвердить)</text>
+<text x="301" y="309" font-size="12" fill="#374151">демо-контейнер + демодоступ</text>
+<text x="301" y="330" font-size="12" fill="#374151">публичная страница (#226)</text>
+<text x="301" y="351" font-size="12" fill="#374151">аудит полноты локализации</text>
+<text x="301" y="372" font-size="12" fill="#374151">«м» ≥2 доверенные ОС</text>
+<text x="301" y="393" font-size="12" fill="#374151">гарантийное письмо «з»</text>
+<text x="301" y="414" font-size="12" fill="#374151">листинг кода — автоген ✓</text>
+
+<rect x="546" y="262" width="250" height="200" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+<text x="562" y="286" font-size="12.5" font-weight="600" fill="#111827">Оформить — юрист / реквизиты</text>
+<text x="562" y="309" font-size="12" fill="#374151">«а» правообладатель РФ</text>
+<text x="562" y="330" font-size="12" fill="#374151">цепочка прав на код</text>
+<text x="562" y="351" font-size="12" fill="#374151">класс по приказу № 486</text>
+<text x="562" y="372" font-size="12" fill="#374151">УКЭП правообладателя</text>
+<text x="562" y="404" font-size="11" fill="#6b7280">неприменимо: «д», «е», «н»</text>
+</svg>

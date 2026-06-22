@@ -1,0 +1,51 @@
+name: legal-listing
+
+# Поддерживает листинг исходного кода для депонирования / госрегистрации ПрЭВМ
+# (docs/legal/listings/*) в актуальном состоянии: при изменении кода бэкенда или
+# фронтенда пересобирает листинг и контрольные суммы и коммитит их обратно.
+# См. docs/legal/tools/gen_listing.py и docs/legal/REGISTRATION_GUIDE.md (этапы 1–2).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'irbis-web/backend/**'
+      - 'irbis-web/frontend/app/**'
+      - 'irbis-web/frontend/components/**'
+      - 'irbis-web/frontend/src/**'
+      - 'docs/legal/tools/gen_listing.py'
+  workflow_dispatch:
+
+# Нужно право записи, чтобы закоммитить обновлённый листинг обратно в main.
+permissions:
+  contents: write
+
+concurrency:
+  group: legal-listing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Regenerate source listing + manifest
+        run: python docs/legal/tools/gen_listing.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/legal/listings
+          if git diff --cached --quiet; then
+            echo "Листинг не изменился — коммит не требуется."
+          else
+            git commit -m "docs(legal): авто-обновление листинга исходного кода [skip ci]"
+            git push
+          fi
