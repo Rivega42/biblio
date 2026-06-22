@@ -660,7 +660,7 @@ export function App() {
           </>
         )}
 
-        {rec && (
+        {rec && (() => { const navList = sortItems(items, sort); const ni = navList.findIndex((it) => it.mfn === rec.mfn && (it.db || db) === rec.db); return (
           <RecordCard
             rec={rec} db={DB} tab={recTab} setTab={setRecTab}
             shareOpen={shareOpen} setShareOpen={setShareOpen}
@@ -673,8 +673,11 @@ export function App() {
             onViewDoc={(pages, idx, title) => setDocView({ pages, idx, title })}
             inBasket={inBasket(rec.mfn)}
             onToggleBasket={() => toggleBasket({ mfn: rec.mfn, title: rec.brief || "", author: recView(rec).meta.find((m) => m.label === "Авторы")?.value, year: recView(rec).meta.find((m) => m.label === "Выходные данные")?.value })}
+            pos={ni >= 0 ? { idx: ni, total: navList.length } : undefined}
+            onPrev={ni > 0 ? () => { const p = navList[ni - 1]; openRecord(p.mfn, p.db || db); } : undefined}
+            onNext={ni >= 0 && ni < navList.length - 1 ? () => { const n = navList[ni + 1]; openRecord(n.mfn, n.db || db); } : undefined}
           />
-        )}
+        ); })()}
         </>
         )}
       </main>
@@ -1128,7 +1131,7 @@ const REC_TABS = ["Полное описание", "Поля", "Экземпля
 const TAB_HOLDINGS = 2;
 const TAB_FILES = 3;
 
-function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, onAuthor, loggedIn, readerName, toast, onOpenRecord, onViewDoc, inBasket, onToggleBasket }: {
+function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, onAuthor, loggedIn, readerName, toast, onOpenRecord, onViewDoc, inBasket, onToggleBasket, pos, onPrev, onNext }: {
   rec: RecordData; db: string; tab: number; setTab: (n: number) => void;
   shareOpen: boolean; setShareOpen: (b: boolean) => void;
   permalink: string; onCopyPermalink: () => void;
@@ -1137,6 +1140,7 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
   onOpenRecord: (db: string, mfn: number) => void;
   onViewDoc: (pages: DocPage[], idx: number, title?: string) => void;
   inBasket: boolean; onToggleBasket: () => void;
+  pos?: { idx: number; total: number }; onPrev?: () => void; onNext?: () => void;
 }) {
   const v = recView(rec);
   // «Полное описание» (#1): серверный формат ИРБИС. Цепочка деградации
@@ -1191,7 +1195,16 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
   });
   return (
     <div>
-      <Button iconLeft="arrow-left" onClick={onBack}>К результатам</Button>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <Button iconLeft="arrow-left" onClick={onBack}>К результатам</Button>
+        {pos && pos.total > 1 && (
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: "auto" }} aria-label="Навигация по записям">
+            <button type="button" onClick={onPrev} disabled={!onPrev} title="Предыдущая запись" aria-label="Предыдущая запись" style={{ display: "inline-flex", background: "transparent", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 9px", cursor: onPrev ? "pointer" : "not-allowed", opacity: onPrev ? 1 : .4 }}><Icon name="chevron-left" size={16} /></button>
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{pos.idx + 1} из {pos.total}</span>
+            <button type="button" onClick={onNext} disabled={!onNext} title="Следующая запись" aria-label="Следующая запись" style={{ display: "inline-flex", background: "transparent", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 9px", cursor: onNext ? "pointer" : "not-allowed", opacity: onNext ? 1 : .4 }}><Icon name="chevron-right" size={16} /></button>
+          </div>
+        )}
+      </div>
       <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
         {rec.hasCover && <img alt="обложка" src={api.coverUrl(db, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
         <div style={{ flex: 1, minWidth: 300 }}>
