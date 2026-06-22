@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-22**
-- Версия кода (git): **`7b421d0`**
-- Файлов: **127** · строк: **35906** · условных страниц: **653**
-- **SHA-256 всего листинга:** `4fbce514304edc882b9dc00a4a30fa15c76604fca8d73860a72a1e5aa0791d1d`
+- Версия кода (git): **`f43055a`**
+- Файлов: **128** · строк: **37046** · условных страниц: **674**
+- **SHA-256 всего листинга:** `8e75caa306960208d69c8719cf3474b0175118bf4a677e63968e7171dd4bc095`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -11,7 +11,7 @@
 | Файл | Строк | SHA-256 |
 |---|---:|---|
 | `irbis-web/backend/server.py` | 98 | `fbec91f1929ae6b141bbb1c0fe2d9d73ca8af0e5ee0598216d256eef4ddccd90` |
-| `irbis-web/backend/core.py` | 2407 | `40f27e7d5ed37adf8d878261391ef55ab52c7fe68c64c918b81efbde6be1cdc3` |
+| `irbis-web/backend/core.py` | 2554 | `4abf0b0bfc01559e436ea4784393bad063c0c70bb14ea388e7dc1ee87fd6812f` |
 | `irbis-web/backend/config.py` | 62 | `7628678d6bd73fe6e2356db3a25987b9ad7dbec8fb6445aa4255d01d76a72f05` |
 | `irbis-web/backend/access/catalog.py` | 688 | `9245fd49ac14578fa08c84471b1d9bdc6f43370d0261208ec8f6ecd48a1af5ea` |
 | `irbis-web/backend/access/circulation.py` | 1018 | `5e6349696f648aadaedf4c107050ec3e20a03203bb7b992abd1ff2b7e736f2c1` |
@@ -50,7 +50,7 @@
 | `irbis-web/backend/smoke.py` | 50 | `4d5d9031222e71a38b0825eb79ad68077c27ea4fee6587017a39e44555bd0682` |
 | `irbis-web/backend/static_files.py` | 55 | `45dfdccfdd9487b28e20faa8649f92e1ee5ed023c1c8b32c04dbcffdb6bf2eb3` |
 | `irbis-web/backend/tests/e2e.py` | 92 | `b33ed4bd0d64b2c43498643ec3196c1cbd1236e3aaceb2bfc316679b3d74b3bb` |
-| `irbis-web/backend/tests/test_access.py` | 251 | `d957b99f85194dc2b47e812aa96b743f719579826a622984e3c3c575940b0eb8` |
+| `irbis-web/backend/tests/test_access.py` | 252 | `efdd30d54ce760eb49d2d78af5368a1c0cdb270149989b169f4d4d12b7925ab7` |
 | `irbis-web/backend/tests/test_acq_bp_routes.py` | 317 | `f79b93760e8326bc0cd25548dbae3cb4c96028b8b795edfac331ba4b8395af37` |
 | `irbis-web/backend/tests/test_acquisition.py` | 358 | `c58dea6fc85ac17ed35bfdb617b279229d5c194d0676188dd75043ac13ab0bfe` |
 | `irbis-web/backend/tests/test_admin_routes.py` | 390 | `14a47704e586ac3876907ce9760fbe7d370d78e232fe6bb67ff7eb660c134d8c` |
@@ -68,6 +68,7 @@
 | `irbis-web/backend/tests/test_integration.py` | 348 | `02326b3c5c7a100c979b3909900870435e76ab04147315dd46056d8b5a7d90dc` |
 | `irbis-web/backend/tests/test_irbis_mst.py` | 314 | `b6a084833024cf2c532ffb0fa7686154ecb80e4094025776c8952d40acccf6cb` |
 | `irbis-web/backend/tests/test_migrate.py` | 365 | `e90fd5547de33fcd42446587ac70b2d2128169af6d10bd8da722e39d1f2c6ab3` |
+| `irbis-web/backend/tests/test_migrate_introspect.py` | 533 | `c8b1af0eba7707c67cfc8160701926a339553335ff2e13ae3e14db980e8dfd66` |
 | `irbis-web/backend/tests/test_notifications.py` | 332 | `1dc6fd39293bde3716c19cdd3be5b392073869b46c9af54d8242b441ffb98422` |
 | `irbis-web/backend/tests/test_pft.py` | 412 | `ec5a2291b73bbbac31dd2f1c91f7b16c1b234e24e7dc7e0bff2b8b85b209f49a` |
 | `irbis-web/backend/tests/test_platform.py` | 528 | `5337447fee1939d02fceba07ae3d124f3d01f4b550596eb46d2ced75e779a7e9` |
@@ -79,7 +80,7 @@
 | `irbis-web/backend/tests/test_tenancy.py` | 178 | `6ac4fb82070748edd90830860cc6021b949f2401df43488407d4b295e9bda2d5` |
 | `irbis-web/backend/tools/__init__.py` | 2 | `9429ccfe3888ed585e0fb562fc3f19065ba0d5aab15f4176bfa6558489a17628` |
 | `irbis-web/backend/tools/irbis_mst.py` | 450 | `634fa789876ec924d26569a6d935629dd259c7129f62747611dec2bac6b15da0` |
-| `irbis-web/backend/tools/migrate_irbis.py` | 534 | `5036184236aa20e4fa45c69b5b16d0eccc2b0a225db05bf69ee396873375c661` |
+| `irbis-web/backend/tools/migrate_irbis.py` | 993 | `05c7691e1ff7c38876a8cf8c9e94517ee52b90d8dfbeae9e624b97e6306af0c8` |
 | `irbis-web/frontend/components/catalog/DatabaseSelector.jsx` | 219 | `44a5bee92c3e5a0496ce02dbc2cc98aa7d8321b4d9c7c4e9070309c4cc758c5a` |
 | `irbis-web/frontend/components/catalog/HoldingsTable.jsx` | 100 | `7801ac0581c5ca4c73c3769359f037081cee1df15775c8bf4789575851a3f373` |
 | `irbis-web/frontend/components/catalog/Pagination.jsx` | 112 | `bdd171b9844fbd7ab15c92c1a2c78426ddbe1b7266f3c3362de239560cbc6845` |
