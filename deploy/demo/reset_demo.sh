@@ -85,14 +85,20 @@ case "$MODE" in
             echo "Сброс демо к эталонному снимку $GOLDEN…"
             # Восстановление Access-стора из golden-дампа (FORCE — без интерактива).
             FORCE=1 sh "$SCRIPT_DIR/../backup/pg_restore.sh" "demo-golden.dump"
-            # Own-store (каталог) сбрасываем пере-сидом: записи идемпотентны по
-            # заглавию, но чужие демо-правки в каталоге переживут restore PG.
-            # Чтобы каталог тоже вернулся к эталону — очищаем CATALOG_DB и сидим.
-            echo "Сброс own-store каталога к эталону…"
+            # Own-store (каталог + движки связности) сбрасываем пере-сидом: записи
+            # идемпотентны, но чужие демо-правки переживут restore PG. Чтобы own-store
+            # тоже вернулся к эталону — очищаем sqlite-БД own-store и пере-сидим.
+            # Порядок важен: сначала каталог (на его инв.№ ссылаются привязки КО),
+            # затем движки связности (linked / fulltext / book-provision).
+            echo "Сброс own-store (каталог + движки связности) к эталону…"
             $DC $COMPOSE exec -T backend sh -c \
-                'rm -f "${CATALOG_DB:-/data/catalog.db}" 2>/dev/null || true'
+                'rm -f "${CATALOG_DB:-/data/catalog.db}" \
+                       "${RIGHT_DB:-/data/right.db}" \
+                       "${FULLTEXT_DB:-/data/fulltext.db}" \
+                       "${BP_DB:-/data/bp.db}" 2>/dev/null || true'
             $DC $COMPOSE exec -T backend python - < "$SCRIPT_DIR/seed_demo_catalog.py"
-            echo "Сброс завершён: Access-стор — из golden-дампа, каталог — пере-сидинг."
+            $DC $COMPOSE exec -T backend python - < "$SCRIPT_DIR/seed_demo_engines.py"
+            echo "Сброс завершён: Access-стор — из golden-дампа, own-store — пере-сидинг."
         else
             echo "Эталонный снимок $GOLDEN не найден — выполняю полный пере-сид."
             echo "  (после него снимите эталон: sh demo/reset_demo.sh --snapshot)"
