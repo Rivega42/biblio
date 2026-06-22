@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-22**
-- Версия кода (git): **`77f4dd1`**
-- Файлов: **133** · строк: **38037** · условных страниц: **692**
-- **SHA-256 всего листинга:** `b42228c10ada5155cdea6319878ee47f4b7cf6aa1d35964b4bb8c0af5662db48`
+- Версия кода (git): **`e552550`**
+- Файлов: **133** · строк: **38354** · условных страниц: **698**
+- **SHA-256 всего листинга:** `f619438e2c5c92d4f0086e3cee3390227dcbdbfd5abc510cb1c7d996c62d950e`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -113,10 +113,10 @@
 | `irbis-web/frontend/src/AdminDesk.tsx` | 432 | `9ac98ed39635096b0e2904b6f53b4da1183e5e9536b35ebec955369e77011e5c` |
 | `irbis-web/frontend/src/App.tsx` | 1220 | `18a7662462434cdc96c24dc1fdbd864a7195b673081be7048fb2a63548c19716` |
 | `irbis-web/frontend/src/BookProvisionDesk.tsx` | 411 | `916bf2f103776fc96a0dab037e1ce1228f532e8cafbc80fef28f1a2e30ce1d45` |
-| `irbis-web/frontend/src/CirculationDesk.tsx` | 332 | `4d0861eb8c4edd2cd4479a180fc653f8f290c107134c009c548af296e58234d7` |
+| `irbis-web/frontend/src/CirculationDesk.tsx` | 423 | `47330dfbaca24b73685d42522d5fa7ff5d068a51e35b63d5d08af4d5f8692fb4` |
 | `irbis-web/frontend/src/MigrationWizard.tsx` | 605 | `1a1333e120567d4b279f188d7310f6ff26514198b8bd59383867c53a726a23a1` |
 | `irbis-web/frontend/src/PlatformDesk.tsx` | 440 | `d370cac9359e35650bc7279f5b1d074c55f0c195c9fa5ed87e7165c0e8f71868` |
-| `irbis-web/frontend/src/Staff.tsx` | 821 | `b45a28c55daa1e4b879676a6384582ad982a76bb5a35385823008c804895711e` |
+| `irbis-web/frontend/src/Staff.tsx` | 1047 | `f2ff364d8e2fe3c99809d86da80ba2d8cd499d3ce6d4422238631480e8101c25` |
 | `irbis-web/frontend/src/api.ts` | 532 | `075f6d7519642cbe013451f0a10ded7a83a71cfa56a780e820f14ca815869251` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 188 | `b364926e1a4282a688eff2a9e07101820e16bfad8f68e12b7a137aad82d2685f` |
