@@ -301,6 +301,51 @@ export interface MigrateRunResult { report: MigrateReport; jobId?: string; }
 //   state: queued|running|done|error; report появляется по завершении.
 export interface MigrateStatus { jobId?: string; state: string; report?: MigrateReport; error?: string; }
 
+// --- Связанные записи: иерархия издания (#analytics) -----------------------
+// Аналитическая роспись и многоуровневые издания. kind задаёт направление:
+//   'children' — что входит В издание (статьи журнала, номера, тома);
+//   'host'     — издание-хозяин для аналитики (журнал/сборник статьи).
+// items[].brief — готовое краткое описание для строки списка; mfn — для перехода.
+// Сиблинг-бэкенд отдаёт {db,mfn,kind,total,items}. 404/501 → блок скрывается.
+export type LinkedKind = "children" | "host";
+export interface LinkedItem { mfn: number; brief: string; }
+export interface LinkedResult {
+  db: string; mfn: number; kind: LinkedKind; total: number; items: LinkedItem[];
+}
+// --- Полный текст: артефакты + права доступа -------------------------------
+// Артефакт полного текста записи: kind — тип (pdf/djvu/scan/epub/…); ref —
+// ссылка/идентификатор; pages — число страниц (если известно); rightsTemplate —
+// человекочитаемый шаблон условий использования (копирайт/лицензия).
+export interface FulltextArtifact {
+  kind: string; ref: string; pages?: number; rightsTemplate?: string;
+}
+// Уровень доступа к полному тексту для категории текущего пользователя:
+//   'deny'     — недоступно (показываем подпись, кнопка просмотра неактивна);
+//   'view'     — только просмотр (без скачивания);
+//   'download' — просмотр и скачивание.
+// pageLimit — лимит страниц к просмотру; downloadBudget — остаток квоты скачиваний.
+export type FulltextLevel = "deny" | "view" | "download";
+export interface FulltextAccess { level: FulltextLevel; pageLimit?: number; downloadBudget?: number; }
+export interface FulltextResult {
+  db: string; mfn: number; artifacts: FulltextArtifact[]; access: FulltextAccess;
+}
+// --- Книгообеспеченность: отчёт ККО (быстрая справка) ----------------------
+// Отчёт по обеспеченности (GET /api/bp/provision) для деска ККО: запрашивается
+// по дисциплине / специальности / факультету. coefficient — коэффициент Кко
+// (экз/чел); status: 'ok' — обеспечено, 'deficit' — дефицит; shortfall — дефицит
+// экземпляров до норматива; bindings — привязанная литература (осн./доп.).
+export type BpProvisionStatus = "ok" | "deficit";
+export interface BpProvisionBinding {
+  title: string; kind?: "main" | "extra"; copies?: number; author?: string; mfn?: number;
+}
+export interface BpProvisionReport {
+  scope?: string; subject?: string;
+  coefficient?: number; norm?: number;
+  status?: BpProvisionStatus;
+  students?: number; copies?: number; shortfall?: number;
+  bindings?: BpProvisionBinding[];
+}
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -377,6 +422,17 @@ export const api = {
     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
     return r;
   },
+  // --- Связанные записи: иерархия издания -----------------------------------
+  // Связанные записи по направлению kind. children — что входит в издание
+  // (статьи/номера/тома); host — издание-хозяин аналитики. 404/501 → блок скрыт.
+  linked: (db: string, mfn: number, kind: LinkedKind) =>
+    jget<LinkedResult>("/api/linked/" + db + "/" + mfn + "?" + qs({ kind })),
+  // --- Полный текст: артефакты + права доступа ------------------------------
+  // Артефакты полного текста записи и уровень доступа категории читателя.
+  // 404/501 → блок «Полный текст» скрывается.
+  fulltext: (db: string, mfn: number) =>
+    jget<FulltextResult>("/api/fulltext/" + db + "/" + mfn),
+
   // --- Бронирование (#222) -------------------------------------------------
   // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
   hold: (db: string, mfn: number) => jpost<HoldResult>("/api/hold", { db, mfn }),
@@ -483,6 +539,16 @@ export const api = {
   // Карточка специальности: дисциплины с Кко + сводный Кко.
   bpSpecialtyCard: (id: string | number, normalize = false) =>
     jget<BpSpecialtyCard>("/api/bp/specialty?" + qs({ id, normalize: normalize ? 1 : 0 })),
+  // Быстрый отчёт ККО для деска: коэффициент, статус (обеспечено/дефицит),
+  // дефицит экз. и список привязок. Параметр — один из discipline/specialty/
+  // faculty (наименование или код). 404/501 → дек скрывает результат (информер).
+  bpProvision: (scope: { discipline?: string; specialty?: string; faculty?: string }) => {
+    const o: Record<string, string> = {};
+    if (scope.discipline) o.discipline = scope.discipline;
+    if (scope.specialty) o.specialty = scope.specialty;
+    if (scope.faculty) o.faculty = scope.faculty;
+    return jget<BpProvisionReport>("/api/bp/provision?" + qs(o));
+  },
 
   // --- Администрирование (#187) -------------------------------------------
   // Список учётных записей сотрудников.
