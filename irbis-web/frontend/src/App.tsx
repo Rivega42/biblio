@@ -280,7 +280,7 @@ export function App() {
     setQ(v); clearTimeout(tRef.current);
     if (v.trim().length < 2) { setSug([]); return; }
     tRef.current = setTimeout(async () => {
-      const r = await api.terms(prefix + "=" + v.toUpperCase(), 8);
+      const r = await api.terms(prefix + "=" + v.toUpperCase(), 8, db);
       if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(prefix + "=") === 0).map((t) => ({ term: t.term.slice(prefix.length + 1), count: t.count })));
     }, 200);
   }
@@ -578,8 +578,11 @@ export function App() {
               </div>
             )}
             {/* Хлебные крошки + контекст запроса (что и где искали + сколько найдено). */}
-            <SearchBreadcrumb db={dbName} mode={mode} prefix={prefix} prefixes={PREFIXES}
-              query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome} />
+            <SearchBreadcrumb db={dbName} dbCode={db} databases={databases.filter((d) => d.public)} mode={mode} prefix={prefix} prefixes={PREFIXES}
+              query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome}
+              onBase={(code) => { setAllDbs(false); setDb(code); runSearch(code, prefix, q, 1); }}
+              onPrefix={(px) => { setPrefix(px); runSearch(allDbs ? ALL_DBS : db, px, q, 1); }}
+              onResearch={() => runSearch(allDbs ? ALL_DBS : db, prefix, q, 1)} />
             {loading && !items.length ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
               total === 0 && !activeFacets.length ? (
                 <div>
@@ -748,24 +751,39 @@ function DidYouMean({ suggestions, onPick }: {
 // тулбара (тот показывает счётчик/страницу; крошки — путь и сам запрос). Для
 // простого поиска показываем область (Автор/Заглавие/…) и термин; для расш./эксп.
 // — компактное выражение.
-function SearchBreadcrumb({ db, mode, prefix, prefixes, query, expr, total, loading, onHome }: {
-  db: string; mode: "simple" | "advanced" | "expert";
+function SearchBreadcrumb({ db, dbCode, databases, mode, prefix, prefixes, query, expr, total, loading, onHome, onBase, onPrefix, onResearch }: {
+  db: string; dbCode?: string; databases?: { code: string; name?: string; public?: boolean }[];
+  mode: "simple" | "advanced" | "expert";
   prefix: string; prefixes: { code: string; label: string }[];
   query: string; expr: string; total: number; loading: boolean; onHome: () => void;
+  onBase?: (code: string) => void; onPrefix?: (code: string) => void; onResearch?: () => void;
 }) {
   const term = mode === "simple" ? query.trim() : (expr || "").trim();
   if (!term) return null;
   const areaLabel = mode === "simple" ? (prefixes.find((p) => p.code === prefix)?.label || "") : "";
   const crumbSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-subtle)" };
+  const pickSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "none", borderBottom: "1px dashed var(--accent)", padding: "0 2px", cursor: "pointer", font: "inherit" };
+  const pub = (databases || []).filter((d) => d.public !== false);
+  const baseOk = mode === "simple" && !!onBase && pub.length > 1 && !!dbCode;
+  const areaOk = mode === "simple" && !!onPrefix && !!areaLabel;
   return (
     <nav aria-label="Хлебные крошки" style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", margin: "0 0 12px" }}>
       <button onClick={onHome} style={{ ...crumbSx, background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
         <Icon name="book" size={13} /> Главная
       </button>
       <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
-      <span style={crumbSx}>Поиск в «{db}»{areaLabel ? " · " + areaLabel : ""}</span>
+      <span style={crumbSx}>Поиск в{" "}
+        {baseOk
+          ? <select value={dbCode} onChange={(e) => onBase!(e.target.value)} title="Выбрать базу" style={pickSx}>{pub.map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}</select>
+          : <b style={{ color: "var(--text-body)", fontWeight: 600 }}>«{db}»</b>}
+        {areaLabel ? (areaOk
+          ? <> · <select value={prefix} onChange={(e) => onPrefix!(e.target.value)} title="Область поиска" style={pickSx}>{prefixes.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}</select></>
+          : <> · {areaLabel}</>) : null}
+      </span>
       <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
-      <span style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={term}>«{term}»</span>
+      {onResearch
+        ? <button onClick={onResearch} title="Повторить поиск" style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "none", border: "none", cursor: "pointer", padding: 0 }}>«{term}»</button>
+        : <span style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={term}>«{term}»</span>}
       {!loading && (
         <span style={{ marginLeft: 4, fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", background: "var(--surface-sunken)", borderRadius: 999, padding: "2px 9px", fontVariantNumeric: "tabular-nums" }}>
           найдено {total.toLocaleString("ru-RU")}

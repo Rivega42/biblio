@@ -382,7 +382,7 @@ export const api = {
     jget<FacetsResult>("/api/facets?" + qs({ db, prefix, q })),
   facetsExpr: (db: string, expr: string) =>
     jget<FacetsResult>("/api/facets?" + qs({ db, expr })),
-  terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
+  terms: (start: string, count = 8, db?: string) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ db, start, count })),
   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
   // Серверный рендер записи в формате ИРБИС: путь /api/render/{db}/{mfn}, формат
   // в query (?fmt=@full). По умолчанию @brief (как на бэкенде). 404/501 → fallback
