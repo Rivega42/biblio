@@ -40,6 +40,9 @@ const PREFIXES = [
   { code: "K", label: "Ключевые слова" }, { code: "A", label: "Автор" },
   { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
 ];
+// Мульти-БД (#3): служебное значение селектора «искать во всех публичных базах».
+// Не код реальной БД — в этом режиме runSearch веером опрашивает все public-БД.
+const ALL_DBS = "__ALL__";
 const esc = (s: string) => (s || "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m]!));
 // Доменные статус-бейджи Style A: цвет текста + мягкая подложка + точка-индикатор.
 // Значения берутся из Biblio-токенов (--status-*), мост даёт постамат/Книгоприём.
@@ -118,6 +121,11 @@ export function App() {
   const [advCombine, setAdvCombine] = React.useState<"and" | "or">("and");
   const [expertExpr, setExpertExpr] = React.useState('"K=Android" + "K=PHP"');
   const [sug, setSug] = React.useState<any[]>([]);
+  // «Вы имели в виду» (#4): варианты при нулевой выдаче. Пусто → блок скрыт.
+  const [didYouMean, setDidYouMean] = React.useState<{ term: string; count?: number }[]>([]);
+  // Мульти-БД (#3): режим «во всех базах». В нём items приходят размеченными
+  // полем db (источник), фасеты/уточнение отключены (база не одна).
+  const [allDbs, setAllDbs] = React.useState(false);
   const [items, setItems] = React.useState<ResultItem[]>([]);
   const [total, setTotal] = React.useState(0);
   const [page, setPage] = React.useState(1);
@@ -194,14 +202,53 @@ export function App() {
 
   async function runSearch(database: string, px: string, query: string, pg: number) {
     if (!query.trim()) return;
-    setHome(false); setLoading(true); setRec(null); setSug([]); setPage(pg);
+    // Мульти-БД (#3): селектор в режиме «во всех базах» → веерный поиск.
+    if (database === ALL_DBS) { runSearchAll(px, query); return; }
+    setHome(false); setAllDbs(false); setLoading(true); setRec(null); setSug([]); setDidYouMean([]); setPage(pg);
     const r = await api.search(database, px, query, pg, pageSize);
     if (r.json?.ok && r.json.data) {
       setItems(r.json.data.items); setTotal(r.json.data.total);
       // a fresh simple search becomes the new base query: reset facets
       if (pg === 1) { setBaseExpr(r.json.data.expr); setActiveFacets([]); loadFacets(database, r.json.data.expr); }
+      // «Вы имели в виду» (#4): при нулевой выдаче подбираем варианты.
+      if (r.json.data.total === 0) loadSuggestions(database, px, query);
     } else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
     setLoading(false);
+  }
+  // Мульти-БД (#3): последовательный поиск по всем публичным базам. Результаты
+  // сливаются в общий список, каждая запись помечается своей базой (it.db), чтобы
+  // открытие/бронь шли в нужную БД. Фасеты/постраничный набор в этом режиме не
+  // применяются (база не одна) — показываем первую страницу из каждой базы.
+  async function runSearchAll(px: string, query: string) {
+    if (!query.trim()) return;
+    const pubs = databases.filter((d) => d.public).map((d) => d.code);
+    if (pubs.length <= 1) { runSearch(pubs[0] || db, px, query, 1); return; }
+    setHome(false); setAllDbs(true); setLoading(true); setRec(null); setSug([]); setDidYouMean([]); setPage(1);
+    setBaseExpr(null); setActiveFacets([]); setFacets([]);
+    const merged: ResultItem[] = []; let grand = 0;
+    for (const code of pubs) {
+      const r = await api.search(code, px, query, 1, pageSize);
+      if (r.json?.ok && r.json.data) {
+        grand += r.json.data.total;
+        for (const it of r.json.data.items) merged.push({ ...it, db: code });
+      }
+    }
+    setItems(merged); setTotal(grand);
+    if (grand === 0) loadSuggestions(pubs[0], px, query);
+    setLoading(false);
+  }
+  // «Вы имели в виду» (#4): дёргаем GET /api/suggest. 404/501 (эндпойнт-сиблинг
+  // ещё не приземлён) или пустой ответ → блок остаётся скрытым (мягкая деградация).
+  async function loadSuggestions(database: string, px: string, query: string) {
+    setDidYouMean([]);
+    const r = await api.suggest(database, px, query);
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      const raw = (r.json.data.suggestions || []) as Array<string | { term: string; count?: number }>;
+      const list = raw
+        .map((s) => (typeof s === "string" ? { term: s } : { term: s.term, count: s.count }))
+        .filter((s) => s.term && s.term.trim() && s.term.trim().toLowerCase() !== query.trim().toLowerCase());
+      setDidYouMean(list.slice(0, 8));
+    }
   }
   async function loadFacets(database: string, expr: string) {
     setFacets([]);
@@ -225,6 +272,7 @@ export function App() {
   function goHome() {
     setHome(true); setRec(null); setView("search");
     setItems([]); setTotal(0); setBaseExpr(null); setActiveFacets([]); setFacets([]);
+    setDidYouMean([]); setAllDbs(false);
     try { const u = new URL(window.location.href); u.searchParams.delete("db"); u.searchParams.delete("mfn"); window.history.replaceState(null, "", u.pathname); } catch { /* ignore */ }
   }
   function onQuery(v: string) {
@@ -358,10 +406,10 @@ export function App() {
       if (!a11y && !cabinetSeen) { setDarkMode(true); setCabinetSeen(true); }
     } else toast({ variant: "info", title: "Кабинет недоступен", message: "Войдите по читательскому билету." });
   }
-  async function doLogin(ticket: string) {
-    const r = await api.loginReader(ticket);
+  async function doLogin(ticket: string, password: string) {
+    const r = await api.loginReader(ticket, password);
     if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); loadCabinet(); }
-    else toast({ variant: "warning", title: "Билет не найден", message: "Проверьте номер читательского билета." });
+    else toast({ variant: "warning", title: "Вход не выполнен", message: "Проверьте номер билета и пароль." });
   }
   function switchContext(c: "reader" | "staff") { if (c === "staff" && !staff) { setStaffLoginOpen(true); return; } setContext(c); setRec(null); }
   async function doStaffLogin(login: string, password: string) {
@@ -445,7 +493,14 @@ export function App() {
           <>
             <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
               {databases.filter((d) => d.public).length > 1 && (
-                <select value={db} onChange={(e) => { setDb(e.target.value); if (mode === "simple") runSearch(e.target.value, prefix, q, 1); }} title="База поиска" style={selStyle}>
+                <select value={allDbs ? ALL_DBS : db}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === ALL_DBS) { setAllDbs(true); if (mode === "simple" && q.trim()) runSearchAll(prefix, q); }
+                    else { setAllDbs(false); setDb(val); if (mode === "simple") runSearch(val, prefix, q, 1); }
+                  }} title="База поиска" style={selStyle}>
+                  {/* Мульти-БД (#3): поиск сразу по всем публичным базам. */}
+                  <option value={ALL_DBS}>Во всех базах</option>
                   {databases.filter((d) => d.public).map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
                 </select>
               )}
@@ -477,8 +532,8 @@ export function App() {
                   {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
                 </select>
                 <div style={{ flex: 1, minWidth: 240 }}>
-                  <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(db, prefix, v, 1)} suggestions={sug}
-                    onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(db, prefix, term, 1); }}
+                  <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(allDbs ? ALL_DBS : db, prefix, v, 1)} suggestions={sug}
+                    onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(allDbs ? ALL_DBS : db, prefix, term, 1); }}
                     placeholder="Поиск по каталогу" buttonLabel="Найти" />
                 </div>
               </div>
@@ -525,7 +580,13 @@ export function App() {
             <SearchBreadcrumb db={dbName} mode={mode} prefix={prefix} prefixes={PREFIXES}
               query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome} />
             {loading && !items.length ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
-              total === 0 && !activeFacets.length ? <EmptyState icon="search" title="Ничего не найдено" description="Измените запрос или область поиска." /> :
+              total === 0 && !activeFacets.length ? (
+                <div>
+                  <EmptyState icon="search" title="Ничего не найдено" description="Измените запрос или область поиска." />
+                  {/* «Вы имели в виду» (#4) — кликабельные варианты; блок скрыт, если их нет. */}
+                  <DidYouMean suggestions={didYouMean} onPick={(term) => { setMode("simple"); setQ(term); runSearch(allDbs ? ALL_DBS : db, prefix, term, 1); }} />
+                </div>
+              ) :
                 <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
                   <div style={{ flex: "1 1 200px", minWidth: 180, maxWidth: 260, order: 1 }} className="irb-facet-rail">
                     <FacetRail facets={facets} active={activeFacets} onToggle={toggleFacet} />
@@ -554,9 +615,9 @@ export function App() {
                           {total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Снимите часть фильтров и повторите поиск." /> : <>
                             {effLayout === "gallery" ? (
                               <GalleryGrid items={sorted} db={db}
-                                inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)}
-                                onHold={(it) => hold(it.mfn, db)}
-                                renderShelf={account.loggedIn ? (it) => <ShelfMenu db={db} mfn={it.mfn} title={it.title} toast={toast} compact /> : undefined} />
+                                inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => { openRecord(mfn); }}
+                                onHold={(it) => hold(it.mfn, it.db || db)}
+                                renderShelf={account.loggedIn ? (it) => <ShelfMenu db={it.db || db} mfn={it.mfn} title={it.title} toast={toast} compact /> : undefined} />
                             ) : effLayout === "calendar" ? (
                               <CalendarGrid items={sorted}
                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
@@ -565,21 +626,27 @@ export function App() {
                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
                             ) : (
                               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                {sorted.map((it) => (
-                                  <div key={it.mfn} style={{ position: "relative" }}>
-                                    <ResultCard item={it} dbTag={dbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn)} />
+                                {sorted.map((it) => {
+                                  // Мульти-БД (#3): запись открывается/бронируется в своей базе (it.db).
+                                  const itDb = it.db || db;
+                                  const itDbName = (databases.find((d) => d.code === itDb)?.name) || itDb;
+                                  return (
+                                  <div key={itDb + ":" + it.mfn} style={{ position: "relative" }}>
+                                    <ResultCard item={it} dbTag={itDbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn, itDb)} />
                                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0 2px 0", paddingLeft: 4 }}>
-                                      <button type="button" onClick={() => hold(it.mfn, db)} title="Забронировать"
+                                      <button type="button" onClick={() => hold(it.mfn, itDb)} title="Забронировать"
                                         style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" }}>
                                         <Icon name="clock" size={14} /> Забронировать
                                       </button>
-                                      {account.loggedIn && <ShelfMenu db={db} mfn={it.mfn} title={it.title} toast={toast} />}
+                                      {account.loggedIn && <ShelfMenu db={itDb} mfn={it.mfn} title={it.title} toast={toast} />}
                                     </div>
                                   </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             )}
-                            <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} pageSize={pageSize} onPageSize={changePageSize} /></div>
+                            {/* Постраничный набор — только в одно-БД-режиме (мульти-БД сливает первые страницы). */}
+                            {!allDbs && <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} pageSize={pageSize} onPageSize={changePageSize} /></div>}
                           </>}
                         </>
                       );
@@ -649,6 +716,28 @@ function FacetRail({ facets, active, onToggle }: {
         </div>
       ))}
     </aside>
+  );
+}
+
+// «Вы имели в виду» (#4) — блок вариантов исправления при нулевой выдаче.
+// Скрыт, если вариантов нет (эндпойнт /api/suggest отсутствует/404 или пуст).
+// Клик по варианту повторяет поиск с этим термином.
+function DidYouMean({ suggestions, onPick }: {
+  suggestions: { term: string; count?: number }[]; onPick: (term: string) => void;
+}) {
+  if (!suggestions.length) return null;
+  return (
+    <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+      <span style={{ fontSize: "var(--text-sm)", color: "var(--text-subtle)", fontWeight: 600 }}>Вы имели в виду:</span>
+      {suggestions.map((s, i) => (
+        <button key={s.term + i} type="button" onClick={() => onPick(s.term)}
+          title={s.count != null ? "Найдётся записей: " + s.count : "Повторить поиск по этому варианту"}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", border: "1px solid var(--border-subtle)", borderRadius: 999, padding: "5px 13px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+          {s.term}
+          {s.count != null && <span style={{ fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{s.count}</span>}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -983,18 +1072,27 @@ function RenewButton() {
   );
 }
 
-function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (t: string) => void }) {
+function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (ticket: string, password: string) => void }) {
   const [t, setT] = React.useState("");
+  // Пароль читателя (#2): передаётся вместе с билетом. «Как в читательском билете».
+  const [pwd, setPwd] = React.useState("");
+  const submit = () => onSubmit(t, pwd);
+  const inputSx: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", marginBottom: 6 };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", borderRadius: 16, padding: 22, width: 320, boxShadow: "var(--shadow-lg, 0 20px 50px rgba(0,0,0,.25))" }}>
         <div style={{ fontWeight: 600, fontSize: "var(--text-lg)", marginBottom: 8 }}>Вход в личный кабинет</div>
-        <p style={{ margin: "0 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Войдите по номеру читательского билета.</p>
-        <input value={t} onChange={(e) => setT(e.target.value)} placeholder="Номер билета" onKeyDown={(e) => { if (e.key === "Enter") onSubmit(t); }}
-          style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", marginBottom: 12 }} />
+        <p style={{ margin: "0 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Войдите по номеру читательского билета и паролю.</p>
+        <label htmlFor="reader-ticket" style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginBottom: 4 }}>Номер билета</label>
+        <input id="reader-ticket" value={t} onChange={(e) => setT(e.target.value)} placeholder="Номер билета" autoFocus
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }} style={inputSx} />
+        <label htmlFor="reader-pwd" style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--text-subtle)", margin: "10px 0 4px" }}>Пароль</label>
+        <input id="reader-pwd" type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} placeholder="Пароль" autoComplete="current-password"
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }} style={inputSx} />
+        <p style={{ margin: "2px 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-2xs,11px)" }}>Пароль указан в вашем читательском билете.</p>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Button variant="ghost" onClick={onClose}>Отмена</Button>
-          <Button onClick={() => onSubmit(t)}>Войти</Button>
+          <Button onClick={submit}>Войти</Button>
         </div>
       </div>
     </div>
@@ -1002,7 +1100,13 @@ function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (t
 }
 
 // --- Карточка записи с вкладками ------------------------------------------
-const REC_TABS = ["Описание", "Экземпляры", "Электронные версии", "Метки MARC"];
+// «Полное описание» (#1) — серверный формат ИРБИС (@full) — первая, основная
+// вкладка (как в jirbis). «Поля» — прежний разбор полей записи — вторая.
+// Дальше — экземпляры / электронные версии / метки MARC.
+const REC_TABS = ["Полное описание", "Поля", "Экземпляры", "Электронные версии", "Метки MARC"];
+// Индексы вкладок с числовыми бейджами (экземпляры / электронные версии).
+const TAB_HOLDINGS = 2;
+const TAB_FILES = 3;
 
 function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, loggedIn, readerName, toast, onOpenRecord, onViewDoc, inBasket, onToggleBasket }: {
   rec: RecordData; db: string; tab: number; setTab: (n: number) => void;
@@ -1015,6 +1119,33 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
   inBasket: boolean; onToggleBasket: () => void;
 }) {
   const v = recView(rec);
+  // «Полное описание» (#1): серверный формат ИРБИС. Цепочка деградации
+  //   @full → (пусто/404) @brief → (пусто/404) показ полей (вкладка «Поля»).
+  // state.text — готовый текст; state.fmt — какой формат отдал результат;
+  // state.status — loading | ok | empty (нет ни @full, ни @brief → откат к полям).
+  const [full, setFull] = React.useState<{ status: "loading" | "ok" | "empty"; text: string; fmt: string }>(
+    { status: "loading", text: "", fmt: "" });
+  React.useEffect(() => {
+    let alive = true;
+    setFull({ status: "loading", text: "", fmt: "" });
+    (async () => {
+      // Пробуем форматы по очереди; первый непустой — победитель.
+      for (const fmt of ["@full", "@brief"] as const) {
+        const r = await api.render(rec.db, rec.mfn, fmt);
+        if (!alive) return;
+        if (r.status === 200 && r.json?.ok && r.json.data) {
+          const text = (r.json.data.rendered || "").trim();
+          if (text) { setFull({ status: "ok", text, fmt }); return; }
+          // 200, но пусто (формат не задан в БД) — пробуем следующий формат.
+          continue;
+        }
+        // 404/501/ошибка эндпойнта — дальше пробовать смысла нет: откат к полям.
+        if (r.status === 404 || r.status === 501) break;
+      }
+      if (alive) setFull({ status: "empty", text: "", fmt: "" });
+    })();
+    return () => { alive = false; };
+  }, [rec.db, rec.mfn]);
   // Страницы для постраничного просмотрщика (#222): из электронных версий записи.
   // Картинки (по расширению) — листаются и зумируются во вьюере; прочие файлы —
   // открываются по ссылке. Только записи со страницами получают кнопку «Открыть просмотр».
@@ -1084,13 +1215,45 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
               <button key={t} role="tab" id={"rectab-" + i} aria-selected={tab === i} aria-controls={"recpanel-" + i}
                 tabIndex={tab === i ? 0 : -1} ref={(el) => { tabRefs.current[i] = el; }}
                 onClick={() => setTab(i)} onKeyDown={(e) => onTabKey(e, i)} style={tabBtn(tab === i)}>
-                {t}{i === 1 && v.holds.length ? " (" + v.holds.length + ")" : ""}{i === 2 && v.files.length ? " (" + v.files.length + ")" : ""}
+                {t}{i === TAB_HOLDINGS && v.holds.length ? " (" + v.holds.length + ")" : ""}{i === TAB_FILES && v.files.length ? " (" + v.files.length + ")" : ""}
               </button>
             ))}
           </div>
 
           <div role="tabpanel" id={"recpanel-" + tab} aria-labelledby={"rectab-" + tab} tabIndex={0} style={{ paddingTop: 16, outline: "none" }}>
+            {/* Вкладка 0 — «Полное описание» (#1): серверный формат ИРБИС (@full/@brief).
+                При отсутствии серверного формата (empty) — мягкое сообщение со ссылкой
+                на вкладку «Поля» (тот же разбор полей записи). */}
             {tab === 0 && (
+              full.status === "loading" ? (
+                <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Загрузка описания…</div>
+              ) : full.status === "ok" ? (
+                <div>
+                  <div style={{
+                    fontFamily: "var(--font-record-body, var(--font-serif, serif))",
+                    fontSize: "var(--text-base, 15.5px)", lineHeight: 1.6, color: "var(--text-body)",
+                    whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  }}
+                    // Серверный PFT сворачивается в текст; переносы строк сохраняем
+                    // через white-space:pre-wrap, разметку не интерпретируем (XSS-safe).
+                  >{full.text}</div>
+                  {full.fmt === "@brief" && (
+                    <div style={{ marginTop: 10, fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>
+                      Показано краткое описание (полный формат для записи не задан).
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>
+                  Серверное описание недоступно.{" "}
+                  <button type="button" onClick={() => setTab(1)}
+                    style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", font: "inherit" }}>
+                    Открыть вкладку «Поля»
+                  </button>.
+                </div>
+              )
+            )}
+            {tab === 1 && (
               <div>
                 {v.meta.length > 0 ? (
                   <dl style={{ display: "grid", gridTemplateColumns: "minmax(120px,160px) 1fr", gap: "6px 14px", margin: "0 0 4px", fontSize: "var(--text-sm)" }}>
@@ -1105,7 +1268,7 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
                 </div></div>}
               </div>
             )}
-            {tab === 1 && (
+            {tab === 2 && (
               v.holds.length ?
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {v.holds.map((h, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderTop: i ? "1px solid var(--border-subtle)" : "none", fontSize: "var(--text-sm)" }}>
@@ -1116,7 +1279,7 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
                 </div> :
                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>
             )}
-            {tab === 2 && (
+            {tab === 3 && (
               v.files.length ?
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {/* Постраничный просмотрщик (#222): доступен, если есть страницы-файлы. */}
@@ -1147,7 +1310,7 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
                 </div> :
                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Электронные версии к записи не прикреплены.</div>
             )}
-            {tab === 3 && (
+            {tab === 4 && (
               <div dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />
             )}
           </div>

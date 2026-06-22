@@ -6,6 +6,10 @@ export interface Health { server: string; version: string; db: string; maxmfn: n
 export interface ResultItem {
   mfn: number; title: string; author?: string; year?: string;
   docType?: string; availability?: "available" | "issued" | "unknown"; hasCover?: boolean;
+  // База-источник записи. Заполняется клиентом при поиске «во всех базах»
+  // (мульти-БД, #3), чтобы открыть/забронировать запись в её собственной БД.
+  // При обычном одно-БД-поиске поле опущено — действует активная база.
+  db?: string;
 }
 export interface SearchResult { db: string; expr: string; total: number; page: number; pageSize: number; items: ResultItem[]; }
 export interface FieldVal { tag: string; value: string; text?: string; subfields: Record<string, string>; }
@@ -19,6 +23,16 @@ export interface StorageNode {
   children?: StorageNode[];
 }
 export interface Term { count: number; term: string; }
+// Серверный рендер записи в формате ИРБИС (GET /api/render/{db}/{mfn}?fmt=).
+// rendered — готовый текст библиографического описания (PFT сворачивается в
+// текст; HTML-разметка — поздняя фаза движка). fmt — применённый формат (@full,
+// @brief и т.п.). Пустой rendered → клиент откатывается на следующий формат.
+export interface RecordRender { db: string; mfn: number; fmt: string; rendered: string; }
+// «Вы имели в виду» (GET /api/suggest) — варианты исправления/расширения запроса
+// при нулевой выдаче. Эндпойнт-сиблинг бэкенда может отсутствовать → 404 → блок
+// скрывается. Сервер может вернуть массив строк или объектов {term,count}.
+export interface Suggestion { term: string; count?: number; }
+export interface SuggestResult { db?: string; q?: string; suggestions: Suggestion[]; }
 export interface FacetValue { value: string; label: string; count: number; }
 export interface Facet { field: string; prefix: string; label: string; values: FacetValue[]; }
 export interface FacetsResult { db: string; expr: string; facets: Facet[]; }
@@ -325,6 +339,15 @@ export const api = {
     jget<FacetsResult>("/api/facets?" + qs({ db, expr })),
   terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
+  // Серверный рендер записи в формате ИРБИС: путь /api/render/{db}/{mfn}, формат
+  // в query (?fmt=@full). По умолчанию @brief (как на бэкенде). 404/501 → fallback
+  // делает вызывающий код (на @brief, затем на показ полей).
+  render: (db: string, mfn: number, fmt = "@full") =>
+    jget<RecordRender>("/api/render/" + db + "/" + mfn + "?" + qs({ fmt })),
+  // «Вы имели в виду» (GET /api/suggest) при нулевой выдаче. db/prefix/q —
+  // контекст исходного поиска. 404/501 → блок подсказок скрыт.
+  suggest: (db: string, prefix: string, q: string) =>
+    jget<SuggestResult>("/api/suggest?" + qs({ db, prefix, q })),
   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),
   order: (db: string, mfn: number) => jpost("/api/order", { db, mfn }),
   // Discovery showcase (G2): new arrivals etc. `kind` defaults to "new" on the backend.
@@ -339,8 +362,13 @@ export const api = {
   cancelOrder: (id: string | number, db?: string, mfn?: number) =>
     jpost("/api/me/orders/cancel", { id, db, mfn }),
   storage: (db: string) => jget<{ db: string; tree: StorageNode[]; holdings: number }>("/api/storage?" + qs({ db })),
-  async loginReader(ticket: string) {
-    const r = await jpost<{ token: string; name?: string }>("/api/auth/reader", { ticket });
+  // Вход читателя по билету и паролю. Пароль передаётся в теле {ticket,password};
+  // если пуст — поле просто опускается (совместимо со старым бэкендом, который
+  // читает только ticket). Пароль — «как в читательском билете».
+  async loginReader(ticket: string, password?: string) {
+    const body: { ticket: string; password?: string } = { ticket };
+    if (password) body.password = password;
+    const r = await jpost<{ token: string; name?: string }>("/api/auth/reader", body);
     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
     return r;
   },
