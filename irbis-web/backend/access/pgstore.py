@@ -597,6 +597,34 @@ def make_tenant_store(slug, dsn=None):
     return PgAccessStore(dsn or default_pg_dsn(), tenant_schema=schema_for(slug))
 
 
+def schema_exists(slug, dsn=None):
+    """True iff tenant ``<slug>``'s schema (``t_<slug>``) has been provisioned.
+
+    A cheap ``information_schema.schemata`` probe over a short-lived admin
+    connection (PG's default search_path, so the lookup is unambiguous). Used by
+    the auth path to decide whether the default tenant's accounts live in
+    ``t_<slug>`` (provisioned) or still in the public store (un-provisioned dev).
+    Returns False (never raises) if PG/psycopg is unavailable, so the sqlite dev
+    box and a control-plane-less PG both degrade cleanly.
+    """
+    try:
+        schema = schema_for(slug)
+    except ValueError:
+        return False
+    try:
+        conn = _admin_conn(dsn or default_pg_dsn())
+    except Exception:
+        return False
+    try:
+        return conn.execute(
+            'SELECT 1 FROM information_schema.schemata WHERE schema_name=%s',
+            (schema,)).fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
 def list_tenants(dsn=None):
     """All provisioned tenants from the control catalog (ordered by slug)."""
     dsn = dsn or default_pg_dsn()

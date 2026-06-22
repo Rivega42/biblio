@@ -38,6 +38,11 @@ from access.catalog import CatalogStore
 # Default tenant slug when running single-tenant / sqlite dev (no control plane).
 DEFAULT_TENANT = os.environ.get('DEFAULT_TENANT', 'public')
 
+# Build/version marker surfaced by /api/metrics (pilot observability). Set
+# $BUILD_VERSION in the container to the image tag / git sha; a stable dev default
+# otherwise. Not a secret — safe to expose unauthenticated.
+BUILD_VERSION = os.environ.get('BUILD_VERSION', 'dev')
+
 # Map an authz function to the functional MODULE that must be licensed for it
 # (issue #101 entitlements). Functions not listed are not module-gated (always
 # allowed if the grant passes). Entitlements are a SEPARATE axis from grants:
@@ -261,6 +266,13 @@ class ResilientIrbis:
 class Api:
     def __init__(self, cfg=None):
         self.cfg = cfg or Config()
+        # ---- operational metrics (pilot observability, /api/metrics) ----
+        # Process start (for uptime) + cheap in-process request/error counters.
+        # A plain lock-guarded counter — no metering pipeline, no per-route cardinality.
+        self._started_at = time.time()
+        self._metrics_lock = threading.Lock()
+        self._req_count = 0
+        self._err_count = 0
         self.irbis = ResilientIrbis(
             SessionManager(self.cfg.irbis_host, self.cfg.irbis_port,
                            self.cfg.workstation, self.cfg.irbis_user,
@@ -268,6 +280,12 @@ class Api:
             retries=self.cfg.irbis_retries, backoff=self.cfg.irbis_backoff)
         self.access = make_access_store(self.cfg)   # sqlite (default) or Postgres via ACCESS_BACKEND
         seed(self.access)                      # idempotent dev seed
+        # Per-tenant Access stores, lazily built + cached by _store_for (PG only).
+        # Caching pins each tenant's search_path-scoped connection once and reuses
+        # it, instead of rebuilding a connection (and re-SETting search_path) every
+        # request — and routes the auth read to the SAME schema provisioning wrote
+        # to (t_<slug>), fixing the post-provision "no session" propagation bug.
+        self._tenant_stores = {}
         # Seeding engine (A5, #188): seed the single-tenant 'public' store's vocabs
         # in dev so /api/vocab has data without a control plane. Idempotent; best-effort
         # (a store without the vocab tables — older schema — must not break startup).
@@ -405,22 +423,50 @@ class Api:
     def _store_for(self, tenant):
         """Access store scoped to ``tenant`` for this request.
 
-        - Single-tenant / sqlite dev (tenant 'public' or none): the default
-          ``self.access`` store, back-compat unchanged.
+        - Single-tenant / sqlite dev: the default ``self.access`` store,
+          back-compat unchanged.
         - Multi-tenant on PostgreSQL: a ``PgAccessStore`` pinned to ``t_<slug>``
           via the existing search_path mechanism, so accounts/grants/audit read
-          and write that tenant's schema only. Falls back to the default store if
-          the tenant store can't be built (keeps dev resilient).
+          and write that tenant's schema only.
+
+        **Post-provision propagation (the container-smoke bug).** Provisioning
+        ALWAYS writes a tenant's accounts into its own schema ``t_<slug>`` — and
+        that includes the DEFAULT tenant, whose admin lands in ``t_public``, not
+        PG's bare ``public`` schema. The auth read must therefore use the SAME
+        schema provisioning wrote to. Previously the default tenant short-circuited
+        to ``self.access`` (search_path = public), so a freshly-provisioned
+        ``public`` admin authenticated 401 ("no session") because the read looked
+        in the wrong schema. Now, on PG, the default tenant is routed to its
+        provisioned ``t_public`` schema whenever that schema exists, so a
+        provisioned admin is authable on the very next request.
+
+        Resolved tenant-scoped stores are cached per slug (``self._tenant_stores``)
+        so the search_path-pinned connection is established once and reused, rather
+        than rebuilding a connection (and re-running ``SET search_path``) on every
+        request. The un-provisioned default-tenant fallback is deliberately NOT
+        cached, so a tenant provisioned mid-process is picked up on the next call
+        (cache miss → re-resolve to the now-existing ``t_<slug>``) instead of
+        serving a stale public-schema store.
         """
-        if not tenant or tenant == DEFAULT_TENANT:
-            return self.access
         if not isinstance(self.access, PgAccessStore):
             return self.access          # sqlite dev has no per-tenant schemas
+        slug = tenant or DEFAULT_TENANT
+        cached = self._tenant_stores.get(slug)
+        if cached is not None:
+            return cached
+        from access import pgstore
         try:
-            from access.pgstore import make_tenant_store
-            return make_tenant_store(tenant)
+            if slug == DEFAULT_TENANT and not pgstore.schema_exists(slug):
+                # Un-provisioned PG dev: no t_public yet → the bare public store
+                # (where startup seed() wrote). Do NOT cache: once 'public' is
+                # provisioned its schema appears and the next call re-resolves to
+                # the tenant-scoped store.
+                return self.access
+            store = pgstore.make_tenant_store(slug)
         except Exception:
-            return self.access
+            return self.access          # PG hiccup → stay resilient, don't cache
+        self._tenant_stores[slug] = store
+        return store
 
     def _audit_pdn_read(self, session, subject_ticket, fields_accessed, resource):
         """Journal a READ of reader ПДн on behalf of staff — audit finding V5 / R5
@@ -514,6 +560,77 @@ class Api:
                          'lastError': h.get('lastError'),
                          'lastOkTs': h.get('lastOkTs')}
         return ok(info)
+
+    def metrics(self, session=None):
+        """GET /api/metrics — lightweight operational metrics for monitoring
+        (pilot observability). Plain JSON, **unauthenticated-safe**: it carries no
+        PII and no secrets, only operational counters a monitor needs.
+
+        Always (no auth required):
+          * ``version``    — build/version marker ($BUILD_VERSION, e.g. image tag);
+          * ``uptimeSec``  — process uptime in seconds;
+          * ``requests``   — {total, errors} in-process counters since start
+                             (errors = responses with status >= 400);
+          * ``irbis``      — the same reachability block as /api/health (server,
+                             default db, reachable flag, maxmfn when reachable,
+                             lastError/lastOkTs) — operational, not PII;
+          * ``tenants.count`` — number of provisioned tenants (0 on sqlite dev /
+                             no control plane). A bare count, not a tenant list.
+
+        Admin-guarded detail (only when the caller presents a valid super-admin
+        session — ``admin.db`` at admin): ``tenants.detail`` adds the per-tenant
+        record/reader counts where cheaply available. These counts could hint at a
+        library's scale, so they are NOT exposed unauthenticated; a monitor scrape
+        with no token simply omits the block. Slug/name are operational identifiers
+        (not PII) and only surface to a super-admin here. Never raises — a counting
+        or control-plane hiccup degrades to a smaller dict, still HTTP 200."""
+        now = time.time()
+        with self._metrics_lock:
+            req_total, req_errors = self._req_count, self._err_count
+        out = {
+            'version': BUILD_VERSION,
+            'uptimeSec': round(now - self._started_at, 3),
+            'requests': {'total': req_total, 'errors': req_errors},
+        }
+        # ИРБИС reachability (reuse the health probe; never raises).
+        irbis = {'server': '%s:%d' % (self.cfg.irbis_host, self.cfg.irbis_port),
+                 'db': self.cfg.db_default}
+        try:
+            irbis['maxmfn'] = self.irbis.max_mfn(self.cfg.db_default)
+            irbis['reachable'] = True
+        except (IrbisError, OSError, socket.error):
+            irbis['reachable'] = False
+        h = self.irbis.health() if hasattr(self.irbis, 'health') else {}
+        irbis['lastError'] = h.get('lastError')
+        irbis['lastOkTs'] = h.get('lastOkTs')
+        out['irbis'] = irbis
+        # Per-tenant block: a bare count unauthenticated; per-tenant record/reader
+        # detail only for a super-admin (could hint at a library's scale).
+        tenants = {'count': 0}
+        try:
+            rows = _provision.list_tenants()      # [] on sqlite dev / no control plane
+            tenants['count'] = len(rows)
+            is_admin = bool(session) and session.get('kind') == 'staff' \
+                and authorize(session.get('grants', []), 'admin.db', '*', 'admin')
+            if is_admin and rows:
+                detail = []
+                for r in rows:
+                    slug = r.get('slug')
+                    item = {'slug': slug, 'name': r.get('name')}
+                    try:
+                        usage = _billing.tenant_usage(self._store_for(slug), slug)
+                        if 'max_records' in usage:
+                            item['records'] = usage['max_records']
+                        if 'max_readers' in usage:
+                            item['readers'] = usage['max_readers']
+                    except Exception:
+                        pass
+                    detail.append(item)
+                tenants['detail'] = detail
+        except Exception:
+            pass
+        out['tenants'] = tenants
+        return 200, ok(out)
 
     @staticmethod
     def _tenant_of(body):
@@ -2024,6 +2141,19 @@ class Api:
 
     # ---- dispatcher ----
     def route(self, method, path, query, body, headers):
+        """Return (status, payload). Thin counting wrapper over ``_dispatch_route``
+        (pilot observability): bumps the request counter, and the error counter when
+        the resolved status is >= 400. OPTIONS preflight (204) is not counted as a
+        request. Counting never affects the response."""
+        status, payload = self._dispatch_route(method, path, query, body, headers)
+        if not (method == 'OPTIONS' and status == 204):
+            with self._metrics_lock:
+                self._req_count += 1
+                if status >= 400:
+                    self._err_count += 1
+        return status, payload
+
+    def _dispatch_route(self, method, path, query, body, headers):
         """Return (status, payload) where payload is dict | Raw | None."""
         path = path.rstrip('/') or '/'
         if method == 'OPTIONS':
@@ -2040,6 +2170,8 @@ class Api:
                 return self.auth_reader(body or {})
             if method == 'GET' and path == '/api/health':
                 return 200, self.health()
+            if method == 'GET' and path == '/api/metrics':
+                return self.metrics(session)
             parts = path.strip('/').split('/')
             if method == 'GET' and path == '/api/search':
                 db = query.get('db', [self.cfg.db_default])[0]
