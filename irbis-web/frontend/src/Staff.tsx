@@ -1,6 +1,6 @@
 import React from "react";
 import { api } from "./api";
-import type { Grant, ResultItem, WorklistField, FlkViolation, FlkRecord } from "./api";
+import type { Grant, ResultItem, WorklistField, FlkViolation, FlkRecord, BpProvisionReport } from "./api";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
 import type { IconName } from "../components/icon/Icon.jsx";
@@ -347,7 +347,7 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
           {current === "cataloging" ? <CatalogingWorksheet staff={staff} toast={toast} />
             : current === "circulation" ? <CirculationDesk toast={toast} />
             : current === "acquisition" ? <AcquisitionDesk toast={toast} />
-            : current === "provision" ? <BookProvisionDesk toast={toast} />
+            : current === "provision" ? <ProvisionArea staff={staff} toast={toast} />
             : current === "admin" ? <AdminDesk toast={toast} />
             : current === "platform" ? <PlatformDesk toast={toast} />
             : current === "migration" ? <MigrationWizard toast={toast} />
@@ -390,6 +390,174 @@ function StaffDesktop({ staff, tiles, onOpen }: { staff: StaffSession; tiles: ty
       <div style={{ marginTop: 16, fontSize: 11.5, color: "var(--text-subtle)", lineHeight: 1.6 }}>
         Запись/удаление — под грантами уровня write/admin; действия пишутся в аудит.
       </div>
+    </div>
+  );
+}
+
+// --- ККО-деск: быстрый отчёт книгообеспеченности (GET /api/bp/provision) ----
+// Выбор охвата (дисциплина / специальность / факультет) + наименование/код →
+// коэффициент Кко, статус (обеспечено/дефицит), дефицит экз., список привязок.
+// Плоский Стиль A (.kko__*, без пересечений с .stf__/.bp__). Мягкая деградация:
+// 404/501 → информер «отчёт недоступен», дек не падает.
+const KKO_CSS = `
+.kko{font-family:var(--font-ui);max-width:920px;}
+.kko__bar{display:grid;grid-template-columns:160px 1fr auto;gap:10px;align-items:end;
+  background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:16px;}
+.kko__fld{display:flex;flex-direction:column;gap:5px;min-width:0;}
+.kko__lab{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-subtle);}
+.kko__in,.kko__sel{box-sizing:border-box;width:100%;padding:8px 11px;border-radius:var(--radius-md);
+  border:1px solid var(--border-default);background:var(--surface-card);color:var(--text-body);font-family:var(--font-ui);font-size:13.5px;}
+.kko__in:focus,.kko__sel:focus{outline:none;border-color:var(--accent);}
+.kko__head{display:flex;align-items:center;gap:14px;padding:16px 18px;border-radius:var(--radius-lg);margin-bottom:14px;}
+.kko__head--ok{background:var(--status-available-bg,#E3F0E4);}
+.kko__head--bad{background:var(--status-issued-bg,#FBEFD8);}
+.kko__val{font-family:var(--font-mono);font-weight:700;font-size:32px;line-height:1;}
+.kko__head--ok .kko__val{color:var(--status-available,#3C7D3F);}
+.kko__head--bad .kko__val{color:var(--status-issued,#B0791C);}
+.kko__cap{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle);}
+.kko__sub{font-size:12.5px;color:var(--text-body);margin-top:3px;}
+.kko__flag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:var(--radius-full);margin-left:auto;}
+.kko__flag--bad{background:var(--danger-50,#FBE9E7);color:var(--danger-500,#C0392B);}
+.kko__flag--ok{background:transparent;color:var(--status-available,#3C7D3F);}
+.kko__stats{display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--text-subtle);margin-bottom:14px;}
+.kko__stats b{color:var(--text-body);font-weight:600;}
+.kko__bind{display:grid;grid-template-columns:auto 1fr auto;gap:11px;align-items:center;padding:9px 4px;border-bottom:1px solid var(--border-subtle);}
+.kko__bind:last-child{border-bottom:none;}
+.kko__kind{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:var(--radius-full);white-space:nowrap;}
+.kko__kind--main{background:var(--accent-weak);color:var(--accent-press);}
+.kko__kind--extra{background:var(--surface-hover);color:var(--text-muted);}
+.kko__bind-title{font-weight:600;font-size:13px;min-width:0;}
+.kko__bind-by{font-weight:400;font-size:12px;color:var(--text-subtle);}
+.kko__bind-copies{font-family:var(--font-mono);font-size:12.5px;color:var(--text-muted);white-space:nowrap;}
+@media (max-width:780px){.kko__bar{grid-template-columns:1fr;}}
+`;
+if (typeof document !== "undefined" && !document.getElementById("kko-css")) {
+  const s = document.createElement("style"); s.id = "kko-css"; s.textContent = KKO_CSS; document.head.appendChild(s);
+}
+
+type KkoScope = "discipline" | "specialty" | "faculty";
+const KKO_SCOPES: { id: KkoScope; label: string; ph: string }[] = [
+  { id: "discipline", label: "Дисциплина", ph: "наименование или код дисциплины" },
+  { id: "specialty", label: "Специальность", ph: "наименование или код специальности" },
+  { id: "faculty", label: "Факультет", ph: "наименование или код факультета" },
+];
+const fmtKkoVal = (v?: number): string =>
+  v == null ? "—" : v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function ProvisionLookup({ toast }: { toast: ToastFn }) {
+  const [scope, setScope] = React.useState<KkoScope>("discipline");
+  const [term, setTerm] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [report, setReport] = React.useState<BpProvisionReport | null>(null);
+  // 'idle' — ничего не искали; 'unavailable' — эндпойнт 404/501 (мягкая деградация).
+  const [phase, setPhase] = React.useState<"idle" | "ok" | "empty" | "unavailable">("idle");
+
+  const run = async () => {
+    const q = term.trim();
+    if (!q) return;
+    setBusy(true);
+    const r = await api.bpProvision({ [scope]: q });
+    setBusy(false);
+    if (r.status === 404 || r.status === 501) {
+      setReport(null); setPhase("unavailable");
+      toast({ variant: "info", title: "Отчёт книгообеспеченности недоступен", message: "Сервис расчёта Кко ещё не подключён в этом контуре." });
+      return;
+    }
+    if (r.json?.ok && r.json.data) {
+      setReport(r.json.data); setPhase("ok");
+    } else {
+      setReport(null); setPhase("empty");
+    }
+  };
+
+  const status = report?.status ?? (report && report.coefficient != null && report.norm != null
+    ? (report.coefficient < report.norm ? "deficit" : "ok") : undefined);
+  const bad = status === "deficit";
+
+  return (
+    <div className="kko">
+      <form className="kko__bar" onSubmit={(e) => { e.preventDefault(); void run(); }}>
+        <div className="kko__fld">
+          <label className="kko__lab" htmlFor="kko-scope">Охват</label>
+          <select id="kko-scope" className="kko__sel" value={scope} onChange={(e) => setScope(e.target.value as KkoScope)}>
+            {KKO_SCOPES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </div>
+        <div className="kko__fld">
+          <label className="kko__lab" htmlFor="kko-term">{KKO_SCOPES.find((s) => s.id === scope)!.label}</label>
+          <input id="kko-term" className="kko__in" value={term} onChange={(e) => setTerm(e.target.value)}
+            placeholder={KKO_SCOPES.find((s) => s.id === scope)!.ph} />
+        </div>
+        <Button type="submit" iconLeft="bar-chart" disabled={busy || !term.trim()}>
+          {busy ? "Расчёт…" : "Рассчитать"}
+        </Button>
+      </form>
+
+      {phase === "unavailable" && (
+        <EmptyState icon="bar-chart" title="Отчёт книгообеспеченности недоступен"
+          description="Сервис расчёта коэффициента Кко ещё не подключён в этом контуре. Деск активируется автоматически, как только бэкенд начнёт отдавать /api/bp/provision." />
+      )}
+      {phase === "empty" && (
+        <EmptyState icon="search" title="Ничего не найдено"
+          description="По заданному охвату данные о книгообеспеченности отсутствуют. Проверьте наименование или код." />
+      )}
+      {phase === "ok" && report && (
+        <>
+          <div className={"kko__head " + (bad ? "kko__head--bad" : "kko__head--ok")}>
+            <div>
+              <div className="kko__cap">Коэффициент Кко{report.norm != null ? " · норматив " + fmtKkoVal(report.norm) : ""}</div>
+              <div className="kko__val">{fmtKkoVal(report.coefficient)}</div>
+              {report.subject && <div className="kko__sub">{report.subject}</div>}
+            </div>
+            <span className={"kko__flag " + (bad ? "kko__flag--bad" : "kko__flag--ok")}>
+              <Icon name={bad ? "alert-triangle" : "check-circle"} size={13} />
+              {bad ? "Дефицит" : "Обеспечено"}
+            </span>
+          </div>
+
+          <div className="kko__stats">
+            {report.students != null && <span>Контингент: <b>{report.students}</b></span>}
+            {report.copies != null && <span>Экземпляров: <b>{report.copies}</b></span>}
+            {bad && report.shortfall != null && report.shortfall > 0 &&
+              <span>Дефицит: <b>{report.shortfall} экз.</b></span>}
+          </div>
+
+          <span className="stf__card-cap">Привязанная литература</span>
+          <div style={{ marginTop: 8 }}>
+            {report.bindings && report.bindings.length ? report.bindings.map((b, i) => (
+              <div className="kko__bind" key={i}>
+                <span className={"kko__kind " + (b.kind === "extra" ? "kko__kind--extra" : "kko__kind--main")}>
+                  {b.kind === "extra" ? "доп." : "осн."}
+                </span>
+                <span className="kko__bind-title">{b.title}{b.author ? <span className="kko__bind-by"> · {b.author}</span> : null}</span>
+                <span className="kko__bind-copies">{b.copies != null ? b.copies + " экз." : "—"}</span>
+              </div>
+            )) : <div className="kko__sub" style={{ color: "var(--text-subtle)" }}>Привязки литературы отсутствуют.</div>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Модуль «Книгообеспеченность»: быстрый ККО-отчёт (грант-гейт КО record.read /
+// admin.db) над полнофункциональным деском связки (факультет→спец.→дисциплина).
+function ProvisionArea({ staff, toast }: { staff: StaffSession; toast: ToastFn }) {
+  const canKko = hasGrant(staff.grants, "record.read") || hasGrant(staff.grants, "admin.db");
+  return (
+    <div>
+      {canKko && (
+        <section style={{ marginBottom: 24 }} aria-label="Быстрый отчёт книгообеспеченности">
+          <div className="stf__pagehead">
+            <div className="stf__h1">
+              <Icon name="bar-chart" size={20} />
+              <h2>Книгообеспеченность · отчёт ККО</h2>
+            </div>
+          </div>
+          <ProvisionLookup toast={toast} />
+        </section>
+      )}
+      <BookProvisionDesk toast={toast} />
     </div>
   );
 }
