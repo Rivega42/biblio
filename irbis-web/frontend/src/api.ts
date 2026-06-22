@@ -243,6 +243,48 @@ export interface ErasureResult {
 // читателя); action — что сделано (просмотр формуляра, выгрузка, правка, …).
 export interface PdnAccessEntry { ts?: string; actor?: string; subject?: string; action?: string; }
 
+// --- Миграция данных: онбординг-мастер переноса из ИРБИС64 (#225; epic #223) -
+// Источник миграции:
+//   • 'network' — сетевой сервер ИРБИС64 (хост/порт + учётка + рабочая станция);
+//   • 'local'   — локальный каталог данных ИРБИС (напр. C:\IRBIS64\Datai).
+// Креды живут только в форме мастера: не сохраняются в клиенте и не логируются.
+export type MigrateMode = "network" | "local";
+// Сетевые реквизиты подключения к серверу ИРБИС64 (логин/пароль — транзитом).
+export interface MigrateNetworkSource { host: string; port: number; user: string; pass: string; workstation?: string; }
+// Локальный источник — путь к каталогу данных ИРБИС.
+export interface MigrateLocalSource { path: string; }
+export type MigrateSource = MigrateNetworkSource | MigrateLocalSource;
+// Поле обнаруженной БД: MARC-тег, метка, состав подполей, частота встречаемости
+// и флаг «допполе» (custom:true) — поле вне штатной схемы РУСМАРК (локальное
+// расширение библиотеки), которое мастер помечает оператору при изучении.
+export interface MigrateField {
+  tag: string; label?: string; subfields: string[];
+  freq?: number; custom?: boolean;
+}
+// Обнаруженная при изучении источника база: код, наименование, тип (kind —
+// напр. bibliographic/reader/authority), число записей, состав полей и (для
+// читательских БД) число читателей.
+export interface MigrateDatabase {
+  code: string; name: string; kind?: string;
+  recordCount?: number; readerCount?: number;
+  fields: MigrateField[];
+}
+// Результат изучения источника (POST /api/admin/migrate/inspect).
+export interface MigrateInspect { databases: MigrateDatabase[]; }
+// Отчёт о миграции (POST /api/admin/migrate/run): прочитано/загружено записей,
+// загружено читателей, пропущено, ошибок. Для dry-run загрузка = 0 (ничего не
+// записано), но счётчики чтения/пропусков отражают пробный анализ.
+export interface MigrateReport {
+  records_read: number; records_loaded: number;
+  readers_loaded: number; skipped: number; errors: number;
+}
+// Ответ запуска миграции: отчёт (синхронно) и/или идентификатор фоновой задачи
+// (jobId) — тогда статус добирается через GET /api/admin/migrate/status.
+export interface MigrateRunResult { report: MigrateReport; jobId?: string; }
+// Статус фоновой задачи миграции (GET /api/admin/migrate/status?jobId=):
+//   state: queued|running|done|error; report появляется по завершении.
+export interface MigrateStatus { jobId?: string; state: string; report?: MigrateReport; error?: string; }
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -465,6 +507,21 @@ export const api = {
   eraseReaderData: () => jpost<{ erased: ErasureResult }>("/api/reader/erase", { confirm: true }),
   // Журнал доступа к ПДн (последние limit записей) — для админ-деска. 404/501 → информер.
   pdnAccess: (limit = 50) => jget<{ items: PdnAccessEntry[] }>("/api/admin/pdn-access?" + qs({ limit })),
+
+  // --- Миграция данных из ИРБИС64 (#225; epic #223) ------------------------
+  // Изучить источник (сетевой сервер ИРБИС64 / локальный каталог данных):
+  // обнаружить базы, число записей и состав полей (с пометкой «допполе» для
+  // кастомных). dbs — опц. сужение перечня изучаемых баз. 404/501 → degrade.
+  migrateInspect: (mode: MigrateMode, source: MigrateSource, dbs?: string[]) =>
+    jpost<MigrateInspect>("/api/admin/migrate/inspect", { mode, source, dbs }),
+  // Запустить миграцию выбранных баз в арендатора. dryRun:true — пробный прогон
+  // (ничего не записывается). → отчёт {records_read, records_loaded,
+  // readers_loaded, skipped, errors} (+ опц. jobId фоновой задачи). 404/501 → degrade.
+  migrateRun: (params: { mode: MigrateMode; source: MigrateSource; tenant: string; dbs: string[]; dryRun: boolean }) =>
+    jpost<MigrateRunResult>("/api/admin/migrate/run", params),
+  // Статус фоновой задачи миграции по её jobId (если run вернул jobId).
+  migrateStatus: (jobId: string) =>
+    jget<MigrateStatus>("/api/admin/migrate/status?" + qs({ jobId })),
 };
 
 export const LANG: Record<string, string> = {
