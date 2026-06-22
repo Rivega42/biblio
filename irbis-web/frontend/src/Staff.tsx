@@ -13,13 +13,14 @@ import { BookProvisionDesk } from "./BookProvisionDesk";
 import { AdminDesk } from "./AdminDesk";
 import { PlatformDesk } from "./PlatformDesk";
 import { MigrationWizard } from "./MigrationWizard";
+import { BenchmarkPanel } from "./BenchmarkPanel";
 
 export interface StaffSession { name?: string; login: string; grants: Grant[]; }
 type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) => void;
 
 // Функциональные модули продукта «Рабочее пространство сотрудника».
 // Собираются ПО ГРАНТАМ учётки (а не «по АРМам»): видны только разрешённые.
-type StaffRoute = "cataloging" | "circulation" | "cells" | "acquisition" | "provision" | "admin" | "platform" | "migration" | "stub";
+type StaffRoute = "cataloging" | "circulation" | "cells" | "acquisition" | "provision" | "admin" | "platform" | "migration" | "benchmark" | "stub";
 type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: StaffRoute };
 const DOMAINS: DomainTile[] = [
   { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей RUSMARC", route: "cataloging" as const },
@@ -31,6 +32,7 @@ const DOMAINS: DomainTile[] = [
   { id: "admin", label: "Администрирование", icon: "sliders", grant: "admin.users", desc: "Учётки, гранты, роли, аудит", route: "admin" as const },
   { id: "platform", label: "Платформа", icon: "layers", grant: "admin.db", desc: "Арендаторы, тариф, лимиты, функциональные модули", route: "platform" as const },
   { id: "migration", label: "Миграция", icon: "download", grant: "admin.db", desc: "Онбординг-мастер переноса данных из ИРБИС64 в арендатора", route: "migration" as const },
+  { id: "benchmark", label: "Сравнение", icon: "trending-up", grant: "admin.db", desc: "ИРБИС ↔ Biblio: метрики скорости поиска, выдачи и миграции", route: "benchmark" as const },
 ];
 const hasGrant = (grants: Grant[], fn: string) => (grants || []).some((g) => g.function === fn);
 
@@ -266,6 +268,7 @@ function routeId(route: any): string {
   if (route === "admin") return "admin";
   if (route === "platform") return "platform";
   if (route === "migration") return "migration";
+  if (route === "benchmark") return "benchmark";
   if (route === "desktop" || !route) return "desktop";
   return "stub";
 }
@@ -286,6 +289,7 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
     current === "admin" ? "Администрирование" :
     current === "platform" ? "Платформа" :
     current === "migration" ? "Миграция" :
+    current === "benchmark" ? "Сравнение" :
     current === "stub" ? stubTitle :
     "Рабочий стол";
 
@@ -347,6 +351,7 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
             : current === "admin" ? <AdminDesk toast={toast} />
             : current === "platform" ? <PlatformDesk toast={toast} />
             : current === "migration" ? <MigrationWizard toast={toast} />
+            : current === "benchmark" ? <BenchmarkPanel toast={toast} />
             : current === "cells" ? <CellMap />
             : current === "stub" ? <StaffStub title={stubTitle} onOpen={() => setRoute("cataloging")} />
             : <StaffDesktop staff={staff} tiles={tiles} onOpen={open} />}
