@@ -403,13 +403,18 @@ def seed_fulltext(catalog, rights_store):
             continue
         arts = ft.artifacts_for(DB, mfn)
         meta955 = [a for a in arts if a.get("kind") == "955"]
-        lvl_guest = rights.access_level(KAT_GUEST, db=DB, mfn=mfn)
+        # ВАЖНО: на роуте /api/fulltext категория гостя = None (не код «9»):
+        # core._reader_category отдаёт категорию ТОЛЬКО для читательской сессии,
+        # для гостя/staff → None. По шаблону с правилами None ни с одним ^B не
+        # совпадает → deny (гейтинг ПТ закрыт для анонима). Поэтому реальный
+        # «гость» проверяется как None, а не как код категории «9».
+        lvl_guest = rights.access_level(None, db=DB, mfn=mfn)
         lvl_student = rights.access_level(KAT_STUDENT, db=DB, mfn=mfn)
         lvl_teacher = rights.access_level(KAT_TEACHER, db=DB, mfn=mfn)
         lim_teacher = rights.page_limit(KAT_TEACHER, db=DB, mfn=mfn)
         pages = meta955[0].get("pages") if meta955 else None
         print("  → '%s' mfn=%s: 955-артефактов=%d, страниц=%s; "
-              "доступ гость=%s студент=%s преп=%s (лимит=%s)"
+              "доступ гость(None)=%s студент=%s преп=%s (лимит=%s)"
               % (title, mfn, len(meta955), pages,
                  lvl_guest, lvl_student, lvl_teacher, lim_teacher))
         checks.append({
