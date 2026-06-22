@@ -243,7 +243,7 @@ def main():
                'test_admin_routes', 'test_platform', 'test_compliance',
                'test_migrate', 'test_migrate_introspect', 'test_irbis_mst',
                'test_stabilize', 'test_reader_auth', 'test_benchmark',
-               'test_demo_requests'):
+               'test_demo_requests', 'test_rights_lich'):
         module_checks(_m)
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
