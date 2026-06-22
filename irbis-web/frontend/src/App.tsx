@@ -521,6 +521,9 @@ export function App() {
                 </div>
               </div>
             )}
+            {/* Хлебные крошки + контекст запроса (что и где искали + сколько найдено). */}
+            <SearchBreadcrumb db={dbName} mode={mode} prefix={prefix} prefixes={PREFIXES}
+              query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome} />
             {loading && !items.length ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
               total === 0 && !activeFacets.length ? <EmptyState icon="search" title="Ничего не найдено" description="Измените запрос или область поиска." /> :
                 <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -646,6 +649,38 @@ function FacetRail({ facets, active, onToggle }: {
         </div>
       ))}
     </aside>
+  );
+}
+
+// Хлебные крошки результатов: «Главная / Поиск в <база> / "<запрос>"» + сводка
+// «найдено N». Даёт контекст на бедноватом экране выдачи без дублирования
+// тулбара (тот показывает счётчик/страницу; крошки — путь и сам запрос). Для
+// простого поиска показываем область (Автор/Заглавие/…) и термин; для расш./эксп.
+// — компактное выражение.
+function SearchBreadcrumb({ db, mode, prefix, prefixes, query, expr, total, loading, onHome }: {
+  db: string; mode: "simple" | "advanced" | "expert";
+  prefix: string; prefixes: { code: string; label: string }[];
+  query: string; expr: string; total: number; loading: boolean; onHome: () => void;
+}) {
+  const term = mode === "simple" ? query.trim() : (expr || "").trim();
+  if (!term) return null;
+  const areaLabel = mode === "simple" ? (prefixes.find((p) => p.code === prefix)?.label || "") : "";
+  const crumbSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-subtle)" };
+  return (
+    <nav aria-label="Хлебные крошки" style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", margin: "0 0 12px" }}>
+      <button onClick={onHome} style={{ ...crumbSx, background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <Icon name="book" size={13} /> Главная
+      </button>
+      <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
+      <span style={crumbSx}>Поиск в «{db}»{areaLabel ? " · " + areaLabel : ""}</span>
+      <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
+      <span style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={term}>«{term}»</span>
+      {!loading && (
+        <span style={{ marginLeft: 4, fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", background: "var(--surface-sunken)", borderRadius: 999, padding: "2px 9px", fontVariantNumeric: "tabular-nums" }}>
+          найдено {total.toLocaleString("ru-RU")}
+        </span>
+      )}
+    </nav>
   );
 }
 

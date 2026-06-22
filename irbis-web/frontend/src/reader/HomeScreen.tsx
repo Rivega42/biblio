@@ -13,6 +13,10 @@ import { Icon } from "../../components/icon/Icon.jsx";
 import { SearchBar } from "../../components/catalog/SearchBar.jsx";
 import { DatabaseSelector } from "../../components/catalog/DatabaseSelector.jsx";
 import { Showcase } from "./Showcase";
+import { Collections } from "./Collections";
+import { Rubricator } from "./Rubricator";
+import { LibraryNews, LibraryEvents } from "./LibraryFeed";
+import { AboutLibrary } from "./AboutLibrary";
 
 // Базовые примеры запросов (онбординг поиска). Дополняются «живыми» рубриками
 // из /api/rubricator, если эндпойнт доступен.
@@ -139,6 +143,15 @@ export function HomeScreen({
         </div>
       </section>
 
+      {/* ===== Тематические подборки (театральная специфика, конфиг арендатора) ===== */}
+      <Collections onSearch={onSearch} />
+
+      {/* ===== Витрина новых поступлений (G2) — живые данные /api/showcase ===== */}
+      <Showcase db={db} onOpen={onOpen} />
+
+      {/* ===== Рубрикатор «Просмотр по разделам» — живой словарь /api/rubricator ===== */}
+      <Rubricator db={db} onSearch={onSearch} />
+
       {/* ===== Богатый селектор баз (G17) ===== */}
       {selectorDbs.length > 1 && (
         <div className="irb-home__pick">
@@ -157,8 +170,12 @@ export function HomeScreen({
         </div>
       )}
 
-      {/* ===== Витрина новых поступлений (G2) ===== */}
-      <Showcase db={db} onOpen={onOpen} />
+      {/* ===== Новости + события (редактируемый per-tenant контент) ===== */}
+      <LibraryNews />
+      <LibraryEvents />
+
+      {/* ===== О библиотеке (часы / контакты / о фонде) ===== */}
+      <AboutLibrary />
     </div>
   );
 }
