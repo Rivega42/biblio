@@ -1,0 +1,69 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Biblio — OVERLAY ПУБЛИЧНОГО ДЕМО-СТЕНДА (issue #226, эпик #223).
+#
+# Накладывается ПОВЕРХ базового docker-compose.yml. Базовый файл задаёт топологию
+# (proxy → backend → db, тома, healthcheck'и); этот overlay превращает её в
+# демонстрационный экземпляр для проверки экспертами Минцифры (Единый реестр
+# росПО): own-store, БЕЗ живого ИРБИС, БЕЗ реальных ПДн, помечен как ДЕМО,
+# read-mostly, ротация логов и периодический сброс к эталонному снимку.
+#
+# СЕРВЕР ДЕМО-СТЕНДА РАЗМЕЩАЕТСЯ В РФ (требование реестра — см.
+# docs/deploy/DEMO_STAND.md и docs/legal/REGISTRATION_GUIDE.md §3.5).
+#
+# Запуск:
+#   cd deploy
+#   cp .env.demo.example .env            # заполнить секреты (CHANGE/СМЕНИТЬ)
+#   sh proxy/gen-cert.sh                 # dev-сертификат (на проде — реальный TLS)
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+#   sh demo/seed_demo.sh                 # наполнить демо-данными (см. ниже)
+#
+# Базовые healthcheck'и (db/backend/proxy) НАСЛЕДУЮТСЯ из docker-compose.yml —
+# здесь они не переопределяются. Этот overlay добавляет к каждому сервису ТОЛЬКО
+# демо-специфику: метку «демо», ротацию docker-логов и отметку отсутствия ИРБИС.
+#
+# ── Чем демо отличается от прод-стека ────────────────────────────────────────
+#   • APP_ENV=demo            — бэкенд знает, что это демонстрационный режим.
+#   • Без переменных IRBIS_*  — никакого моста к живому ИРБИС (own-store only).
+#   • Ротация логов           — json-file max-size/max-file, чтобы публичный
+#                               стенд не забил диск за время проверки.
+#   • read-mostly             — демо наполняется сидом и периодически сбрасывается
+#                               к снимку (deploy/demo/reset_demo.sh + cron); правки
+#                               посетителей живут только до ближайшего сброса.
+#   • Метки com.biblio.role=demo на всех сервисах — для инвентаризации/мониторинга.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Общий якорь ротации логов: ни один сервис публичного демо не должен забивать
+# диск. 10 МБ × 3 файла на сервис — компромисс «хватает на расследование» / «мало
+# на диске». На проде то же можно задать глобально в /etc/docker/daemon.json.
+x-demo-logging: &demo-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    logging: *demo-logging
+    labels:
+      com.biblio.role: "demo"
+      com.biblio.stand: "reestr-rospo-demo"
+
+  backend:
+    environment:
+      # Демо-режим: явный маркер для бэкенда и для оператора стенда.
+      APP_ENV: "demo"
+      # ИРБИС на демо ОТКЛЮЧЁН: пустой хост → бэкенд поднимается на own-store,
+      # OPAC-функции, требующие ИРБИС, на демо не задействуются. (Перебивает
+      # дефолт из базового compose, чтобы демо случайно не пошло в чужой ИРБИС.)
+      IRBIS_HOST: ""
+      IRBIS_PASS: ""
+    logging: *demo-logging
+    labels:
+      com.biblio.role: "demo"
+      com.biblio.stand: "reestr-rospo-demo"
+
+  proxy:
+    logging: *demo-logging
+    labels:
+      com.biblio.role: "demo"
+      com.biblio.stand: "reestr-rospo-demo"

@@ -86,6 +86,12 @@ except Exception:  # ImportError when run in isolation
 
 SECONDS_PER_DAY = 86400
 
+# Маркер «книга не возвращена / задолженность» в подполе 40^F (FST DOLG=).
+# Из конфигов: `RETURNDATE1=F`, признак долга = `40^F:'******'` (DB_CIRCULATION
+# §3/§5). Пока книга на руках — в 40^F стоит этот маркер; при возврате он
+# замещается датой фактического возврата (40^F = дата).
+DEBT_MARKER = '******'
+
 
 # --------------------------------------------------------------------------- #
 # Policy — the per-tenant ``circ_policy`` (defaults from SPEC §5.3 / §7).
@@ -257,6 +263,19 @@ CREATE TABLE IF NOT EXISTS fine (
   UNIQUE(loan, kind)              -- one fine row per loan per kind (§3.4 idempotent)
 );
 CREATE INDEX IF NOT EXISTS fine_reader_idx ON fine(reader, status);
+CREATE TABLE IF NOT EXISTS rdr_arh (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  loan INTEGER,                   -- исходная выдача (loan.id), для трассировки
+  reader TEXT NOT NULL,           -- 30 (RI=) читатель
+  item TEXT NOT NULL,             -- 40^B инв.№ / 910^b
+  due REAL,                       -- 40^E план. возврат
+  checked_out_at REAL,            -- 40^D дата выдачи
+  returned_at REAL NOT NULL,      -- 40^F дата факт. возврата
+  lost_status TEXT,               -- состояние на момент архивации
+  archived_at REAL NOT NULL       -- момент переноса в архив (152-ФЗ ретенция)
+);
+CREATE INDEX IF NOT EXISTS rdr_arh_reader_idx ON rdr_arh(reader);
+CREATE INDEX IF NOT EXISTS rdr_arh_item_idx ON rdr_arh(item);
 """
 
 
@@ -328,6 +347,12 @@ class CirculationStore:
             'SELECT * FROM loan WHERE reader=? AND returned=0 AND lost_status!=? '
             'ORDER BY id', (reader_id, 'lost')).fetchall()]
 
+    def reader_loans(self, reader_id):
+        """Все выдачи читателя (на руках + возвращённые) — для полного формуляра."""
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM loan WHERE reader=? ORDER BY id',
+            (reader_id,)).fetchall()]
+
     def count_on_hand(self, reader_id):
         """``count_on_hand`` = number of RDR.40 with ``40^F='******'`` (§5.4)."""
         return self._conn().execute(
@@ -368,6 +393,45 @@ class CirculationStore:
         c = self._conn()
         c.execute('UPDATE loan SET lost_status=? WHERE id=?', (status, loan_id))
         c.commit()
+
+    # ---- archive (RDR_ARH) ------------------------------------------------ #
+    def archive_loan(self, loan, returned_at, archived_at):
+        """Перенести завершённую (возвращённую) выдачу в архив ``rdr_arh``.
+
+        Ребро INTEGRATION_MAP 2.5: при возврате запись о выдаче дублируется в
+        отдельную сущность-архив RDR_ARH (152-ФЗ ретенция). Это **opt-in**
+        добавление: сама строка ``loan`` остаётся помеченной ``returned=1`` —
+        архив её не заменяет, а накапливает историю. Возвращает строку архива.
+        """
+        c = self._conn()
+        cur = c.execute(
+            'INSERT INTO rdr_arh(loan,reader,item,due,checked_out_at,'
+            'returned_at,lost_status,archived_at) VALUES(?,?,?,?,?,?,?,?)',
+            (loan['id'], loan['reader'], loan['item'], loan['due'],
+             loan['checked_out_at'], returned_at, loan['lost_status'],
+             archived_at))
+        c.commit()
+        return self.get_archived(cur.lastrowid)
+
+    def get_archived(self, arh_id):
+        r = self._conn().execute(
+            'SELECT * FROM rdr_arh WHERE id=?', (arh_id,)).fetchone()
+        return dict(r) if r else None
+
+    def archived_loans(self, reader_id):
+        """Архивные (возвращённые) выдачи читателя — поле 40 в RDR_ARH."""
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM rdr_arh WHERE reader=? ORDER BY id',
+            (reader_id,)).fetchall()]
+
+    def count_archived(self, reader_id=None):
+        """Число архивных записей (всего или по читателю)."""
+        if reader_id is None:
+            return self._conn().execute(
+                'SELECT COUNT(*) AS n FROM rdr_arh').fetchone()['n']
+        return self._conn().execute(
+            'SELECT COUNT(*) AS n FROM rdr_arh WHERE reader=?',
+            (reader_id,)).fetchone()['n']
 
     # ---- holds ------------------------------------------------------------ #
     def add_hold(self, reader_id, item, queued_at):
@@ -485,7 +549,8 @@ class CirculationEngine:
 
     def __init__(self, store=None, policy=None, notifier=None, tenant='public',
                  catalog=None, catalog_db='IBIS', notifications=None,
-                 staff_recipient='staff', acquisition=None):
+                 staff_recipient='staff', acquisition=None,
+                 archive_on_return=False):
         self.store = store or CirculationStore(':memory:')
         self.policy = policy or default_policy(tenant)
         # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
@@ -516,6 +581,12 @@ class CirculationEngine:
         # «списан»). Best-effort, optional — with no handle circulation stays fully
         # standalone (back-compat, mirrors the ``catalog=`` seam).
         self.acquisition = acquisition
+        # Архив выдач RDR_ARH (ребро 2.5). **Opt-in**: когда True, ``return_item``
+        # дополнительно к ``returned=1`` переносит завершённую выдачу в архив
+        # ``rdr_arh`` (152-ФЗ ретенция — отдельная сущность истории выдач). По
+        # умолчанию (False) поведение прежнее: только флаг ``returned=1`` в той
+        # же таблице, без архива (back-compat).
+        self.archive_on_return = archive_on_return
 
     # ---- acquisition-driven seams (поступление → выдача · выдача → КСУ) ---- #
     def register_acquired_item(self, item, catalog_db=None):
@@ -666,6 +737,121 @@ class CirculationEngine:
             return self.catalog.is_available(self.catalog_db, item)
         except Exception:
             return None
+
+    # ---- RDR.40 materialization (ребро 2.4) ------------------------------- #
+    def _resolve_exemplar40(self, item):
+        """Достать из каталога подполя поля 40, привязанные к экземпляру ``item``.
+
+        Ребро 2.4: при выдаче формат ``RQSTRDR.pft`` строит RDR.40 из заказа и
+        записи ЭК. У нас ``loan.item`` = инвентарный номер (910^b); каталог по
+        нему резолвит запись и отдаёт остальные подполя:
+
+          * ``^A`` = 903 шифр документа (= ``I=`` в ЭК),
+          * ``^H`` = 910^H штрих-код,
+          * ``^K`` = 910^D место хранения,
+          * ``^C`` = brief (краткое описание).
+
+        Возвращает dict с найденными подполями (отсутствующие — пустые). Когда
+        каталог не подключён или экземпляр в нём не найден — отдаёт пустой
+        результат: поле 40 материализуется из loan-модели и без каталога
+        (back-compat), просто без обогащения из ЭК. Чисто читающая операция.
+        """
+        out = {'A': '', 'H': '', 'K': '', 'C': ''}
+        if self.catalog is None:
+            return out
+        try:
+            found = self.catalog.find_exemplar(self.catalog_db, item)
+            if found is None:
+                return out
+            mfn, _idx, inst = found
+            # подполя 910 экземпляра (^H штрих-код, ^D место хранения)
+            if isinstance(inst, dict):
+                out['H'] = str(inst.get('h') or inst.get('H') or '')
+                out['K'] = str(inst.get('d') or inst.get('D') or '')
+            # 903 шифр документа + brief — из полной записи каталога
+            record = self.catalog.get(self.catalog_db, mfn)
+            if record is not None:
+                out['A'] = self._first_903(record)
+            try:
+                out['C'] = self.catalog.brief(self.catalog_db, mfn) or ''
+            except Exception:
+                out['C'] = ''
+        except Exception:
+            return {'A': '', 'H': '', 'K': '', 'C': ''}
+        return out
+
+    @staticmethod
+    def _first_903(record):
+        """Значение поля 903 (шифр документа) из записи каталога, или ''.
+
+        903 — целое поле (не подполя). Поддерживает обе формы хранения: строку
+        и dict-инстанс (``''``/``value``/конкатенация подполей)."""
+        raw = record.get('903') if record else None
+        if raw is None:
+            return ''
+        if isinstance(raw, list):
+            raw = raw[0] if raw else ''
+        if isinstance(raw, dict):
+            return str(raw.get('') or raw.get('value')
+                       or ''.join(str(v) for v in raw.values()))
+        return str(raw)
+
+    def loan_field40(self, loan):
+        """Материализовать одну выдачу (``loan``) в структуру **поля 40 RDR**.
+
+        Ребро 2.4 — ДОП. представление поверх текущей loan-модели (не меняет
+        колонки/сценарии). Маппинг подполей (DB_CIRCULATION §3 «развёртка поля
+        40», §5 модель циркуляции, §8 связи):
+
+          | ^x | смысл                       | источник                       |
+          |----|-----------------------------|--------------------------------|
+          | ^A | шифр документа              | 903 (резолв ЭК по инв.№)       |
+          | ^B | инвентарный номер           | 910^B = ``loan.item``          |
+          | ^H | штрих-код                   | 910^H (резолв ЭК)              |
+          | ^K | место хранения экземпляра   | 910^D (резолв ЭК)              |
+          | ^D | дата выдачи                 | 41 = ``loan.checked_out_at``   |
+          | ^E | дата планового возврата     | 42 = ``loan.due``              |
+          | ^F | дата факт. возврата / долг  | ``******`` на руках, иначе дата|
+          | ^G | имя БД каталога             | ``catalog_db``                 |
+          | ^C | краткое описание (brief)    | резолв ЭК                      |
+          | ^U | признак утерянной книги     | ``'1'`` при ``lost``           |
+
+        ``^F``: пока на руках/в долгу — маркер ``******`` (FST ``DOLG=``); после
+        возврата — дата фактического возврата (``loan.returned_at``). Даты —
+        epoch-секунды (как и весь движок); форматирование в ГГГГММДД оставлено
+        слою представления.
+        """
+        ex = self._resolve_exemplar40(loan['item'])
+        f40 = {
+            'A': ex['A'],                       # 903 шифр
+            'B': str(loan['item']),             # 910^B инв.№
+            'H': ex['H'],                       # 910^H штрих-код
+            'K': ex['K'],                       # 910^D место хранения
+            'D': loan['checked_out_at'],        # 41 дата выдачи
+            'E': loan['due'],                   # 42 срок
+            'G': self.catalog_db,               # имя БД ЭК
+            'C': ex['C'],                       # brief
+        }
+        # ^F — дата факт. возврата либо маркер долга/«на руках».
+        if loan['returned']:
+            f40['F'] = loan.get('returned_at')
+        else:
+            f40['F'] = DEBT_MARKER
+        # ^U — утерянная книга (HU=).
+        if loan.get('lost_status') == 'lost':
+            f40['U'] = '1'
+        return f40
+
+    def reader_field40(self, reader_id, include_returned=False):
+        """Поле 40 читателя как список инстансов (повторяющееся поле, RDR §3).
+
+        По умолчанию — только выдачи «на руках» (``40^F='******'``), как в
+        формуляре RDR. ``include_returned=True`` добавляет возвращённые (для
+        полного формуляра). Каждый элемент — dict подполей (см.
+        :meth:`loan_field40`)."""
+        rows = (self.store.loans_on_hand(reader_id) if not include_returned
+                else self.store.reader_loans(reader_id))
+        return [self.loan_field40(ln) for ln in rows]
 
     # ---- checkout (§2 debtor gate + §5 limits) ---------------------------- #
     def checkout(self, reader_id, item, today, item_kind=None, item_price=None,
@@ -823,6 +1009,16 @@ class CirculationEngine:
 
         # ws3 op: clear 40^F (the return gesture closes the loan).
         self.store.mark_returned(loan_id, today)
+
+        # Ребро 2.5: opt-in перенос завершённой выдачи в архив RDR_ARH (152-ФЗ
+        # ретенция) — В ДОПОЛНЕНИЕ к ``returned=1`` (флаг off ⇒ как раньше, без
+        # архива). Архивируется пост-возвратное состояние выдачи (40^F = дата).
+        if self.archive_on_return:
+            closed = self.store.get_loan(loan_id)
+            arh = self.store.archive_loan(closed, returned_at=today,
+                                          archived_at=today)
+            if arh is not None:
+                computed['archived'] = arh['id']
 
         # Edge 2.2: reflect the return into the catalog exemplar (910^A 1→0 free).
         # The physical copy is back on the desk; circulation's hold queue (below)

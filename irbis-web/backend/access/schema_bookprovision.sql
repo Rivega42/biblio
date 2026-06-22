@@ -26,8 +26,9 @@ CREATE TABLE IF NOT EXISTS bp_specialty (
   spec        TEXT NOT NULL DEFAULT '',   -- 68/83 ^C специальность/профиль
   vid         TEXT NOT NULL DEFAULT '',   -- 68/83 ^V вид обучения (уровень)
   form        TEXT NOT NULL DEFAULT '',   -- 68/83 ^O форма обучения
+  fili        TEXT NOT NULL DEFAULT '',   -- 68/83 ^L филиал (для связки 691)
   name        TEXT NOT NULL DEFAULT '',
-  UNIQUE (tenant_id, faculty_id, napr, spec, vid, form)
+  UNIQUE (tenant_id, faculty_id, napr, spec, vid, form, fili)
 );
 
 CREATE TABLE IF NOT EXISTS bp_discipline (

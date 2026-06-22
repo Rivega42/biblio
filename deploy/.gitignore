@@ -3,6 +3,7 @@
 .env
 .env.*
 !.env.example
+!.env.demo.example
 # Ignore cert material but keep the certs/ mount dir (via its .gitkeep) tracked.
 proxy/certs/*
 !proxy/certs/.gitkeep

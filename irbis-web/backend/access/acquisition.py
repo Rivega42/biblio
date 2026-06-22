@@ -37,6 +37,19 @@ The lifecycle (mirrors the АРМ «Комплектатор» tabs, ACQUISITION
      fully; ToCat is a graceful no-op (back-compat, mirrors the ``catalog=`` seam
      in circulation.py).
 
+ToCat — реформат БО CMPL → IBIS (cluster 1, рёбра 1.1–1.5)
+---------------------------------------------------------
+Помимо receipt-driven ToCat (шаг 3 выше), модуль несёт явный **перенос готового БО
+CMPL в каталог** через :meth:`AcquisitionEngine.to_catalog` — ядро ребра
+1.1 INTEGRATION_MAP («CMPL БО → IBIS запись»). Триггер — флаг **поля 66**
+(:func:`field66_set`). Шаги: реформат полей (920→РЛ, заглавие→200, 922/330→700/701,
+аналитика→463; :meth:`reformat_to_ibis`) [1.1]; перенос экземпляров CMPL 910→IBIS
+910 [1.2]; связь подписки 938 [1.3] и техн.путь 901 [1.4]; запись через
+catalog-handle (новый/существующий по :func:`title_key`); затем ``VD=DEL`` на
+исходный БО [1.5] — анти-дубль. Идемпотентность: повторный ToCat над уже
+помеченной (``66^a='DEL'``) записью — no-op. Без catalog-handle реформат всё равно
+выполняется и возвращается, но никуда не пишется (``action='no_catalog'``).
+
 ККО (book-provision ratio, SPEC §2)
 -----------------------------------
 :func:`kko` implements the ККО = ЭКЗЕМПЛЯРЫ / СТУДЕНТЫ formula with the SPEC §2.2
@@ -105,6 +118,41 @@ CATALOG_DB = 'IBIS'
 # («книга») is the catalog's default book worklist; field 920 is FLK-mandatory
 # (severity-1) so a ToCat record without it would be rejected by catalog.save.
 DEFAULT_WORKLIST = 'PAZK'
+
+# ToCat — реформат БО CMPL → формат IBIS (INTEGRATION_MAP кластер 1, рёбра 1.1–1.5,
+# DB_ACQUISITION A.8 / ws2 §8). Перенос запускается флагом **поля 66** (в CMPL
+# `66` = «флаг переноса в БД ЭК»; FST-строка 66 ставит `VD=DEL` на исходник).
+# --------------------------------------------------------------------------- #
+# Поле 920 (вид документа / рабочий лист) — РЛ CMPL → РЛ IBIS. CMPL и IBIS делят
+# почти один и тот же словарь 920.MNU; для ToCat нас интересует подмножество
+# «каталогизируемых» РЛ (книга / спецификация том / врем. коллектив / журнал /
+# аналитика). Коды, у которых семантика совпадает, переносятся как есть; служебные
+# CMPL-РЛ (ZK/SZ/KSU/KS2/KS3/IZD/OJK/AZP) — это НЕ библиографические записи и в
+# ЭК не переносятся (to_catalog их отвергает). Маппинг: CMPL-код → IBIS-код.
+WORKLIST_MAP_TO_CAT = {
+    'PAZK': 'PAZK',   # полное БО книги (под автором/заглавием)
+    'PVK': 'PVK',     # полное БО (под временным коллективом)
+    'SPEC': 'SPEC',   # спецификация тома
+    'J': 'J',         # журнал / периодическое издание
+    'NJ': 'NJ',       # номер журнала
+    'ASP': 'ASP',     # аналитика (статья)
+}
+
+# Служебные CMPL-РЛ, которые НЕ переносятся в ЭК (не библиографические записи).
+NON_CATALOG_WORKLISTS = frozenset(
+    ('ZK', 'SZ', 'KSU', 'KS2', 'KS3', 'KSI', 'IZD', 'OJK', 'AZP', 'KAT', 'POLZV'))
+
+# Поле 66 — флаг переноса в ЭК (ToCat trigger). Считаем флаг «взведённым», если
+# поле 66 присутствует и не помечено явным «выкл.». Реальная FST-строка 66 в
+# CMPL — это вычисляемый признак РЛ (PAZKK/SPECK/PVKK); здесь триггер — наличие
+# непустого поля 66 в БО (любое подполе/значение), что и моделирует «флаг взведён».
+FIELD66_TAG = '66'
+
+# Пометка на удаление, которую ToCat ставит на ИСХОДНУЮ запись CMPL после успешного
+# переноса (ребро 1.5, анти-дубль). Поле 66 несёт `VD=DEL` (FST-строка 66). Мы
+# выставляем подполе ^a = 'DEL' в поле 66 исходного БО — это и есть метка
+# «перенесён, помечен на удаление». :func:`is_source_deleted` её читает.
+VD_DEL = 'DEL'
 
 
 # --------------------------------------------------------------------------- #
@@ -416,6 +464,120 @@ def title_key(title, author=None):
     t = (title or '').strip().casefold()
     a = (author or '').strip().casefold()
     return (t, a)
+
+
+def field66_set(cmpl_rec):
+    """True iff поле 66 (флаг переноса в ЭК) взведён на БО CMPL — the ToCat trigger.
+
+    Поле 66 в CMPL — «флаг переноса в БД ЭК» (DB_ACQUISITION A.3.1 / A.8). We treat
+    the flag as set when field 66 is present and carries any non-empty value (a bare
+    string, a ``{subfield: value}`` dict, or a list of either) — and is NOT already
+    a pure ``VD=DEL`` mark left by a previous transfer. A record already marked
+    ``66^a == 'DEL'`` is considered transferred (flag consumed), not pending."""
+    raw = cmpl_rec.get(FIELD66_TAG) if cmpl_rec else None
+    if raw is None:
+        return False
+    insts = raw if isinstance(raw, list) else [raw]
+    saw_value = False
+    only_del = True
+    for inst in insts:
+        if isinstance(inst, dict):
+            vals = [str(v) for v in inst.values() if str(v or '').strip()]
+            if not vals:
+                continue
+            saw_value = True
+            for v in vals:
+                if v.strip().upper() != VD_DEL:
+                    only_del = False
+        else:
+            s = str(inst or '').strip()
+            if not s:
+                continue
+            saw_value = True
+            if s.upper() != VD_DEL:
+                only_del = False
+    if not saw_value:
+        return False
+    return not only_del
+
+
+def is_source_deleted(cmpl_rec):
+    """True iff поле 66 of the source CMPL record carries the ``VD=DEL`` mark.
+
+    The anti-duplicate guarantee (ребро 1.5): after a successful ToCat transfer the
+    source БО gets ``66^a = 'DEL'``. This reads that mark so a re-run of ToCat over
+    the same record is a no-op (idempotency)."""
+    raw = cmpl_rec.get(FIELD66_TAG) if cmpl_rec else None
+    if raw is None:
+        return False
+    insts = raw if isinstance(raw, list) else [raw]
+    for inst in insts:
+        if isinstance(inst, dict):
+            for v in inst.values():
+                if str(v or '').strip().upper() == VD_DEL:
+                    return True
+        elif str(inst or '').strip().upper() == VD_DEL:
+            return True
+    return False
+
+
+def _as_list(raw):
+    """Normalize a record field value to a list of instances (str|dict)."""
+    if raw is None:
+        return []
+    return raw if isinstance(raw, list) else [raw]
+
+
+def _has_subfield(inst, sub):
+    """True iff instance dict carries a non-empty subfield ``sub`` (case-tolerant)."""
+    if not isinstance(inst, dict):
+        return False
+    return bool(inst.get(sub) or inst.get(sub.upper()) or inst.get(sub.lower()))
+
+
+def _carry_heading(inst):
+    """Carry an already-structured 700/701 instance (^a/^b/^9) through as-is.
+
+    When a CMPL БО already holds a proper author heading (``^a`` filled), ToCat
+    transfers it verbatim (the catalog needs no reconstruction). Returns a shallow
+    copy of the recognized subfields, or None for an empty instance."""
+    if not isinstance(inst, dict):
+        s = str(inst or '').strip()
+        return {'a': s} if s else None
+    out = {}
+    for src, dst in (('a', 'a'), ('A', 'a'), ('b', 'b'), ('B', 'b'),
+                     ('g', 'g'), ('G', 'g'), ('9', '9'), ('3', '3')):
+        if inst.get(src) and dst not in out:
+            out[dst] = str(inst.get(src))
+    return out or None
+
+
+def _author_heading(inst):
+    """Build a 700/701-style author heading dict from a CMPL analytic author inst.
+
+    CMPL аналитика (922/330) carries authors in ``^F`` (and ``^2``/``^3``/``^1``);
+    the catalog heading wants ``^a`` (фамилия) + optional ``^b`` (инициалы) + ``^9``
+    role. We split a "Фамилия И.О." string into ``^a``/``^b`` on the first space so
+    a search by ``A=`` lands on the surname (best-effort; full parse is a TODO)."""
+    if isinstance(inst, dict):
+        name = (inst.get('F') or inst.get('f') or inst.get('a') or
+                inst.get('A') or inst.get('2') or inst.get('3') or '')
+        role = inst.get('X') or inst.get('x') or ''
+    else:
+        name = str(inst or '')
+        role = ''
+    name = str(name or '').strip()
+    if not name:
+        return None
+    heading = {}
+    # split "Surname Initials" -> ^a surname, ^b initials (first space only).
+    parts = name.split(' ', 1)
+    heading['a'] = parts[0]
+    if len(parts) > 1 and parts[1].strip():
+        heading['b'] = parts[1].strip()
+    if role:
+        heading['9'] = str(role)
+    return heading
 
 
 class AcquisitionError(Exception):
@@ -750,6 +912,355 @@ class AcquisitionEngine:
     def ksu_summary(self, ksu_no):
         """The КСУ summary row (88^E titles / 88^F copies / 88^G sum + act)."""
         return self.store.get_ksu(ksu_no)
+
+    # ---- ToCat: реформат БО CMPL → IBIS (кластер 1, рёбра 1.1–1.5) --------- #
+    def reformat_to_ibis(self, cmpl_rec):
+        """Реформат БО CMPL → структура записи IBIS (ребро 1.1). Pure, no store.
+
+        Маппинг (DB_ACQUISITION A.8 / ws2 §8, FST `STN.FST`/`MNOG.FST`/`UMARCIW.FST`):
+
+          * **920** (вид документа / РЛ): CMPL-код → IBIS-код через
+            :data:`WORKLIST_MAP_TO_CAT` (PAZK/SPEC/PVK/J/NJ/ASP). 920 — FLK-mandatory.
+          * **заглавие → 200**: 200^a (осн. загл.) + 200^f (1-е свед. об отв.),
+            переносится как есть, если уже в формате 200; иначе из аналитики.
+          * **922/330 → 700/701**: авторы аналитики. 922^F/^2/^3 (или 330^F/^1/^2)
+            → 700 (1-й автор) + 701 (прочие); 922^C/330^C (заглавие статьи) → 200^a,
+            если своего 200 нет.
+          * **аналитика → 463**: ссылка на издание-хозяина (журнал/сборник). Из
+            CMPL 463 (если есть) — как есть; иначе строим заглушку 463^C из загл.
+          * существующие 700/701 БО CMPL переносятся как есть (приоритет над
+            реконструкцией из аналитики).
+
+        Returns a fresh IBIS-format record dict (the I1 field/subfield draft). The
+        input ``cmpl_rec`` is NOT mutated. Поля, чей построчный маппинг recon не
+        транскрибировал (910 спец-подполя, КСУ-распределение) — помечены TODO и в
+        реформате опущены (их переносят отдельные шаги 1.2–1.4).
+        """
+        rec = {}
+
+        # --- 920 (вид документа / рабочий лист) -> IBIS worklist ---
+        raw920 = cmpl_rec.get('920')
+        code = ''
+        if isinstance(raw920, str):
+            code = raw920.strip()
+        elif isinstance(raw920, dict):
+            code = str(raw920.get('') or raw920.get('a') or
+                       raw920.get('A') or '').strip()
+        elif isinstance(raw920, list) and raw920:
+            first = raw920[0]
+            code = (first.strip() if isinstance(first, str)
+                    else str(first.get('') or first.get('a') or '').strip())
+        rec['920'] = WORKLIST_MAP_TO_CAT.get(code.upper(), code.upper() or
+                                             self.worklist)
+
+        # --- 200 (заглавие) ---
+        title_insts = _as_list(cmpl_rec.get('200'))
+        title_dict = None
+        for inst in title_insts:
+            if isinstance(inst, dict) and (inst.get('a') or inst.get('A')):
+                title_dict = {'a': str(inst.get('a') or inst.get('A'))}
+                resp = inst.get('f') or inst.get('F')
+                if resp:
+                    title_dict['f'] = str(resp)
+                break
+            if isinstance(inst, str) and inst.strip():
+                title_dict = {'a': inst.strip()}
+                break
+
+        # --- 922/330 (аналитика) -> authors + (fallback) title ---
+        analytic = _as_list(cmpl_rec.get('922')) + _as_list(cmpl_rec.get('330'))
+        # заглавие статьи (^C) как fallback для 200, если своего 200 нет
+        if title_dict is None:
+            for inst in analytic:
+                if isinstance(inst, dict) and (inst.get('C') or inst.get('c')):
+                    title_dict = {'a': str(inst.get('C') or inst.get('c'))}
+                    resp = inst.get('G') or inst.get('g')
+                    if resp:
+                        title_dict['f'] = str(resp)
+                    break
+        if title_dict is not None:
+            rec['200'] = [title_dict]
+
+        # авторы: сначала уже-готовые 700/701 БО CMPL, иначе из аналитики 922/330.
+        existing_700 = _as_list(cmpl_rec.get('700'))
+        existing_701 = _as_list(cmpl_rec.get('701'))
+        headings = []
+        if existing_700 or existing_701:
+            for inst in existing_700:
+                h = _author_heading(inst) if not _has_subfield(inst, 'a') \
+                    else _carry_heading(inst)
+                if h:
+                    headings.append(h)
+            for inst in existing_701:
+                h = _carry_heading(inst) if _has_subfield(inst, 'a') \
+                    else _author_heading(inst)
+                if h:
+                    headings.append(h)
+        else:
+            for inst in analytic:
+                h = _author_heading(inst)
+                if h:
+                    headings.append(h)
+        if headings:
+            rec['700'] = [headings[0]]
+            if len(headings) > 1:
+                rec['701'] = headings[1:]
+
+        # --- 463 (связь с изданием-хозяином для аналитики) ---
+        host = _as_list(cmpl_rec.get('463'))
+        if host:
+            carried = []
+            for inst in host:
+                if isinstance(inst, dict):
+                    carried.append(dict(inst))
+                elif str(inst or '').strip():
+                    carried.append({'C': str(inst).strip()})
+            if carried:
+                rec['463'] = carried
+        elif rec.get('920') in ('ASP',) and rec.get('200'):
+            # аналитика без явного 463 — строим заглушку host из заглавия (TODO:
+            # полный маппинг host-сведений из 922/330 ^L/^M/^N/^O не транскрибирован).
+            rec['463'] = [{'C': rec['200'][0]['a']}]  # TODO(recon #CMPL-04)
+
+        # --- 101 язык (умолчание rus, как в _new_bib_record) ---
+        lang = cmpl_rec.get('101')
+        rec['101'] = (lang if isinstance(lang, str) and lang.strip() else 'rus')
+
+        return rec
+
+    def to_catalog(self, cmpl_rec, ksu_no=None):
+        """Перенести БО CMPL в каталог ЭК (ToCat, рёбра 1.1–1.5). Триггер — поле 66.
+
+        Полный цикл переноса фонд→каталог:
+
+          1. **[1.1]** реформат БО CMPL → формат IBIS (:meth:`reformat_to_ibis`):
+             920→РЛ, заглавие→200, 922/330→700/701, аналитика→463.
+          2. **[1.2]** перенос экземпляров CMPL ``910`` → IBIS ``910`` (статус ^A,
+             инв.№ ^b, КСУ ^U, цена ^E, штрих-код ^H, МХР ^d).
+          3. **[1.3]** связь подписки CMPL ``938`` (период) → IBIS ``938``.
+          4. **[1.4]** технологический путь ``901`` (^B №экз + пункты ТП ^1..^5).
+          5. сохранение в каталог через handle (``catalog.save``); новый-vs-
+             существующий резолвится по :func:`title_key` (re-supply дополняет
+             запись экземплярами, не дублирует её).
+          6. **[1.5]** ``VD=DEL`` на исходную запись CMPL (поле 66 ^a='DEL') —
+             анти-дубль. Мутирует ``cmpl_rec`` на месте.
+
+        Идемпотентность: запись, уже помеченная ``VD=DEL`` (перенесена ранее), —
+        no-op (``action='already_transferred'``). Триггер: если поле 66 НЕ взведено,
+        перенос пропускается (``action='not_triggered'``). Back-compat: без
+        catalog-handle модуль автономен — реформат всё равно выполняется и
+        возвращается в результате, но запись никуда не пишется (``action='no_catalog'``).
+
+        Returns::
+
+            {
+              'action': 'created'|'updated'|'already_transferred'
+                        |'not_triggered'|'no_catalog'|'rejected',
+              'catalog_mfn': <mfn or None>,
+              'record': <реформатированная IBIS-запись или None>,
+              'source_deleted': <bool — выставлен ли VD=DEL>,
+              'exemplars': [<инв.№ перенесённых экз.>],
+            }
+        """
+        result = {'action': None, 'catalog_mfn': None, 'record': None,
+                  'source_deleted': False, 'exemplars': []}
+
+        # [1.5/идемпотентность] уже перенесён?
+        if is_source_deleted(cmpl_rec):
+            result['action'] = 'already_transferred'
+            result['source_deleted'] = True
+            return result
+
+        # [триггер] поле 66 должно быть взведено.
+        if not field66_set(cmpl_rec):
+            result['action'] = 'not_triggered'
+            return result
+
+        # [1.1] реформат БО -> IBIS.
+        record = self.reformat_to_ibis(cmpl_rec)
+        result['record'] = record
+
+        # [1.2] перенос экземпляров 910 CMPL -> IBIS 910.
+        exemplars = self._carry_exemplars(cmpl_rec, ksu_no)
+        if exemplars:
+            record['910'] = exemplars
+            result['exemplars'] = [e.get('b') for e in exemplars if e.get('b')]
+
+        # [1.3] связь подписки 938 (период).
+        link938 = self._carry_938(cmpl_rec)
+        if link938:
+            record['938'] = link938
+
+        # [1.4] технологический путь 901 (^B №экз + пункты ТП).
+        path901 = self._carry_901(cmpl_rec, exemplars)
+        if path901:
+            record['901'] = path901
+
+        # field-66 КСУ back-link (как в receive-driven ToCat) если known.
+        if ksu_no:
+            self._merge_ksu_link(record, ksu_no)
+
+        # [back-compat] без каталога — реформат готов, но писать некуда.
+        if self.catalog is None:
+            result['action'] = 'no_catalog'
+            return result
+
+        # [5] сохранение: новый-vs-существующий по (title, author).
+        try:
+            mfn, action = self._save_to_catalog(record)
+        except Exception:
+            # ToCat best-effort: ошибка каталога/ФЛК не ставит VD=DEL (исходник
+            # цел, перенос можно повторить).
+            result['action'] = 'rejected'
+            return result
+        if mfn is None:
+            result['action'] = 'rejected'
+            return result
+        result['catalog_mfn'] = mfn
+        result['action'] = action
+
+        # [1.5] VD=DEL на исходник (анти-дубль). Мутирует cmpl_rec на месте.
+        self._mark_source_deleted(cmpl_rec, ksu_no)
+        result['source_deleted'] = True
+        return result
+
+    def _carry_exemplars(self, cmpl_rec, ksu_no):
+        """Перенос CMPL 910 → IBIS 910 (ребро 1.2). Returns a list of 910 instances.
+
+        Подполя CMPL 910 (DB_ACQUISITION A.3.1, `910k.wss`): ^A статус(ste.mnu),
+        ^B инв.№, ^H штрих-код, ^D МХР, ^C дата, ^E цена, ^U №КСУ, ^Q коллекция,
+        ^F канал. В ЭК переносятся ключевые: ^A статус, ^b инв.№, ^U КСУ, ^E цена,
+        ^H штрих-код, ^d МХР. Если у экз. нет статуса — ставим «свободен» (^A=0),
+        чтобы поступивший экз. был сразу выдаваем. №КСУ берётся из экз. (^U) или из
+        аргумента ``ksu_no``. Полный построчный маппинг — TODO(recon #CMPL-04)."""
+        out = []
+        for inst in _as_list(cmpl_rec.get('910')):
+            if not isinstance(inst, dict):
+                continue
+            inv = inst.get('b') or inst.get('B')
+            if not inv:
+                continue
+            status = inst.get('a') or inst.get('A') or EXEMPLAR_FREE
+            ex = {'a': str(status), 'b': str(inv)}
+            ksu = (inst.get('u') or inst.get('U') or ksu_no)
+            if ksu:
+                ex['u'] = str(ksu)
+            for src, dst in (('e', 'e'), ('E', 'e'), ('h', 'h'), ('H', 'h'),
+                             ('d', 'd'), ('D', 'd')):
+                if inst.get(src) and dst not in ex:
+                    ex[dst] = str(inst.get(src))
+            out.append(ex)
+        return out
+
+    @staticmethod
+    def _carry_938(cmpl_rec):
+        """Перенос CMPL 938 (заказ по периодам подписки) → IBIS 938 (ребро 1.3).
+
+        938 связывает перенесённую запись с заказом подписки по периодам
+        (FIELD_DICTIONARY: 938 «Заказанные экземпляры — по периодам подписки»,
+        ^Q/^N/^A/^B/^Y/^E/^V/^D/^X). Переносится как есть (instance dicts)."""
+        out = []
+        for inst in _as_list(cmpl_rec.get('938')):
+            if isinstance(inst, dict):
+                out.append(dict(inst))
+            elif str(inst or '').strip():
+                out.append({'': str(inst).strip()})
+        return out
+
+    @staticmethod
+    def _carry_901(cmpl_rec, exemplars):
+        """Технологический путь 901 (ребро 1.4): ^B №экз + пункты ТП ^1..^5.
+
+        Поле 901 (DB_ACQUISITION A.3.1, `901.WSS`): ^B №экз., ^1..^5 пункты ТП
+        (tp.mnu). Если БО CMPL уже несёт 901 — переносим как есть. Иначе строим по
+        одному 901 на экземпляр (^B = инв.№), помечая старт ТП — пункт ^1='1'
+        (приёмка) как минимальный технологический путь (полные пункты ТП из tp.mnu
+        — TODO, во внешнем Мастере)."""
+        existing = _as_list(cmpl_rec.get('901'))
+        if existing:
+            out = []
+            for inst in existing:
+                if isinstance(inst, dict):
+                    out.append(dict(inst))
+                elif str(inst or '').strip():
+                    out.append({'B': str(inst).strip()})
+            return out
+        # построить минимальный ТП по экземплярам.
+        out = []
+        for ex in (exemplars or []):
+            inv = ex.get('b')
+            if inv:
+                out.append({'B': str(inv), '1': '1'})  # TODO: полные пункты tp.mnu
+        return out
+
+    def _save_to_catalog(self, record):
+        """Сохранить реформатированную запись в каталог (новый-vs-существующий).
+
+        Резолвит существующую запись по (title, author) через :func:`title_key`
+        (как receive-driven ToCat): re-supply дополняет существующую запись
+        экземплярами/КСУ-связями, не дублируя. Returns ``(mfn, action)`` с
+        action ∈ {'created','updated'}, или ``(None, None)`` при отказе ФЛК."""
+        title = _first_value(record, '200', 'a')
+        author = _first_value(record, '700', 'a')
+        existing_mfn = self._find_catalog_record(title, author)
+        if existing_mfn is not None:
+            existing = self.catalog.get(self.catalog_db, existing_mfn)
+            if existing is not None:
+                # дополнить экземплярами + КСУ-связями новые 910/66/938/901.
+                self._merge_records(existing, record)
+                res = self.catalog.save(self.catalog_db, existing,
+                                        mfn=existing_mfn)
+                return ((res['mfn'], 'updated') if res.get('saved')
+                        else (None, None))
+        res = self.catalog.save(self.catalog_db, record)
+        return (res['mfn'], 'created') if res.get('saved') else (None, None)
+
+    @staticmethod
+    def _merge_records(target, incoming):
+        """Дополнить существующую запись ``target`` данными ``incoming`` (re-supply).
+
+        Экземпляры (910), КСУ-связи (66), периоды подписки (938), техн.путь (901)
+        ДОПОЛНЯЮТСЯ (append); скалярные поля (200/700/920/101) НЕ переписываются
+        (существующая запись — источник истины по библиографии)."""
+        for tag in ('910', '938', '901', '463'):
+            inc = _as_list(incoming.get(tag))
+            if not inc:
+                continue
+            cur = target.get(tag)
+            if cur is None:
+                target[tag] = list(inc)
+            else:
+                cur_list = cur if isinstance(cur, list) else [cur]
+                target[tag] = cur_list + list(inc)
+        # КСУ-связи поля 66: дополняем уникальные ^u.
+        for inst in _as_list(incoming.get('66')):
+            if isinstance(inst, dict) and (inst.get('u') or inst.get('U')):
+                AcquisitionEngine._merge_ksu_link(
+                    target, inst.get('u') or inst.get('U'))
+
+    @staticmethod
+    def _mark_source_deleted(cmpl_rec, ksu_no=None):
+        """Поставить ``VD=DEL`` (66^a='DEL') на исходную запись CMPL (ребро 1.5).
+
+        Анти-дубль: после успешного переноса исходный БО помечается на удаление.
+        Мутирует ``cmpl_rec['66']`` на месте, сохраняя любые существующие
+        инстансы поля 66 (например КСУ-связь ^u), добавляя один с ^a='DEL'."""
+        insts = cmpl_rec.get('66')
+        if insts is None:
+            insts = []
+        elif not isinstance(insts, list):
+            insts = [insts]
+        # не дублируем метку, если уже стоит.
+        for inst in insts:
+            if isinstance(inst, dict) and \
+                    str(inst.get('a') or inst.get('A') or '').upper() == VD_DEL:
+                cmpl_rec['66'] = insts
+                return
+        mark = {'a': VD_DEL}
+        if ksu_no:
+            mark['u'] = str(ksu_no)
+        insts.append(mark)
+        cmpl_rec['66'] = insts
 
     # ---- disposal / списание (cluster 5.2: Книговыдача → КСУ выбытия) ------ #
     def record_disposal(self, inv_no, ksu_disp_no, reason='lost', ref=None,

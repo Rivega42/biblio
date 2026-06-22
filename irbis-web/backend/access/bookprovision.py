@@ -10,6 +10,24 @@ binds recommended literature (titles) to a discipline, and computes the
 book-provision coefficient (Кко = exemplars ÷ contingent) with the exact 4-cell
 division-by-zero policy of SPEC E1 §2.2.
 
+Cross-DB seams now wired (cluster 4, all through OPTIONAL read/handle wiring —
+the engine stays fully standalone and back-compatible when nothing is wired):
+
+  * **ребро 4.4 (полный агрегат ККО, DB_VUZ §6.2).** ``Кко = экземпляры/студенты``.
+    Exemplars come from IBIS (910/693 via the catalog handle, фонд = свободные +
+    выданные-на-руки, see ``_binding_exemplars``); the *contingent of students*
+    comes from RDR by связка (``&uf('JRDR,LN=<связка>')`` при ``ACCESSRDR=1``)
+    через опциональный ``rdr`` handle, **or** falls back to поле ``68^Z`` (the
+    inline ``students``, ``ACCESSRDR=0``). :meth:`provision_aggregate` rolls the
+    full cross-БД свод IBIS(экз)×RDR(студенты) over a faculty/specialty/всю связку.
+  * **ребро 4.1 (Move691, DB_VUZ §6.3).** :meth:`move691` переносит связку
+    контингента (68/83 ``^A^L^N^C^V^O^F``) в каталог как поле **691** (привязка
+    экз↔дисциплина) с ``691^I=<3^0>`` + ``^G`` тип лит. — через catalog handle
+    (``catalog.save``); каталог НЕ редактируется напрямую.
+  * **ребро 4.5 (архив 692, DB_VUZ §6.4).** :meth:`archive691` снимает привязку
+    691 и переносит её в архивное поле **692** (``Arhiv692.gbl``) — тоже через
+    catalog handle.
+
 What this module is
 -------------------
 A standalone domain engine: pure stdlib + ``sqlite3`` (dev parity, ADR-004), no
@@ -87,6 +105,16 @@ KIND_EXTRA = 'extra'  # дополнительная литература (691^G
 # Per-kind provision norm (SPEC E1 §2.6/§3.4 defaults; per-tenant tunable).
 DEFAULT_KKO_NORM = {KIND_MAIN: 0.5, KIND_EXTRA: 0.25}
 
+# --------------------------------------------------------------------------- #
+# Catalog field tags for the Move691 / архив-692 seam (DB_VUZ §6.3/§6.4).
+#   691 — привязка экземпляра каталога к дисциплине+контингенту (связка).
+#   692 — архив книгообеспеченности (снятые/исторические привязки 691).
+# 691^G (тип лит.) follows 691G.MNU: основная=Осн / дополнительная=Доп.
+# --------------------------------------------------------------------------- #
+FIELD_LINK = '691'         # привязка экз↔дисциплина (Move691.gbl)
+FIELD_ARCHIVE = '692'      # архив КО (Arhiv692.gbl / GlobArhiv)
+KIND_691G = {KIND_MAIN: 'Осн', KIND_EXTRA: 'Доп'}  # 691^G value per 691G.MNU
+
 
 # --------------------------------------------------------------------------- #
 # Schema. Own tables — does NOT touch the catalog / AccessStore schema.
@@ -106,8 +134,9 @@ CREATE TABLE IF NOT EXISTS bp_specialty (
   spec TEXT NOT NULL DEFAULT '',        -- 68/83 ^C специальность/профиль
   vid  TEXT NOT NULL DEFAULT '',        -- 68/83 ^V вид обучения (уровень)
   form TEXT NOT NULL DEFAULT '',        -- 68/83 ^O форма обучения
+  fili TEXT NOT NULL DEFAULT '',        -- 68/83 ^L филиал (для связки 691)
   name TEXT NOT NULL DEFAULT '',
-  UNIQUE(faculty_id, napr, spec, vid, form)
+  UNIQUE(faculty_id, napr, spec, vid, form, fili)
 );
 CREATE TABLE IF NOT EXISTS bp_discipline (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -215,6 +244,17 @@ class BookProvisionEngine:
         on-hand loan it is counted as 1 provisioned copy (not 0). The handle is
         READ-ONLY (asks ``circulation.item_on_hand``); without it the catalog read
         stands unchanged (back-compat).
+    rdr : object | None
+        Optional read-only RDR (читатели) handle — the *students* side of the
+        full ККО aggregate (INTEGRATION_MAP ребро 4.4, DB_VUZ §6.2). When wired
+        (the ``ACCESSRDR=1`` regime) the contingent of a discipline is counted
+        live from RDR by связка — ``&uf('JRDR,LN=<связка>')`` — instead of the
+        inline ``68^Z`` count. Duck-typed: the engine asks
+        ``rdr.count_students(linkage)`` where ``linkage`` is the связка dict
+        ``{A,L,N,C,V,O,F}`` (or a ``count_by_linkage``/``students`` alias). A
+        ``None`` return (or any error / no handle) degrades to the recorded
+        ``68^Z`` count — the ``ACCESSRDR=0`` fallback — so the engine never
+        crashes on an out-of-sync RDR (back-compat).
     kko_norm : dict | None
         Per-kind provision norm (основная/дополнительная). Defaults to
         :data:`DEFAULT_KKO_NORM` (0.5 / 0.25, SPEC E1 §2.6/§3.4). A fresh copy is
@@ -222,10 +262,11 @@ class BookProvisionEngine:
     """
 
     def __init__(self, db_path=':memory:', catalog=None, kko_norm=None,
-                 circulation=None):
+                 circulation=None, rdr=None):
         self.db_path = db_path
         self.catalog = catalog
         self.circulation = circulation
+        self.rdr = rdr
         self.kko_norm = dict(kko_norm) if kko_norm else dict(DEFAULT_KKO_NORM)
         self._local = threading.local()
         self.ensure_schema()
@@ -268,17 +309,21 @@ class BookProvisionEngine:
         return cur.lastrowid
 
     def add_specialty(self, faculty_id, napr='', spec='', vid='', form='',
-                      name=''):
+                      name='', fili=''):
         """Bind a Направление/Специальность (the связка ``^N``/``^C`` + вид/форма
-        ``^V``/``^O``) under a faculty. Idempotent on
-        (faculty, napr, spec, vid, form). Returns the specialty id."""
+        ``^V``/``^O`` + филиал ``^L``) under a faculty. Idempotent on
+        (faculty, napr, spec, vid, form, fili). ``fili`` (the ``^L`` филиал) is
+        optional — empty for single-campus вузы; it completes the связка
+        ``^A^L^N^C^V^O^F`` that Move691 carries into каталог. Returns the
+        specialty id."""
         if not self._faculty_exists(faculty_id):
             raise BookProvisionError('unknown faculty_id %r' % (faculty_id,))
         conn = self._conn()
         row = conn.execute(
             '''SELECT id FROM bp_specialty
-               WHERE faculty_id=? AND napr=? AND spec=? AND vid=? AND form=?''',
-            (faculty_id, napr, spec, vid, form)).fetchone()
+               WHERE faculty_id=? AND napr=? AND spec=? AND vid=? AND form=?
+                 AND fili=?''',
+            (faculty_id, napr, spec, vid, form, fili)).fetchone()
         if row is not None:
             if name:
                 conn.execute('UPDATE bp_specialty SET name=? WHERE id=?',
@@ -286,9 +331,9 @@ class BookProvisionEngine:
                 conn.commit()
             return row['id']
         cur = conn.execute(
-            '''INSERT INTO bp_specialty(faculty_id,napr,spec,vid,form,name)
-               VALUES(?,?,?,?,?,?)''',
-            (faculty_id, napr, spec, vid, form, name))
+            '''INSERT INTO bp_specialty(faculty_id,napr,spec,vid,form,fili,name)
+               VALUES(?,?,?,?,?,?,?)''',
+            (faculty_id, napr, spec, vid, form, fili, name))
         conn.commit()
         return cur.lastrowid
 
@@ -428,6 +473,69 @@ class BookProvisionEngine:
             return False
 
     # ------------------------------------------------------------------- #
+    # Студенты (контингент) — the RDR side of the full ККО aggregate.
+    #   RDR by связка (ACCESSRDR=1, &uf('JRDR,LN=<связка>')) when an rdr handle is
+    #   wired, else the inline 68^Z count (ACCESSRDR=0). DB_VUZ §6.2.
+    # ------------------------------------------------------------------- #
+    def _linkage_for(self, discipline_row):
+        """The связка dict ``{A,L,N,C,V,O,F}`` of a discipline (DB_VUZ §4.1/§6.3).
+
+        Joins дисциплина→специальность→факультет into the contingent linkage
+        ``^A`` факультет / ``^L`` филиал / ``^N`` направление / ``^C`` спец /
+        ``^V`` вид / ``^O`` форма / ``^F`` семестр — the key Move691 carries into
+        каталог and the key RDR is counted by (``JRDR,LN=<связка>``)."""
+        sp = self._conn().execute(
+            'SELECT * FROM bp_specialty WHERE id=?',
+            (discipline_row['specialty_id'],)).fetchone()
+        fac = self._conn().execute(
+            'SELECT * FROM bp_faculty WHERE id=?',
+            (sp['faculty_id'],)).fetchone() if sp is not None else None
+        return {
+            'A': (fac['code'] if fac is not None else ''),
+            'L': (sp['fili'] if sp is not None else ''),
+            'N': (sp['napr'] if sp is not None else ''),
+            'C': (sp['spec'] if sp is not None else ''),
+            'V': (sp['vid'] if sp is not None else ''),
+            'O': (sp['form'] if sp is not None else ''),
+            'F': str(discipline_row['semester'] or ''),
+        }
+
+    def _students_from_rdr(self, linkage):
+        """Count students from the RDR handle by связка (None if no opinion).
+
+        Read-only probe of the optional ``rdr`` handle (the ``ACCESSRDR=1`` path,
+        ``&uf('JRDR,LN=<связка>')``). Duck-typed: tries ``count_students`` /
+        ``count_by_linkage`` / ``students`` in turn. Returns the count, or ``None``
+        when no handle is wired / it has no opinion / it errors — so the caller
+        degrades cleanly to the 68^Z fallback (``ACCESSRDR=0``)."""
+        if self.rdr is None:
+            return None
+        for name in ('count_students', 'count_by_linkage', 'students'):
+            probe = getattr(self.rdr, name, None)
+            if probe is None:
+                continue
+            try:
+                n = probe(dict(linkage))
+            except Exception:
+                return None
+            if n is None:
+                return None
+            return max(0, int(n))
+        return None
+
+    def _students_for(self, discipline_row):
+        """Resolve a discipline's contingent → ``(students, source)`` (DB_VUZ §6.2).
+
+        RDR by связка when an ``rdr`` handle is wired and has an opinion
+        (``source='rdr'``, ``ACCESSRDR=1``); otherwise the inline ``68^Z`` count
+        recorded on the discipline (``source='68z'``, ``ACCESSRDR=0``). This is the
+        students side of the full cross-БД ККО aggregate IBIS(экз)×RDR(студенты)."""
+        n = self._students_from_rdr(self._linkage_for(discipline_row))
+        if n is not None:
+            return n, 'rdr'
+        return max(0, int(discipline_row['students'] or 0)), '68z'
+
+    # ------------------------------------------------------------------- #
     # Reports — per-discipline / per-specialty provision summary.
     # ------------------------------------------------------------------- #
     def _kko_norm_for(self, kind):
@@ -452,7 +560,10 @@ class BookProvisionEngine:
         d = self._discipline_row(discipline_id)
         if d is None:
             raise BookProvisionError('unknown discipline_id %r' % (discipline_id,))
-        students = int(d['students'] or 0)
+        # Контингент: RDR by связка (ACCESSRDR=1) when an rdr handle is wired,
+        # else the recorded 68^Z count (ACCESSRDR=0). The live source overrides
+        # the stored students_source so the report is honest about ACCESSRDR.
+        students, students_source = self._students_for(d)
         rows = self._conn().execute(
             'SELECT * FROM bp_binding WHERE discipline_id=? ORDER BY id',
             (discipline_id,)).fetchall()
@@ -479,7 +590,8 @@ class BookProvisionEngine:
         return {
             'discipline_id': discipline_id, 'disc_id': d['disc_id'],
             'name': d['name'], 'semester': d['semester'],
-            'students': students, 'students_source': d['students_source'],
+            'students': students, 'students_source': students_source,
+            'total_exemplars': total_exemplars,
             'bindings': bindings, 'average_kko': avg, 'kko_norm': norm,
             'under_provisioned': under,
             'shortfall': shortfall(total_exemplars, students, norm),
@@ -524,6 +636,264 @@ class BookProvisionEngine:
             'average_kko': average_kko(disc_avgs, normalize=normalize),
             'under_provisioned': under, 'total_shortfall': total_shortfall,
         }
+
+    # ------------------------------------------------------------------- #
+    # Полный кросс-БД агрегат ККО IBIS(экз)×RDR(студенты) — ребро 4.4.
+    # ------------------------------------------------------------------- #
+    def provision_aggregate(self, faculty_id=None, specialty_id=None,
+                            normalize=False):
+        """Full cross-БД ККО aggregate IBIS(экз)×RDR(студенты) over the связка.
+
+        The sweep that closes ребро 4.4 «полный агрегат»: it rolls EVERY discipline
+        in scope, pulling exemplars from the catalog (IBIS 910/693 фонд, on-hand
+        included) and students from RDR by связка (``ACCESSRDR=1``) or the ``68^Z``
+        fallback (``ACCESSRDR=0``) — DB_VUZ §6.2. Scope is the whole tenant by
+        default, one ``faculty_id``, or one ``specialty_id``.
+
+        Two aggregate coefficients are reported (both real, neither replaces the
+        other):
+
+          * ``aggregate_kko`` — фонд-weighted ``Σэкз / Σстуд`` over disciplines
+            with students > 0 (the «сколько экземпляров на одного студента» свод;
+            zero-contingent disciplines carry no students and are excluded from the
+            ratio, mirroring the NULL policy);
+          * ``average_kko`` — the mean of the disciplines' (non-NULL) average Кко
+            (SPEC E1 §2.4), so an over-stocked discipline cannot mask a deficit.
+
+        Returns a dict::
+
+            {scope, faculty_id, specialty_id,
+             disciplines, total_disciplines,
+             total_exemplars, total_students, students_sources,
+             aggregate_kko, average_kko,
+             under_provisioned:[...], total_shortfall}
+        """
+        disc_ids = self._scope_discipline_ids(faculty_id, specialty_id)
+        total_exemplars = 0
+        total_students = 0
+        disc_avgs = []
+        under = []
+        total_shortfall = 0
+        students_sources = {'rdr': 0, '68z': 0}
+        for did in disc_ids:
+            rep = self.discipline_provision(did, normalize=normalize)
+            total_exemplars += rep['total_exemplars']
+            total_students += rep['students']
+            students_sources[rep['students_source']] = \
+                students_sources.get(rep['students_source'], 0) + 1
+            disc_avgs.append(rep['average_kko'])
+            if rep['under_provisioned']:
+                under.append({
+                    'discipline_id': rep['discipline_id'],
+                    'disc_id': rep['disc_id'], 'name': rep['name'],
+                    'students': rep['students'],
+                    'students_source': rep['students_source'],
+                    'average_kko': rep['average_kko'],
+                    'shortfall': rep['shortfall'],
+                })
+            total_shortfall += rep['shortfall']
+        # Σэкз/Σстуд: undefined (None) when no students anywhere — NULL «нет данных»
+        # rather than a misleading 0 (consistent with the per-binding policy).
+        aggregate = (total_exemplars / total_students) if total_students > 0 \
+            else None
+        scope = ('specialty' if specialty_id is not None
+                 else 'faculty' if faculty_id is not None else 'tenant')
+        return {
+            'scope': scope, 'faculty_id': faculty_id,
+            'specialty_id': specialty_id,
+            'disciplines': disc_ids, 'total_disciplines': len(disc_ids),
+            'total_exemplars': total_exemplars,
+            'total_students': total_students,
+            'students_sources': students_sources,
+            'aggregate_kko': aggregate,
+            'average_kko': average_kko(disc_avgs, normalize=normalize),
+            'under_provisioned': under, 'total_shortfall': total_shortfall,
+        }
+
+    def _scope_discipline_ids(self, faculty_id, specialty_id):
+        """Discipline ids in scope for the aggregate (tenant / faculty / specialty)."""
+        conn = self._conn()
+        if specialty_id is not None:
+            if not self._specialty_exists(specialty_id):
+                raise BookProvisionError('unknown specialty_id %r' % (specialty_id,))
+            rows = conn.execute(
+                'SELECT id FROM bp_discipline WHERE specialty_id=? ORDER BY id',
+                (specialty_id,)).fetchall()
+        elif faculty_id is not None:
+            if not self._faculty_exists(faculty_id):
+                raise BookProvisionError('unknown faculty_id %r' % (faculty_id,))
+            rows = conn.execute(
+                '''SELECT d.id FROM bp_discipline d
+                   JOIN bp_specialty s ON s.id=d.specialty_id
+                   WHERE s.faculty_id=? ORDER BY d.id''',
+                (faculty_id,)).fetchall()
+        else:
+            rows = conn.execute(
+                'SELECT id FROM bp_discipline ORDER BY id').fetchall()
+        return [r['id'] for r in rows]
+
+    # ------------------------------------------------------------------- #
+    # Move691 (ребро 4.1) / архив 692 (ребро 4.5) — связка ↔ каталог, через
+    # the optional catalog handle (catalog.get/save). The catalog is touched
+    # ONLY through the handle; this engine never writes catalog rows directly.
+    # ------------------------------------------------------------------- #
+    def _require_catalog(self):
+        if self.catalog is None:
+            raise BookProvisionError(
+                'move691/archive691 require a catalog handle (none wired)')
+        return self.catalog
+
+    def _resolve_mfn(self, db, binding_row, mfn):
+        """The catalog mfn a binding's 691 lives on: explicit ``mfn`` or resolved
+        from the holding's inventory key (``910^b`` → ``find_exemplar``)."""
+        if mfn is not None:
+            return mfn
+        key = binding_row['inv_key'] if binding_row is not None else None
+        if not key:
+            return None
+        finder = getattr(self.catalog, 'find_exemplar', None)
+        if finder is None:
+            return None
+        try:
+            found = finder(db, key)
+        except Exception:
+            return None
+        return found[0] if found else None
+
+    def _link_691(self, discipline_row, kind):
+        """Build the 691 field instance from the связка (DB_VUZ §6.3).
+
+        ``^I``=id дисциплины (3^0), ``^A^L^N^C^V^O^F``=связка контингента (omitting
+        empty subfields), ``^G``=тип лит. (Осн/Доп per 691G.MNU). This is the row
+        Move691.gbl writes into каталог to bind экземпляр↔дисциплина."""
+        lk = self._linkage_for(discipline_row)
+        inst = {'I': str(discipline_row['disc_id'])}
+        for sub in ('A', 'L', 'N', 'C', 'V', 'O', 'F'):
+            if lk.get(sub):
+                inst[sub] = lk[sub]
+        g = KIND_691G.get(kind)
+        if g:
+            inst['G'] = g
+        return inst
+
+    @staticmethod
+    def _instances(record, tag):
+        """Field ``tag`` of a record as a list of instance dicts (never None)."""
+        insts = record.get(tag)
+        if insts is None:
+            return []
+        if not isinstance(insts, list):
+            insts = [insts]
+        return insts
+
+    @staticmethod
+    def _same_link(inst, disc_id):
+        """Does a 691/692 instance bind discipline ``disc_id`` (match on ``^I``)?"""
+        if not isinstance(inst, dict):
+            return False
+        return str(inst.get('I') or inst.get('i') or '') == str(disc_id)
+
+    def move691(self, discipline_id, catalog_db=None, mfn=None, kind=None):
+        """Move691 (ребро 4.1): связка контингента → каталог поле **691**.
+
+        Carries the discipline's связка (68/83 ``^A^L^N^C^V^O^F``) into каталог as
+        a field-691 binding (``691^I=<3^0>`` + ``^G`` тип лит.) — the привязка
+        экз↔дисциплина (DB_VUZ §6.3, ``Move691.gbl``). One 691 is written per bound
+        holding the discipline carries (resolved by ``910^b`` inventory key), or to
+        an explicit ``mfn`` when given. **Idempotent on ``(mfn, disc_id)``**: an
+        existing 691 for the same дисциплина on that record is refreshed in place,
+        never duplicated.
+
+        The catalog is reached ONLY through the wired handle (``catalog.get`` to
+        read the record, ``catalog.save`` to write it back). Raises
+        :class:`BookProvisionError` when no catalog handle is wired. Returns a list
+        of ``{mfn, disc_id, kind, created}`` — one per record touched."""
+        cat = self._require_catalog()
+        d = self._discipline_row(discipline_id)
+        if d is None:
+            raise BookProvisionError('unknown discipline_id %r' % (discipline_id,))
+        # Targets: each bound holding's catalog record (db + resolved mfn), or a
+        # single explicit (catalog_db, mfn). Deduplicate on (db, mfn).
+        targets = {}
+        binds = self._conn().execute(
+            'SELECT * FROM bp_binding WHERE discipline_id=? ORDER BY id',
+            (discipline_id,)).fetchall()
+        if mfn is not None:
+            db = catalog_db or (binds[0]['catalog_db'] if binds else None)
+            if db is None:
+                raise BookProvisionError('move691: catalog_db required with mfn')
+            # Explicit-mfn kind: the strictest bound kind (основная dominates), or
+            # KIND_MAIN when nothing is bound yet.
+            bk = {b['kind'] for b in binds}
+            targets[(db, mfn)] = KIND_MAIN if KIND_MAIN in bk or not bk \
+                else KIND_EXTRA
+        else:
+            for b in binds:
+                db = catalog_db or b['catalog_db']
+                rmfn = self._resolve_mfn(db, b, None)
+                if db is None or rmfn is None:
+                    continue
+                targets[(db, rmfn)] = b['kind']
+        if not targets:
+            raise BookProvisionError(
+                'move691: no catalog target resolved (need bound holdings with '
+                'inv_key, or an explicit mfn)')
+        results = []
+        for (db, tmfn), bind_kind in targets.items():
+            use_kind = kind if kind is not None else bind_kind
+            record = cat.get(db, tmfn)
+            if record is None:
+                raise BookProvisionError(
+                    'move691: catalog record %s/%r not found' % (db, tmfn))
+            insts = self._instances(record, FIELD_LINK)
+            link = self._link_691(d, use_kind)
+            replaced = False
+            for i, inst in enumerate(insts):
+                if self._same_link(inst, d['disc_id']):
+                    insts[i] = link
+                    replaced = True
+                    break
+            if not replaced:
+                insts.append(link)
+            record[FIELD_LINK] = insts
+            cat.save(db, record, mfn=tmfn)
+            results.append({'mfn': tmfn, 'disc_id': d['disc_id'],
+                            'kind': use_kind, 'created': not replaced})
+        return results
+
+    def archive691(self, discipline_id, db, mfn):
+        """Архив 692 (ребро 4.5): снять привязку 691 → перенести в поле **692**.
+
+        Removes the field-691 instance binding ``discipline_id`` from каталог record
+        ``mfn`` and appends it to the archival field **692** (``Arhiv692.gbl`` /
+        ``GlobArhiv``, DB_VUZ §6.4) — the history of снятых привязок. Reached ONLY
+        through the wired catalog handle (``catalog.get``/``catalog.save``). Returns
+        ``True`` when a 691 was archived, ``False`` when none matched (no-op).
+        Raises :class:`BookProvisionError` when no catalog handle is wired."""
+        cat = self._require_catalog()
+        d = self._discipline_row(discipline_id)
+        if d is None:
+            raise BookProvisionError('unknown discipline_id %r' % (discipline_id,))
+        record = cat.get(db, mfn)
+        if record is None:
+            raise BookProvisionError(
+                'archive691: catalog record %s/%r not found' % (db, mfn))
+        insts = self._instances(record, FIELD_LINK)
+        keep = []
+        moved = []
+        for inst in insts:
+            if self._same_link(inst, d['disc_id']):
+                moved.append(inst)
+            else:
+                keep.append(inst)
+        if not moved:
+            return False
+        record[FIELD_LINK] = keep
+        archive = self._instances(record, FIELD_ARCHIVE)
+        archive.extend(moved)
+        record[FIELD_ARCHIVE] = archive
+        cat.save(db, record, mfn=mfn)
+        return True
 
     # ------------------------------------------------------------------- #
     # Small read helpers / existence checks.
