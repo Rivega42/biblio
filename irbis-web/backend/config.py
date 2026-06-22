@@ -3,6 +3,17 @@
 import os
 
 
+def _envbool(value, default=False):
+    """Parse a textual env flag into a bool. Unset/empty -> ``default``.
+    Truthy: 1/true/yes/on; falsy: 0/false/no/off (case-insensitive)."""
+    if value is None:
+        return default
+    v = str(value).strip().lower()
+    if v == '':
+        return default
+    return v in ('1', 'true', 'yes', 'on')
+
+
 def load_env(path):
     if not os.path.exists(path):
         return
@@ -56,6 +67,13 @@ class Config:
         self.access_db = os.environ.get('ACCESS_DB', os.path.join(here, 'access.db'))
         self.pg_dsn = os.environ.get('PG_DSN', '')      # prod: postgresql://...
         self.app_secret = os.environ.get('APP_SECRET', 'dev-insecure-secret')
+        # Reader authentication: require a password (билет + пароль), as in jirbis.
+        # Default TRUE — security-critical. When a reader record carries NO password
+        # field, behaviour is governed by this same flag: TRUE => login refused (401,
+        # logged), FALSE => legacy ticket-only login is allowed (and logged). A reader
+        # that HAS a password is always checked, regardless of the flag.
+        self.require_reader_password = _envbool(
+            os.environ.get('REQUIRE_READER_PASSWORD'), default=True)
         # App
         self.app_host = os.environ.get('APP_HOST', '127.0.0.1')
         self.app_port = int(os.environ.get('APP_PORT', '8080'))

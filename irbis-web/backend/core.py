@@ -5,6 +5,8 @@
 Pipeline: authn (bearer token -> session) -> authorize (grant function x db x level)
 -> IRBIS call -> normalize -> audit (write/admin). Server -3338 -> 403.
 """
+import hashlib
+import hmac
 import json
 import os
 import random
@@ -69,6 +71,120 @@ def ok(data):
 
 def err(code, message):
     return {'ok': False, 'error': {'code': code, 'message': message}}
+
+
+# Поля RDR, где может храниться пароль читателя для входа на портал:
+#   130 — «Пароль» (ИРБИС64+, основной рабочий лист читателя);
+#   100 — «Пароль для интернета» (классический RDR\DEFAULT.WS).
+# Аудит отметил оба варианта хранения значения: открытый текст ЛИБО несолёный
+# MD5-хэш (32 hex-символа). Проверяем оба, чтобы пройти любой существующий набор
+# данных без миграции. См. docs/recon/.../databases/DB_CIRCULATION.md (поле 100).
+READER_PASSWORD_TAGS = ('130', '100')
+
+
+def _reader_password_value(rec):
+    """Вернуть сохранённый пароль читателя из записи RDR (первое непустое
+    значение полей 130/100) или '' если пароль не задан. Берётся «голое»
+    значение поля; если пароль положили в подполе, поддерживаем и это."""
+    for tag in READER_PASSWORD_TAGS:
+        f = field(rec, tag)
+        if not f:
+            continue
+        val = (f.get('value') or '').strip()
+        if not val:
+            # пароль мог быть записан в подполе (редкий РЛ) — возьмём первое
+            for sub in (f.get('subfields') or {}).values():
+                if sub and str(sub).strip():
+                    val = str(sub).strip()
+                    break
+        if val:
+            return val
+    return ''
+
+
+def verify_reader_password(supplied, stored):
+    """Проверить введённый пароль ``supplied`` против сохранённого ``stored``.
+
+    Поддерживает оба формата хранения, отмеченные аудитом:
+      * открытый текст — посимвольное сравнение в постоянном времени;
+      * несолёный MD5 (32 hex) — сравнение MD5(supplied) со ``stored``
+        без учёта регистра hex.
+    Сравнения выполняются через ``hmac.compare_digest`` (защита от тайминг-атак).
+    Пустой ``supplied`` или ``stored`` -> False (пустой пароль не валиден)."""
+    if not supplied or not stored:
+        return False
+    # 1) открытый текст
+    if hmac.compare_digest(supplied, stored):
+        return True
+    # 2) несолёный MD5: сохранён 32-символьный hex -> сверяем MD5 от введённого
+    s = stored.strip()
+    if len(s) == 32 and all(c in '0123456789abcdefABCDEF' for c in s):
+        digest = hashlib.md5(supplied.encode('utf-8')).hexdigest()
+        if hmac.compare_digest(digest, s.lower()):
+            return True
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# Нечёткое сопоставление терминов («Вы имели в виду …») — компактно на stdlib.
+# --------------------------------------------------------------------------- #
+def levenshtein(a, b):
+    """Расстояние Левенштейна между двумя строками (итеративно, O(len(a)*len(b)),
+    память O(min)). Чистый stdlib, без зависимостей."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            cur.append(min(prev[j] + 1,        # удаление
+                           cur[j - 1] + 1,     # вставка
+                           prev[j - 1] + cost))  # замена
+        prev = cur
+    return prev[-1]
+
+
+def _trigrams(s):
+    """Множество триграмм строки с краевыми маркерами (для коротких слов и
+    устойчивости к перестановкам). 'кот' -> {'  к','  ко','кот','от ','т  '}."""
+    s = '  ' + s + '  '
+    return {s[i:i + 3] for i in range(len(s) - 2)}
+
+
+def trigram_similarity(a, b):
+    """Сходство по Жаккару на множествах триграмм в [0..1]."""
+    if a == b:
+        return 1.0
+    ta, tb = _trigrams(a), _trigrams(b)
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    return inter / union if union else 0.0
+
+
+def term_similarity(query, candidate):
+    """Комбинированная близость query↔candidate в [0..1]: смесь нормированного
+    Левенштейна и триграммного сходства. Регистронезависима. Используется для
+    ранжирования подсказок «Вы имели в виду»."""
+    q = (query or '').strip().lower()
+    c = (candidate or '').strip().lower()
+    if not q or not c:
+        return 0.0
+    if q == c:
+        return 1.0
+    dist = levenshtein(q, c)
+    lev_sim = 1.0 - dist / max(len(q), len(c))
+    tri_sim = trigram_similarity(q, c)
+    # Левенштейн ловит опечатки в один символ, триграммы — общую похожесть.
+    return 0.6 * lev_sim + 0.4 * tri_sim
 
 
 class Raw:
@@ -656,21 +772,51 @@ class Api:
                         'login': acc['login'], 'name': acc['full_name'], 'grants': grants})
 
     def auth_reader(self, body):
+        """Аутентификация читателя: билет + пароль (как в jirbis).
+
+        Тело: ``{ticket, password}``. По билету (``RI=<ticket>``) находим запись
+        RDR, затем СВЕРЯЕМ пароль с полем пароля записи (130/100; открытый текст
+        или несолёный MD5 — см. ``verify_reader_password``). Неверный пароль -> 401.
+
+        Поведение, когда у читателя пароль в RDR НЕ задан, управляется флагом
+        ``REQUIRE_READER_PASSWORD`` (по умолчанию true): при true — вход запрещён
+        (401), при false — разрешён вход по одному билету (legacy). И тот, и другой
+        исход логируется. Пароль НИКОГДА не логируется и не возвращается."""
         ticket = (body.get('ticket', '') or '').strip()
         if not ticket:
             return 400, err('bad_request', 'ticket required')
+        password = body.get('password', '') or ''
         tenant = self._tenant_of(body)
+        store = self._store_for(tenant)
         try:
             _count, mfns = self.irbis.search('RDR', '"RI=%s"' % ticket)
         except IrbisError:
             mfns = []
         if not mfns:
-            return 401, err('auth_failed', 'reader not found')
+            # Один и тот же ответ для «нет читателя» и «неверный пароль» —
+            # не раскрываем существование билета.
+            return 401, err('auth_failed', 'invalid credentials')
         rec = self.irbis.read_record('RDR', mfns[0])
+        stored = _reader_password_value(rec)
+        require = self.cfg.require_reader_password
+        if stored:
+            # У читателя задан пароль — проверяем ВСЕГДА, независимо от флага.
+            if not verify_reader_password(password, stored):
+                store.audit('RI=%s' % ticket, 'auth.reader', 'RDR', mfns[0], 'denied')
+                return 401, err('auth_failed', 'invalid credentials')
+            outcome = 'ok'
+        else:
+            # Пароль у читателя не задан.
+            if require:
+                store.audit('RI=%s' % ticket, 'auth.reader', 'RDR', mfns[0], 'denied')
+                return 401, err('auth_failed', 'password not set')
+            # Legacy-режим: пускаем по билету, но фиксируем это в аудите.
+            outcome = 'ok_no_password'
         name_f = field(rec, '10') or field(rec, '11')
         name = (name_f or {}).get('value', '') if name_f else ''
         token, _ = self._new_session('reader', 'RI=%s' % ticket, READER_GRANTS,
                                      tenant=tenant, rdr_mfn=mfns[0])
+        store.audit('RI=%s' % ticket, 'auth.reader', 'RDR', mfns[0], outcome)
         return 200, ok({'token': token, 'kind': 'reader', 'name': name, 'mfn': mfns[0]})
 
     def _brief_item(self, db, mfn):
@@ -696,14 +842,52 @@ class Api:
                 'year': year, 'docType': doctype, 'availability': avail,
                 'hasCover': any(f['tag'] == '953' for f in rec['fields'])}
 
+    @staticmethod
+    def _expr_term(expr):
+        """Разобрать ПРОСТОЙ одночленный поисковый expr вида ``"A=Толстой$"`` в
+        пару ``(prefix, value)`` для подсказок. Усечение ``$`` и кавычки
+        отбрасываются. Сложные булевы выражения (``*``, ``+``, ``^``, скобки) ->
+        ``(None, None)`` — для них подсказки не строим."""
+        if not expr:
+            return None, None
+        e = expr.strip()
+        if e and e[0] == '"' and e[-1] == '"':
+            e = e[1:-1]
+        if any(ch in e for ch in ('*', '+', '^', '(', ')', '"')):
+            return None, None      # булева/сложная конструкция — пропускаем
+        e = e.rstrip('$').strip()
+        if '=' in e:
+            pre, val = e.split('=', 1)
+            return (pre + '='), val.strip()
+        return '', e
+
+    def _did_you_mean(self, db, expr):
+        """Подсказки «Вы имели в виду» для запроса, давшего 0 результатов.
+        Best-effort: при сложном выражении/ошибке -> []. Имена терминов (без
+        служебных полей score), готовые к показу."""
+        prefix, value = self._expr_term(expr)
+        if value is None or not value:
+            return []
+        return [s['value'] for s in self._suggest_terms(db, prefix, value, limit=5)]
+
     def search(self, session, db, expr, page, page_size):
         self._guard(session, 'search', db, 'read')
         self._public_db_guard(session, db)
         count, mfns = self.irbis.search(db, expr)
         start = (page - 1) * page_size
         items = [self._brief_item(db, mfn) for mfn in mfns[start:start + page_size]]
-        return 200, ok({'db': db, 'expr': expr, 'total': count,
-                        'page': page, 'pageSize': page_size, 'items': items})
+        out = {'db': db, 'expr': expr, 'total': count,
+               'page': page, 'pageSize': page_size, 'items': items}
+        # На пустую выдачу — добавим «Вы имели в виду …» (тем же механизмом, что
+        # /api/suggest). Никогда не ломает поиск: ошибка подбора -> поле опускается.
+        if count == 0:
+            try:
+                dym = self._did_you_mean(db, expr)
+            except Exception:
+                dym = []
+            if dym:
+                out['didYouMean'] = dym
+        return 200, ok(out)
 
     def record(self, session, db, mfn):
         self._guard(session, 'record.read', db, 'read')
@@ -732,6 +916,81 @@ class Api:
         rows = self.irbis.read_terms(db, start, count)
         return 200, ok({'db': db, 'start': start,
                         'terms': [{'count': c, 'term': t} for c, t in rows]})
+
+    # Сколько терминов словаря просматривать при подборе подсказок, и сколько
+    # отдавать. Окно держим скромным (один-два запроса 'H'), чтобы не нагружать
+    # сервер; топ ограничиваем 5–8 (контракт эндпойнта).
+    _SUGGEST_SCAN = 200
+    _SUGGEST_LIMIT = 8
+    _SUGGEST_MIN_SIM = 0.34          # порог отсева заведомо непохожих терминов
+
+    def _suggest_terms(self, db, prefix, q, limit=None):
+        """Подобрать похожие термины словаря для (возможно ошибочного) ``q``.
+
+        Возвращает список ``[{term, value, count, expr, score}]``, ранжированный
+        по близости (см. ``term_similarity``), не длиннее ``limit``. ``prefix`` —
+        вид словаря (``A=``/``T=``/``K=`` …, опционален); сопоставление идёт по
+        ЗНАЧЕНИЮ (часть после префикса). Никогда не бросает: при недоступности
+        сервера или пустом блоке возвращает []. Чистая логика — переиспользуется
+        и эндпойнтом /api/suggest, и веткой didYouMean в /api/search."""
+        limit = limit or self._SUGGEST_LIMIT
+        prefix = (prefix or '').strip()
+        qv = (q or '').strip()
+        if not qv:
+            return []
+        # Окно словаря вокруг запроса. Якорь — первый символ значения; словарь
+        # ИРБИС обычно в верхнем регистре, но регистр запроса заранее не известен,
+        # поэтому сканируем от ОБОИХ вариантов первого символа (как введён и в
+        # верхнем регистре) и сливаем, дедуплицируя по терму. Так окрестность
+        # точного термина покрывается независимо от регистра словаря.
+        first = qv[:1]
+        anchors = [prefix + first]
+        if first.upper() != first:
+            anchors.append(prefix + first.upper())
+        rows = []
+        seen_terms = set()
+        for anchor in anchors:
+            try:
+                got = self.irbis.read_terms(db, anchor, self._SUGGEST_SCAN)
+            except IrbisError:
+                got = []
+            for cnt, term in got:
+                if term not in seen_terms:
+                    seen_terms.add(term)
+                    rows.append((cnt, term))
+        scored = []
+        ql = qv.lower()
+        for cnt, term in rows:
+            if prefix and not term.startswith(prefix):
+                continue                      # вышли за пределы этого словаря
+            value = term[len(prefix):] if prefix else term
+            if not value:
+                continue
+            if value.lower() == ql:
+                continue                      # точное совпадение — это не «подсказка»
+            score = term_similarity(qv, value)
+            if score < self._SUGGEST_MIN_SIM:
+                continue
+            scored.append((score, cnt, term, value))
+        # Сортировка: сначала по близости, затем по числу постингов (популярнее —
+        # выше), затем алфавитно для детерминизма.
+        scored.sort(key=lambda r: (-r[0], -r[1], r[3].lower()))
+        out = []
+        for score, cnt, term, value in scored[:limit]:
+            out.append({'term': term, 'value': value, 'count': cnt,
+                        'expr': '"%s"' % term, 'score': round(score, 4)})
+        return out
+
+    def suggest(self, session, db, prefix, q, limit=None):
+        """GET /api/suggest — «Вы имели в виду …»: похожие термины словаря на
+        опечатку. Публичный (как /api/terms): гость/читатель вправе звать, но
+        только для публичных баз. Возвращает ``{db, prefix, q, suggestions:[…]}``.
+        Деградирует до пустого списка, никогда не 500."""
+        self._guard(session, 'terms', db, 'read')
+        self._public_db_guard(session, db)
+        suggestions = self._suggest_terms(db, prefix, q, limit)
+        return 200, ok({'db': db, 'prefix': (prefix or '').strip(),
+                        'q': (q or '').strip(), 'suggestions': suggestions})
 
     def showcase(self, session, db, kind, limit):
         """Discovery façade — "new arrivals / featured" brief cards for the portal.
@@ -2337,6 +2596,11 @@ class Api:
                 start = query.get('start', [''])[0]
                 cnt = min(50, max(1, int(query.get('count', ['15'])[0])))
                 return self.terms(session, db, start, cnt)
+            if method == 'GET' and path == '/api/suggest':
+                db = query.get('db', [self.cfg.db_default])[0]
+                prefix = query.get('prefix', [''])[0]
+                q = query.get('q', [''])[0]
+                return self.suggest(session, db, prefix, q)
             if method == 'GET' and path == '/api/facets':
                 db = query.get('db', [self.cfg.db_default])[0]
                 expr = build_expr(query)

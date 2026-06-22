@@ -241,7 +241,7 @@ def main():
                'test_acq_bp_routes', 'test_circ_routes', 'test_social',
                'test_admin_routes', 'test_platform', 'test_compliance',
                'test_migrate', 'test_migrate_introspect', 'test_irbis_mst',
-               'test_stabilize'):
+               'test_stabilize', 'test_reader_auth'):
         module_checks(_m)
 
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
