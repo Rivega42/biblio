@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-22**
-- Версия кода (git): **`75ce9ff`**
-- Файлов: **146** · строк: **46196** · условных страниц: **840**
-- **SHA-256 всего листинга:** `25186ae4c6bf463d502c0a4d51ce3e8f437c59feef4e628ceb3a1ed95a1be69d`
+- Версия кода (git): **`e662650`**
+- Файлов: **147** · строк: **46473** · условных страниц: **845**
+- **SHA-256 всего листинга:** `5d56045cc7a978cf35fee146916d1b21fbf339db9e72d7e94496523179095968`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -13,7 +13,7 @@
 | `irbis-web/backend/server.py` | 114 | `a01cef21d45f79d5051b35c0a7c0a2b22d647c85ebff748be0e37f0d0efdfab8` |
 | `irbis-web/backend/core.py` | 3133 | `c80e7e9b1e4cae3c41212eb7895f110fd70b32abd49ba8d4d65c509d7db97f5c` |
 | `irbis-web/backend/config.py` | 80 | `7efde203d1db15388de3c74d032991991d0e74ea2bb04bc60cbd72eb338cddee` |
-| `irbis-web/backend/access/catalog.py` | 836 | `9122afcb157874f5b2e57cc33ee4424f0da95366e48b839bd0def011a9bd1141` |
+| `irbis-web/backend/access/catalog.py` | 948 | `a13522a49d43e51bf23b129f902a5242128d748629738cf3ed6619147390e435` |
 | `irbis-web/backend/access/circulation.py` | 1297 | `1cc0465881421372e485baa238afe9952757c4ce90b723d0ff40a0eeeae6b57f` |
 | `irbis-web/backend/access/acquisition.py` | 1459 | `3a639f3f39003816655d484b94ba32120616ff2e491934aa39c940e8689e863b` |
 | `irbis-web/backend/access/bookprovision.py` | 935 | `8812e799d34483400e3decd41e518354032aa6d7e1b3f2317ae2d19797c897e9` |
@@ -51,7 +51,7 @@
 | `irbis-web/backend/smoke.py` | 50 | `4d5d9031222e71a38b0825eb79ad68077c27ea4fee6587017a39e44555bd0682` |
 | `irbis-web/backend/static_files.py` | 55 | `45dfdccfdd9487b28e20faa8649f92e1ee5ed023c1c8b32c04dbcffdb6bf2eb3` |
 | `irbis-web/backend/tests/e2e.py` | 92 | `b33ed4bd0d64b2c43498643ec3196c1cbd1236e3aaceb2bfc316679b3d74b3bb` |
-| `irbis-web/backend/tests/test_access.py` | 254 | `0dc22fe302150ef57afef3f080c1bd8cd0eb37e444dae04350c76c9e39eab0a3` |
+| `irbis-web/backend/tests/test_access.py` | 254 | `5a2f9ef48b8781ad2171a0797b0deb08d729ab9474357713bb8473e46a6d212f` |
 | `irbis-web/backend/tests/test_acq_bp_routes.py` | 317 | `f79b93760e8326bc0cd25548dbae3cb4c96028b8b795edfac331ba4b8395af37` |
 | `irbis-web/backend/tests/test_acquisition.py` | 358 | `c58dea6fc85ac17ed35bfdb617b279229d5c194d0676188dd75043ac13ab0bfe` |
 | `irbis-web/backend/tests/test_admin_routes.py` | 390 | `14a47704e586ac3876907ce9760fbe7d370d78e232fe6bb67ff7eb660c134d8c` |
@@ -81,6 +81,7 @@
 | `irbis-web/backend/tests/test_portal222.py` | 390 | `58cc8cdb35369ce2df4d279c3737fd5e3f43dffdcb65a278649ffc450252f477` |
 | `irbis-web/backend/tests/test_rdr40.py` | 408 | `8b70c0d1eee7ac247a50d949753aa3980703af776e27c58a515be1c24cf2d6a2` |
 | `irbis-web/backend/tests/test_reader_auth.py` | 403 | `754ecd4ecf469c00a9aecc35f8f16e91bb347eb5d3a32aa0596d428279cfe8bb` |
+| `irbis-web/backend/tests/test_record_links.py` | 165 | `5924849cebf687568f500689c25f976ec2c4140d5c81515481b15f782cab393a` |
 | `irbis-web/backend/tests/test_resilience.py` | 525 | `a6c87d23dbb5088587e65aae88d92f34bfff383d5bc8650c760262cbc0c9df79` |
 | `irbis-web/backend/tests/test_seeding.py` | 246 | `4224de11d1bbf9cc112a95b82f43e0687df8d715e501e00d6a374a0c6796260d` |
 | `irbis-web/backend/tests/test_social.py` | 467 | `4eaf9623fbeec765678ef4e03a8452229c4b61c85c9730ff553daa6496134a31` |
