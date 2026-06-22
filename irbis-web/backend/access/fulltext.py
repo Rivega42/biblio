@@ -453,9 +453,9 @@ class FulltextRegistry:
             # Оставляем признак наличия встроенного ресурса во флаге ``embedded``.
         elif kind == KIND_META:
             ref = data.get('file') or None
-            pages = data.get('pages')
-            if pages is None:
-                pages = _to_pages(data.get('pages'))
+            # ^N приходит как int (через ``attach``/_build_data) или как строка (из
+            # каталожной записи) — приводим к int единообразно (мусор/пусто → None).
+            pages = _to_pages(data.get('pages'))
             rights_template = data.get('rights_template') or None
         art = {
             'kind': kind,
