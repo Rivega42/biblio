@@ -27,6 +27,7 @@ import { HoldsTab } from "./reader/HoldsTab";
 import { ShelvesPanel, ShelfMenu } from "./reader/Shelves";
 import { ReviewPanel } from "./reader/ReviewPanel";
 import { SimilarRecommendations, ForYouRecommendations } from "./reader/Recommendations";
+import { InThisEdition, RecordHost, FulltextBlock } from "./reader/LinkedRecords";
 import { HistoryTab } from "./reader/HistoryTab";
 import { SaveSearchButton, SavedSearchMenu, SavedSearchesPanel } from "./reader/SavedSearches";
 import { ConsentBanner, ConsentToggle, EraseDataCard } from "./reader/Consent";
@@ -1314,6 +1315,18 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
               <div dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />
             )}
           </div>
+
+          {/* «Полный текст» — артефакты ПТ + бейдж доступа (deny/view/download)
+              + остаток квоты. Скрыт при 404/501/нет артефактов. */}
+          <FulltextBlock db={rec.db} mfn={rec.mfn} onViewDoc={onViewDoc} />
+
+          {/* «Источник» — издание-хозяин аналитической росписи (host). Скрыт при
+              404/501/пусто. */}
+          <RecordHost db={rec.db} mfn={rec.mfn} onOpen={onOpenRecord} />
+
+          {/* «В этом издании» — статьи журнала / номера / тома (children). Скрыт
+              при 404/501/пусто. */}
+          <InThisEdition db={rec.db} mfn={rec.mfn} onOpen={onOpenRecord} />
 
           {/* Отзывы и оценки (#134) — скрыто при отсутствии эндпойнта. */}
           <ReviewPanel db={rec.db} mfn={rec.mfn} loggedIn={loggedIn} readerName={readerName} toast={toast} />
