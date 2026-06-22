@@ -11,8 +11,10 @@ import json
 import os
 import random
 import socket
+import statistics
 import threading
 import time
+from datetime import datetime, timezone
 from urllib.parse import unquote_to_bytes
 
 from config import Config
@@ -379,6 +381,43 @@ class ResilientIrbis:
             pass
 
 
+# --------------------------------------------------------------------------- #
+# Замер скорости ИРБИС↔Biblio (panel «liquid glass», super-admin).
+#
+# Методика — ЧЕСТНАЯ и like-for-like, на stdlib ``time.perf_counter``:
+#   * каждую сторону прогоняем N раз, отбрасываем ОДИН максимальный выброс
+#     (самый медленный прогон — JIT/кэш/сетевой всплеск), берём МЕДИАНУ остатка;
+#   * любой сбой стороны -> ``None`` для неё + пометка в ``notes`` (НЕ 500, НЕ
+#     выдуманное число);
+#   * на ИРБИС НИЧЕГО не пишем (он общий, продакшн): где сравниваемой операции нет
+#     read-only аналога (выдача), берём round-trip ЧТЕНИЯ записи как ЯВНО помеченную
+#     прокси-оценку стоимости одной протокольной операции.
+# --------------------------------------------------------------------------- #
+BENCH_SAMPLES = 5          # N прогонов на сторону (медиана из N-1 после отброса max)
+BENCH_MIGRATE_N = 50       # сколько записей читать для оценки скорости миграции
+
+
+def _bench_median_ms(fn, samples=BENCH_SAMPLES):
+    """Прогнать ``fn`` ``samples`` раз, вернуть МЕДИАНУ длительности в мс, отбросив
+    один максимальный выброс. Возвращает ``(median_ms, error)``: при первом же
+    исключении -> ``(None, '<repr>')`` (сторона помечается недоступной, не падает).
+
+    Выброс отбрасывается только когда прогонов >= 3 (иначе медиана из 1-2 значений
+    нерепрезентативна и сам отброс исказил бы её). Время меряется per-прогон через
+    ``time.perf_counter`` (монотонные часы) — складывать ничего не нужно."""
+    durations = []
+    for _ in range(max(1, int(samples))):
+        t0 = time.perf_counter()
+        try:
+            fn()
+        except Exception as e:                         # noqa: BLE001 - сторона недоступна
+            return None, '%s: %s' % (type(e).__name__, e)
+        durations.append((time.perf_counter() - t0) * 1000.0)
+    if len(durations) >= 3:
+        durations.remove(max(durations))               # отбрасываем один max-выброс
+    return statistics.median(durations), None
+
+
 class Api:
     def __init__(self, cfg=None):
         self.cfg = cfg or Config()
@@ -494,6 +533,12 @@ class Api:
                 bp_db, catalog=self.catalog)
         except Exception:
             self.bookprovision = None
+
+        # ---- benchmark cache (ИРБИС↔Biblio panel, super-admin) ----
+        # Последний результат замера, кэш В ПАМЯТИ процесса (GET /api/admin/benchmark
+        # отдаёт его; пусто -> 404). Lock-guarded — замер может прийти конкурентно.
+        self._bench_lock = threading.Lock()
+        self._bench_cache = None
 
     # ---- session helpers (signed JWT; no server-side session table) ----
     def _new_session(self, kind, actor, grants, **extra):
@@ -2491,6 +2536,173 @@ class Api:
              'report': report})
         return 200, ok({'report': report, 'tenant': target_tenant, 'dryRun': dry_run})
 
+    # --------------------------------------------------------------------- #
+    # Замер скорости ИРБИС↔Biblio (panel «liquid glass», super-admin).
+    #
+    # Контракт ответа (фронт BenchmarkPanel.tsx уже его потребляет — форму не менять):
+    #   { query:{irbis_ms,biblio_ms}, circulation:{irbis_ms|null,biblio_ms},
+    #     migration:{records_per_sec,total|null}, ts:<iso>, notes:{...} }
+    # Каждая сторона — медиана из N прогонов с отбросом max-выброса (_bench_median_ms);
+    # любой сбой стороны -> null + пометка в ``notes`` (не 500). Все три стадии —
+    # ЧЕСТНЫЕ замеры реальных операций; единственная прокси (явно помечена) —
+    # ``circulation.irbis_ms`` (на ИРБИС писать нельзя, он общий/продакшн).
+    # --------------------------------------------------------------------- #
+    # Частый поисковый термин для query-стадии. ``K=`` (ключевые слова / целое поле
+    # 610) — самый населённый словарь; ``A=Иванов$`` как запасной частый автор. Берём
+    # ОДИН И ТОТ ЖЕ expr для обеих сторон (like-for-like), $ — правое усечение.
+    _BENCH_QUERY_EXPR = '"K=библиотека"'
+
+    def _bench_query(self, db, notes):
+        """query-стадия: один и тот же expr по живому ИРБИС и по own-store Biblio.
+
+        Обе стороны РЕАЛЬНЫ: ``irbis_ms`` — round-trip ``self.irbis.search`` по живому
+        серверу; ``biblio_ms`` — ``self.catalog.search`` по нашему мигрированному
+        sqlite/PG-стору (тот же inverted-index словарный поиск). Любая упавшая
+        сторона -> ``None`` + пометка. Возвращает ``{'irbis_ms','biblio_ms'}``."""
+        expr = self._BENCH_QUERY_EXPR
+        notes['query'] = {'expr': expr, 'db': db, 'method': 'real',
+                          'samples': BENCH_SAMPLES,
+                          'note': 'одинаковый запрос обеим сторонам (like-for-like); '
+                                  'медиана с отбросом max-выброса'}
+        irbis_ms, ierr = _bench_median_ms(lambda: self.irbis.search(db, expr))
+        if ierr:
+            notes['query']['irbis_error'] = ierr
+        biblio_ms = None
+        if self.catalog is None:
+            notes['query']['biblio_error'] = 'own-store недоступен'
+        else:
+            biblio_ms, berr = _bench_median_ms(
+                lambda: self.catalog.search(db, expr, limit=20))
+            if berr:
+                notes['query']['biblio_error'] = berr
+        return {'irbis_ms': irbis_ms, 'biblio_ms': biblio_ms}
+
+    def _bench_circulation(self, db, notes):
+        """circulation-стадия: own-store выдача+возврат vs прокси-чтение ИРБИС.
+
+        ``biblio_ms`` — РЕАЛЬНАЯ операция выдача→возврат в ИЗОЛИРОВАННОМ временном
+        сторе (``CirculationStore(':memory:')`` + temp читатель/экземпляр), чтобы не
+        загрязнять боевой own-store; после замера временный стор просто отбрасывается.
+
+        ``irbis_ms`` — ПРОКСИ: round-trip чтения записи (read_record + format) как
+        оценка стоимости ОДНОЙ протокольной операции. Записывать выдачу на ИРБИС
+        НЕЛЬЗЯ (общий продакшн-сервер), поэтому прямого аналога нет — это явно
+        помечено в ``notes`` (``irbis_method='proxy'``)."""
+        notes['circulation'] = {
+            'biblio_method': 'real', 'irbis_method': 'proxy', 'samples': BENCH_SAMPLES,
+            'note': 'Biblio — реальная выдача+возврат во ВРЕМЕННОМ изолированном сторе; '
+                    'ИРБИС — ПРОКСИ (round-trip чтения записи), т.к. запись на общий '
+                    'продакшн-сервер ИРБИС запрещена'}
+
+        # --- Biblio: реальная issue→return в изолированном in-memory сторе ---
+        biblio_ms = None
+        try:
+            today = int(time.time())
+
+            def _one_cycle():
+                store = _circulation.CirculationStore(':memory:')
+                engine = _circulation.CirculationEngine(store=store)   # без catalog — standalone
+                store.add_reader('BENCH_READER', category='_DEFAULT')
+                dec = engine.checkout('BENCH_READER', 'BENCH_ITEM', today)
+                if not dec.ok:
+                    raise RuntimeError('checkout denied: %s' % dec.reasons)
+                engine.return_item(dec.computed['loan']['id'], today)
+            biblio_ms, berr = _bench_median_ms(_one_cycle)
+            if berr:
+                notes['circulation']['biblio_error'] = berr
+        except Exception as e:                         # noqa: BLE001 - стадия не валит ответ
+            notes['circulation']['biblio_error'] = '%s: %s' % (type(e).__name__, e)
+
+        # --- ИРБИС: прокси одной протокольной операции (чтение записи) ---
+        irbis_ms = None
+        try:
+            top = self.irbis.max_mfn(db)
+            mfn = 1 if not top or top < 1 else min(top, max(1, top // 2))
+
+            def _proxy():
+                self.irbis.read_record(db, mfn)
+                self.irbis.format_record(db, mfn, '@brief')
+            irbis_ms, ierr = _bench_median_ms(_proxy)
+            if ierr:
+                notes['circulation']['irbis_error'] = ierr
+        except Exception as e:                         # noqa: BLE001
+            notes['circulation']['irbis_error'] = '%s: %s' % (type(e).__name__, e)
+        return {'irbis_ms': irbis_ms, 'biblio_ms': biblio_ms}
+
+    def _bench_migration(self, db, notes):
+        """migration-стадия: РЕАЛЬНОЕ чтение N записей из ИРБИС -> records_per_sec.
+
+        Read-only: читаем ``BENCH_MIGRATE_N`` записей подряд через ту же протокольную
+        операцию, что использует мигратор (``read_record``; на этой же сессии работает
+        ``tools.migrate_irbis``), считаем суммарное время и скорость. ``total`` —
+        ``max_mfn`` основной БД (полный объём для оценки «N мин на весь объём» на
+        фронте). Сбой -> ``records_per_sec=None`` + пометка."""
+        notes['migration'] = {'db': db, 'method': 'real', 'sample': BENCH_MIGRATE_N,
+                              'note': 'реальное read-only чтение записей тем же '
+                                      'протокольным путём, что и мигратор'}
+        rps = None
+        total = None
+        try:
+            top = self.irbis.max_mfn(db)
+            total = int(top) if top and top > 0 else None
+        except Exception as e:                         # noqa: BLE001
+            notes['migration']['total_error'] = '%s: %s' % (type(e).__name__, e)
+        try:
+            top = total or 0
+            n = min(BENCH_MIGRATE_N, top) if top else BENCH_MIGRATE_N
+            read = 0
+            t0 = time.perf_counter()
+            for mfn in range(1, n + 1):
+                try:
+                    self.irbis.read_record(db, mfn)
+                    read += 1
+                except IrbisError:
+                    continue                            # удалённая/пустая запись — пропуск
+            elapsed = time.perf_counter() - t0
+            if read > 0 and elapsed > 0:
+                rps = read / elapsed
+                notes['migration']['records_read'] = read
+            else:
+                notes['migration']['migration_error'] = 'нет прочитанных записей'
+        except Exception as e:                         # noqa: BLE001
+            notes['migration']['migration_error'] = '%s: %s' % (type(e).__name__, e)
+        return {'records_per_sec': rps, 'total': total}
+
+    def benchmark_run(self, session):
+        """POST /api/admin/benchmark/run — выполнить замер и закэшировать результат.
+
+        Super-admin only (как соседние /api/admin/*). Прогоняет три стадии (query /
+        circulation / migration), собирает контракт-ответ, кладёт его в кэш в памяти
+        процесса и возвращает. Стороны деградируют независимо: упавшая возвращает
+        ``null`` + пометку в ``notes`` — НИКОГДА не 500 и не выдуманное число."""
+        self._require_super_admin(session)
+        db = self.cfg.db_default
+        notes = {}
+        result = {
+            'query': self._bench_query(db, notes),
+            'circulation': self._bench_circulation(db, notes),
+            'migration': self._bench_migration(db, notes),
+            'ts': datetime.now(timezone.utc).isoformat(),
+            'notes': notes,
+        }
+        with self._bench_lock:
+            self._bench_cache = result
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok', {'op': 'benchmark.run'})
+        return 200, ok(result)
+
+    def benchmark_get(self, session):
+        """GET /api/admin/benchmark — последний кэш замера (или 404, если не запускали).
+
+        Super-admin only. Кэш живёт в памяти процесса (теряется при рестарте) — тогда
+        404, и фронт остаётся в демо-режиме."""
+        self._require_super_admin(session)
+        with self._bench_lock:
+            cached = self._bench_cache
+        if cached is None:
+            return 404, err('not_found', 'замер ещё не запускался')
+        return 200, ok(cached)
+
     def vocab_list(self, session):
         """List the session tenant's dictionaries (name/title/kind/seed_version).
 
@@ -2750,6 +2962,11 @@ class Api:
                 return self.admin_migrate_inspect(session, body or {})
             if method == 'POST' and path == '/api/admin/migrate/run':
                 return self.admin_migrate_run(session, body or {})
+            # ---- Замер скорости ИРБИС↔Biblio (super-admin, panel «liquid glass») ----
+            if method == 'POST' and path == '/api/admin/benchmark/run':
+                return self.benchmark_run(session)
+            if method == 'GET' and path == '/api/admin/benchmark':
+                return self.benchmark_get(session)
             # ---- Циркуляция / выдача (circulation desk) — staff-only (#185) ----
             if method == 'GET' and path == '/api/circ/reader':
                 return self.circ_reader(session, (query.get('ticket', [''])[0] or '').strip())
