@@ -980,6 +980,12 @@ class Api:
         и эндпойнтом /api/suggest, и веткой didYouMean в /api/search."""
         limit = limit or self._SUGGEST_LIMIT
         prefix = (prefix or '').strip()
+        # Вид словаря приходит от клиента как код индекса ("K"/"A"/"T"), но ключи
+        # словаря ИРБИС хранятся С разделителем ("K=ТЕАТР"). Без "=" якорь
+        # (prefix+первый символ) промахивается мимо блока словаря и suggest пуст —
+        # добиваем "=", если клиент его не прислал. "K=" остаётся как есть.
+        if prefix and not prefix.endswith('='):
+            prefix = prefix + '='
         qv = (q or '').strip()
         if not qv:
             return []
