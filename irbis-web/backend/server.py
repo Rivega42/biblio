@@ -13,6 +13,16 @@ import static_files
 API = Api()
 
 
+def _is_product_path(path):
+    """True для публичной страницы продукта /product и её подпутей (#226).
+
+    SPA отдаётся одним index.html; внутренний роутер (main.tsx) рендерит лендинг.
+    Не перехватывает /product-… как префикс другого слова — только '/product' и
+    то, что под ним ('/product/…')."""
+    p = (path or '').rstrip('/')
+    return p == '/product' or p.startswith('/product/')
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = 'irbis-web-p0/0.2'
 
@@ -52,6 +62,12 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self, method):
         u = urlparse(self.path)
         if method == 'GET' and (u.path.rstrip('/') or '/') == '/':
+            if static_files.has_dist():
+                return self._emit(200, Raw(static_files.dist_index(), 'text/html; charset=utf-8'))
+            return self._emit(200, Raw(READER_HTML.encode('utf-8'), 'text/html; charset=utf-8'))
+        # Публичная страница продукта (#226): отдаём тот же SPA index.html на
+        # /product и подпутях; роутинг внутри SPA (main.tsx) показывает лендинг.
+        if method == 'GET' and _is_product_path(u.path):
             if static_files.has_dist():
                 return self._emit(200, Raw(static_files.dist_index(), 'text/html; charset=utf-8'))
             return self._emit(200, Raw(READER_HTML.encode('utf-8'), 'text/html; charset=utf-8'))

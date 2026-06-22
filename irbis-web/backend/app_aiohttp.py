@@ -25,8 +25,21 @@ def _query(request):
     return {k: mq.getall(k) for k in mq.keys()}
 
 
+def _is_product_path(path):
+    """True для публичной страницы продукта /product и её подпутей (#226).
+
+    SPA отдаётся одним index.html; внутренний роутер (main.tsx) рендерит лендинг."""
+    p = (path or '').rstrip('/')
+    return p == '/product' or p.startswith('/product/')
+
+
 async def handle(request):
     if request.method == 'GET' and (request.path.rstrip('/') or '/') == '/':
+        if static_files.has_dist():
+            return web.Response(body=static_files.dist_index(), content_type='text/html', charset='utf-8', headers=CORS)
+        return web.Response(text=READER_HTML, content_type='text/html', headers=CORS)
+    # Публичная страница продукта (#226): тот же SPA index.html на /product и подпутях.
+    if request.method == 'GET' and _is_product_path(request.path):
         if static_files.has_dist():
             return web.Response(body=static_files.dist_index(), content_type='text/html', charset='utf-8', headers=CORS)
         return web.Response(text=READER_HTML, content_type='text/html', headers=CORS)
