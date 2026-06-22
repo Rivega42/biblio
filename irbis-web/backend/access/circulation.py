@@ -94,6 +94,47 @@ DEBT_MARKER = '******'
 
 
 # --------------------------------------------------------------------------- #
+# reservstatus (RQST 910^A 0–4) ↔ наш enum hold.status — ребро 2.6.
+# --------------------------------------------------------------------------- #
+# «Одно подполе — разные кодировки» (recon #CIRC-06, DB_CIRCULATION §6, ws3 §6):
+# 910^A в RQST (статус БРОНИ, словарь `reservstatus.mnu`, коды 0–4) — это НЕ то
+# же, что 910^A в ЭК (статус ЭКЗЕМПЛЯРА, `ste.mnu`). Наш движок хранит статус
+# брони отдельным enum'ом `hold.status` (queued|ready|fulfilled|cancelled|expired) —
+# дизайн их верно разводит; здесь — двусторонний словарь кодов <-> enum.
+#
+# Семантика `reservstatus.mnu` (DB_CIRCULATION §5 «БРОНИРОВАНИЕ»):
+#   0 — заказ отправлен с места хранения (МХР) на место выдачи (МВ): экз. в пути,
+#       читатель ещё ждёт → у нас бронь стоит в очереди      => 'queued'
+#   1 — получен на МВ / готов для выдачи: бронь «на полке»,
+#       читатель может забирать                              => 'ready'
+#   2 — получен от читателя (бронь сработала, выдан/закрыт)  => 'fulfilled'
+#   3 — для возврата на МХР: экз. больше не держится за читателем,
+#       уходит в фонд (бронь не реализована)                 => 'expired'
+#   4 — отправлен с МВ обратно на МХР (тот же исход — снят с полки) => 'expired'
+#
+# Прямое отображение код->enum (resolve_hold_status_in):
+RESERVSTATUS_TO_HOLD = {
+    '0': 'queued',
+    '1': 'ready',
+    '2': 'fulfilled',
+    '3': 'expired',
+    '4': 'expired',
+}
+# Обратное enum->код (hold_status_to_reservstatus). 3 и 4 оба означают «снят с
+# полки»; для каноничной обратной проводки expired → '3' (на МХР), как первый из
+# пары «возврат в фонд». `cancelled` — чисто наш статус (отмена читателем до
+# срабатывания брони): в `reservstatus.mnu` отдельного кода нет, бронь просто
+# исчезает из RQST (транзитная БД чистится `rqst_clear.gbl`) — отображаем в None.
+HOLD_TO_RESERVSTATUS = {
+    'queued': '0',
+    'ready': '1',
+    'fulfilled': '2',
+    'expired': '3',
+    'cancelled': None,
+}
+
+
+# --------------------------------------------------------------------------- #
 # Policy — the per-tenant ``circ_policy`` (defaults from SPEC §5.3 / §7).
 # --------------------------------------------------------------------------- #
 # Limit matrix keyed by reader category (50.mnu: В01–В05 adults, Д01–Д03 kids,
@@ -795,6 +836,79 @@ class CirculationEngine:
             return str(raw.get('') or raw.get('value')
                        or ''.join(str(v) for v in raw.values()))
         return str(raw)
+
+    # ---- order ↔ catalog record resolve (ребро 2.3) ----------------------- #
+    def resolve_order_record(self, item_or_shifr, catalog_db=None):
+        """Резолвить запись каталога для заказа/выдачи — ребро 2.3 (903 ↔ ``I=``).
+
+        Заказ RQST привязан к записи ЭК по **шифру** ``903`` = ``I=`` в каталоге
+        (``DBNPREFSHIFR=I=``, DB_CIRCULATION §8 «RQST → IBIS»), а не только по
+        инвентарному номеру ``910^b``. Этот метод замыкает оба пути резолва в один
+        контракт и возвращает ``mfn`` записи каталога (или ``None``):
+
+          1. **по шифру 903** — поиск каталога по инвертированному префиксу
+             ``I=`` (``catalog.search(db, 'I=<шифр>')``); берётся первый
+             найденный mfn. Это «правильный» путь заказа: ``loan.item`` /
+             переданный аргумент трактуется как шифр документа.
+          2. **по инв.№ 910^b** (fallback, НЕ ломаем существующий резолв) —
+             если по шифру не нашлось, пробуем ``catalog.find_exemplar(db, item)``
+             (как в ``_resolve_exemplar40`` / ``_flip_catalog_status``): аргумент
+             трактуется как 910^b, возвращается mfn его записи.
+
+        ``catalog_db`` — имя БД ЭК (по умолчанию ``self.catalog_db``). Когда каталог
+        не подключён — ``None`` (движок остаётся автономным, back-compat: заказ
+        живёт по строке-шифру без записи каталога). Любая ошибка каталога
+        деградирует в ``None`` — резолв не должен ронять операцию выдачи.
+        Чисто читающая операция (поиск/чтение, без записи).
+        """
+        if self.catalog is None:
+            return None
+        db = catalog_db or self.catalog_db
+        key = '' if item_or_shifr is None else str(item_or_shifr).strip()
+        if not key:
+            return None
+        # 1) по шифру 903 через инвертированный индекс I= (основной путь заказа).
+        try:
+            res = self.catalog.search(db, 'I=' + key, limit=1)
+            items = (res or {}).get('items') or []
+            if items:
+                return items[0].get('mfn')
+        except Exception:
+            pass  # поиск-резолв best-effort — падаем на резолв по инв.№
+        # 2) fallback по инв.№ 910^b (существующий путь — не ломаем его).
+        try:
+            found = self.catalog.find_exemplar(db, key)
+            if found is not None:
+                return found[0]
+        except Exception:
+            pass
+        return None
+
+    # ---- reservstatus (RQST 910^A 0–4) ↔ hold.status (ребро 2.6) ----------- #
+    @staticmethod
+    def resolve_hold_status_in(reservstatus):
+        """Код брони RQST ``910^A`` (``reservstatus.mnu`` 0–4) → наш ``hold.status``.
+
+        Ребро 2.6 / recon #CIRC-06: входной код брони из RQST переводится в наш
+        enum статусов брони (см. :data:`RESERVSTATUS_TO_HOLD`). Принимает строку
+        или число (``0``/``'0'``). Неизвестный/пустой код → ``None`` (нечего
+        отображать). Не путать со статусом ЭКЗЕМПЛЯРА ``ste.mnu`` — это разные
+        кодировки одного подполя в разных БД."""
+        if reservstatus is None:
+            return None
+        return RESERVSTATUS_TO_HOLD.get(str(reservstatus).strip())
+
+    @staticmethod
+    def hold_status_to_reservstatus(status):
+        """Наш ``hold.status`` → код брони RQST ``910^A`` (``reservstatus.mnu``).
+
+        Обратное отображение ребра 2.6 (см. :data:`HOLD_TO_RESERVSTATUS`).
+        ``expired`` отображается в каноничный ``'3'`` (возврат на МХР); ``cancelled``
+        — в ``None`` (в `reservstatus.mnu` отдельного кода нет: отменённая бронь
+        просто исчезает из транзитной RQST). Неизвестный enum → ``None``."""
+        if status is None:
+            return None
+        return HOLD_TO_RESERVSTATUS.get(str(status).strip())
 
     def loan_field40(self, loan):
         """Материализовать одну выдачу (``loan``) в структуру **поля 40 RDR**.
