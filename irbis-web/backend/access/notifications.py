@@ -92,18 +92,100 @@ class SendError(Exception):
     """Transient/permanent failure from a channel; engine treats it as a miss."""
 
 
-class Channel:
-    """A delivery surface (email / sms / push / …).
+class Notification:
+    """An immutable, rendered notice handed to a channel by the dispatcher.
 
-    Subclasses set ``name`` and implement ``send(recipient, subject, body,
-    payload)``. ``send`` returns a provider message-id string on success and
-    raises :class:`SendError` on failure (so the engine can fall through to the
-    next channel in the chain).
+    The dispatch contract (SPEC §1.1) wants the channel to receive the *whole*
+    notification — not a loose ``(recipient, subject, body)`` tuple — so a channel
+    can decide on receipts, in-app persistence, SMS minimisation, etc. from the
+    full context. Built once per queue row inside :meth:`NotificationQueue.dispatch`
+    (rendered subject/body, the resolved recipient, the event, the raw payload and
+    the originating row id).
+    """
+
+    __slots__ = ('id', 'event', 'recipient', 'subject', 'body', 'payload', 'tenant')
+
+    def __init__(self, id, event, recipient, subject, body, payload, tenant='public'):
+        self.id = id
+        self.event = event
+        self.recipient = recipient
+        self.subject = subject
+        self.body = body
+        self.payload = payload
+        self.tenant = tenant
+
+    def __repr__(self):  # pragma: no cover - debug aid only
+        return ('Notification(id=%r, event=%r, recipient=%r)'
+                % (self.id, self.event, self.recipient))
+
+
+class DeliveryResult:
+    """The outcome a channel returns from :meth:`Channel.deliver`.
+
+    * ``ok``        — was the notice accepted by the surface/provider?
+    * ``provider_id`` — opaque id the surface assigns (message-id), for the log.
+    * ``error``     — failure detail when ``ok`` is False (recorded in the journal).
+
+    A channel never *raises* to signal a miss on the dispatch path — it returns
+    ``DeliveryResult.fail(...)`` so the dispatcher records the attempt and walks
+    the fallback chain. (A raised exception is still caught defensively and turned
+    into a failed result, so a buggy channel can't abort dispatch.)
+    """
+
+    __slots__ = ('ok', 'provider_id', 'error')
+
+    def __init__(self, ok, provider_id=None, error=None):
+        self.ok = ok
+        self.provider_id = provider_id
+        self.error = error
+
+    @classmethod
+    def sent(cls, provider_id=None):
+        return cls(True, provider_id=provider_id)
+
+    @classmethod
+    def fail(cls, error):
+        return cls(False, error=str(error))
+
+    def __repr__(self):  # pragma: no cover - debug aid only
+        return ('DeliveryResult(ok=%r, provider_id=%r, error=%r)'
+                % (self.ok, self.provider_id, self.error))
+
+
+class Channel:
+    """A delivery surface (email / sms / push / in-app / …).
+
+    Two contracts coexist for back-compat:
+
+      * :meth:`send(recipient, subject, body, payload)` — the original
+        first-success API used by :meth:`NotificationQueue.process_once`; returns a
+        provider message-id on success and raises :class:`SendError` on failure.
+      * :meth:`deliver(notification) -> DeliveryResult` — the dispatch contract
+        (SPEC §1.1): takes the whole :class:`Notification` and returns a
+        :class:`DeliveryResult` instead of raising. The base class implements
+        ``deliver`` on top of ``send`` so existing channels (which only define
+        ``send``) work unchanged under the new dispatcher; a channel that needs the
+        full notice (in-app inbox) overrides ``deliver`` directly.
     """
     name = 'abstract'
 
     def send(self, recipient, subject, body, payload):  # pragma: no cover
         raise NotImplementedError
+
+    def deliver(self, notification):
+        """Default adapter: drive the legacy ``send`` and wrap the outcome.
+
+        Lets every pre-existing :class:`Channel` (which implements only ``send``)
+        participate in :meth:`NotificationQueue.dispatch` without change.
+        """
+        try:
+            provider_id = self.send(notification.recipient, notification.subject,
+                                    notification.body, notification.payload)
+            return DeliveryResult.sent(provider_id=provider_id)
+        except SendError as e:
+            return DeliveryResult.fail(e)
+        except Exception as e:  # defensive: any channel bug is a miss, not a crash
+            return DeliveryResult.fail('%s: %s' % (type(e).__name__, e))
 
 
 class MemoryChannel(Channel):
@@ -167,6 +249,41 @@ class SmsChannel(Channel):
             raise SendError('sms: gateway not configured')
         self.outbox.append({'to': recipient, 'text': body})
         return 'sms-stub-%d' % len(self.outbox)
+
+
+class InAppChannel(Channel):
+    """In-app inbox — the terminal, always-available fallback (SPEC §1.3).
+
+    Unlike email/SMS it needs no external contact or consent, so it is the last
+    link of every fallback chain and can never be "unavailable". It overrides
+    :meth:`deliver` directly (it wants the whole :class:`Notification`, not just a
+    body) and persists the rendered card straight onto the queue row by stamping
+    ``read_at=NULL`` semantics — the notice is *already* a queue row, so "delivery
+    to the inbox" is simply marking the row as inbox-visible (status ``sent`` via
+    this channel) and the existing :meth:`NotificationQueue.inbox` view renders it.
+
+    The reader/staff inbox surface (#222) reads the same rows; this channel is what
+    makes a notice land there as a guaranteed delivery when every external channel
+    has missed. It records what it accepted in ``delivered`` for tests.
+    """
+    name = 'inapp'
+
+    def __init__(self):
+        self.delivered = []
+
+    def deliver(self, notification):
+        # In-app is durable + local: accepting the notice is infallible. The row
+        # itself is the inbox entry; the dispatcher marks it 'sent' via 'inapp' and
+        # inbox()/unread_count() surface it to the reader or staff.
+        self.delivered.append({'id': notification.id, 'recipient': notification.recipient,
+                               'event': notification.event, 'subject': notification.subject,
+                               'body': notification.body})
+        return DeliveryResult.sent(provider_id='inapp-%d' % len(self.delivered))
+
+    def send(self, recipient, subject, body, payload):  # pragma: no cover
+        # Provided for symmetry with the legacy contract; deliver() is the path used.
+        self.delivered.append({'recipient': recipient, 'subject': subject, 'body': body})
+        return 'inapp-%d' % len(self.delivered)
 
 
 # --------------------------------------------------------------------------- #
@@ -360,6 +477,27 @@ CREATE INDEX IF NOT EXISTS notification_claim_idx
   ON notification(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS notification_inbox_idx
   ON notification(recipient, read_at);
+
+-- Delivery journal (SPEC §5.4 `delivery_attempt`): one row per channel attempt of
+-- a notification, for "did it arrive?" forensics and per-channel idempotency. The
+-- pair (notification_id, channel) is UNIQUE so a retry never logs/sends a second
+-- delivery on a channel that already accepted — channel-level idempotency on top of
+-- the event-level dedup on notification(dedup_key).
+CREATE TABLE IF NOT EXISTS delivery_attempt (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  notification_id INTEGER NOT NULL,
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL                          -- 'sent' | 'failed'
+         CHECK (status IN ('sent','failed')),
+  provider_id TEXT,
+  error TEXT,
+  tries INTEGER NOT NULL DEFAULT 1,             -- how many times this channel was hit
+  created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+  updated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+  UNIQUE (notification_id, channel)
+);
+CREATE INDEX IF NOT EXISTS delivery_attempt_notif_idx
+  ON delivery_attempt(notification_id);
 """
 
 # attempts -> seconds of advisory backoff before the row is reclaimable.
@@ -472,15 +610,69 @@ class NotificationQueue:
             'AND next_attempt_at<=? ORDER BY id LIMIT ?',
             (now, limit)).fetchall()
 
+    # ---- delivery journal (SPEC §5.4 delivery_attempt) -------------------- #
+    def _channel_already_sent(self, notif_id, channel):
+        """True if this channel already accepted this notice (idempotency guard).
+
+        A retry must never re-send on a channel that already succeeded — the
+        UNIQUE(notification_id, channel) journal row with status='sent' is the
+        record of that. Honoured before every ``deliver`` attempt.
+        """
+        r = self._conn().execute(
+            "SELECT 1 FROM delivery_attempt WHERE notification_id=? AND channel=? "
+            "AND status='sent'", (notif_id, channel)).fetchone()
+        return r is not None
+
+    def _record_attempt(self, notif_id, channel, status, provider_id, error, now):
+        """Upsert a delivery_attempt row (one per notification+channel).
+
+        First hit on a channel inserts; a later retry on the same channel bumps
+        ``tries`` and overwrites the latest outcome — so the journal carries the
+        attempt count without ever duplicating the (notification, channel) pair.
+        """
+        c = self._conn()
+        existing = c.execute(
+            'SELECT id, tries FROM delivery_attempt WHERE notification_id=? '
+            'AND channel=?', (notif_id, channel)).fetchone()
+        if existing is None:
+            c.execute(
+                'INSERT INTO delivery_attempt(notification_id,channel,status,'
+                'provider_id,error,tries,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)',
+                (notif_id, channel, status, provider_id, error, now, now))
+        else:
+            c.execute(
+                'UPDATE delivery_attempt SET status=?, provider_id=?, error=?, '
+                'tries=?, updated_at=? WHERE id=?',
+                (status, provider_id, error, existing['tries'] + 1, now, existing['id']))
+
+    def delivery_log(self, notif_id):
+        """The per-channel delivery journal for one notification (oldest first)."""
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM delivery_attempt WHERE notification_id=? ORDER BY id',
+            (notif_id,)).fetchall()]
+
+    def _build_notification(self, row):
+        """Render a claimed row into the immutable :class:`Notification` handed
+        to channels (subject/body rendered via the event template)."""
+        payload = json.loads(row['payload_json'])
+        tmpl = self.catalog.template(row['event'])
+        return Notification(
+            id=row['id'], event=row['event'], recipient=row['recipient'],
+            subject=render(tmpl.get('subject'), payload),
+            body=render(tmpl.get('body'), payload),
+            payload=payload, tenant=row['tenant'])
+
     def process_once(self, channels, now=None, limit=100):
         """Process up to ``limit`` due pending rows once. Returns a summary dict.
 
         ``channels`` is ``{name: Channel}``. For each claimed row we render the
-        template and walk its resolved channel chain, stopping at the first
-        success (records the delivering channel + marks ``sent``). If the whole
-        chain misses we bump ``attempts``: under :data:`MAX_ATTEMPTS` the row goes
-        back to ``pending`` with an advisory backoff; at the cap it is marked
-        ``failed``.
+        notice and walk its resolved channel chain via :meth:`Channel.deliver`,
+        stopping at the first success (records the delivering channel + marks
+        ``sent``). Every attempt — hit or miss — is written to the delivery journal
+        (``delivery_attempt``); a channel that already accepted this notice is
+        skipped (channel-level idempotency). If the whole chain misses we bump
+        ``attempts``: under :data:`MAX_ATTEMPTS` the row goes back to ``pending``
+        with an advisory backoff; at the cap it is marked ``failed``.
         """
         now = time.time() if now is None else now
         c = self._conn()
@@ -488,11 +680,8 @@ class NotificationQueue:
 
         for row in self._claim_due(now, limit):
             summary['processed'] += 1
-            payload = json.loads(row['payload_json'])
             chain = json.loads(row['channels_json'])
-            tmpl = self.catalog.template(row['event'])
-            subject = render(tmpl.get('subject'), payload)
-            body = render(tmpl.get('body'), payload)
+            notice = self._build_notification(row)
 
             delivered_via = None
             last_error = None
@@ -501,14 +690,19 @@ class NotificationQueue:
                 if ch is None:
                     last_error = 'no channel %r wired' % cname
                     continue
-                try:
-                    ch.send(row['recipient'], subject, body, payload)
+                # Channel-level idempotency: never re-send where we already did.
+                if self._channel_already_sent(row['id'], cname):
                     delivered_via = cname
                     break
-                except SendError as e:
-                    last_error = str(e)
-                except Exception as e:  # defensive: any channel bug is a miss
-                    last_error = '%s: %s' % (type(e).__name__, e)
+                result = ch.deliver(notice)
+                if result.ok:
+                    self._record_attempt(row['id'], cname, 'sent',
+                                         result.provider_id, None, now)
+                    delivered_via = cname
+                    break
+                last_error = result.error or 'delivery failed'
+                self._record_attempt(row['id'], cname, 'failed',
+                                     None, last_error, now)
 
             attempts = row['attempts'] + 1
             if delivered_via is not None:
@@ -532,6 +726,42 @@ class NotificationQueue:
                 summary['retried'] += 1
         c.commit()
         return summary
+
+    def dispatch(self, channels, now=None, limit=100, max_passes=MAX_ATTEMPTS):
+        """Drive the queue's dispatch: deliver every due notice, retrying within
+        backoff up to its attempt cap. The high-level "диспетч очереди".
+
+        Where :meth:`process_once` is a *single* claim-and-send pass,
+        ``dispatch`` repeats passes until the queue settles — no due pending row
+        remains deliverable in this call. Each pass advances the clock to the
+        earliest ``next_attempt_at`` so a transiently-failing notice is retried
+        within the same dispatch rather than waiting for an external scheduler;
+        ``max_passes`` bounds the loop (defaults to :data:`MAX_ATTEMPTS`, the
+        per-notice retry cap, so an always-failing notice walks to ``failed`` and
+        stops). An empty / fully-settled queue is a clean no-op.
+
+        Idempotent: a second ``dispatch`` over an already-settled queue delivers
+        nothing (no pending rows) and never re-sends (channel-journal guard).
+        Returns an aggregate ``{passes, processed, sent, failed, retried}``.
+        """
+        clock = time.time() if now is None else now
+        agg = {'passes': 0, 'processed': 0, 'sent': 0, 'failed': 0, 'retried': 0}
+        for _ in range(max(1, max_passes)):
+            summary = self.process_once(channels, now=clock, limit=limit)
+            agg['passes'] += 1
+            for k in ('processed', 'sent', 'failed', 'retried'):
+                agg[k] += summary[k]
+            if summary['processed'] == 0:
+                break                       # nothing was due -> settled, stop
+            # Advance to the soonest re-claimable pending row; if none remain
+            # pending the next pass claims nothing and we exit on processed==0.
+            nxt = self._conn().execute(
+                "SELECT MIN(next_attempt_at) AS t FROM notification "
+                "WHERE status='pending'").fetchone()['t']
+            if nxt is None:
+                break                       # no pending rows left -> done
+            clock = max(clock, nxt)
+        return agg
 
     # ---- introspection ---------------------------------------------------- #
     def get(self, notif_id):

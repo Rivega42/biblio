@@ -234,7 +234,8 @@ def main():
     identity_checks()
     seeding_checks()
     flk_checks()
-    for _m in ('test_pft', 'test_authority', 'test_notifications', 'test_gbl',
+    for _m in ('test_pft', 'test_authority', 'test_notifications',
+               'test_notifications_dispatch', 'test_gbl',
                'test_catalog', 'test_circulation', 'test_circ_notify',
                'test_discovery', 'test_integration', 'test_resilience',
                'test_portal222', 'test_acquisition', 'test_bookprovision',
