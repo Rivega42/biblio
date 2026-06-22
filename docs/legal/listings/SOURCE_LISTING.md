@@ -10,11 +10,11 @@
 |---|---|
 | Продукт | Biblio — система автоматизации библиотек (АБИС) |
 | Дата сборки листинга | 2026-06-22 |
-| Версия кода (git) | `0ec7335` |
+| Версия кода (git) | `816b902` |
 | Файлов в листинге | 133 |
-| Всего строк исходного кода | 39098 |
-| Условных страниц (~55 строк) | 711 |
-| **SHA-256 всего листинга** | `0c1c495d941cb037e26bba38b79abd77bd872439c43d6ec11001a2cc80423e5a` |
+| Всего строк исходного кода | 39289 |
+| Условных страниц (~55 строк) | 715 |
+| **SHA-256 всего листинга** | `f06f92c2100fa2909fcc657f7723a6cc39b64467e8aca5a0d77491f6f9f76025` |
 
 Перечень файлов и их контрольные суммы — в `MANIFEST.sha256.md`.
 
@@ -34198,7 +34198,7 @@
   432 | }
 ```
 
-### Файл: `irbis-web/frontend/src/App.tsx`  · строк: 1220
+### Файл: `irbis-web/frontend/src/App.tsx`  · строк: 1383
 
 ```tsx
     1 | import React from "react";
@@ -34243,1294 +34243,1472 @@
    40 |   { code: "K", label: "Ключевые слова" }, { code: "A", label: "Автор" },
    41 |   { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
    42 | ];
-   43 | const esc = (s: string) => (s || "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m]!));
-   44 | // Доменные статус-бейджи Style A: цвет текста + мягкая подложка + точка-индикатор.
+   43 | // Мульти-БД (#3): служебное значение селектора «искать во всех публичных базах».
+   44 | // Не код реальной БД — в этом режиме runSearch веером опрашивает все public-БД.
 ```
 
 <!-- ─── страница 563 ─── -->
 
 ```tsx
-   45 | // Значения берутся из Biblio-токенов (--status-*), мост даёт постамат/Книгоприём.
-   46 | const STATUS: Record<string, { label: string; fg: string; bg: string }> = {
-   47 |   available: { label: "В наличии", fg: "var(--status-available,#2E7D52)", bg: "var(--status-available-bg,#E4F0E8)" },
-   48 |   issued: { label: "На руках", fg: "var(--status-issued,#9A6A12)", bg: "var(--status-issued-bg,#F7ECD6)" },
-   49 |   hold: { label: "В постамате", fg: "var(--status-hold,#2F6DB5)", bg: "var(--status-hold-bg,#E3ECF8)" },
-   50 |   returned: { label: "Книгоприём", fg: "var(--status-return,#6B5CA5)", bg: "var(--status-return-bg,#ECE8F6)" },
-   51 |   unknown: { label: "Нет данных", fg: "var(--text-subtle,#8A857A)", bg: "var(--surface-2,#F0EEE6)" },
-   52 | };
-   53 | const statusChip = (s: string): React.CSSProperties => {
-   54 |   const c = STATUS[s] || STATUS.unknown;
-   55 |   return { display: "inline-flex", alignItems: "center", gap: 6, background: c.bg, color: c.fg, borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
-   56 | };
-   57 | const statusDot = (s: string): React.CSSProperties => ({ width: 6, height: 6, borderRadius: 999, background: (STATUS[s] || STATUS.unknown).fg, flex: "none" });
-   58 | const sf = (f: FieldVal | undefined, c: string) =>
-   59 |   !f ? "" : (f.subfields[c] || f.subfields[c.toUpperCase()] || f.subfields[c.toLowerCase()] || "");
-   60 | 
-   61 | interface Toast { id: number; variant: ToastVariant; title: string; message?: string; }
-   62 | interface ActiveFacet { field: string; prefix: string; groupLabel: string; value: string; valueLabel: string; }
+   45 | const ALL_DBS = "__ALL__";
+   46 | const esc = (s: string) => (s || "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m]!));
+   47 | // Доменные статус-бейджи Style A: цвет текста + мягкая подложка + точка-индикатор.
+   48 | // Значения берутся из Biblio-токенов (--status-*), мост даёт постамат/Книгоприём.
+   49 | const STATUS: Record<string, { label: string; fg: string; bg: string }> = {
+   50 |   available: { label: "В наличии", fg: "var(--status-available,#2E7D52)", bg: "var(--status-available-bg,#E4F0E8)" },
+   51 |   issued: { label: "На руках", fg: "var(--status-issued,#9A6A12)", bg: "var(--status-issued-bg,#F7ECD6)" },
+   52 |   hold: { label: "В постамате", fg: "var(--status-hold,#2F6DB5)", bg: "var(--status-hold-bg,#E3ECF8)" },
+   53 |   returned: { label: "Книгоприём", fg: "var(--status-return,#6B5CA5)", bg: "var(--status-return-bg,#ECE8F6)" },
+   54 |   unknown: { label: "Нет данных", fg: "var(--text-subtle,#8A857A)", bg: "var(--surface-2,#F0EEE6)" },
+   55 | };
+   56 | const statusChip = (s: string): React.CSSProperties => {
+   57 |   const c = STATUS[s] || STATUS.unknown;
+   58 |   return { display: "inline-flex", alignItems: "center", gap: 6, background: c.bg, color: c.fg, borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
+   59 | };
+   60 | const statusDot = (s: string): React.CSSProperties => ({ width: 6, height: 6, borderRadius: 999, background: (STATUS[s] || STATUS.unknown).fg, flex: "none" });
+   61 | const sf = (f: FieldVal | undefined, c: string) =>
+   62 |   !f ? "" : (f.subfields[c] || f.subfields[c.toUpperCase()] || f.subfields[c.toLowerCase()] || "");
    63 | 
-   64 | // Compose a base query expr with the active facet refinements using the IRBIS
-   65 | // AND operator '*': (<base>) * "V=05" * "J=RUS". Mirrors the backend refinement.
-   66 | function composeExpr(base: string, active: ActiveFacet[]): string {
-   67 |   let expr = base;
-   68 |   for (const a of active) {
-   69 |     expr = "(" + expr + ') * "' + a.prefix + "=" + a.value.replace(/"/g, "") + '"';
-   70 |   }
-   71 |   return expr;
-   72 | }
-   73 | 
-   74 | function recView(d: RecordData) {
-   75 |   const F = (tag: string) => d.fields.filter((x) => x.tag === tag);
-   76 |   const F1 = (tag: string) => F(tag)[0];
-   77 |   const authors = ["700", "701", "702"].flatMap(F).map((f) => (sf(f, "A") + (sf(f, "G") ? ", " + sf(f, "G") : "")).trim()).filter(Boolean);
-   78 |   const orgs = ["710", "711"].flatMap(F).map((f) => sf(f, "A")).filter(Boolean);
-   79 |   const imprint = (() => { const f = F1("210"); if (!f) return ""; const a = sf(f, "A"), c = sf(f, "C"), y = sf(f, "D"); return [a, c].filter(Boolean).join(" : ") + (y ? (a || c ? ", " : "") + y : ""); })();
-   80 |   const volume = (() => { const f = F1("215"); if (!f) return ""; return [sf(f, "A"), sf(f, "C"), sf(f, "E")].filter(Boolean).join(" ; "); })();
-   81 |   const langCode = (() => { const f = F1("101"); return f ? (sf(f, "A") || f.value) : ""; })();
-   82 |   const meta = [
-   83 |     { label: "Авторы", value: authors.concat(orgs).join("; ") },
-   84 |     { label: "Выходные данные", value: imprint },
-   85 |     { label: "Объём", value: volume },
-   86 |     { label: "ISBN", value: F1("10") ? sf(F1("10"), "A") : "" },
-   87 |     { label: "Язык", value: LANG[langCode] || langCode },
-   88 |     { label: "УДК", value: (F1("675") && sf(F1("675"), "A")) || (F1("675")?.value ?? "") },
-   89 |     { label: "Примечание", value: (F1("331") && sf(F1("331"), "A")) || (F1("330") && sf(F1("330"), "A")) || (F1("300")?.value ?? "") },
-   90 |   ].filter((r) => r.value);
-   91 |   const subjects = F("606").map((f) => [sf(f, "A"), sf(f, "B"), sf(f, "C"), sf(f, "D")].filter(Boolean).join(" — ")).filter(Boolean);
-   92 |   const holds = (d.holdings && d.holdings.length)
-   93 |     ? d.holdings.map((h) => ({ loc: h.location || "", inv: h.inv_no, st: h.status }))
-   94 |     : F("910").map((h) => ({ loc: sf(h, "D") || "Основной фонд", inv: sf(h, "B"),
-   95 |         st: (sf(h, "A") === "0" || sf(h, "A") === "") ? "available" : "issued" }));
-   96 |   const files = ["951", "955"].flatMap(F).map((f) => {
-   97 |     const name = sf(f, "T") || sf(f, "A") || sf(f, "H") || f.value || "";
-   98 |     const link = sf(f, "I") || sf(f, "U") || sf(f, "A") || "";
-   99 |     const isUrl = /^(https?:\/\/|ftp:\/\/|www\.)/i.test(link.trim());
+   64 | interface Toast { id: number; variant: ToastVariant; title: string; message?: string; }
+   65 | interface ActiveFacet { field: string; prefix: string; groupLabel: string; value: string; valueLabel: string; }
+   66 | 
+   67 | // Compose a base query expr with the active facet refinements using the IRBIS
+   68 | // AND operator '*': (<base>) * "V=05" * "J=RUS". Mirrors the backend refinement.
+   69 | function composeExpr(base: string, active: ActiveFacet[]): string {
+   70 |   let expr = base;
+   71 |   for (const a of active) {
+   72 |     expr = "(" + expr + ') * "' + a.prefix + "=" + a.value.replace(/"/g, "") + '"';
+   73 |   }
+   74 |   return expr;
+   75 | }
+   76 | 
+   77 | function recView(d: RecordData) {
+   78 |   const F = (tag: string) => d.fields.filter((x) => x.tag === tag);
+   79 |   const F1 = (tag: string) => F(tag)[0];
+   80 |   const authors = ["700", "701", "702"].flatMap(F).map((f) => (sf(f, "A") + (sf(f, "G") ? ", " + sf(f, "G") : "")).trim()).filter(Boolean);
+   81 |   const orgs = ["710", "711"].flatMap(F).map((f) => sf(f, "A")).filter(Boolean);
+   82 |   const imprint = (() => { const f = F1("210"); if (!f) return ""; const a = sf(f, "A"), c = sf(f, "C"), y = sf(f, "D"); return [a, c].filter(Boolean).join(" : ") + (y ? (a || c ? ", " : "") + y : ""); })();
+   83 |   const volume = (() => { const f = F1("215"); if (!f) return ""; return [sf(f, "A"), sf(f, "C"), sf(f, "E")].filter(Boolean).join(" ; "); })();
+   84 |   const langCode = (() => { const f = F1("101"); return f ? (sf(f, "A") || f.value) : ""; })();
+   85 |   const meta = [
+   86 |     { label: "Авторы", value: authors.concat(orgs).join("; ") },
+   87 |     { label: "Выходные данные", value: imprint },
+   88 |     { label: "Объём", value: volume },
+   89 |     { label: "ISBN", value: F1("10") ? sf(F1("10"), "A") : "" },
+   90 |     { label: "Язык", value: LANG[langCode] || langCode },
+   91 |     { label: "УДК", value: (F1("675") && sf(F1("675"), "A")) || (F1("675")?.value ?? "") },
+   92 |     { label: "Примечание", value: (F1("331") && sf(F1("331"), "A")) || (F1("330") && sf(F1("330"), "A")) || (F1("300")?.value ?? "") },
+   93 |   ].filter((r) => r.value);
+   94 |   const subjects = F("606").map((f) => [sf(f, "A"), sf(f, "B"), sf(f, "C"), sf(f, "D")].filter(Boolean).join(" — ")).filter(Boolean);
+   95 |   const holds = (d.holdings && d.holdings.length)
+   96 |     ? d.holdings.map((h) => ({ loc: h.location || "", inv: h.inv_no, st: h.status }))
+   97 |     : F("910").map((h) => ({ loc: sf(h, "D") || "Основной фонд", inv: sf(h, "B"),
+   98 |         st: (sf(h, "A") === "0" || sf(h, "A") === "") ? "available" : "issued" }));
+   99 |   const files = ["951", "955"].flatMap(F).map((f) => {
 ```
 
 <!-- ─── страница 564 ─── -->
 
 ```tsx
-  100 |     return { name: name.trim(), url: isUrl ? (link.trim().startsWith("www.") ? "http://" + link.trim() : link.trim()) : "" };
-  101 |   }).filter((x) => x.name || x.url);
-  102 |   const rawRows = d.fields.map((x) => `<tr><td style="color:var(--text-subtle);font-family:var(--font-mono);padding-right:12px;vertical-align:top">${x.tag}</td><td style="font-family:var(--font-mono);font-size:12px">${esc(x.value)}</td></tr>`).join("");
-  103 |   return { brief: d.brief || "", meta, subjects, holds, files, rawRows };
-  104 | }
-  105 | 
-  106 | export function App() {
-  107 |   const [ready, setReady] = React.useState(false);
-  108 |   const [server, setServer] = React.useState<any>(null);
-  109 |   // Biblio Style A is the default skin. MODE light/dark via data-mode, a11y via data-theme.
-  110 |   const [darkMode, setDarkMode] = React.useState(false);
-  111 |   const [a11y, setA11y] = React.useState(false);
-  112 |   const [databases, setDatabases] = React.useState<DbItem[]>([]);
-  113 |   const [db, setDb] = React.useState("IBIS");
-  114 |   const [prefix, setPrefix] = React.useState("K");
-  115 |   const [q, setQ] = React.useState("Android");
-  116 |   const [mode, setMode] = React.useState<"simple" | "advanced" | "expert">("simple");
-  117 |   const [advRows, setAdvRows] = React.useState([{ field: "A", value: "" }, { field: "T", value: "" }]);
-  118 |   const [advCombine, setAdvCombine] = React.useState<"and" | "or">("and");
-  119 |   const [expertExpr, setExpertExpr] = React.useState('"K=Android" + "K=PHP"');
-  120 |   const [sug, setSug] = React.useState<any[]>([]);
-  121 |   const [items, setItems] = React.useState<ResultItem[]>([]);
-  122 |   const [total, setTotal] = React.useState(0);
-  123 |   const [page, setPage] = React.useState(1);
-  124 |   const [facets, setFacets] = React.useState<Facet[]>([]);
-  125 |   const [baseExpr, setBaseExpr] = React.useState<string | null>(null);
-  126 |   const [activeFacets, setActiveFacets] = React.useState<ActiveFacet[]>([]);
-  127 |   const [loading, setLoading] = React.useState(false);
-  128 |   const [rec, setRec] = React.useState<RecordData | null>(null);
-  129 |   const [recTab, setRecTab] = React.useState(0);
-  130 |   const [shareOpen, setShareOpen] = React.useState(false);
-  131 |   // Постраничный просмотрщик (#222): открытый документ/набор страниц или null.
-  132 |   const [docView, setDocView] = React.useState<{ pages: DocPage[]; idx: number; title?: string } | null>(null);
-  133 |   // Корзина (отбор) — только в памяти, без localStorage (защищённый контур).
-  134 |   const [basket, setBasket] = React.useState<ResultItem[]>([]);
-  135 |   const [basketOpen, setBasketOpen] = React.useState(false);
-  136 |   const [toasts, setToasts] = React.useState<Toast[]>([]);
-  137 |   const [account, setAccount] = React.useState<{ loggedIn: boolean; ticket?: string }>({ loggedIn: false });
-  138 |   const [loginOpen, setLoginOpen] = React.useState(false);
-  139 |   const [view, setView] = React.useState<"search" | "cabinet">("search");
-  140 |   const [cab, setCab] = React.useState<CabinetData | null>(null);
-  141 |   const [cabinetSeen, setCabinetSeen] = React.useState(false);
-  142 |   const [context, setContext] = React.useState<"reader" | "staff">("reader");
-  143 |   const [staff, setStaff] = React.useState<StaffSession | null>(null);
-  144 |   const [staffRoute, setStaffRoute] = React.useState<any>("desktop");
-  145 |   const [staffLoginOpen, setStaffLoginOpen] = React.useState(false);
-  146 |   // Discovery façade (G1): главная-лендинг показывается до первого поиска.
-  147 |   const [home, setHome] = React.useState(true);
-  148 |   // Представление выдачи (G4) и сортировка (G6) и размер страницы (G19).
-  149 |   const [viewMode, setViewMode] = React.useState<ViewMode>("list");
-  150 |   const [sort, setSort] = React.useState<SortKey>("relevance");
-  151 |   const [pageSize, setPageSize] = React.useState(10);
-  152 |   // Мульти-лейаут по типу базы (#222): активный вид выдачи (list/gallery/calendar/archive).
-  153 |   // По умолчанию берётся из профиля базы; пользователь может переключать там, где доступно.
-  154 |   const [layout, setLayout] = React.useState<LayoutKind>("list");
+  100 |     const name = sf(f, "T") || sf(f, "A") || sf(f, "H") || f.value || "";
+  101 |     const link = sf(f, "I") || sf(f, "U") || sf(f, "A") || "";
+  102 |     const isUrl = /^(https?:\/\/|ftp:\/\/|www\.)/i.test(link.trim());
+  103 |     return { name: name.trim(), url: isUrl ? (link.trim().startsWith("www.") ? "http://" + link.trim() : link.trim()) : "" };
+  104 |   }).filter((x) => x.name || x.url);
+  105 |   const rawRows = d.fields.map((x) => `<tr><td style="color:var(--text-subtle);font-family:var(--font-mono);padding-right:12px;vertical-align:top">${x.tag}</td><td style="font-family:var(--font-mono);font-size:12px">${esc(x.value)}</td></tr>`).join("");
+  106 |   return { brief: d.brief || "", meta, subjects, holds, files, rawRows };
+  107 | }
+  108 | 
+  109 | export function App() {
+  110 |   const [ready, setReady] = React.useState(false);
+  111 |   const [server, setServer] = React.useState<any>(null);
+  112 |   // Biblio Style A is the default skin. MODE light/dark via data-mode, a11y via data-theme.
+  113 |   const [darkMode, setDarkMode] = React.useState(false);
+  114 |   const [a11y, setA11y] = React.useState(false);
+  115 |   const [databases, setDatabases] = React.useState<DbItem[]>([]);
+  116 |   const [db, setDb] = React.useState("IBIS");
+  117 |   const [prefix, setPrefix] = React.useState("K");
+  118 |   const [q, setQ] = React.useState("Android");
+  119 |   const [mode, setMode] = React.useState<"simple" | "advanced" | "expert">("simple");
+  120 |   const [advRows, setAdvRows] = React.useState([{ field: "A", value: "" }, { field: "T", value: "" }]);
+  121 |   const [advCombine, setAdvCombine] = React.useState<"and" | "or">("and");
+  122 |   const [expertExpr, setExpertExpr] = React.useState('"K=Android" + "K=PHP"');
+  123 |   const [sug, setSug] = React.useState<any[]>([]);
+  124 |   // «Вы имели в виду» (#4): варианты при нулевой выдаче. Пусто → блок скрыт.
+  125 |   const [didYouMean, setDidYouMean] = React.useState<{ term: string; count?: number }[]>([]);
+  126 |   // Мульти-БД (#3): режим «во всех базах». В нём items приходят размеченными
+  127 |   // полем db (источник), фасеты/уточнение отключены (база не одна).
+  128 |   const [allDbs, setAllDbs] = React.useState(false);
+  129 |   const [items, setItems] = React.useState<ResultItem[]>([]);
+  130 |   const [total, setTotal] = React.useState(0);
+  131 |   const [page, setPage] = React.useState(1);
+  132 |   const [facets, setFacets] = React.useState<Facet[]>([]);
+  133 |   const [baseExpr, setBaseExpr] = React.useState<string | null>(null);
+  134 |   const [activeFacets, setActiveFacets] = React.useState<ActiveFacet[]>([]);
+  135 |   const [loading, setLoading] = React.useState(false);
+  136 |   const [rec, setRec] = React.useState<RecordData | null>(null);
+  137 |   const [recTab, setRecTab] = React.useState(0);
+  138 |   const [shareOpen, setShareOpen] = React.useState(false);
+  139 |   // Постраничный просмотрщик (#222): открытый документ/набор страниц или null.
+  140 |   const [docView, setDocView] = React.useState<{ pages: DocPage[]; idx: number; title?: string } | null>(null);
+  141 |   // Корзина (отбор) — только в памяти, без localStorage (защищённый контур).
+  142 |   const [basket, setBasket] = React.useState<ResultItem[]>([]);
+  143 |   const [basketOpen, setBasketOpen] = React.useState(false);
+  144 |   const [toasts, setToasts] = React.useState<Toast[]>([]);
+  145 |   const [account, setAccount] = React.useState<{ loggedIn: boolean; ticket?: string }>({ loggedIn: false });
+  146 |   const [loginOpen, setLoginOpen] = React.useState(false);
+  147 |   const [view, setView] = React.useState<"search" | "cabinet">("search");
+  148 |   const [cab, setCab] = React.useState<CabinetData | null>(null);
+  149 |   const [cabinetSeen, setCabinetSeen] = React.useState(false);
+  150 |   const [context, setContext] = React.useState<"reader" | "staff">("reader");
+  151 |   const [staff, setStaff] = React.useState<StaffSession | null>(null);
+  152 |   const [staffRoute, setStaffRoute] = React.useState<any>("desktop");
+  153 |   const [staffLoginOpen, setStaffLoginOpen] = React.useState(false);
+  154 |   // Discovery façade (G1): главная-лендинг показывается до первого поиска.
 ```
 
 <!-- ─── страница 565 ─── -->
 
 ```tsx
-  155 |   // Тик для перезагрузки списка броней в кабинете после новой брони (#222).
-  156 |   const [holdsRefresh, setHoldsRefresh] = React.useState(0);
-  157 |   // Тик для перезагрузки полок «Для вас» (#133) — обновляем после просмотра записей,
-  158 |   // т.к. подборка зависит от истории. Сохранённые запросы (#133) — после сохранения.
-  159 |   const [forYouRefresh, setForYouRefresh] = React.useState(0);
-  160 |   const [savedRefresh, setSavedRefresh] = React.useState(0);
-  161 |   const tRef = React.useRef<any>(null);
-  162 |   const toast = (t: Omit<Toast, "id">) => { const id = Math.random(); setToasts((x) => [...x, { ...t, id }]); setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 4000); };
-  163 | 
-  164 |   React.useEffect(() => {
-  165 |     (async () => {
-  166 |       await api.initGuest();
-  167 |       const h = await api.health(); setServer(h.json?.data);
-  168 |       const startDb = h.json?.data?.db || "IBIS"; setDb(startDb);
-  169 |       const d = await api.databases(); if (d.json?.ok && d.json.data) setDatabases(d.json.data.items);
-  170 |       setReady(true);
-  171 |       // Постоянная ссылка: если в URL есть ?db=&mfn=, автоматически открыть запись.
-  172 |       try {
-  173 |         const p = new URLSearchParams(window.location.search);
-  174 |         const linkDb = p.get("db"); const linkMfn = p.get("mfn");
-  175 |         if (linkMfn && /^\d+$/.test(linkMfn)) {
-  176 |           const useDb = linkDb || startDb; setDb(useDb);
-  177 |           setHome(false); // permalink ведёт сразу к записи, минуя лендинг
-  178 |           await openRecord(parseInt(linkMfn, 10), useDb);
-  179 |         }
-  180 |       } catch { /* ignore */ }
-  181 |       // Иначе остаёмся на главной-лендинге (фасад discovery, G1) — без авто-поиска.
-  182 |     })();
-  183 |   }, []);
-  184 | 
-  185 |   // Мульти-лейаут (#222): при смене активной базы сбрасываем вид выдачи на дефолт
-  186 |   // её профиля (book→list, image→gallery, perio→calendar, arch→archive). Внутри
-  187 |   // одной базы пользовательский тумблер list/gallery сохраняется (db не меняется).
-  188 |   React.useEffect(() => {
-  189 |     const def = defaultLayout(db);
-  190 |     setLayout(def);
-  191 |     // Синхронизируем тумблер list/gallery, чтобы он отражал актуальный вид.
-  192 |     if (def === "list" || def === "gallery") setViewMode(def);
-  193 |   }, [db]);
-  194 | 
-  195 |   async function runSearch(database: string, px: string, query: string, pg: number) {
-  196 |     if (!query.trim()) return;
-  197 |     setHome(false); setLoading(true); setRec(null); setSug([]); setPage(pg);
-  198 |     const r = await api.search(database, px, query, pg, pageSize);
-  199 |     if (r.json?.ok && r.json.data) {
-  200 |       setItems(r.json.data.items); setTotal(r.json.data.total);
-  201 |       // a fresh simple search becomes the new base query: reset facets
-  202 |       if (pg === 1) { setBaseExpr(r.json.data.expr); setActiveFacets([]); loadFacets(database, r.json.data.expr); }
-  203 |     } else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
-  204 |     setLoading(false);
-  205 |   }
-  206 |   async function loadFacets(database: string, expr: string) {
-  207 |     setFacets([]);
-  208 |     const r = await api.facetsExpr(database, expr);
-  209 |     if (r.json?.ok && r.json.data) setFacets(r.json.data.facets);
+  155 |   const [home, setHome] = React.useState(true);
+  156 |   // Представление выдачи (G4) и сортировка (G6) и размер страницы (G19).
+  157 |   const [viewMode, setViewMode] = React.useState<ViewMode>("list");
+  158 |   const [sort, setSort] = React.useState<SortKey>("relevance");
+  159 |   const [pageSize, setPageSize] = React.useState(10);
+  160 |   // Мульти-лейаут по типу базы (#222): активный вид выдачи (list/gallery/calendar/archive).
+  161 |   // По умолчанию берётся из профиля базы; пользователь может переключать там, где доступно.
+  162 |   const [layout, setLayout] = React.useState<LayoutKind>("list");
+  163 |   // Тик для перезагрузки списка броней в кабинете после новой брони (#222).
+  164 |   const [holdsRefresh, setHoldsRefresh] = React.useState(0);
+  165 |   // Тик для перезагрузки полок «Для вас» (#133) — обновляем после просмотра записей,
+  166 |   // т.к. подборка зависит от истории. Сохранённые запросы (#133) — после сохранения.
+  167 |   const [forYouRefresh, setForYouRefresh] = React.useState(0);
+  168 |   const [savedRefresh, setSavedRefresh] = React.useState(0);
+  169 |   const tRef = React.useRef<any>(null);
+  170 |   const toast = (t: Omit<Toast, "id">) => { const id = Math.random(); setToasts((x) => [...x, { ...t, id }]); setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 4000); };
+  171 | 
+  172 |   React.useEffect(() => {
+  173 |     (async () => {
+  174 |       await api.initGuest();
+  175 |       const h = await api.health(); setServer(h.json?.data);
+  176 |       const startDb = h.json?.data?.db || "IBIS"; setDb(startDb);
+  177 |       const d = await api.databases(); if (d.json?.ok && d.json.data) setDatabases(d.json.data.items);
+  178 |       setReady(true);
+  179 |       // Постоянная ссылка: если в URL есть ?db=&mfn=, автоматически открыть запись.
+  180 |       try {
+  181 |         const p = new URLSearchParams(window.location.search);
+  182 |         const linkDb = p.get("db"); const linkMfn = p.get("mfn");
+  183 |         if (linkMfn && /^\d+$/.test(linkMfn)) {
+  184 |           const useDb = linkDb || startDb; setDb(useDb);
+  185 |           setHome(false); // permalink ведёт сразу к записи, минуя лендинг
+  186 |           await openRecord(parseInt(linkMfn, 10), useDb);
+  187 |         }
+  188 |       } catch { /* ignore */ }
+  189 |       // Иначе остаёмся на главной-лендинге (фасад discovery, G1) — без авто-поиска.
+  190 |     })();
+  191 |   }, []);
+  192 | 
+  193 |   // Мульти-лейаут (#222): при смене активной базы сбрасываем вид выдачи на дефолт
+  194 |   // её профиля (book→list, image→gallery, perio→calendar, arch→archive). Внутри
+  195 |   // одной базы пользовательский тумблер list/gallery сохраняется (db не меняется).
+  196 |   React.useEffect(() => {
+  197 |     const def = defaultLayout(db);
+  198 |     setLayout(def);
+  199 |     // Синхронизируем тумблер list/gallery, чтобы он отражал актуальный вид.
+  200 |     if (def === "list" || def === "gallery") setViewMode(def);
+  201 |   }, [db]);
+  202 | 
+  203 |   async function runSearch(database: string, px: string, query: string, pg: number) {
+  204 |     if (!query.trim()) return;
+  205 |     // Мульти-БД (#3): селектор в режиме «во всех базах» → веерный поиск.
+  206 |     if (database === ALL_DBS) { runSearchAll(px, query); return; }
+  207 |     setHome(false); setAllDbs(false); setLoading(true); setRec(null); setSug([]); setDidYouMean([]); setPage(pg);
+  208 |     const r = await api.search(database, px, query, pg, pageSize);
+  209 |     if (r.json?.ok && r.json.data) {
 ```
 
 <!-- ─── страница 566 ─── -->
 
 ```tsx
-  210 |   }
-  211 |   // С главной-лендинга: задаём поле/запрос, уходим в результаты и ищем (G1).
-  212 |   function goSearch(px: string, query: string) {
-  213 |     setHome(false); setMode("simple"); setPrefix(px); setQ(query); setRec(null);
-  214 |     runSearch(db, px, query, 1);
-  215 |   }
-  216 |   // Сохранённые запросы (#133): повторно запустить сохранённый поиск. Если задан
-  217 |   // префикс — простой поиск; иначе query трактуется как поисковое выражение.
-  218 |   function runSavedSearch(s: SavedSearch) {
-  219 |     const useDb = s.db || db;
-  220 |     setDb(useDb); setView("search"); setRec(null); setHome(false);
-  221 |     if (s.prefix) { setMode("simple"); setPrefix(s.prefix); setQ(s.query); runSearch(useDb, s.prefix, s.query, 1); }
-  222 |     else { setMode("expert"); setExpertExpr(s.query); runExpr(useDb, s.query, 1, true); }
-  223 |   }
-  224 |   // Логотип / «Главная» — вернуться на лендинг (G1).
-  225 |   function goHome() {
-  226 |     setHome(true); setRec(null); setView("search");
-  227 |     setItems([]); setTotal(0); setBaseExpr(null); setActiveFacets([]); setFacets([]);
-  228 |     try { const u = new URL(window.location.href); u.searchParams.delete("db"); u.searchParams.delete("mfn"); window.history.replaceState(null, "", u.pathname); } catch { /* ignore */ }
-  229 |   }
-  230 |   function onQuery(v: string) {
-  231 |     setQ(v); clearTimeout(tRef.current);
-  232 |     if (v.trim().length < 2) { setSug([]); return; }
-  233 |     tRef.current = setTimeout(async () => {
-  234 |       const r = await api.terms(prefix + "=" + v.toUpperCase(), 8);
-  235 |       if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(prefix + "=") === 0).map((t) => ({ term: t.term.slice(prefix.length + 1), count: t.count })));
-  236 |     }, 200);
-  237 |   }
-  238 |   async function runExpr(database: string, expr: string, pg: number, asBase = false) {
-  239 |     setHome(false); setLoading(true); setRec(null); setPage(pg);
-  240 |     const r = await api.searchExpr(database, expr, pg, pageSize);
-  241 |     if (r.json?.ok && r.json.data) {
-  242 |       setItems(r.json.data.items); setTotal(r.json.data.total);
-  243 |       // a fresh expr search (advanced) becomes the new base query: reset facets
-  244 |       if (asBase && pg === 1) { setBaseExpr(expr); setActiveFacets([]); loadFacets(database, expr); }
-  245 |     } else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
-  246 |     setLoading(false);
-  247 |   }
-  248 |   // Re-run the search with the current base intersected by the given active facets.
-  249 |   function applyFacets(next: ActiveFacet[]) {
-  250 |     if (baseExpr == null) return;
-  251 |     setActiveFacets(next);
-  252 |     runExpr(db, composeExpr(baseExpr, next), 1);
-  253 |   }
-  254 |   function toggleFacet(f: Facet, v: { value: string; label: string }) {
-  255 |     const exists = activeFacets.find((a) => a.field === f.field && a.value === v.value);
-  256 |     if (exists) applyFacets(activeFacets.filter((a) => !(a.field === f.field && a.value === v.value)));
-  257 |     else applyFacets([...activeFacets, { field: f.field, prefix: f.prefix, groupLabel: f.label, value: v.value, valueLabel: v.label }]);
-  258 |   }
-  259 |   function removeFacet(a: ActiveFacet) {
-  260 |     applyFacets(activeFacets.filter((x) => !(x.field === a.field && x.value === a.value)));
-  261 |   }
-  262 |   function buildAdvExpr() {
-  263 |     const parts = advRows.map((r) => {
-  264 |       let v = r.value.trim().replace(/"/g, "");
+  210 |       setItems(r.json.data.items); setTotal(r.json.data.total);
+  211 |       // a fresh simple search becomes the new base query: reset facets
+  212 |       if (pg === 1) { setBaseExpr(r.json.data.expr); setActiveFacets([]); loadFacets(database, r.json.data.expr); }
+  213 |       // «Вы имели в виду» (#4): при нулевой выдаче подбираем варианты.
+  214 |       if (r.json.data.total === 0) loadSuggestions(database, px, query);
+  215 |     } else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
+  216 |     setLoading(false);
+  217 |   }
+  218 |   // Мульти-БД (#3): последовательный поиск по всем публичным базам. Результаты
+  219 |   // сливаются в общий список, каждая запись помечается своей базой (it.db), чтобы
+  220 |   // открытие/бронь шли в нужную БД. Фасеты/постраничный набор в этом режиме не
+  221 |   // применяются (база не одна) — показываем первую страницу из каждой базы.
+  222 |   async function runSearchAll(px: string, query: string) {
+  223 |     if (!query.trim()) return;
+  224 |     const pubs = databases.filter((d) => d.public).map((d) => d.code);
+  225 |     if (pubs.length <= 1) { runSearch(pubs[0] || db, px, query, 1); return; }
+  226 |     setHome(false); setAllDbs(true); setLoading(true); setRec(null); setSug([]); setDidYouMean([]); setPage(1);
+  227 |     setBaseExpr(null); setActiveFacets([]); setFacets([]);
+  228 |     const merged: ResultItem[] = []; let grand = 0;
+  229 |     for (const code of pubs) {
+  230 |       const r = await api.search(code, px, query, 1, pageSize);
+  231 |       if (r.json?.ok && r.json.data) {
+  232 |         grand += r.json.data.total;
+  233 |         for (const it of r.json.data.items) merged.push({ ...it, db: code });
+  234 |       }
+  235 |     }
+  236 |     setItems(merged); setTotal(grand);
+  237 |     if (grand === 0) loadSuggestions(pubs[0], px, query);
+  238 |     setLoading(false);
+  239 |   }
+  240 |   // «Вы имели в виду» (#4): дёргаем GET /api/suggest. 404/501 (эндпойнт-сиблинг
+  241 |   // ещё не приземлён) или пустой ответ → блок остаётся скрытым (мягкая деградация).
+  242 |   async function loadSuggestions(database: string, px: string, query: string) {
+  243 |     setDidYouMean([]);
+  244 |     const r = await api.suggest(database, px, query);
+  245 |     if (r.status === 200 && r.json?.ok && r.json.data) {
+  246 |       const raw = (r.json.data.suggestions || []) as Array<string | { term: string; count?: number }>;
+  247 |       const list = raw
+  248 |         .map((s) => (typeof s === "string" ? { term: s } : { term: s.term, count: s.count }))
+  249 |         .filter((s) => s.term && s.term.trim() && s.term.trim().toLowerCase() !== query.trim().toLowerCase());
+  250 |       setDidYouMean(list.slice(0, 8));
+  251 |     }
+  252 |   }
+  253 |   async function loadFacets(database: string, expr: string) {
+  254 |     setFacets([]);
+  255 |     const r = await api.facetsExpr(database, expr);
+  256 |     if (r.json?.ok && r.json.data) setFacets(r.json.data.facets);
+  257 |   }
+  258 |   // С главной-лендинга: задаём поле/запрос, уходим в результаты и ищем (G1).
+  259 |   function goSearch(px: string, query: string) {
+  260 |     setHome(false); setMode("simple"); setPrefix(px); setQ(query); setRec(null);
+  261 |     runSearch(db, px, query, 1);
+  262 |   }
+  263 |   // Сохранённые запросы (#133): повторно запустить сохранённый поиск. Если задан
+  264 |   // префикс — простой поиск; иначе query трактуется как поисковое выражение.
 ```
 
 <!-- ─── страница 567 ─── -->
 
 ```tsx
-  265 |       if (!v) return "";
-  266 |       if ((r.field === "A" || r.field === "T") && !v.endsWith("$")) v += "$";
-  267 |       return `"${r.field}=${v}"`;
-  268 |     }).filter(Boolean);
-  269 |     if (!parts.length) return null;
-  270 |     if (parts.length === 1) return parts[0];
-  271 |     return "(" + parts.join(advCombine === "or" ? " + " : " * ") + ")";
-  272 |   }
-  273 |   function runAdvanced() {
-  274 |     const expr = buildAdvExpr();
-  275 |     if (!expr) { toast({ variant: "warning", title: "Заполните условия", message: "Введите хотя бы одно значение." }); return; }
-  276 |     runExpr(db, expr, 1, true);
+  265 |   function runSavedSearch(s: SavedSearch) {
+  266 |     const useDb = s.db || db;
+  267 |     setDb(useDb); setView("search"); setRec(null); setHome(false);
+  268 |     if (s.prefix) { setMode("simple"); setPrefix(s.prefix); setQ(s.query); runSearch(useDb, s.prefix, s.query, 1); }
+  269 |     else { setMode("expert"); setExpertExpr(s.query); runExpr(useDb, s.query, 1, true); }
+  270 |   }
+  271 |   // Логотип / «Главная» — вернуться на лендинг (G1).
+  272 |   function goHome() {
+  273 |     setHome(true); setRec(null); setView("search");
+  274 |     setItems([]); setTotal(0); setBaseExpr(null); setActiveFacets([]); setFacets([]);
+  275 |     setDidYouMean([]); setAllDbs(false);
+  276 |     try { const u = new URL(window.location.href); u.searchParams.delete("db"); u.searchParams.delete("mfn"); window.history.replaceState(null, "", u.pathname); } catch { /* ignore */ }
   277 |   }
-  278 |   function runExpert() {
-  279 |     const expr = expertExpr.trim();
-  280 |     if (!expr) { toast({ variant: "warning", title: "Введите выражение", message: "Запрос поиска не должен быть пустым." }); return; }
-  281 |     runExpr(db, expr, 1, true);
-  282 |   }
-  283 |   // --- Корзина (отбор) -----------------------------------------------------
-  284 |   function inBasket(mfn: number) { return basket.some((b) => b.mfn === mfn); }
-  285 |   function toggleBasket(it: ResultItem) {
-  286 |     setBasket((b) => b.some((x) => x.mfn === it.mfn) ? b.filter((x) => x.mfn !== it.mfn) : [...b, it]);
-  287 |   }
-  288 |   function removeFromBasket(mfn: number) { setBasket((b) => b.filter((x) => x.mfn !== mfn)); }
-  289 |   // Pagination that preserves the active base query + facet refinements.
-  290 |   function gotoPage(p: number) {
-  291 |     if (baseExpr != null) runExpr(db, composeExpr(baseExpr, activeFacets), p);
-  292 |     else if (mode === "advanced") { const ex = buildAdvExpr(); if (ex) runExpr(db, ex, p); }
-  293 |     else runSearch(db, prefix, q, p);
-  294 |   }
-  295 |   // Размер страницы (G19): меняем и перезапускаем текущий запрос с 1-й страницы.
-  296 |   function changePageSize(size: number) {
-  297 |     setPageSize(size);
-  298 |     if (baseExpr != null) { setLoading(true); setRec(null); setPage(1); api.searchExpr(db, composeExpr(baseExpr, activeFacets), 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); }
-  299 |     else if (mode === "advanced") { const ex = buildAdvExpr(); if (ex) { setLoading(true); setPage(1); api.searchExpr(db, ex, 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); } }
-  300 |     else { setLoading(true); setPage(1); api.search(db, prefix, q, 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); }
+  278 |   function onQuery(v: string) {
+  279 |     setQ(v); clearTimeout(tRef.current);
+  280 |     if (v.trim().length < 2) { setSug([]); return; }
+  281 |     tRef.current = setTimeout(async () => {
+  282 |       const r = await api.terms(prefix + "=" + v.toUpperCase(), 8);
+  283 |       if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(prefix + "=") === 0).map((t) => ({ term: t.term.slice(prefix.length + 1), count: t.count })));
+  284 |     }, 200);
+  285 |   }
+  286 |   async function runExpr(database: string, expr: string, pg: number, asBase = false) {
+  287 |     setHome(false); setLoading(true); setRec(null); setPage(pg);
+  288 |     const r = await api.searchExpr(database, expr, pg, pageSize);
+  289 |     if (r.json?.ok && r.json.data) {
+  290 |       setItems(r.json.data.items); setTotal(r.json.data.total);
+  291 |       // a fresh expr search (advanced) becomes the new base query: reset facets
+  292 |       if (asBase && pg === 1) { setBaseExpr(expr); setActiveFacets([]); loadFacets(database, expr); }
+  293 |     } else { toast({ variant: "error", title: "Каталог недоступен", message: "Повторите попытку позже." }); setItems([]); setTotal(0); }
+  294 |     setLoading(false);
+  295 |   }
+  296 |   // Re-run the search with the current base intersected by the given active facets.
+  297 |   function applyFacets(next: ActiveFacet[]) {
+  298 |     if (baseExpr == null) return;
+  299 |     setActiveFacets(next);
+  300 |     runExpr(db, composeExpr(baseExpr, next), 1);
   301 |   }
-  302 | 
-  303 |   async function openRecord(mfn: number, database: string = db) {
-  304 |     setLoading(true); const r = await api.record(database, mfn); setLoading(false);
-  305 |     if (r.json?.ok && r.json.data) {
-  306 |       setRec(r.json.data); setRecTab(0); setShareOpen(false);
-  307 |       // Постоянная ссылка: ?db=<db>&mfn=<mfn> в адресной строке без перезагрузки.
-  308 |       try { const u = new URL(window.location.href); u.searchParams.set("db", database); u.searchParams.set("mfn", String(mfn)); window.history.replaceState(null, "", u.toString()); } catch { /* ignore */ }
-  309 |       window.scrollTo(0, 0);
-  310 |       // Просмотр записи влияет на историю и подборку «Для вас» (#133/#134) — обновим тик.
-  311 |       setForYouRefresh((n) => n + 1);
-  312 |     }
-  313 |   }
-  314 |   function closeRecord() {
-  315 |     setRec(null); setShareOpen(false);
-  316 |     try { const u = new URL(window.location.href); u.searchParams.delete("db"); u.searchParams.delete("mfn"); window.history.replaceState(null, "", u.pathname + (u.search ? u.search : "")); } catch { /* ignore */ }
-  317 |   }
-  318 |   function permalink(): string {
-  319 |     try { const u = new URL(window.location.href); u.search = ""; u.searchParams.set("db", rec ? rec.db : db); if (rec) u.searchParams.set("mfn", String(rec.mfn)); return u.toString(); } catch { return ""; }
+  302 |   function toggleFacet(f: Facet, v: { value: string; label: string }) {
+  303 |     const exists = activeFacets.find((a) => a.field === f.field && a.value === v.value);
+  304 |     if (exists) applyFacets(activeFacets.filter((a) => !(a.field === f.field && a.value === v.value)));
+  305 |     else applyFacets([...activeFacets, { field: f.field, prefix: f.prefix, groupLabel: f.label, value: v.value, valueLabel: v.label }]);
+  306 |   }
+  307 |   function removeFacet(a: ActiveFacet) {
+  308 |     applyFacets(activeFacets.filter((x) => !(x.field === a.field && x.value === a.value)));
+  309 |   }
+  310 |   function buildAdvExpr() {
+  311 |     const parts = advRows.map((r) => {
+  312 |       let v = r.value.trim().replace(/"/g, "");
+  313 |       if (!v) return "";
+  314 |       if ((r.field === "A" || r.field === "T") && !v.endsWith("$")) v += "$";
+  315 |       return `"${r.field}=${v}"`;
+  316 |     }).filter(Boolean);
+  317 |     if (!parts.length) return null;
+  318 |     if (parts.length === 1) return parts[0];
+  319 |     return "(" + parts.join(advCombine === "or" ? " + " : " * ") + ")";
 ```
 
 <!-- ─── страница 568 ─── -->
 
 ```tsx
   320 |   }
-  321 |   async function copyPermalink() {
-  322 |     const link = permalink();
-  323 |     try {
-  324 |       if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(link);
-  325 |       else { const ta = document.createElement("textarea"); ta.value = link; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
-  326 |       toast({ variant: "success", title: "Ссылка скопирована", message: "Постоянная ссылка на запись в буфере обмена." });
-  327 |     } catch { toast({ variant: "info", title: "Скопируйте ссылку", message: link }); }
-  328 |   }
-  329 |   async function order(mfn: number) {
-  330 |     const r = await api.order(db, mfn);
-  331 |     if (r.status === 200) toast({ variant: "success", title: "Заказ принят", message: "Экземпляр поставлен в очередь выдачи." });
-  332 |     else if (r.status === 401 || r.status === 403) { toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." }); setLoginOpen(true); }
-  333 |     else toast({ variant: "error", title: "Не удалось заказать", message: "Повторите попытку." });
-  334 |   }
-  335 |   // Бронирование (#222): POST /api/hold → показываем итог (готов / позиция в очереди).
-  336 |   // 404/501 — модуль брони ещё не подключён → мягкий тост, страница не падает.
-  337 |   async function hold(mfn: number, database: string = db) {
-  338 |     const r = await api.hold(database, mfn);
-  339 |     if (r.status === 200 && r.json?.ok && r.json.data) {
-  340 |       const d = r.json.data;
-  341 |       if (d.status === "ready") toast({ variant: "success", title: "Забронировано", message: "Издание готово к получению." });
-  342 |       else toast({ variant: "success", title: "Вы в очереди", message: d.position ? "Ваша позиция: " + d.position + "-я." : "Бронь поставлена в очередь." });
-  343 |       setHoldsRefresh((n) => n + 1);
-  344 |     } else if (r.status === 401 || r.status === 403) {
-  345 |       toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." }); setLoginOpen(true);
-  346 |     } else if (r.status === 404 || r.status === 501) {
-  347 |       toast({ variant: "info", title: "Бронирование недоступно", message: "Модуль бронирования ещё подключается." });
-  348 |     } else {
-  349 |       toast({ variant: "error", title: "Не удалось забронировать", message: "Повторите попытку позже." });
-  350 |     }
-  351 |   }
-  352 |   async function loadCabinet() {
-  353 |     const r = await api.cabinet();
-  354 |     if (r.json?.ok && r.json.data) {
-  355 |       setCab(r.json.data); setView("cabinet"); setRec(null);
-  356 |       // «06» — тёмная витрина: показываем кабинет в тёмной теме (если не a11y и
-  357 |       // пользователь сам ещё не выбрал светлую в этой сессии). Тумблер остаётся рабочим.
-  358 |       if (!a11y && !cabinetSeen) { setDarkMode(true); setCabinetSeen(true); }
-  359 |     } else toast({ variant: "info", title: "Кабинет недоступен", message: "Войдите по читательскому билету." });
-  360 |   }
-  361 |   async function doLogin(ticket: string) {
-  362 |     const r = await api.loginReader(ticket);
-  363 |     if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); loadCabinet(); }
-  364 |     else toast({ variant: "warning", title: "Билет не найден", message: "Проверьте номер читательского билета." });
+  321 |   function runAdvanced() {
+  322 |     const expr = buildAdvExpr();
+  323 |     if (!expr) { toast({ variant: "warning", title: "Заполните условия", message: "Введите хотя бы одно значение." }); return; }
+  324 |     runExpr(db, expr, 1, true);
+  325 |   }
+  326 |   function runExpert() {
+  327 |     const expr = expertExpr.trim();
+  328 |     if (!expr) { toast({ variant: "warning", title: "Введите выражение", message: "Запрос поиска не должен быть пустым." }); return; }
+  329 |     runExpr(db, expr, 1, true);
+  330 |   }
+  331 |   // --- Корзина (отбор) -----------------------------------------------------
+  332 |   function inBasket(mfn: number) { return basket.some((b) => b.mfn === mfn); }
+  333 |   function toggleBasket(it: ResultItem) {
+  334 |     setBasket((b) => b.some((x) => x.mfn === it.mfn) ? b.filter((x) => x.mfn !== it.mfn) : [...b, it]);
+  335 |   }
+  336 |   function removeFromBasket(mfn: number) { setBasket((b) => b.filter((x) => x.mfn !== mfn)); }
+  337 |   // Pagination that preserves the active base query + facet refinements.
+  338 |   function gotoPage(p: number) {
+  339 |     if (baseExpr != null) runExpr(db, composeExpr(baseExpr, activeFacets), p);
+  340 |     else if (mode === "advanced") { const ex = buildAdvExpr(); if (ex) runExpr(db, ex, p); }
+  341 |     else runSearch(db, prefix, q, p);
+  342 |   }
+  343 |   // Размер страницы (G19): меняем и перезапускаем текущий запрос с 1-й страницы.
+  344 |   function changePageSize(size: number) {
+  345 |     setPageSize(size);
+  346 |     if (baseExpr != null) { setLoading(true); setRec(null); setPage(1); api.searchExpr(db, composeExpr(baseExpr, activeFacets), 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); }
+  347 |     else if (mode === "advanced") { const ex = buildAdvExpr(); if (ex) { setLoading(true); setPage(1); api.searchExpr(db, ex, 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); } }
+  348 |     else { setLoading(true); setPage(1); api.search(db, prefix, q, 1, size).then((r) => { if (r.json?.ok && r.json.data) { setItems(r.json.data.items); setTotal(r.json.data.total); } setLoading(false); }); }
+  349 |   }
+  350 | 
+  351 |   async function openRecord(mfn: number, database: string = db) {
+  352 |     setLoading(true); const r = await api.record(database, mfn); setLoading(false);
+  353 |     if (r.json?.ok && r.json.data) {
+  354 |       setRec(r.json.data); setRecTab(0); setShareOpen(false);
+  355 |       // Постоянная ссылка: ?db=<db>&mfn=<mfn> в адресной строке без перезагрузки.
+  356 |       try { const u = new URL(window.location.href); u.searchParams.set("db", database); u.searchParams.set("mfn", String(mfn)); window.history.replaceState(null, "", u.toString()); } catch { /* ignore */ }
+  357 |       window.scrollTo(0, 0);
+  358 |       // Просмотр записи влияет на историю и подборку «Для вас» (#133/#134) — обновим тик.
+  359 |       setForYouRefresh((n) => n + 1);
+  360 |     }
+  361 |   }
+  362 |   function closeRecord() {
+  363 |     setRec(null); setShareOpen(false);
+  364 |     try { const u = new URL(window.location.href); u.searchParams.delete("db"); u.searchParams.delete("mfn"); window.history.replaceState(null, "", u.pathname + (u.search ? u.search : "")); } catch { /* ignore */ }
   365 |   }
-  366 |   function switchContext(c: "reader" | "staff") { if (c === "staff" && !staff) { setStaffLoginOpen(true); return; } setContext(c); setRec(null); }
-  367 |   async function doStaffLogin(login: string, password: string) {
-  368 |     const r = await api.loginStaff(login, password);
-  369 |     if (r.status === 200 && r.json?.ok && r.json.data) {
-  370 |       setStaff({ name: r.json.data.name, login: r.json.data.login, grants: r.json.data.grants || [] });
-  371 |       setContext("staff"); setStaffRoute("desktop"); setStaffLoginOpen(false);
-  372 |       toast({ variant: "success", title: "Вход выполнен", message: r.json.data.name || login });
-  373 |     } else toast({ variant: "warning", title: "Неверный логин или пароль", message: "Проверьте учётные данные." });
-  374 |   }
+  366 |   function permalink(): string {
+  367 |     try { const u = new URL(window.location.href); u.search = ""; u.searchParams.set("db", rec ? rec.db : db); if (rec) u.searchParams.set("mfn", String(rec.mfn)); return u.toString(); } catch { return ""; }
+  368 |   }
+  369 |   async function copyPermalink() {
+  370 |     const link = permalink();
+  371 |     try {
+  372 |       if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(link);
+  373 |       else { const ta = document.createElement("textarea"); ta.value = link; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); }
+  374 |       toast({ variant: "success", title: "Ссылка скопирована", message: "Постоянная ссылка на запись в буфере обмена." });
 ```
 
 <!-- ─── страница 569 ─── -->
 
 ```tsx
-  375 | 
-  376 |   // Skin: a11y high-contrast wins; otherwise Biblio Style A ("working" alias the
-  377 |   // bridge maps to Style A). data-mode carries light/dark for the Biblio palette.
-  378 |   const rootTheme = a11y ? "a11y" : "working";
-  379 |   const rootMode = !a11y && darkMode ? "dark" : undefined;
-  380 |   const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  381 |   const DB = db;
-  382 |   // Человекочитаемое имя текущей базы для пилюли в шапке (G18).
-  383 |   const dbName = (databases.find((d) => d.code === db)?.name) || db;
-  384 |   const hbtn = (active: boolean): React.CSSProperties => ({ background: active ? "rgba(255,255,255,.25)" : "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" });
-  385 |   const selStyle: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", maxWidth: 240 };
-  386 |   const modeBtn = (active: boolean): React.CSSProperties => ({ background: active ? "var(--accent)" : "transparent", color: active ? "var(--text-on-accent, #fff)" : "var(--text-body)", border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: "var(--text-sm)" });
-  387 |   const iconBtn: React.CSSProperties = { padding: "7px 11px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", cursor: "pointer" };
-  388 | 
-  389 |   if (!ready) return <div style={{ padding: 40, color: "var(--text-subtle)" }}>Загрузка каталога…</div>;
-  390 | 
-  391 |   return (
-  392 |     <div data-theme={rootTheme} data-mode={rootMode} style={{ minHeight: "100vh", background: "var(--bg-page)", color: "var(--text-body)", display: "flex", flexDirection: "column" }}>
-  393 |       <header style={{ background: "var(--accent)", color: "var(--text-on-accent, #fff)", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
-  394 |         <button onClick={goHome} title="На главную" aria-label="На главную"
-  395 |           style={{ display: "inline-flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
-  396 |           <span style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,.18)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="book" size={19} /></span>
-  397 |           <b style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-lg)", letterSpacing: "-.01em" }}>Читательский портал</b>
-  398 |         </button>
-  399 |         {/* Пилюля текущей базы (G18) — контекст «где я ищу». */}
-  400 |         {context === "reader" && !home && (
-  401 |           <span title={"Текущая база поиска: " + dbName} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.34)", borderRadius: 999, padding: "3px 11px", fontSize: "var(--text-xs)", fontWeight: 600 }}>
-  402 |             <Icon name="layers" size={13} /> {dbName}
-  403 |           </span>
-  404 |         )}
-  405 |         <span style={{ opacity: .85, fontSize: "var(--text-xs)" }}>ИРБИС {server?.version}{home ? " · база " + DB : ""}</span>
-  406 |         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-  407 |           <div style={{ display: "flex", gap: 4, marginRight: 6, padding: 2, background: "rgba(255,255,255,.12)", borderRadius: 10 }}>
-  408 |             <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>Читатель</button>
-  409 |             <button onClick={() => switchContext("staff")} style={hbtn(context === "staff")}>Сотрудник</button>
-  410 |           </div>
-  411 |           <button onClick={() => setDarkMode((v) => !v)} title="Светлая / тёмная тема" style={hbtn(darkMode && !a11y)}>{darkMode ? "Светлая" : "Тёмная"}</button>
-  412 |           <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
-  413 |           {/* Почтовый ящик уведомлений (#222) — только для вошедшего читателя. */}
-  414 |           {context === "reader" && account.loggedIn && <NotificationInbox />}
-  415 |           {context === "reader" && account.loggedIn && <button onClick={loadCabinet} style={hbtn(view === "cabinet")}>Кабинет</button>}
-  416 |           {context === "reader" && <button onClick={() => account.loggedIn ? (setAccount({ loggedIn: false }), setView("search"), setCab(null)) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
-  417 |           {context === "staff" && staff && <button onClick={() => { setStaff(null); setContext("reader"); }} style={hbtn(false)}>Выйти ({staff.login})</button>}
-  418 |         </div>
-  419 |       </header>
-  420 | 
-  421 |       <main style={{ flex: 1, maxWidth: 1100, width: "100%", margin: "0 auto", padding: 20, boxSizing: "border-box" }}>
-  422 |         {context === "staff" ? (
-  423 |           <StaffArea staff={staff!} route={staffRoute} setRoute={setStaffRoute} toast={toast} />
-  424 |         ) : view === "cabinet" ? (
-  425 |           <CabinetScreen cab={cab} ticket={account.ticket} toast={toast} holdsRefresh={holdsRefresh}
-  426 |             onOpenRecord={(database, mfn) => { setView("search"); setHome(false); openRecord(mfn, database); }}
-  427 |             onRunSearch={(s) => runSavedSearch(s)} onErased={() => { setHoldsRefresh((n) => n + 1); loadCabinet(); }}
-  428 |             onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
-  429 |         ) : home && !rec ? (
+  375 |     } catch { toast({ variant: "info", title: "Скопируйте ссылку", message: link }); }
+  376 |   }
+  377 |   async function order(mfn: number) {
+  378 |     const r = await api.order(db, mfn);
+  379 |     if (r.status === 200) toast({ variant: "success", title: "Заказ принят", message: "Экземпляр поставлен в очередь выдачи." });
+  380 |     else if (r.status === 401 || r.status === 403) { toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." }); setLoginOpen(true); }
+  381 |     else toast({ variant: "error", title: "Не удалось заказать", message: "Повторите попытку." });
+  382 |   }
+  383 |   // Бронирование (#222): POST /api/hold → показываем итог (готов / позиция в очереди).
+  384 |   // 404/501 — модуль брони ещё не подключён → мягкий тост, страница не падает.
+  385 |   async function hold(mfn: number, database: string = db) {
+  386 |     const r = await api.hold(database, mfn);
+  387 |     if (r.status === 200 && r.json?.ok && r.json.data) {
+  388 |       const d = r.json.data;
+  389 |       if (d.status === "ready") toast({ variant: "success", title: "Забронировано", message: "Издание готово к получению." });
+  390 |       else toast({ variant: "success", title: "Вы в очереди", message: d.position ? "Ваша позиция: " + d.position + "-я." : "Бронь поставлена в очередь." });
+  391 |       setHoldsRefresh((n) => n + 1);
+  392 |     } else if (r.status === 401 || r.status === 403) {
+  393 |       toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." }); setLoginOpen(true);
+  394 |     } else if (r.status === 404 || r.status === 501) {
+  395 |       toast({ variant: "info", title: "Бронирование недоступно", message: "Модуль бронирования ещё подключается." });
+  396 |     } else {
+  397 |       toast({ variant: "error", title: "Не удалось забронировать", message: "Повторите попытку позже." });
+  398 |     }
+  399 |   }
+  400 |   async function loadCabinet() {
+  401 |     const r = await api.cabinet();
+  402 |     if (r.json?.ok && r.json.data) {
+  403 |       setCab(r.json.data); setView("cabinet"); setRec(null);
+  404 |       // «06» — тёмная витрина: показываем кабинет в тёмной теме (если не a11y и
+  405 |       // пользователь сам ещё не выбрал светлую в этой сессии). Тумблер остаётся рабочим.
+  406 |       if (!a11y && !cabinetSeen) { setDarkMode(true); setCabinetSeen(true); }
+  407 |     } else toast({ variant: "info", title: "Кабинет недоступен", message: "Войдите по читательскому билету." });
+  408 |   }
+  409 |   async function doLogin(ticket: string, password: string) {
+  410 |     const r = await api.loginReader(ticket, password);
+  411 |     if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); loadCabinet(); }
+  412 |     else toast({ variant: "warning", title: "Вход не выполнен", message: "Проверьте номер билета и пароль." });
+  413 |   }
+  414 |   function switchContext(c: "reader" | "staff") { if (c === "staff" && !staff) { setStaffLoginOpen(true); return; } setContext(c); setRec(null); }
+  415 |   async function doStaffLogin(login: string, password: string) {
+  416 |     const r = await api.loginStaff(login, password);
+  417 |     if (r.status === 200 && r.json?.ok && r.json.data) {
+  418 |       setStaff({ name: r.json.data.name, login: r.json.data.login, grants: r.json.data.grants || [] });
+  419 |       setContext("staff"); setStaffRoute("desktop"); setStaffLoginOpen(false);
+  420 |       toast({ variant: "success", title: "Вход выполнен", message: r.json.data.name || login });
+  421 |     } else toast({ variant: "warning", title: "Неверный логин или пароль", message: "Проверьте учётные данные." });
+  422 |   }
+  423 | 
+  424 |   // Skin: a11y high-contrast wins; otherwise Biblio Style A ("working" alias the
+  425 |   // bridge maps to Style A). data-mode carries light/dark for the Biblio palette.
+  426 |   const rootTheme = a11y ? "a11y" : "working";
+  427 |   const rootMode = !a11y && darkMode ? "dark" : undefined;
+  428 |   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  429 |   const DB = db;
 ```
 
 <!-- ─── страница 570 ─── -->
 
 ```tsx
-  430 |           /* Discovery façade (G1-G3, G17) — лендинг до первого поиска. */
-  431 |           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-  432 |             <HomeScreen
-  433 |               databases={databases} db={db}
-  434 |               onPickDb={(code) => setDb(code)}
-  435 |               onSearch={(px, query) => goSearch(px, query)}
-  436 |               onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }}
-  437 |             />
-  438 |             {/* «Для вас» (#133) — персональная подборка; скрыта, если эндпойнт пуст/404. */}
-  439 |             <ForYouRecommendations refreshKey={forYouRefresh}
-  440 |               onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }} />
-  441 |           </div>
-  442 |         ) : (
-  443 |         <>
-  444 |         {!rec && (
-  445 |           <>
-  446 |             <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
-  447 |               {databases.filter((d) => d.public).length > 1 && (
-  448 |                 <select value={db} onChange={(e) => { setDb(e.target.value); if (mode === "simple") runSearch(e.target.value, prefix, q, 1); }} title="База поиска" style={selStyle}>
-  449 |                   {databases.filter((d) => d.public).map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
-  450 |                 </select>
-  451 |               )}
-  452 |               <div role="tablist" aria-label="Режим поиска" style={{ display: "flex", gap: 4, padding: 2, background: "var(--surface-sunken,#eee)", borderRadius: 10 }}>
-  453 |                 <button role="tab" aria-selected={mode === "simple"} onClick={() => setMode("simple")} style={modeBtn(mode === "simple")}>Простой</button>
-  454 |                 <button role="tab" aria-selected={mode === "advanced"} onClick={() => setMode("advanced")} style={modeBtn(mode === "advanced")}>Расширенный</button>
-  455 |                 <button role="tab" aria-selected={mode === "expert"} onClick={() => setMode("expert")} style={modeBtn(mode === "expert")}>Экспертный</button>
-  456 |               </div>
-  457 |               <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-  458 |                 {/* Сохранённые запросы (#133): меню повтора + сохранение текущего поиска. */}
-  459 |                 <SavedSearchMenu toast={toast} onRun={runSavedSearch} refreshKey={savedRefresh} />
-  460 |                 {(total > 0 || baseExpr != null) && (
-  461 |                   <SaveSearchButton
-  462 |                     db={db}
-  463 |                     prefix={mode === "simple" ? prefix : ""}
-  464 |                     query={mode === "simple" ? q : (baseExpr || expertExpr)}
-  465 |                     defaultName={mode === "simple" ? q : undefined}
-  466 |                     toast={toast} onSaved={() => setSavedRefresh((n) => n + 1)} />
-  467 |                 )}
-  468 |                 <button onClick={() => setBasketOpen(true)} title="Корзина отбора"
-  469 |                   style={{ display: "inline-flex", alignItems: "center", gap: 6, background: basket.length ? "var(--accent)" : "transparent", color: basket.length ? "#fff" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
-  470 |                   <Icon name="bookmark" size={16} /> Корзина{basket.length ? " · " + basket.length : ""}
-  471 |                 </button>
-  472 |               </div>
-  473 |             </div>
-  474 |             {mode === "simple" ? (
-  475 |               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-  476 |                 <select value={prefix} onChange={(e) => setPrefix(e.target.value)} style={selStyle}>
-  477 |                   {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
-  478 |                 </select>
-  479 |                 <div style={{ flex: 1, minWidth: 240 }}>
-  480 |                   <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(db, prefix, v, 1)} suggestions={sug}
-  481 |                     onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(db, prefix, term, 1); }}
-  482 |                     placeholder="Поиск по каталогу" buttonLabel="Найти" />
-  483 |                 </div>
-  484 |               </div>
+  430 |   // Человекочитаемое имя текущей базы для пилюли в шапке (G18).
+  431 |   const dbName = (databases.find((d) => d.code === db)?.name) || db;
+  432 |   const hbtn = (active: boolean): React.CSSProperties => ({ background: active ? "rgba(255,255,255,.25)" : "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" });
+  433 |   const selStyle: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", maxWidth: 240 };
+  434 |   const modeBtn = (active: boolean): React.CSSProperties => ({ background: active ? "var(--accent)" : "transparent", color: active ? "var(--text-on-accent, #fff)" : "var(--text-body)", border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: "var(--text-sm)" });
+  435 |   const iconBtn: React.CSSProperties = { padding: "7px 11px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", cursor: "pointer" };
+  436 | 
+  437 |   if (!ready) return <div style={{ padding: 40, color: "var(--text-subtle)" }}>Загрузка каталога…</div>;
+  438 | 
+  439 |   return (
+  440 |     <div data-theme={rootTheme} data-mode={rootMode} style={{ minHeight: "100vh", background: "var(--bg-page)", color: "var(--text-body)", display: "flex", flexDirection: "column" }}>
+  441 |       <header style={{ background: "var(--accent)", color: "var(--text-on-accent, #fff)", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+  442 |         <button onClick={goHome} title="На главную" aria-label="На главную"
+  443 |           style={{ display: "inline-flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
+  444 |           <span style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,.18)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="book" size={19} /></span>
+  445 |           <b style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-lg)", letterSpacing: "-.01em" }}>Читательский портал</b>
+  446 |         </button>
+  447 |         {/* Пилюля текущей базы (G18) — контекст «где я ищу». */}
+  448 |         {context === "reader" && !home && (
+  449 |           <span title={"Текущая база поиска: " + dbName} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.34)", borderRadius: 999, padding: "3px 11px", fontSize: "var(--text-xs)", fontWeight: 600 }}>
+  450 |             <Icon name="layers" size={13} /> {dbName}
+  451 |           </span>
+  452 |         )}
+  453 |         <span style={{ opacity: .85, fontSize: "var(--text-xs)" }}>ИРБИС {server?.version}{home ? " · база " + DB : ""}</span>
+  454 |         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+  455 |           <div style={{ display: "flex", gap: 4, marginRight: 6, padding: 2, background: "rgba(255,255,255,.12)", borderRadius: 10 }}>
+  456 |             <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>Читатель</button>
+  457 |             <button onClick={() => switchContext("staff")} style={hbtn(context === "staff")}>Сотрудник</button>
+  458 |           </div>
+  459 |           <button onClick={() => setDarkMode((v) => !v)} title="Светлая / тёмная тема" style={hbtn(darkMode && !a11y)}>{darkMode ? "Светлая" : "Тёмная"}</button>
+  460 |           <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
+  461 |           {/* Почтовый ящик уведомлений (#222) — только для вошедшего читателя. */}
+  462 |           {context === "reader" && account.loggedIn && <NotificationInbox />}
+  463 |           {context === "reader" && account.loggedIn && <button onClick={loadCabinet} style={hbtn(view === "cabinet")}>Кабинет</button>}
+  464 |           {context === "reader" && <button onClick={() => account.loggedIn ? (setAccount({ loggedIn: false }), setView("search"), setCab(null)) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
+  465 |           {context === "staff" && staff && <button onClick={() => { setStaff(null); setContext("reader"); }} style={hbtn(false)}>Выйти ({staff.login})</button>}
+  466 |         </div>
+  467 |       </header>
+  468 | 
+  469 |       <main style={{ flex: 1, maxWidth: 1100, width: "100%", margin: "0 auto", padding: 20, boxSizing: "border-box" }}>
+  470 |         {context === "staff" ? (
+  471 |           <StaffArea staff={staff!} route={staffRoute} setRoute={setStaffRoute} toast={toast} />
+  472 |         ) : view === "cabinet" ? (
+  473 |           <CabinetScreen cab={cab} ticket={account.ticket} toast={toast} holdsRefresh={holdsRefresh}
+  474 |             onOpenRecord={(database, mfn) => { setView("search"); setHome(false); openRecord(mfn, database); }}
+  475 |             onRunSearch={(s) => runSavedSearch(s)} onErased={() => { setHoldsRefresh((n) => n + 1); loadCabinet(); }}
+  476 |             onBack={() => setView("search")} onLogout={() => { setAccount({ loggedIn: false }); setView("search"); setCab(null); }} />
+  477 |         ) : home && !rec ? (
+  478 |           /* Discovery façade (G1-G3, G17) — лендинг до первого поиска. */
+  479 |           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+  480 |             <HomeScreen
+  481 |               databases={databases} db={db}
+  482 |               onPickDb={(code) => setDb(code)}
+  483 |               onSearch={(px, query) => goSearch(px, query)}
+  484 |               onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }}
 ```
 
 <!-- ─── страница 571 ─── -->
 
 ```tsx
-  485 |             ) : mode === "expert" ? (
-  486 |               <div style={{ marginBottom: 14, background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 12, padding: 14 }}>
-  487 |                 <label htmlFor="expert-expr" style={{ display: "block", fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6 }}>Поисковое выражение ИРБИС</label>
-  488 |                 <textarea id="expert-expr" value={expertExpr} onChange={(e) => setExpertExpr(e.target.value)}
-  489 |                   onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runExpert(); }}
-  490 |                   rows={3} spellCheck={false} placeholder={'Например: "K=Android" + "K=PHP"'}
-  491 |                   style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)", background: "var(--surface-card,#fff)", color: "var(--text-body)", resize: "vertical" }} />
-  492 |                 <div style={{ marginTop: 8, fontSize: "var(--text-xs)", color: "var(--text-subtle)", lineHeight: 1.6 }}>
-  493 |                   Операторы: <b>*</b> И · <b>+</b> ИЛИ · <b>^</b> НЕ · <b>$</b> усечение · префиксы <code style={{ fontFamily: "var(--font-mono)" }}>K=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>A=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>T=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>V=</code>. Термин в кавычках, напр. <code style={{ fontFamily: "var(--font-mono)" }}>"K=Android"</code>.
-  494 |                 </div>
-  495 |                 <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-  496 |                   <Button variant="ghost" onClick={() => setExpertExpr("")}>Очистить</Button>
-  497 |                   <Button iconLeft="search" onClick={runExpert}>Найти</Button>
-  498 |                 </div>
-  499 |               </div>
-  500 |             ) : (
-  501 |               <div style={{ marginBottom: 14, background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 12, padding: 14 }}>
-  502 |                 {advRows.map((r, i) => (
-  503 |                   <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-  504 |                     {i > 0
-  505 |                       ? <select value={advCombine} onChange={(e) => setAdvCombine(e.target.value as any)} style={{ ...selStyle, width: 86 }}><option value="and">И</option><option value="or">ИЛИ</option></select>
-  506 |                       : <span style={{ width: 86, fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>где</span>}
-  507 |                     <select value={r.field} onChange={(e) => setAdvRows((rows) => rows.map((x, j) => j === i ? { ...x, field: e.target.value } : x))} style={selStyle}>
-  508 |                       {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
-  509 |                     </select>
-  510 |                     <input value={r.value} onChange={(e) => setAdvRows((rows) => rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
-  511 |                       onKeyDown={(e) => { if (e.key === "Enter") runAdvanced(); }} placeholder="значение" style={{ flex: 1, minWidth: 160, padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)" }} />
-  512 |                     {advRows.length > 1 && <button onClick={() => setAdvRows((rows) => rows.filter((_, j) => j !== i))} style={iconBtn} title="Убрать условие">×</button>}
-  513 |                   </div>
-  514 |                 ))}
-  515 |                 <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
-  516 |                   <button onClick={() => setAdvRows((rows) => [...rows, { field: "K", value: "" }])} style={iconBtn}>+ условие</button>
-  517 |                   <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-  518 |                     <Button variant="ghost" onClick={() => setAdvRows([{ field: "A", value: "" }, { field: "T", value: "" }])}>Сброс</Button>
-  519 |                     <Button iconLeft="search" onClick={runAdvanced}>Найти</Button>
-  520 |                   </div>
-  521 |                 </div>
-  522 |               </div>
-  523 |             )}
-  524 |             {/* Хлебные крошки + контекст запроса (что и где искали + сколько найдено). */}
-  525 |             <SearchBreadcrumb db={dbName} mode={mode} prefix={prefix} prefixes={PREFIXES}
-  526 |               query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome} />
-  527 |             {loading && !items.length ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
-  528 |               total === 0 && !activeFacets.length ? <EmptyState icon="search" title="Ничего не найдено" description="Измените запрос или область поиска." /> :
-  529 |                 <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
-  530 |                   <div style={{ flex: "1 1 200px", minWidth: 180, maxWidth: 260, order: 1 }} className="irb-facet-rail">
-  531 |                     <FacetRail facets={facets} active={activeFacets} onToggle={toggleFacet} />
-  532 |                   </div>
-  533 |                   <div style={{ flex: "100 1 380px", minWidth: 280, order: 2 }}>
-  534 |                     {activeFacets.length > 0 && (
-  535 |                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "0 0 12px" }}>
-  536 |                         <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Фильтры:</span>
-  537 |                         {activeFacets.map((a) => (
-  538 |                           <FilterChip key={a.field + a.value} label={a.valueLabel} group={a.groupLabel} onRemove={() => removeFacet(a)} />
-  539 |                         ))}
+  485 |             />
+  486 |             {/* «Для вас» (#133) — персональная подборка; скрыта, если эндпойнт пуст/404. */}
+  487 |             <ForYouRecommendations refreshKey={forYouRefresh}
+  488 |               onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }} />
+  489 |           </div>
+  490 |         ) : (
+  491 |         <>
+  492 |         {!rec && (
+  493 |           <>
+  494 |             <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+  495 |               {databases.filter((d) => d.public).length > 1 && (
+  496 |                 <select value={allDbs ? ALL_DBS : db}
+  497 |                   onChange={(e) => {
+  498 |                     const val = e.target.value;
+  499 |                     if (val === ALL_DBS) { setAllDbs(true); if (mode === "simple" && q.trim()) runSearchAll(prefix, q); }
+  500 |                     else { setAllDbs(false); setDb(val); if (mode === "simple") runSearch(val, prefix, q, 1); }
+  501 |                   }} title="База поиска" style={selStyle}>
+  502 |                   {/* Мульти-БД (#3): поиск сразу по всем публичным базам. */}
+  503 |                   <option value={ALL_DBS}>Во всех базах</option>
+  504 |                   {databases.filter((d) => d.public).map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
+  505 |                 </select>
+  506 |               )}
+  507 |               <div role="tablist" aria-label="Режим поиска" style={{ display: "flex", gap: 4, padding: 2, background: "var(--surface-sunken,#eee)", borderRadius: 10 }}>
+  508 |                 <button role="tab" aria-selected={mode === "simple"} onClick={() => setMode("simple")} style={modeBtn(mode === "simple")}>Простой</button>
+  509 |                 <button role="tab" aria-selected={mode === "advanced"} onClick={() => setMode("advanced")} style={modeBtn(mode === "advanced")}>Расширенный</button>
+  510 |                 <button role="tab" aria-selected={mode === "expert"} onClick={() => setMode("expert")} style={modeBtn(mode === "expert")}>Экспертный</button>
+  511 |               </div>
+  512 |               <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+  513 |                 {/* Сохранённые запросы (#133): меню повтора + сохранение текущего поиска. */}
+  514 |                 <SavedSearchMenu toast={toast} onRun={runSavedSearch} refreshKey={savedRefresh} />
+  515 |                 {(total > 0 || baseExpr != null) && (
+  516 |                   <SaveSearchButton
+  517 |                     db={db}
+  518 |                     prefix={mode === "simple" ? prefix : ""}
+  519 |                     query={mode === "simple" ? q : (baseExpr || expertExpr)}
+  520 |                     defaultName={mode === "simple" ? q : undefined}
+  521 |                     toast={toast} onSaved={() => setSavedRefresh((n) => n + 1)} />
+  522 |                 )}
+  523 |                 <button onClick={() => setBasketOpen(true)} title="Корзина отбора"
+  524 |                   style={{ display: "inline-flex", alignItems: "center", gap: 6, background: basket.length ? "var(--accent)" : "transparent", color: basket.length ? "#fff" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+  525 |                   <Icon name="bookmark" size={16} /> Корзина{basket.length ? " · " + basket.length : ""}
+  526 |                 </button>
+  527 |               </div>
+  528 |             </div>
+  529 |             {mode === "simple" ? (
+  530 |               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+  531 |                 <select value={prefix} onChange={(e) => setPrefix(e.target.value)} style={selStyle}>
+  532 |                   {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
+  533 |                 </select>
+  534 |                 <div style={{ flex: 1, minWidth: 240 }}>
+  535 |                   <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(allDbs ? ALL_DBS : db, prefix, v, 1)} suggestions={sug}
+  536 |                     onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(allDbs ? ALL_DBS : db, prefix, term, 1); }}
+  537 |                     placeholder="Поиск по каталогу" buttonLabel="Найти" />
+  538 |                 </div>
+  539 |               </div>
 ```
 
 <!-- ─── страница 572 ─── -->
 
 ```tsx
-  540 |                         <button onClick={() => applyFacets([])} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "var(--text-xs)" }}>Сбросить все</button>
-  541 |                       </div>
-  542 |                     )}
-  543 |                     {/* Мульти-лейаут (#222): профиль базы задаёт вид. Для list/gallery-баз
-  544 |                         вид следует тумблеру (viewMode); для calendar/archive — профилю. */}
-  545 |                     {(() => {
-  546 |                       const prof = layoutProfile(db);
-  547 |                       const togglable = layoutAllows(db, "list") && layoutAllows(db, "gallery");
-  548 |                       const effLayout: LayoutKind = togglable ? viewMode : prof.views[0];
-  549 |                       const sorted = sortItems(items, sort);
-  550 |                       return (
-  551 |                         <>
-  552 |                           <ResultsToolbar total={total} page={page} pageCount={pageCount}
-  553 |                             view={viewMode} onView={setViewMode} sort={sort} onSort={setSort} showToggle={togglable} />
-  554 |                           {total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Снимите часть фильтров и повторите поиск." /> : <>
-  555 |                             {effLayout === "gallery" ? (
-  556 |                               <GalleryGrid items={sorted} db={db}
-  557 |                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)}
-  558 |                                 onHold={(it) => hold(it.mfn, db)}
-  559 |                                 renderShelf={account.loggedIn ? (it) => <ShelfMenu db={db} mfn={it.mfn} title={it.title} toast={toast} compact /> : undefined} />
-  560 |                             ) : effLayout === "calendar" ? (
-  561 |                               <CalendarGrid items={sorted}
-  562 |                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
-  563 |                             ) : effLayout === "archive" ? (
-  564 |                               <ArchiveList items={sorted} startIndex={(page - 1) * pageSize}
-  565 |                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
-  566 |                             ) : (
-  567 |                               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-  568 |                                 {sorted.map((it) => (
-  569 |                                   <div key={it.mfn} style={{ position: "relative" }}>
-  570 |                                     <ResultCard item={it} dbTag={dbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn)} />
-  571 |                                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0 2px 0", paddingLeft: 4 }}>
-  572 |                                       <button type="button" onClick={() => hold(it.mfn, db)} title="Забронировать"
-  573 |                                         style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" }}>
-  574 |                                         <Icon name="clock" size={14} /> Забронировать
-  575 |                                       </button>
-  576 |                                       {account.loggedIn && <ShelfMenu db={db} mfn={it.mfn} title={it.title} toast={toast} />}
-  577 |                                     </div>
-  578 |                                   </div>
-  579 |                                 ))}
-  580 |                               </div>
-  581 |                             )}
-  582 |                             <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} pageSize={pageSize} onPageSize={changePageSize} /></div>
-  583 |                           </>}
-  584 |                         </>
-  585 |                       );
-  586 |                     })()}
-  587 |                   </div>
-  588 |                 </div>}
-  589 |           </>
-  590 |         )}
-  591 | 
-  592 |         {rec && (
-  593 |           <RecordCard
-  594 |             rec={rec} db={DB} tab={recTab} setTab={setRecTab}
+  540 |             ) : mode === "expert" ? (
+  541 |               <div style={{ marginBottom: 14, background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 12, padding: 14 }}>
+  542 |                 <label htmlFor="expert-expr" style={{ display: "block", fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6 }}>Поисковое выражение ИРБИС</label>
+  543 |                 <textarea id="expert-expr" value={expertExpr} onChange={(e) => setExpertExpr(e.target.value)}
+  544 |                   onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runExpert(); }}
+  545 |                   rows={3} spellCheck={false} placeholder={'Например: "K=Android" + "K=PHP"'}
+  546 |                   style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)", background: "var(--surface-card,#fff)", color: "var(--text-body)", resize: "vertical" }} />
+  547 |                 <div style={{ marginTop: 8, fontSize: "var(--text-xs)", color: "var(--text-subtle)", lineHeight: 1.6 }}>
+  548 |                   Операторы: <b>*</b> И · <b>+</b> ИЛИ · <b>^</b> НЕ · <b>$</b> усечение · префиксы <code style={{ fontFamily: "var(--font-mono)" }}>K=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>A=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>T=</code>/<code style={{ fontFamily: "var(--font-mono)" }}>V=</code>. Термин в кавычках, напр. <code style={{ fontFamily: "var(--font-mono)" }}>"K=Android"</code>.
+  549 |                 </div>
+  550 |                 <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
+  551 |                   <Button variant="ghost" onClick={() => setExpertExpr("")}>Очистить</Button>
+  552 |                   <Button iconLeft="search" onClick={runExpert}>Найти</Button>
+  553 |                 </div>
+  554 |               </div>
+  555 |             ) : (
+  556 |               <div style={{ marginBottom: 14, background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 12, padding: 14 }}>
+  557 |                 {advRows.map((r, i) => (
+  558 |                   <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+  559 |                     {i > 0
+  560 |                       ? <select value={advCombine} onChange={(e) => setAdvCombine(e.target.value as any)} style={{ ...selStyle, width: 86 }}><option value="and">И</option><option value="or">ИЛИ</option></select>
+  561 |                       : <span style={{ width: 86, fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>где</span>}
+  562 |                     <select value={r.field} onChange={(e) => setAdvRows((rows) => rows.map((x, j) => j === i ? { ...x, field: e.target.value } : x))} style={selStyle}>
+  563 |                       {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
+  564 |                     </select>
+  565 |                     <input value={r.value} onChange={(e) => setAdvRows((rows) => rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+  566 |                       onKeyDown={(e) => { if (e.key === "Enter") runAdvanced(); }} placeholder="значение" style={{ flex: 1, minWidth: 160, padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)" }} />
+  567 |                     {advRows.length > 1 && <button onClick={() => setAdvRows((rows) => rows.filter((_, j) => j !== i))} style={iconBtn} title="Убрать условие">×</button>}
+  568 |                   </div>
+  569 |                 ))}
+  570 |                 <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
+  571 |                   <button onClick={() => setAdvRows((rows) => [...rows, { field: "K", value: "" }])} style={iconBtn}>+ условие</button>
+  572 |                   <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+  573 |                     <Button variant="ghost" onClick={() => setAdvRows([{ field: "A", value: "" }, { field: "T", value: "" }])}>Сброс</Button>
+  574 |                     <Button iconLeft="search" onClick={runAdvanced}>Найти</Button>
+  575 |                   </div>
+  576 |                 </div>
+  577 |               </div>
+  578 |             )}
+  579 |             {/* Хлебные крошки + контекст запроса (что и где искали + сколько найдено). */}
+  580 |             <SearchBreadcrumb db={dbName} mode={mode} prefix={prefix} prefixes={PREFIXES}
+  581 |               query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome} />
+  582 |             {loading && !items.length ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
+  583 |               total === 0 && !activeFacets.length ? (
+  584 |                 <div>
+  585 |                   <EmptyState icon="search" title="Ничего не найдено" description="Измените запрос или область поиска." />
+  586 |                   {/* «Вы имели в виду» (#4) — кликабельные варианты; блок скрыт, если их нет. */}
+  587 |                   <DidYouMean suggestions={didYouMean} onPick={(term) => { setMode("simple"); setQ(term); runSearch(allDbs ? ALL_DBS : db, prefix, term, 1); }} />
+  588 |                 </div>
+  589 |               ) :
+  590 |                 <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
+  591 |                   <div style={{ flex: "1 1 200px", minWidth: 180, maxWidth: 260, order: 1 }} className="irb-facet-rail">
+  592 |                     <FacetRail facets={facets} active={activeFacets} onToggle={toggleFacet} />
+  593 |                   </div>
+  594 |                   <div style={{ flex: "100 1 380px", minWidth: 280, order: 2 }}>
 ```
 
 <!-- ─── страница 573 ─── -->
 
 ```tsx
-  595 |             shareOpen={shareOpen} setShareOpen={setShareOpen}
-  596 |             permalink={permalink()} onCopyPermalink={copyPermalink}
-  597 |             onBack={closeRecord} onOrder={() => order(rec.mfn)} onHold={() => hold(rec.mfn, rec.db)}
-  598 |             onSubject={(t: string) => { setMode("simple"); setPrefix("K"); setQ(t); closeRecord(); runSearch(db, "K", t, 1); }}
-  599 |             loggedIn={account.loggedIn} readerName={cab?.name} toast={toast}
-  600 |             onOpenRecord={(database, mfn) => openRecord(mfn, database)}
-  601 |             onViewDoc={(pages, idx, title) => setDocView({ pages, idx, title })}
-  602 |             inBasket={inBasket(rec.mfn)}
-  603 |             onToggleBasket={() => toggleBasket({ mfn: rec.mfn, title: rec.brief || "", author: recView(rec).meta.find((m) => m.label === "Авторы")?.value, year: recView(rec).meta.find((m) => m.label === "Выходные данные")?.value })}
-  604 |           />
-  605 |         )}
-  606 |         </>
-  607 |         )}
-  608 |       </main>
-  609 | 
-  610 |       <footer style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 20px", fontSize: "var(--text-xs)", color: "var(--text-subtle)", display: "flex", gap: 10, alignItems: "center" }}>
-  611 |         <Icon name="globe" size={14} />
-  612 |         <span>Читательский портал поверх ИРБИС64 (база {DB}). Работает в защищённом контуре.</span>
-  613 |       </footer>
-  614 | 
-  615 |       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
-  616 |       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
-  617 |       {basketOpen && <BasketPanel items={basket} onClose={() => setBasketOpen(false)} onRemove={removeFromBasket} onClear={() => setBasket([])} toast={toast} />}
-  618 |       {docView && <DocViewer pages={docView.pages} startIndex={docView.idx} title={docView.title} onClose={() => setDocView(null)} />}
-  619 |       {/* Согласие на обработку ПДн (#199) — баннер первого сеанса. Только для вошедшего
-  620 |           читателя (не гость, не контекст сотрудника). Сам прячется при given/404. */}
-  621 |       {context === "reader" && account.loggedIn && <ConsentBanner toast={toast} />}
-  622 |       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
-  623 |     </div>
-  624 |   );
-  625 | }
-  626 | 
-  627 | function FacetRail({ facets, active, onToggle }: {
-  628 |   facets: Facet[];
-  629 |   active: ActiveFacet[];
-  630 |   onToggle: (f: Facet, v: { value: string; label: string }) => void;
-  631 | }) {
-  632 |   const groups = facets.filter((f) => f.values.length > 0);
-  633 |   if (!groups.length) return null;
-  634 |   return (
-  635 |     <aside aria-label="Уточнение поиска" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-  636 |       <div style={{ fontWeight: 600, fontSize: "var(--text-sm)", color: "var(--text-body)" }}>Уточнить</div>
-  637 |       {groups.map((f) => (
-  638 |         <div key={f.field}>
-  639 |           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 8 }}>{f.label}</div>
-  640 |           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-  641 |             {f.values.map((v) => {
-  642 |               const on = active.some((a) => a.field === f.field && a.value === v.value);
-  643 |               return (
-  644 |                 <FilterChip key={v.value} label={v.label} count={v.count} pressed={on}
-  645 |                   onToggle={() => onToggle(f, { value: v.value, label: v.label })} />
-  646 |               );
-  647 |             })}
-  648 |           </div>
-  649 |         </div>
+  595 |                     {activeFacets.length > 0 && (
+  596 |                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "0 0 12px" }}>
+  597 |                         <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Фильтры:</span>
+  598 |                         {activeFacets.map((a) => (
+  599 |                           <FilterChip key={a.field + a.value} label={a.valueLabel} group={a.groupLabel} onRemove={() => removeFacet(a)} />
+  600 |                         ))}
+  601 |                         <button onClick={() => applyFacets([])} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "var(--text-xs)" }}>Сбросить все</button>
+  602 |                       </div>
+  603 |                     )}
+  604 |                     {/* Мульти-лейаут (#222): профиль базы задаёт вид. Для list/gallery-баз
+  605 |                         вид следует тумблеру (viewMode); для calendar/archive — профилю. */}
+  606 |                     {(() => {
+  607 |                       const prof = layoutProfile(db);
+  608 |                       const togglable = layoutAllows(db, "list") && layoutAllows(db, "gallery");
+  609 |                       const effLayout: LayoutKind = togglable ? viewMode : prof.views[0];
+  610 |                       const sorted = sortItems(items, sort);
+  611 |                       return (
+  612 |                         <>
+  613 |                           <ResultsToolbar total={total} page={page} pageCount={pageCount}
+  614 |                             view={viewMode} onView={setViewMode} sort={sort} onSort={setSort} showToggle={togglable} />
+  615 |                           {total === 0 ? <EmptyState icon="search" title="Ничего не найдено" description="Снимите часть фильтров и повторите поиск." /> : <>
+  616 |                             {effLayout === "gallery" ? (
+  617 |                               <GalleryGrid items={sorted} db={db}
+  618 |                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => { openRecord(mfn); }}
+  619 |                                 onHold={(it) => hold(it.mfn, it.db || db)}
+  620 |                                 renderShelf={account.loggedIn ? (it) => <ShelfMenu db={it.db || db} mfn={it.mfn} title={it.title} toast={toast} compact /> : undefined} />
+  621 |                             ) : effLayout === "calendar" ? (
+  622 |                               <CalendarGrid items={sorted}
+  623 |                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
+  624 |                             ) : effLayout === "archive" ? (
+  625 |                               <ArchiveList items={sorted} startIndex={(page - 1) * pageSize}
+  626 |                                 inBasket={inBasket} onToggleBasket={toggleBasket} onOpen={(mfn) => openRecord(mfn)} />
+  627 |                             ) : (
+  628 |                               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+  629 |                                 {sorted.map((it) => {
+  630 |                                   // Мульти-БД (#3): запись открывается/бронируется в своей базе (it.db).
+  631 |                                   const itDb = it.db || db;
+  632 |                                   const itDbName = (databases.find((d) => d.code === itDb)?.name) || itDb;
+  633 |                                   return (
+  634 |                                   <div key={itDb + ":" + it.mfn} style={{ position: "relative" }}>
+  635 |                                     <ResultCard item={it} dbTag={itDbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn, itDb)} />
+  636 |                                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0 2px 0", paddingLeft: 4 }}>
+  637 |                                       <button type="button" onClick={() => hold(it.mfn, itDb)} title="Забронировать"
+  638 |                                         style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" }}>
+  639 |                                         <Icon name="clock" size={14} /> Забронировать
+  640 |                                       </button>
+  641 |                                       {account.loggedIn && <ShelfMenu db={itDb} mfn={it.mfn} title={it.title} toast={toast} />}
+  642 |                                     </div>
+  643 |                                   </div>
+  644 |                                   );
+  645 |                                 })}
+  646 |                               </div>
+  647 |                             )}
+  648 |                             {/* Постраничный набор — только в одно-БД-режиме (мульти-БД сливает первые страницы). */}
+  649 |                             {!allDbs && <div style={{ marginTop: 14 }}><Pagination page={page} pageCount={pageCount} total={total} onPage={gotoPage} pageSize={pageSize} onPageSize={changePageSize} /></div>}
 ```
 
 <!-- ─── страница 574 ─── -->
 
 ```tsx
-  650 |       ))}
-  651 |     </aside>
-  652 |   );
-  653 | }
-  654 | 
-  655 | // Хлебные крошки результатов: «Главная / Поиск в <база> / "<запрос>"» + сводка
-  656 | // «найдено N». Даёт контекст на бедноватом экране выдачи без дублирования
-  657 | // тулбара (тот показывает счётчик/страницу; крошки — путь и сам запрос). Для
-  658 | // простого поиска показываем область (Автор/Заглавие/…) и термин; для расш./эксп.
-  659 | // — компактное выражение.
-  660 | function SearchBreadcrumb({ db, mode, prefix, prefixes, query, expr, total, loading, onHome }: {
-  661 |   db: string; mode: "simple" | "advanced" | "expert";
-  662 |   prefix: string; prefixes: { code: string; label: string }[];
-  663 |   query: string; expr: string; total: number; loading: boolean; onHome: () => void;
-  664 | }) {
-  665 |   const term = mode === "simple" ? query.trim() : (expr || "").trim();
-  666 |   if (!term) return null;
-  667 |   const areaLabel = mode === "simple" ? (prefixes.find((p) => p.code === prefix)?.label || "") : "";
-  668 |   const crumbSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-subtle)" };
-  669 |   return (
-  670 |     <nav aria-label="Хлебные крошки" style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", margin: "0 0 12px" }}>
-  671 |       <button onClick={onHome} style={{ ...crumbSx, background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
-  672 |         <Icon name="book" size={13} /> Главная
-  673 |       </button>
-  674 |       <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
-  675 |       <span style={crumbSx}>Поиск в «{db}»{areaLabel ? " · " + areaLabel : ""}</span>
-  676 |       <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
-  677 |       <span style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={term}>«{term}»</span>
-  678 |       {!loading && (
-  679 |         <span style={{ marginLeft: 4, fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", background: "var(--surface-sunken)", borderRadius: 999, padding: "2px 9px", fontVariantNumeric: "tabular-nums" }}>
-  680 |           найдено {total.toLocaleString("ru-RU")}
-  681 |         </span>
-  682 |       )}
-  683 |     </nav>
-  684 |   );
-  685 | }
-  686 | 
-  687 | // --- Личный кабинет (экран «06 Reader Cabinet») ----------------------------
-  688 | // Формуляр читателя из живого ИРБИС: поле 40 с подполями
-  689 | //   ^A шифр · ^B инв · ^C краткое описание · ^D дата выдачи · ^E план. возврата
-  690 | //   ^F факт. возврата (****** = на руках) · ^L продление.
-  691 | // Очередь брони / полки / челлендж — backend пока не отдаёт: показываем как
-  692 | // демонстрационный UI (помечено «демо»), без обращения к несуществующим эндпойнтам.
-  693 | const RU_MONTH = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
-  694 | // Разбор даты ИРБИС YYYYMMDD → Date (локальная полночь) либо null.
-  695 | function parseIrbisDate(s: string): Date | null {
-  696 |   if (!s || !/^\d{8}$/.test(s)) return null;
-  697 |   const y = +s.slice(0, 4), m = +s.slice(4, 6), d = +s.slice(6, 8);
-  698 |   if (m < 1 || m > 12 || d < 1 || d > 31) return null;
-  699 |   const dt = new Date(y, m - 1, d);
-  700 |   return isNaN(dt.getTime()) ? null : dt;
-  701 | }
-  702 | function fmtDate(dt: Date | null): string {
-  703 |   return dt ? dt.getDate() + " " + RU_MONTH[dt.getMonth()] : "";
-  704 | }
+  650 |                           </>}
+  651 |                         </>
+  652 |                       );
+  653 |                     })()}
+  654 |                   </div>
+  655 |                 </div>}
+  656 |           </>
+  657 |         )}
+  658 | 
+  659 |         {rec && (
+  660 |           <RecordCard
+  661 |             rec={rec} db={DB} tab={recTab} setTab={setRecTab}
+  662 |             shareOpen={shareOpen} setShareOpen={setShareOpen}
+  663 |             permalink={permalink()} onCopyPermalink={copyPermalink}
+  664 |             onBack={closeRecord} onOrder={() => order(rec.mfn)} onHold={() => hold(rec.mfn, rec.db)}
+  665 |             onSubject={(t: string) => { setMode("simple"); setPrefix("K"); setQ(t); closeRecord(); runSearch(db, "K", t, 1); }}
+  666 |             loggedIn={account.loggedIn} readerName={cab?.name} toast={toast}
+  667 |             onOpenRecord={(database, mfn) => openRecord(mfn, database)}
+  668 |             onViewDoc={(pages, idx, title) => setDocView({ pages, idx, title })}
+  669 |             inBasket={inBasket(rec.mfn)}
+  670 |             onToggleBasket={() => toggleBasket({ mfn: rec.mfn, title: rec.brief || "", author: recView(rec).meta.find((m) => m.label === "Авторы")?.value, year: recView(rec).meta.find((m) => m.label === "Выходные данные")?.value })}
+  671 |           />
+  672 |         )}
+  673 |         </>
+  674 |         )}
+  675 |       </main>
+  676 | 
+  677 |       <footer style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 20px", fontSize: "var(--text-xs)", color: "var(--text-subtle)", display: "flex", gap: 10, alignItems: "center" }}>
+  678 |         <Icon name="globe" size={14} />
+  679 |         <span>Читательский портал поверх ИРБИС64 (база {DB}). Работает в защищённом контуре.</span>
+  680 |       </footer>
+  681 | 
+  682 |       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
+  683 |       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
+  684 |       {basketOpen && <BasketPanel items={basket} onClose={() => setBasketOpen(false)} onRemove={removeFromBasket} onClear={() => setBasket([])} toast={toast} />}
+  685 |       {docView && <DocViewer pages={docView.pages} startIndex={docView.idx} title={docView.title} onClose={() => setDocView(null)} />}
+  686 |       {/* Согласие на обработку ПДн (#199) — баннер первого сеанса. Только для вошедшего
+  687 |           читателя (не гость, не контекст сотрудника). Сам прячется при given/404. */}
+  688 |       {context === "reader" && account.loggedIn && <ConsentBanner toast={toast} />}
+  689 |       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
+  690 |     </div>
+  691 |   );
+  692 | }
+  693 | 
+  694 | function FacetRail({ facets, active, onToggle }: {
+  695 |   facets: Facet[];
+  696 |   active: ActiveFacet[];
+  697 |   onToggle: (f: Facet, v: { value: string; label: string }) => void;
+  698 | }) {
+  699 |   const groups = facets.filter((f) => f.values.length > 0);
+  700 |   if (!groups.length) return null;
+  701 |   return (
+  702 |     <aside aria-label="Уточнение поиска" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+  703 |       <div style={{ fontWeight: 600, fontSize: "var(--text-sm)", color: "var(--text-body)" }}>Уточнить</div>
+  704 |       {groups.map((f) => (
 ```
 
 <!-- ─── страница 575 ─── -->
 
 ```tsx
-  705 | // Декоративная палитра подложек обложек-плейсхолдеров — токены Biblio
-  706 | // (--cover-tint-*); hex оставлен как фолбэк на случай отсутствия токен-слоя.
-  707 | const COVER_TINTS = [
-  708 |   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
-  709 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
-  710 | ];
-  711 | 
-  712 | // Адаптив кабинета: на узких экранах профиль уезжает наверх, сетки в одну колонку.
-  713 | const CAB_CSS = `
-  714 | @media (max-width: 860px){
-  715 |   .irb-cab-grid{grid-template-columns:1fr !important;}
-  716 |   .irb-cab-2col,.irb-cab-3col{grid-template-columns:1fr !important;}
-  717 | }`;
-  718 | if (typeof document !== "undefined" && !document.getElementById("irb-cab-css")) {
-  719 |   const s = document.createElement("style"); s.id = "irb-cab-css"; s.textContent = CAB_CSS; document.head.appendChild(s);
+  705 |         <div key={f.field}>
+  706 |           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 8 }}>{f.label}</div>
+  707 |           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+  708 |             {f.values.map((v) => {
+  709 |               const on = active.some((a) => a.field === f.field && a.value === v.value);
+  710 |               return (
+  711 |                 <FilterChip key={v.value} label={v.label} count={v.count} pressed={on}
+  712 |                   onToggle={() => onToggle(f, { value: v.value, label: v.label })} />
+  713 |               );
+  714 |             })}
+  715 |           </div>
+  716 |         </div>
+  717 |       ))}
+  718 |     </aside>
+  719 |   );
   720 | }
   721 | 
-  722 | interface LoanView {
-  723 |   title: string;
-  724 |   meta: string;          // шифр · инв
-  725 |   issued: Date | null;   // ^D
-  726 |   due: Date | null;      // ^E
-  727 |   returned: boolean;     // ^F != ******
-  728 |   onHand: boolean;       // выдано и не возвращено
-  729 |   renewals: number;      // ^L (число продлений), если есть
-  730 |   tone: "ok" | "soon" | "over" | "done";
-  731 |   dueLabel: string;
-  732 |   daysWord: string;
-  733 | }
-  734 | // Краткое описание ^C обычно содержит «Автор. Заглавие [Текст] : … / …, ГОД. - … с.»
-  735 | // Берём заглавную часть до первого « [» или « : » как заголовок; остальное служит подписью.
-  736 | function loanTitle(desc: string, code: string): { title: string; sub: string } {
-  737 |   const raw = (desc || "").trim();
-  738 |   if (!raw) return { title: code || "Издание", sub: "" };
-  739 |   let head = raw.split(/\s\[|\s:\s|\s\/\s/)[0].trim();
-  740 |   if (head.length > 90) head = head.slice(0, 88).trim() + "…";
-  741 |   // Подпись: остаток после заголовка (год / автор), ограниченный по длине.
-  742 |   let sub = raw.slice(head.length).replace(/^[\s\[\]:/.,–-]+/, "").trim();
-  743 |   if (sub.length > 70) sub = sub.slice(0, 68).trim() + "…";
-  744 |   return { title: head || code || "Издание", sub };
-  745 | }
-  746 | function buildLoan(l: { value: string; subfields: Record<string, string> }, today: Date): LoanView {
-  747 |   const sub = l.subfields || {};
-  748 |   const get = (c: string) => sub[c] || sub[c.toUpperCase()] || sub[c.toLowerCase()] || "";
-  749 |   const code = get("A"), inv = get("B"), desc = get("C");
-  750 |   const issued = parseIrbisDate(get("D"));
-  751 |   const due = parseIrbisDate(get("E"));
-  752 |   const fact = get("F");
-  753 |   const returned = !!fact && fact.indexOf("*") < 0; // реальная дата возврата
-  754 |   const onHand = !returned;                          // ****** или пусто → на руках
-  755 |   const renewals = (() => { const v = get("L"); const n = parseInt(v, 10); return isNaN(n) ? 0 : n; })();
-  756 |   const t = loanTitle(desc, code);
-  757 |   let tone: LoanView["tone"] = "ok";
-  758 |   let dueLabel = due ? "до " + fmtDate(due) : "";
-  759 |   let daysWord = "";
+  722 | // «Вы имели в виду» (#4) — блок вариантов исправления при нулевой выдаче.
+  723 | // Скрыт, если вариантов нет (эндпойнт /api/suggest отсутствует/404 или пуст).
+  724 | // Клик по варианту повторяет поиск с этим термином.
+  725 | function DidYouMean({ suggestions, onPick }: {
+  726 |   suggestions: { term: string; count?: number }[]; onPick: (term: string) => void;
+  727 | }) {
+  728 |   if (!suggestions.length) return null;
+  729 |   return (
+  730 |     <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+  731 |       <span style={{ fontSize: "var(--text-sm)", color: "var(--text-subtle)", fontWeight: 600 }}>Вы имели в виду:</span>
+  732 |       {suggestions.map((s, i) => (
+  733 |         <button key={s.term + i} type="button" onClick={() => onPick(s.term)}
+  734 |           title={s.count != null ? "Найдётся записей: " + s.count : "Повторить поиск по этому варианту"}
+  735 |           style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", border: "1px solid var(--border-subtle)", borderRadius: 999, padding: "5px 13px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+  736 |           {s.term}
+  737 |           {s.count != null && <span style={{ fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{s.count}</span>}
+  738 |         </button>
+  739 |       ))}
+  740 |     </div>
+  741 |   );
+  742 | }
+  743 | 
+  744 | // Хлебные крошки результатов: «Главная / Поиск в <база> / "<запрос>"» + сводка
+  745 | // «найдено N». Даёт контекст на бедноватом экране выдачи без дублирования
+  746 | // тулбара (тот показывает счётчик/страницу; крошки — путь и сам запрос). Для
+  747 | // простого поиска показываем область (Автор/Заглавие/…) и термин; для расш./эксп.
+  748 | // — компактное выражение.
+  749 | function SearchBreadcrumb({ db, mode, prefix, prefixes, query, expr, total, loading, onHome }: {
+  750 |   db: string; mode: "simple" | "advanced" | "expert";
+  751 |   prefix: string; prefixes: { code: string; label: string }[];
+  752 |   query: string; expr: string; total: number; loading: boolean; onHome: () => void;
+  753 | }) {
+  754 |   const term = mode === "simple" ? query.trim() : (expr || "").trim();
+  755 |   if (!term) return null;
+  756 |   const areaLabel = mode === "simple" ? (prefixes.find((p) => p.code === prefix)?.label || "") : "";
+  757 |   const crumbSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-subtle)" };
+  758 |   return (
+  759 |     <nav aria-label="Хлебные крошки" style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", margin: "0 0 12px" }}>
 ```
 
 <!-- ─── страница 576 ─── -->
 
 ```tsx
-  760 |   if (returned) {
-  761 |     tone = "done"; dueLabel = "возвращено";
-  762 |   } else if (due) {
-  763 |     const ms = due.getTime() - today.getTime();
-  764 |     const days = Math.round(ms / 86400000);
-  765 |     if (days < 0) {
-  766 |       tone = "over"; daysWord = Math.abs(days) + " " + plural(Math.abs(days), "день", "дня", "дней"); dueLabel = "просрочено · " + daysWord;
-  767 |     } else if (days <= 3) {
-  768 |       tone = "soon"; daysWord = days === 0 ? "сегодня" : days + " " + plural(days, "день", "дня", "дней"); dueLabel = "до " + fmtDate(due) + " · скоро";
-  769 |     } else {
-  770 |       tone = "ok"; dueLabel = "до " + fmtDate(due);
-  771 |     }
-  772 |   }
-  773 |   return {
-  774 |     title: t.title, meta: [code, inv ? "инв. " + inv : ""].filter(Boolean).join(" · "),
-  775 |     issued, due, returned, onHand, renewals, tone, dueLabel, daysWord,
-  776 |   };
-  777 | }
-  778 | function plural(n: number, one: string, few: string, many: string): string {
-  779 |   const m10 = n % 10, m100 = n % 100;
-  780 |   if (m10 === 1 && m100 !== 11) return one;
-  781 |   if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
-  782 |   return many;
-  783 | }
-  784 | function initials(name: string): string {
-  785 |   const parts = (name || "").trim().split(/\s+/).filter(Boolean);
-  786 |   if (!parts.length) return "ЧТ";
-  787 |   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  788 |   return (parts[0][0] + parts[1][0]).toUpperCase();
-  789 | }
-  790 | const TONE_STATUS: Record<LoanView["tone"], string> = { ok: "available", soon: "issued", over: "unknown", done: "returned" };
-  791 | function toneChip(tone: LoanView["tone"]): React.CSSProperties {
-  792 |   if (tone === "over") return { display: "inline-flex", alignItems: "center", gap: 6, background: "color-mix(in srgb, var(--error) 18%, transparent)", color: "var(--error)", borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
-  793 |   return statusChip(TONE_STATUS[tone]);
-  794 | }
-  795 | function toneDot(tone: LoanView["tone"]): React.CSSProperties {
-  796 |   const c = tone === "over" ? "var(--error)" : (STATUS[TONE_STATUS[tone]] || STATUS.unknown).fg;
-  797 |   return { width: 6, height: 6, borderRadius: 999, background: c, flex: "none" };
-  798 | }
-  799 | 
-  800 | function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSearch, onErased, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; holdsRefresh?: number; onOpenRecord?: (db: string, mfn: number) => void; onRunSearch?: (s: SavedSearch) => void; onErased?: () => void; onBack: () => void; onLogout: () => void }) {
-  801 |   const [cabTab, setCabTab] = React.useState<"formular" | "orders" | "history" | "saved">("formular");
-  802 |   const today = React.useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
-  803 |   const loans = React.useMemo(() => (cab?.loans || []).map((l) => buildLoan(l, today)), [cab, today]);
-  804 |   const onHand = loans.filter((l) => l.onHand);
-  805 |   const returnedCount = loans.length - onHand.length;
-  806 |   const overdue = onHand.filter((l) => l.tone === "over").length;
-  807 |   const name = cab?.name || "Читатель";
-  808 |   const cardSx: React.CSSProperties = { background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-xl,16px)", boxShadow: "var(--shadow-sm)" };
-  809 |   const h2Sx: React.CSSProperties = { fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-xl,1.25rem)", letterSpacing: "-.02em", margin: 0 };
-  810 |   const demoHint: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 999, background: "var(--surface-sunken)", color: "var(--text-subtle)", fontSize: "var(--text-2xs,11px)", fontWeight: 600, letterSpacing: ".02em" };
-  811 | 
-  812 |   // Челлендж остаётся демонстрационным (вне объёма #222) — помечен «демо».
-  813 |   const challengeGoal = 50, challengeDone = Math.min(returnedCount + 35, 49);
-  814 |   const pct = Math.round((challengeDone / challengeGoal) * 100);
+  760 |       <button onClick={onHome} style={{ ...crumbSx, background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+  761 |         <Icon name="book" size={13} /> Главная
+  762 |       </button>
+  763 |       <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
+  764 |       <span style={crumbSx}>Поиск в «{db}»{areaLabel ? " · " + areaLabel : ""}</span>
+  765 |       <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
+  766 |       <span style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={term}>«{term}»</span>
+  767 |       {!loading && (
+  768 |         <span style={{ marginLeft: 4, fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", background: "var(--surface-sunken)", borderRadius: 999, padding: "2px 9px", fontVariantNumeric: "tabular-nums" }}>
+  769 |           найдено {total.toLocaleString("ru-RU")}
+  770 |         </span>
+  771 |       )}
+  772 |     </nav>
+  773 |   );
+  774 | }
+  775 | 
+  776 | // --- Личный кабинет (экран «06 Reader Cabinet») ----------------------------
+  777 | // Формуляр читателя из живого ИРБИС: поле 40 с подполями
+  778 | //   ^A шифр · ^B инв · ^C краткое описание · ^D дата выдачи · ^E план. возврата
+  779 | //   ^F факт. возврата (****** = на руках) · ^L продление.
+  780 | // Очередь брони / полки / челлендж — backend пока не отдаёт: показываем как
+  781 | // демонстрационный UI (помечено «демо»), без обращения к несуществующим эндпойнтам.
+  782 | const RU_MONTH = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  783 | // Разбор даты ИРБИС YYYYMMDD → Date (локальная полночь) либо null.
+  784 | function parseIrbisDate(s: string): Date | null {
+  785 |   if (!s || !/^\d{8}$/.test(s)) return null;
+  786 |   const y = +s.slice(0, 4), m = +s.slice(4, 6), d = +s.slice(6, 8);
+  787 |   if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  788 |   const dt = new Date(y, m - 1, d);
+  789 |   return isNaN(dt.getTime()) ? null : dt;
+  790 | }
+  791 | function fmtDate(dt: Date | null): string {
+  792 |   return dt ? dt.getDate() + " " + RU_MONTH[dt.getMonth()] : "";
+  793 | }
+  794 | // Декоративная палитра подложек обложек-плейсхолдеров — токены Biblio
+  795 | // (--cover-tint-*); hex оставлен как фолбэк на случай отсутствия токен-слоя.
+  796 | const COVER_TINTS = [
+  797 |   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
+  798 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
+  799 | ];
+  800 | 
+  801 | // Адаптив кабинета: на узких экранах профиль уезжает наверх, сетки в одну колонку.
+  802 | const CAB_CSS = `
+  803 | @media (max-width: 860px){
+  804 |   .irb-cab-grid{grid-template-columns:1fr !important;}
+  805 |   .irb-cab-2col,.irb-cab-3col{grid-template-columns:1fr !important;}
+  806 | }`;
+  807 | if (typeof document !== "undefined" && !document.getElementById("irb-cab-css")) {
+  808 |   const s = document.createElement("style"); s.id = "irb-cab-css"; s.textContent = CAB_CSS; document.head.appendChild(s);
+  809 | }
+  810 | 
+  811 | interface LoanView {
+  812 |   title: string;
+  813 |   meta: string;          // шифр · инв
+  814 |   issued: Date | null;   // ^D
 ```
 
 <!-- ─── страница 577 ─── -->
 
 ```tsx
-  815 |   // Реальное число активных броней (#222) для статистики профиля; 0 пока не загружено
-  816 |   // или модуль брони недоступен.
-  817 |   const [holdsCount, setHoldsCount] = React.useState(0);
-  818 |   React.useEffect(() => {
-  819 |     let alive = true;
-  820 |     (async () => {
-  821 |       const r = await api.holds();
-  822 |       if (!alive) return;
-  823 |       if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) setHoldsCount(r.json.data.items.length);
-  824 |       else setHoldsCount(0);
-  825 |     })();
-  826 |     return () => { alive = false; };
-  827 |   }, [holdsRefresh]);
-  828 | 
-  829 |   return (
-  830 |     <div>
-  831 |       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
-  832 |         <Button variant="secondary" size="sm" iconLeft="arrow-left" onClick={onBack}>К каталогу</Button>
-  833 |         <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Мой кабинет</span>
-  834 |       </div>
-  835 |       <div className="irb-cab-grid" style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 24, alignItems: "start" }}>
-  836 | 
-  837 |         {/* ===== Профиль + челлендж ===== */}
-  838 |         <aside aria-label="Профиль читателя" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-  839 |           <div style={{ ...cardSx, padding: 22, textAlign: "center" }}>
-  840 |             <span aria-hidden="true" style={{ width: 64, height: 64, borderRadius: 999, background: "linear-gradient(150deg, var(--accent), var(--accent-hover))", color: "var(--accent-fg,#fff)", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "600 24px var(--font-ui)", margin: "0 auto" }}>{initials(name)}</span>
-  841 |             <h2 style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-lg,19px)", margin: "14px 0 2px" }}>{name}</h2>
-  842 |             <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>{ticket ? "Билет № " + ticket : "Читательский билет"}</span>
-  843 |             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "4px 11px", borderRadius: 999, ...statusChip("available") }}>
-  844 |               <span style={statusDot("available")} aria-hidden="true" />Активен
-  845 |             </div>
-  846 |             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border-subtle)" }}>
-  847 |               {[{ n: onHand.length, l: "на руках" }, { n: holdsCount, l: "в брони" }, { n: challengeDone, l: "прочитано", demo: true }].map((s, i) => (
-  848 |                 <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-  849 |                   <span style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: 21, fontVariantNumeric: "tabular-nums" }}>{s.n}</span>
-  850 |                   <span style={{ fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)" }}>{s.l}</span>
-  851 |                 </div>
-  852 |               ))}
-  853 |             </div>
-  854 |           </div>
-  855 | 
-  856 |           {/* Reading challenge (демо) */}
-  857 |           <div style={{ ...cardSx, padding: 20 }}>
-  858 |             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-  859 |               <Icon name="star" size={16} style={{ color: "var(--accent)" }} />
-  860 |               <span style={{ fontWeight: 600, fontSize: "var(--text-sm)" }}>Челлендж 2026</span>
-  861 |               <span style={{ ...demoHint, marginLeft: "auto" }} title="Раздел в разработке">демо</span>
-  862 |             </div>
-  863 |             <p style={{ fontSize: "var(--text-sm)", color: "var(--text-muted,var(--text-secondary))", margin: "10px 0 14px" }}>Прочитать {challengeGoal} книг за год</p>
-  864 |             <div style={{ height: 9, borderRadius: 999, background: "var(--surface-hover,var(--surface-3))", overflow: "hidden" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Прогресс челленджа">
-  865 |               <div style={{ height: "100%", width: pct + "%", borderRadius: 999, background: "linear-gradient(90deg, var(--accent), var(--accent-hover))" }} />
-  866 |             </div>
-  867 |             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 9 }}>
-  868 |               <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--accent)" }}>{challengeDone} из {challengeGoal}</span>
-  869 |               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
+  815 |   due: Date | null;      // ^E
+  816 |   returned: boolean;     // ^F != ******
+  817 |   onHand: boolean;       // выдано и не возвращено
+  818 |   renewals: number;      // ^L (число продлений), если есть
+  819 |   tone: "ok" | "soon" | "over" | "done";
+  820 |   dueLabel: string;
+  821 |   daysWord: string;
+  822 | }
+  823 | // Краткое описание ^C обычно содержит «Автор. Заглавие [Текст] : … / …, ГОД. - … с.»
+  824 | // Берём заглавную часть до первого « [» или « : » как заголовок; остальное служит подписью.
+  825 | function loanTitle(desc: string, code: string): { title: string; sub: string } {
+  826 |   const raw = (desc || "").trim();
+  827 |   if (!raw) return { title: code || "Издание", sub: "" };
+  828 |   let head = raw.split(/\s\[|\s:\s|\s\/\s/)[0].trim();
+  829 |   if (head.length > 90) head = head.slice(0, 88).trim() + "…";
+  830 |   // Подпись: остаток после заголовка (год / автор), ограниченный по длине.
+  831 |   let sub = raw.slice(head.length).replace(/^[\s\[\]:/.,–-]+/, "").trim();
+  832 |   if (sub.length > 70) sub = sub.slice(0, 68).trim() + "…";
+  833 |   return { title: head || code || "Издание", sub };
+  834 | }
+  835 | function buildLoan(l: { value: string; subfields: Record<string, string> }, today: Date): LoanView {
+  836 |   const sub = l.subfields || {};
+  837 |   const get = (c: string) => sub[c] || sub[c.toUpperCase()] || sub[c.toLowerCase()] || "";
+  838 |   const code = get("A"), inv = get("B"), desc = get("C");
+  839 |   const issued = parseIrbisDate(get("D"));
+  840 |   const due = parseIrbisDate(get("E"));
+  841 |   const fact = get("F");
+  842 |   const returned = !!fact && fact.indexOf("*") < 0; // реальная дата возврата
+  843 |   const onHand = !returned;                          // ****** или пусто → на руках
+  844 |   const renewals = (() => { const v = get("L"); const n = parseInt(v, 10); return isNaN(n) ? 0 : n; })();
+  845 |   const t = loanTitle(desc, code);
+  846 |   let tone: LoanView["tone"] = "ok";
+  847 |   let dueLabel = due ? "до " + fmtDate(due) : "";
+  848 |   let daysWord = "";
+  849 |   if (returned) {
+  850 |     tone = "done"; dueLabel = "возвращено";
+  851 |   } else if (due) {
+  852 |     const ms = due.getTime() - today.getTime();
+  853 |     const days = Math.round(ms / 86400000);
+  854 |     if (days < 0) {
+  855 |       tone = "over"; daysWord = Math.abs(days) + " " + plural(Math.abs(days), "день", "дня", "дней"); dueLabel = "просрочено · " + daysWord;
+  856 |     } else if (days <= 3) {
+  857 |       tone = "soon"; daysWord = days === 0 ? "сегодня" : days + " " + plural(days, "день", "дня", "дней"); dueLabel = "до " + fmtDate(due) + " · скоро";
+  858 |     } else {
+  859 |       tone = "ok"; dueLabel = "до " + fmtDate(due);
+  860 |     }
+  861 |   }
+  862 |   return {
+  863 |     title: t.title, meta: [code, inv ? "инв. " + inv : ""].filter(Boolean).join(" · "),
+  864 |     issued, due, returned, onHand, renewals, tone, dueLabel, daysWord,
+  865 |   };
+  866 | }
+  867 | function plural(n: number, one: string, few: string, many: string): string {
+  868 |   const m10 = n % 10, m100 = n % 100;
+  869 |   if (m10 === 1 && m100 !== 11) return one;
 ```
 
 <!-- ─── страница 578 ─── -->
 
 ```tsx
-  870 |             </div>
-  871 |           </div>
-  872 |         </aside>
-  873 | 
-  874 |         {/* ===== Основная колонка ===== */}
-  875 |         <main style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
-  876 | 
-  877 |           {/* Вкладки кабинета: Формуляр / Заказы (G12) / История (#134) / Запросы (#133) */}
-  878 |           <div role="tablist" aria-label="Разделы кабинета" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", flexWrap: "wrap" }}>
-  879 |             {([["formular", "Формуляр"], ["orders", "Заказы"], ["history", "История"], ["saved", "Запросы"]] as const).map(([key, label]) => {
-  880 |               const on = cabTab === key;
-  881 |               return (
-  882 |                 <button key={key} role="tab" aria-selected={on} onClick={() => setCabTab(key)}
-  883 |                   style={{ background: "none", border: "none", borderBottom: on ? "2px solid var(--accent)" : "2px solid transparent", color: on ? "var(--accent)" : "var(--text-subtle)", fontWeight: on ? 600 : 500, padding: "9px 14px", cursor: "pointer", fontSize: "var(--text-sm)", fontFamily: "var(--font-ui,inherit)" }}>
-  884 |                   {label}
-  885 |                 </button>
-  886 |               );
-  887 |             })}
-  888 |           </div>
-  889 | 
-  890 |           {cabTab === "orders" ? (
-  891 |             <section aria-labelledby="cab-orders">
-  892 |               <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
-  893 |                 <h1 id="cab-orders" style={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}>Мои заказы</h1>
-  894 |               </div>
-  895 |               <OrdersTab toast={toast} cardSx={cardSx} />
-  896 |             </section>
-  897 |           ) : cabTab === "history" ? (
-  898 |             /* История просмотров (#134) — реальные данные GET /api/history. */
-  899 |             <HistoryTab cardSx={cardSx} standalone
-  900 |               h2Sx={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}
-  901 |               onOpenRecord={onOpenRecord} />
-  902 |           ) : cabTab === "saved" ? (
-  903 |             /* Сохранённые запросы (#133) — повтор/удаление, реальные данные GET /api/savedsearch. */
-  904 |             <SavedSearchesPanel cardSx={cardSx} standalone
-  905 |               h2Sx={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}
-  906 |               toast={toast} onRun={(s) => onRunSearch?.(s)} />
-  907 |           ) : (
-  908 |           <>
-  909 |           {/* На руках сейчас — LIVE формуляр */}
-  910 |           <section aria-labelledby="cab-onhand">
-  911 |             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
-  912 |               <h1 id="cab-onhand" style={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}>На руках сейчас</h1>
-  913 |               <span style={{ fontSize: "var(--text-sm)", color: "var(--text-subtle)" }}>
-  914 |                 Формуляр · {onHand.length} {plural(onHand.length, "издание", "издания", "изданий")}
-  915 |                 {overdue ? " · " : ""}{overdue ? <span style={{ color: "var(--error)", fontWeight: 600 }}>{overdue} {plural(overdue, "просрочено", "просрочены", "просрочено")}</span> : null}
-  916 |               </span>
-  917 |             </div>
-  918 |             {onHand.length ? (
-  919 |               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-  920 |                 {onHand.map((l, i) => (
-  921 |                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: "14px 16px" }}>
-  922 |                     <div aria-hidden="true" style={{ width: 40, height: 56, flex: "none", borderRadius: 6, background: "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.35))", boxShadow: "var(--shadow-md)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 4 }}>
-  923 |                       <Icon name="book" size={13} style={{ color: "rgba(255,255,255,.85)" }} />
-  924 |                     </div>
+  870 |   if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  871 |   return many;
+  872 | }
+  873 | function initials(name: string): string {
+  874 |   const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  875 |   if (!parts.length) return "ЧТ";
+  876 |   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  877 |   return (parts[0][0] + parts[1][0]).toUpperCase();
+  878 | }
+  879 | const TONE_STATUS: Record<LoanView["tone"], string> = { ok: "available", soon: "issued", over: "unknown", done: "returned" };
+  880 | function toneChip(tone: LoanView["tone"]): React.CSSProperties {
+  881 |   if (tone === "over") return { display: "inline-flex", alignItems: "center", gap: 6, background: "color-mix(in srgb, var(--error) 18%, transparent)", color: "var(--error)", borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
+  882 |   return statusChip(TONE_STATUS[tone]);
+  883 | }
+  884 | function toneDot(tone: LoanView["tone"]): React.CSSProperties {
+  885 |   const c = tone === "over" ? "var(--error)" : (STATUS[TONE_STATUS[tone]] || STATUS.unknown).fg;
+  886 |   return { width: 6, height: 6, borderRadius: 999, background: c, flex: "none" };
+  887 | }
+  888 | 
+  889 | function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSearch, onErased, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; holdsRefresh?: number; onOpenRecord?: (db: string, mfn: number) => void; onRunSearch?: (s: SavedSearch) => void; onErased?: () => void; onBack: () => void; onLogout: () => void }) {
+  890 |   const [cabTab, setCabTab] = React.useState<"formular" | "orders" | "history" | "saved">("formular");
+  891 |   const today = React.useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  892 |   const loans = React.useMemo(() => (cab?.loans || []).map((l) => buildLoan(l, today)), [cab, today]);
+  893 |   const onHand = loans.filter((l) => l.onHand);
+  894 |   const returnedCount = loans.length - onHand.length;
+  895 |   const overdue = onHand.filter((l) => l.tone === "over").length;
+  896 |   const name = cab?.name || "Читатель";
+  897 |   const cardSx: React.CSSProperties = { background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-xl,16px)", boxShadow: "var(--shadow-sm)" };
+  898 |   const h2Sx: React.CSSProperties = { fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-xl,1.25rem)", letterSpacing: "-.02em", margin: 0 };
+  899 |   const demoHint: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 999, background: "var(--surface-sunken)", color: "var(--text-subtle)", fontSize: "var(--text-2xs,11px)", fontWeight: 600, letterSpacing: ".02em" };
+  900 | 
+  901 |   // Челлендж остаётся демонстрационным (вне объёма #222) — помечен «демо».
+  902 |   const challengeGoal = 50, challengeDone = Math.min(returnedCount + 35, 49);
+  903 |   const pct = Math.round((challengeDone / challengeGoal) * 100);
+  904 |   // Реальное число активных броней (#222) для статистики профиля; 0 пока не загружено
+  905 |   // или модуль брони недоступен.
+  906 |   const [holdsCount, setHoldsCount] = React.useState(0);
+  907 |   React.useEffect(() => {
+  908 |     let alive = true;
+  909 |     (async () => {
+  910 |       const r = await api.holds();
+  911 |       if (!alive) return;
+  912 |       if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) setHoldsCount(r.json.data.items.length);
+  913 |       else setHoldsCount(0);
+  914 |     })();
+  915 |     return () => { alive = false; };
+  916 |   }, [holdsRefresh]);
+  917 | 
+  918 |   return (
+  919 |     <div>
+  920 |       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+  921 |         <Button variant="secondary" size="sm" iconLeft="arrow-left" onClick={onBack}>К каталогу</Button>
+  922 |         <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Мой кабинет</span>
+  923 |       </div>
+  924 |       <div className="irb-cab-grid" style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 24, alignItems: "start" }}>
 ```
 
 <!-- ─── страница 579 ─── -->
 
 ```tsx
-  925 |                     <div style={{ flex: 1, minWidth: 0 }}>
-  926 |                       <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-base,15.5px)", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{l.title}</div>
-  927 |                       <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
-  928 |                         <span style={{ fontFamily: "var(--font-mono)" }}>{l.meta || "—"}</span>
-  929 |                         {l.issued && <span>выдано {fmtDate(l.issued)}</span>}
-  930 |                         {l.renewals > 0 && <span>продлений: {l.renewals}</span>}
-  931 |                       </div>
-  932 |                     </div>
-  933 |                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 7, flex: "none" }}>
-  934 |                       <span style={toneChip(l.tone)}><span style={toneDot(l.tone)} aria-hidden="true" />{l.dueLabel || "срок не указан"}</span>
-  935 |                       <RenewButton />
-  936 |                     </div>
-  937 |                   </div>
-  938 |                 ))}
-  939 |               </div>
-  940 |             ) : (
-  941 |               <div style={cardSx}><EmptyState icon="check-circle" title="На руках книг нет" description={returnedCount ? "Все издания возвращены." : "Формуляр пуст — закажите издание в каталоге."} /></div>
-  942 |             )}
-  943 |           </section>
+  925 | 
+  926 |         {/* ===== Профиль + челлендж ===== */}
+  927 |         <aside aria-label="Профиль читателя" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+  928 |           <div style={{ ...cardSx, padding: 22, textAlign: "center" }}>
+  929 |             <span aria-hidden="true" style={{ width: 64, height: 64, borderRadius: 999, background: "linear-gradient(150deg, var(--accent), var(--accent-hover))", color: "var(--accent-fg,#fff)", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "600 24px var(--font-ui)", margin: "0 auto" }}>{initials(name)}</span>
+  930 |             <h2 style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-lg,19px)", margin: "14px 0 2px" }}>{name}</h2>
+  931 |             <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>{ticket ? "Билет № " + ticket : "Читательский билет"}</span>
+  932 |             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "4px 11px", borderRadius: 999, ...statusChip("available") }}>
+  933 |               <span style={statusDot("available")} aria-hidden="true" />Активен
+  934 |             </div>
+  935 |             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border-subtle)" }}>
+  936 |               {[{ n: onHand.length, l: "на руках" }, { n: holdsCount, l: "в брони" }, { n: challengeDone, l: "прочитано", demo: true }].map((s, i) => (
+  937 |                 <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+  938 |                   <span style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: 21, fontVariantNumeric: "tabular-nums" }}>{s.n}</span>
+  939 |                   <span style={{ fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)" }}>{s.l}</span>
+  940 |                 </div>
+  941 |               ))}
+  942 |             </div>
+  943 |           </div>
   944 | 
-  945 |           {/* Очередь брони — реальные данные GET /api/holds (#222). При 404/501 секция прячется. */}
-  946 |           <HoldsTab cardSx={cardSx} h2Sx={h2Sx} demoHint={demoHint} toast={toast} refreshKey={holdsRefresh} />
-  947 | 
-  948 |           {/* Мои полки — реальные списки GET /api/shelves (#222). При 404/501 секция прячется. */}
-  949 |           <ShelvesPanel cardSx={cardSx} h2Sx={h2Sx} toast={toast} onOpenRecord={onOpenRecord} />
-  950 | 
-  951 |           {/* Конфиденциальность (#199, 152-ФЗ): согласие на обработку ПДн + право на
-  952 |               забвение. Тумблер прячется при отсутствии эндпойнта; карточка удаления
-  953 |               деградирует тостом. Каталог библиотеки правом на забвение не затрагивается. */}
-  954 |           <section aria-labelledby="cab-privacy">
-  955 |             <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
-  956 |               <h2 id="cab-privacy" style={h2Sx}>Конфиденциальность</h2>
-  957 |             </div>
-  958 |             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-  959 |               <ConsentToggle cardSx={cardSx} toast={toast} />
-  960 |               <EraseDataCard cardSx={cardSx} toast={toast} onErased={onErased} />
-  961 |             </div>
-  962 |           </section>
-  963 |           </>
-  964 |           )}
+  945 |           {/* Reading challenge (демо) */}
+  946 |           <div style={{ ...cardSx, padding: 20 }}>
+  947 |             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+  948 |               <Icon name="star" size={16} style={{ color: "var(--accent)" }} />
+  949 |               <span style={{ fontWeight: 600, fontSize: "var(--text-sm)" }}>Челлендж 2026</span>
+  950 |               <span style={{ ...demoHint, marginLeft: "auto" }} title="Раздел в разработке">демо</span>
+  951 |             </div>
+  952 |             <p style={{ fontSize: "var(--text-sm)", color: "var(--text-muted,var(--text-secondary))", margin: "10px 0 14px" }}>Прочитать {challengeGoal} книг за год</p>
+  953 |             <div style={{ height: 9, borderRadius: 999, background: "var(--surface-hover,var(--surface-3))", overflow: "hidden" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Прогресс челленджа">
+  954 |               <div style={{ height: "100%", width: pct + "%", borderRadius: 999, background: "linear-gradient(90deg, var(--accent), var(--accent-hover))" }} />
+  955 |             </div>
+  956 |             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 9 }}>
+  957 |               <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--accent)" }}>{challengeDone} из {challengeGoal}</span>
+  958 |               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
+  959 |             </div>
+  960 |           </div>
+  961 |         </aside>
+  962 | 
+  963 |         {/* ===== Основная колонка ===== */}
+  964 |         <main style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
   965 | 
-  966 |           <div style={{ marginTop: 4 }}><Button variant="ghost" iconLeft="log-out" onClick={onLogout}>Выйти из кабинета</Button></div>
-  967 |         </main>
-  968 |       </div>
-  969 |     </div>
-  970 |   );
-  971 | }
-  972 | 
-  973 | // «Продлить» — реальное продление это запись в backend, которой ещё нет.
-  974 | // Кнопка задизейблена с подсказкой «скоро»; write-эндпойнты не вызываются.
-  975 | function RenewButton() {
-  976 |   return (
-  977 |     <span title="Онлайн-продление появится скоро" style={{ display: "inline-block" }}>
-  978 |       <button type="button" disabled aria-disabled="true" aria-label="Продлить (скоро)"
-  979 |         style={{ border: "1px solid var(--border-default,var(--border-strong))", background: "transparent", color: "var(--text-muted,var(--text-secondary))", borderRadius: 8, padding: "6px 13px", fontFamily: "var(--font-ui)", fontWeight: 500, fontSize: "var(--text-xs,12px)", cursor: "not-allowed", opacity: .7, display: "inline-flex", alignItems: "center", gap: 5 }}>
+  966 |           {/* Вкладки кабинета: Формуляр / Заказы (G12) / История (#134) / Запросы (#133) */}
+  967 |           <div role="tablist" aria-label="Разделы кабинета" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", flexWrap: "wrap" }}>
+  968 |             {([["formular", "Формуляр"], ["orders", "Заказы"], ["history", "История"], ["saved", "Запросы"]] as const).map(([key, label]) => {
+  969 |               const on = cabTab === key;
+  970 |               return (
+  971 |                 <button key={key} role="tab" aria-selected={on} onClick={() => setCabTab(key)}
+  972 |                   style={{ background: "none", border: "none", borderBottom: on ? "2px solid var(--accent)" : "2px solid transparent", color: on ? "var(--accent)" : "var(--text-subtle)", fontWeight: on ? 600 : 500, padding: "9px 14px", cursor: "pointer", fontSize: "var(--text-sm)", fontFamily: "var(--font-ui,inherit)" }}>
+  973 |                   {label}
+  974 |                 </button>
+  975 |               );
+  976 |             })}
+  977 |           </div>
+  978 | 
+  979 |           {cabTab === "orders" ? (
 ```
 
 <!-- ─── страница 580 ─── -->
 
 ```tsx
-  980 |         <Icon name="refresh-cw" size={13} /> Продлить
-  981 |       </button>
-  982 |     </span>
-  983 |   );
-  984 | }
-  985 | 
-  986 | function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (t: string) => void }) {
-  987 |   const [t, setT] = React.useState("");
-  988 |   return (
-  989 |     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-  990 |       <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", borderRadius: 16, padding: 22, width: 320, boxShadow: "var(--shadow-lg, 0 20px 50px rgba(0,0,0,.25))" }}>
-  991 |         <div style={{ fontWeight: 600, fontSize: "var(--text-lg)", marginBottom: 8 }}>Вход в личный кабинет</div>
-  992 |         <p style={{ margin: "0 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Войдите по номеру читательского билета.</p>
-  993 |         <input value={t} onChange={(e) => setT(e.target.value)} placeholder="Номер билета" onKeyDown={(e) => { if (e.key === "Enter") onSubmit(t); }}
-  994 |           style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", marginBottom: 12 }} />
-  995 |         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-  996 |           <Button variant="ghost" onClick={onClose}>Отмена</Button>
-  997 |           <Button onClick={() => onSubmit(t)}>Войти</Button>
-  998 |         </div>
-  999 |       </div>
- 1000 |     </div>
- 1001 |   );
- 1002 | }
- 1003 | 
- 1004 | // --- Карточка записи с вкладками ------------------------------------------
- 1005 | const REC_TABS = ["Описание", "Экземпляры", "Электронные версии", "Метки MARC"];
- 1006 | 
- 1007 | function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, loggedIn, readerName, toast, onOpenRecord, onViewDoc, inBasket, onToggleBasket }: {
- 1008 |   rec: RecordData; db: string; tab: number; setTab: (n: number) => void;
- 1009 |   shareOpen: boolean; setShareOpen: (b: boolean) => void;
- 1010 |   permalink: string; onCopyPermalink: () => void;
- 1011 |   onBack: () => void; onOrder: () => void; onHold: () => void; onSubject: (t: string) => void;
- 1012 |   loggedIn: boolean; readerName?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
- 1013 |   onOpenRecord: (db: string, mfn: number) => void;
- 1014 |   onViewDoc: (pages: DocPage[], idx: number, title?: string) => void;
- 1015 |   inBasket: boolean; onToggleBasket: () => void;
- 1016 | }) {
- 1017 |   const v = recView(rec);
- 1018 |   // Страницы для постраничного просмотрщика (#222): из электронных версий записи.
- 1019 |   // Картинки (по расширению) — листаются и зумируются во вьюере; прочие файлы —
- 1020 |   // открываются по ссылке. Только записи со страницами получают кнопку «Открыть просмотр».
- 1021 |   const docPages: DocPage[] = v.files
- 1022 |     .filter((f) => f.url)
- 1023 |     .map((f) => ({ name: f.name || f.url, url: f.url, kind: /\.(png|jpe?g|gif|webp|bmp|tiff?|svg)(\?|#|$)/i.test(f.url) ? ("image" as const) : ("file" as const) }));
- 1024 |   const hasImagePages = docPages.some((p) => p.kind === "image");
- 1025 |   const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
- 1026 |   const lbl: React.CSSProperties = { fontWeight: 600, fontSize: "var(--text-sm)", margin: "0 0 8px" };
- 1027 |   const onTabKey = (e: React.KeyboardEvent, i: number) => {
- 1028 |     let next = i;
- 1029 |     if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (i + 1) % REC_TABS.length;
- 1030 |     else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (i - 1 + REC_TABS.length) % REC_TABS.length;
- 1031 |     else if (e.key === "Home") next = 0;
- 1032 |     else if (e.key === "End") next = REC_TABS.length - 1;
- 1033 |     else return;
- 1034 |     e.preventDefault(); setTab(next); tabRefs.current[next]?.focus();
+  980 |             <section aria-labelledby="cab-orders">
+  981 |               <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+  982 |                 <h1 id="cab-orders" style={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}>Мои заказы</h1>
+  983 |               </div>
+  984 |               <OrdersTab toast={toast} cardSx={cardSx} />
+  985 |             </section>
+  986 |           ) : cabTab === "history" ? (
+  987 |             /* История просмотров (#134) — реальные данные GET /api/history. */
+  988 |             <HistoryTab cardSx={cardSx} standalone
+  989 |               h2Sx={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}
+  990 |               onOpenRecord={onOpenRecord} />
+  991 |           ) : cabTab === "saved" ? (
+  992 |             /* Сохранённые запросы (#133) — повтор/удаление, реальные данные GET /api/savedsearch. */
+  993 |             <SavedSearchesPanel cardSx={cardSx} standalone
+  994 |               h2Sx={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}
+  995 |               toast={toast} onRun={(s) => onRunSearch?.(s)} />
+  996 |           ) : (
+  997 |           <>
+  998 |           {/* На руках сейчас — LIVE формуляр */}
+  999 |           <section aria-labelledby="cab-onhand">
+ 1000 |             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+ 1001 |               <h1 id="cab-onhand" style={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}>На руках сейчас</h1>
+ 1002 |               <span style={{ fontSize: "var(--text-sm)", color: "var(--text-subtle)" }}>
+ 1003 |                 Формуляр · {onHand.length} {plural(onHand.length, "издание", "издания", "изданий")}
+ 1004 |                 {overdue ? " · " : ""}{overdue ? <span style={{ color: "var(--error)", fontWeight: 600 }}>{overdue} {plural(overdue, "просрочено", "просрочены", "просрочено")}</span> : null}
+ 1005 |               </span>
+ 1006 |             </div>
+ 1007 |             {onHand.length ? (
+ 1008 |               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+ 1009 |                 {onHand.map((l, i) => (
+ 1010 |                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: "14px 16px" }}>
+ 1011 |                     <div aria-hidden="true" style={{ width: 40, height: 56, flex: "none", borderRadius: 6, background: "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.35))", boxShadow: "var(--shadow-md)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 4 }}>
+ 1012 |                       <Icon name="book" size={13} style={{ color: "rgba(255,255,255,.85)" }} />
+ 1013 |                     </div>
+ 1014 |                     <div style={{ flex: 1, minWidth: 0 }}>
+ 1015 |                       <div style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-base,15.5px)", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{l.title}</div>
+ 1016 |                       <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
+ 1017 |                         <span style={{ fontFamily: "var(--font-mono)" }}>{l.meta || "—"}</span>
+ 1018 |                         {l.issued && <span>выдано {fmtDate(l.issued)}</span>}
+ 1019 |                         {l.renewals > 0 && <span>продлений: {l.renewals}</span>}
+ 1020 |                       </div>
+ 1021 |                     </div>
+ 1022 |                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 7, flex: "none" }}>
+ 1023 |                       <span style={toneChip(l.tone)}><span style={toneDot(l.tone)} aria-hidden="true" />{l.dueLabel || "срок не указан"}</span>
+ 1024 |                       <RenewButton />
+ 1025 |                     </div>
+ 1026 |                   </div>
+ 1027 |                 ))}
+ 1028 |               </div>
+ 1029 |             ) : (
+ 1030 |               <div style={cardSx}><EmptyState icon="check-circle" title="На руках книг нет" description={returnedCount ? "Все издания возвращены." : "Формуляр пуст — закажите издание в каталоге."} /></div>
+ 1031 |             )}
+ 1032 |           </section>
+ 1033 | 
+ 1034 |           {/* Очередь брони — реальные данные GET /api/holds (#222). При 404/501 секция прячется. */}
 ```
 
 <!-- ─── страница 581 ─── -->
 
 ```tsx
- 1035 |   };
- 1036 |   const tabBtn = (active: boolean): React.CSSProperties => ({
- 1037 |     background: "none", border: "none", borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
- 1038 |     color: active ? "var(--accent)" : "var(--text-subtle)", fontWeight: active ? 600 : 500,
- 1039 |     padding: "8px 12px", cursor: "pointer", fontSize: "var(--text-sm)", fontFamily: "var(--font-ui, inherit)", whiteSpace: "nowrap",
- 1040 |   });
- 1041 |   return (
- 1042 |     <div>
- 1043 |       <Button iconLeft="arrow-left" onClick={onBack}>К результатам</Button>
- 1044 |       <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
- 1045 |         {rec.hasCover && <img alt="обложка" src={api.coverUrl(db, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
- 1046 |         <div style={{ flex: 1, minWidth: 300 }}>
- 1047 |           <h2 style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-2xl, 1.5rem)", lineHeight: 1.3, margin: "2px 0 12px" }}>{v.brief}</h2>
- 1048 | 
- 1049 |           {/* Действия: заказ, бронь, список, корзина, поделиться, экспорт */}
- 1050 |           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14, position: "relative" }}>
- 1051 |             <Button iconLeft="bookmark" onClick={onOrder}>Заказать</Button>
- 1052 |             {/* Бронирование (#222) — ставит экземпляр в очередь удержания. */}
- 1053 |             <Button variant="secondary" iconLeft="clock" onClick={onHold}>Забронировать</Button>
- 1054 |             {/* «В список ▾» (#222) — доступно вошедшему читателю. */}
- 1055 |             {loggedIn && <ShelfMenu db={rec.db} mfn={rec.mfn} title={rec.brief || ""} toast={toast} />}
- 1056 |             <button onClick={onToggleBasket} title={inBasket ? "Убрать из корзины" : "Добавить в корзину"}
- 1057 |               style={{ display: "inline-flex", alignItems: "center", gap: 6, background: inBasket ? "var(--accent-weak,#eef2f7)" : "transparent", color: inBasket ? "var(--accent)" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
- 1058 |               <Icon name={inBasket ? "check" : "plus"} size={15} /> {inBasket ? "В корзине" : "В корзину"}
- 1059 |             </button>
- 1060 |             <button onClick={() => setShareOpen(!shareOpen)} aria-expanded={shareOpen} title="Поделиться"
- 1061 |               style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
- 1062 |               <Icon name="share" size={15} /> Поделиться
- 1063 |             </button>
- 1064 |             <span style={{ width: 1, height: 22, background: "var(--border-subtle)" }} aria-hidden="true" />
- 1065 |             <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Экспорт:</span>
- 1066 |             <button onClick={() => exportRecord(rec, "ris")} style={exportBtn} title="Экспорт в формате RIS"><Icon name="download" size={14} /> RIS</button>
- 1067 |             <button onClick={() => exportRecord(rec, "bib")} style={exportBtn} title="Экспорт в формате BibTeX"><Icon name="download" size={14} /> BibTeX</button>
- 1068 |             <button onClick={() => exportRecord(rec, "gost")} style={exportBtn} title="Экспорт по ГОСТ Р 7.0.100"><Icon name="download" size={14} /> ГОСТ</button>
- 1069 |             {shareOpen && (
- 1070 |               <div role="dialog" aria-label="Постоянная ссылка" style={{ position: "absolute", top: "100%", left: 0, marginTop: 8, zIndex: 20, background: "var(--surface-card,#fff)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 10, padding: 12, boxShadow: "var(--shadow-lg, 0 12px 30px rgba(0,0,0,.18))", width: "min(460px, 92vw)" }}>
- 1071 |                 <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}><Icon name="link" size={15} /> Постоянная ссылка</div>
- 1072 |                 <div style={{ display: "flex", gap: 8 }}>
- 1073 |                   <input readOnly value={permalink} aria-label="Постоянная ссылка на запись" onFocus={(e) => e.currentTarget.select()}
- 1074 |                     style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", background: "var(--surface-sunken,#f5f5f5)", color: "var(--text-body)" }} />
- 1075 |                   <Button size="sm" iconLeft="copy" onClick={onCopyPermalink}>Копировать</Button>
- 1076 |                 </div>
- 1077 |               </div>
- 1078 |             )}
- 1079 |           </div>
- 1080 | 
- 1081 |           {/* Вкладки */}
- 1082 |           <div role="tablist" aria-label="Разделы записи" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", overflowX: "auto" }}>
- 1083 |             {REC_TABS.map((t, i) => (
- 1084 |               <button key={t} role="tab" id={"rectab-" + i} aria-selected={tab === i} aria-controls={"recpanel-" + i}
- 1085 |                 tabIndex={tab === i ? 0 : -1} ref={(el) => { tabRefs.current[i] = el; }}
- 1086 |                 onClick={() => setTab(i)} onKeyDown={(e) => onTabKey(e, i)} style={tabBtn(tab === i)}>
- 1087 |                 {t}{i === 1 && v.holds.length ? " (" + v.holds.length + ")" : ""}{i === 2 && v.files.length ? " (" + v.files.length + ")" : ""}
- 1088 |               </button>
- 1089 |             ))}
+ 1035 |           <HoldsTab cardSx={cardSx} h2Sx={h2Sx} demoHint={demoHint} toast={toast} refreshKey={holdsRefresh} />
+ 1036 | 
+ 1037 |           {/* Мои полки — реальные списки GET /api/shelves (#222). При 404/501 секция прячется. */}
+ 1038 |           <ShelvesPanel cardSx={cardSx} h2Sx={h2Sx} toast={toast} onOpenRecord={onOpenRecord} />
+ 1039 | 
+ 1040 |           {/* Конфиденциальность (#199, 152-ФЗ): согласие на обработку ПДн + право на
+ 1041 |               забвение. Тумблер прячется при отсутствии эндпойнта; карточка удаления
+ 1042 |               деградирует тостом. Каталог библиотеки правом на забвение не затрагивается. */}
+ 1043 |           <section aria-labelledby="cab-privacy">
+ 1044 |             <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
+ 1045 |               <h2 id="cab-privacy" style={h2Sx}>Конфиденциальность</h2>
+ 1046 |             </div>
+ 1047 |             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+ 1048 |               <ConsentToggle cardSx={cardSx} toast={toast} />
+ 1049 |               <EraseDataCard cardSx={cardSx} toast={toast} onErased={onErased} />
+ 1050 |             </div>
+ 1051 |           </section>
+ 1052 |           </>
+ 1053 |           )}
+ 1054 | 
+ 1055 |           <div style={{ marginTop: 4 }}><Button variant="ghost" iconLeft="log-out" onClick={onLogout}>Выйти из кабинета</Button></div>
+ 1056 |         </main>
+ 1057 |       </div>
+ 1058 |     </div>
+ 1059 |   );
+ 1060 | }
+ 1061 | 
+ 1062 | // «Продлить» — реальное продление это запись в backend, которой ещё нет.
+ 1063 | // Кнопка задизейблена с подсказкой «скоро»; write-эндпойнты не вызываются.
+ 1064 | function RenewButton() {
+ 1065 |   return (
+ 1066 |     <span title="Онлайн-продление появится скоро" style={{ display: "inline-block" }}>
+ 1067 |       <button type="button" disabled aria-disabled="true" aria-label="Продлить (скоро)"
+ 1068 |         style={{ border: "1px solid var(--border-default,var(--border-strong))", background: "transparent", color: "var(--text-muted,var(--text-secondary))", borderRadius: 8, padding: "6px 13px", fontFamily: "var(--font-ui)", fontWeight: 500, fontSize: "var(--text-xs,12px)", cursor: "not-allowed", opacity: .7, display: "inline-flex", alignItems: "center", gap: 5 }}>
+ 1069 |         <Icon name="refresh-cw" size={13} /> Продлить
+ 1070 |       </button>
+ 1071 |     </span>
+ 1072 |   );
+ 1073 | }
+ 1074 | 
+ 1075 | function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (ticket: string, password: string) => void }) {
+ 1076 |   const [t, setT] = React.useState("");
+ 1077 |   // Пароль читателя (#2): передаётся вместе с билетом. «Как в читательском билете».
+ 1078 |   const [pwd, setPwd] = React.useState("");
+ 1079 |   const submit = () => onSubmit(t, pwd);
+ 1080 |   const inputSx: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", marginBottom: 6 };
+ 1081 |   return (
+ 1082 |     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
+ 1083 |       <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", borderRadius: 16, padding: 22, width: 320, boxShadow: "var(--shadow-lg, 0 20px 50px rgba(0,0,0,.25))" }}>
+ 1084 |         <div style={{ fontWeight: 600, fontSize: "var(--text-lg)", marginBottom: 8 }}>Вход в личный кабинет</div>
+ 1085 |         <p style={{ margin: "0 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Войдите по номеру читательского билета и паролю.</p>
+ 1086 |         <label htmlFor="reader-ticket" style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginBottom: 4 }}>Номер билета</label>
+ 1087 |         <input id="reader-ticket" value={t} onChange={(e) => setT(e.target.value)} placeholder="Номер билета" autoFocus
+ 1088 |           onKeyDown={(e) => { if (e.key === "Enter") submit(); }} style={inputSx} />
+ 1089 |         <label htmlFor="reader-pwd" style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--text-subtle)", margin: "10px 0 4px" }}>Пароль</label>
 ```
 
 <!-- ─── страница 582 ─── -->
 
 ```tsx
- 1090 |           </div>
- 1091 | 
- 1092 |           <div role="tabpanel" id={"recpanel-" + tab} aria-labelledby={"rectab-" + tab} tabIndex={0} style={{ paddingTop: 16, outline: "none" }}>
- 1093 |             {tab === 0 && (
- 1094 |               <div>
- 1095 |                 {v.meta.length > 0 ? (
- 1096 |                   <dl style={{ display: "grid", gridTemplateColumns: "minmax(120px,160px) 1fr", gap: "6px 14px", margin: "0 0 4px", fontSize: "var(--text-sm)" }}>
- 1097 |                     {v.meta.map((m, i) => <React.Fragment key={i}><dt style={{ color: "var(--text-subtle)" }}>{m.label}</dt><dd style={{ margin: 0 }}>{m.value}</dd></React.Fragment>)}
- 1098 |                   </dl>
- 1099 |                 ) : <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Описание отсутствует.</div>}
- 1100 |                 {v.subjects.length > 0 && <div style={{ marginTop: 18 }}><div style={lbl}>Темы и рубрики</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
- 1101 |                   {v.subjects.map((s, i) => <span key={i} role="button" tabIndex={0}
- 1102 |                     onClick={() => onSubject(s.split(" — ")[0])}
- 1103 |                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSubject(s.split(" — ")[0]); } }}
- 1104 |                     style={{ cursor: "pointer", background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", padding: "3px 11px", borderRadius: 999, fontSize: "var(--text-xs)" }}>{s}</span>)}
- 1105 |                 </div></div>}
- 1106 |               </div>
- 1107 |             )}
- 1108 |             {tab === 1 && (
- 1109 |               v.holds.length ?
- 1110 |                 <div style={{ display: "flex", flexDirection: "column" }}>
- 1111 |                   {v.holds.map((h, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderTop: i ? "1px solid var(--border-subtle)" : "none", fontSize: "var(--text-sm)" }}>
- 1112 |                     <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-subtle)", flex: "none", minWidth: 90 }}>{h.inv || "—"}</span>
- 1113 |                     <span style={{ flex: 1, minWidth: 0 }}>{h.loc || "на руках у читателя"}</span>
- 1114 |                     <span style={statusChip(h.st)}><span style={statusDot(h.st)} aria-hidden="true" />{(STATUS[h.st] || STATUS.unknown).label}</span>
- 1115 |                   </div>)}
- 1116 |                 </div> :
- 1117 |                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>
- 1118 |             )}
- 1119 |             {tab === 2 && (
- 1120 |               v.files.length ?
- 1121 |                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
- 1122 |                   {/* Постраничный просмотрщик (#222): доступен, если есть страницы-файлы. */}
- 1123 |                   {docPages.length > 0 && (
- 1124 |                     <div style={{ marginBottom: 6 }}>
- 1125 |                       <Button size="sm" iconLeft={hasImagePages ? "images" : "book-open"}
- 1126 |                         onClick={() => onViewDoc(docPages, 0, rec.brief || "")}>
- 1127 |                         Открыть просмотр{docPages.length > 1 ? " · " + docPages.length + " стр." : ""}
- 1128 |                       </Button>
- 1129 |                     </div>
- 1130 |                   )}
- 1131 |                   {v.files.map((f, i) => {
- 1132 |                     const pageIdx = docPages.findIndex((p) => p.url === f.url);
- 1133 |                     return (
- 1134 |                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)" }}>
- 1135 |                         <Icon name="file-text" size={16} style={{ color: "var(--text-subtle)", flexShrink: 0 }} />
- 1136 |                         {f.url && pageIdx >= 0
- 1137 |                           ? <button type="button" onClick={() => onViewDoc(docPages, pageIdx, rec.brief || "")}
- 1138 |                               style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", font: "inherit", display: "inline-flex", alignItems: "center", gap: 5 }}>
- 1139 |                               {f.name || f.url} <Icon name="eye" size={13} />
- 1140 |                             </button>
- 1141 |                           : f.url
- 1142 |                             ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 5 }}>{f.name || f.url} <Icon name="external-link" size={13} /></a>
- 1143 |                             : <span>{f.name}</span>}
- 1144 |                       </div>
+ 1090 |         <input id="reader-pwd" type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} placeholder="Пароль" autoComplete="current-password"
+ 1091 |           onKeyDown={(e) => { if (e.key === "Enter") submit(); }} style={inputSx} />
+ 1092 |         <p style={{ margin: "2px 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-2xs,11px)" }}>Пароль указан в вашем читательском билете.</p>
+ 1093 |         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+ 1094 |           <Button variant="ghost" onClick={onClose}>Отмена</Button>
+ 1095 |           <Button onClick={submit}>Войти</Button>
+ 1096 |         </div>
+ 1097 |       </div>
+ 1098 |     </div>
+ 1099 |   );
+ 1100 | }
+ 1101 | 
+ 1102 | // --- Карточка записи с вкладками ------------------------------------------
+ 1103 | // «Полное описание» (#1) — серверный формат ИРБИС (@full) — первая, основная
+ 1104 | // вкладка (как в jirbis). «Поля» — прежний разбор полей записи — вторая.
+ 1105 | // Дальше — экземпляры / электронные версии / метки MARC.
+ 1106 | const REC_TABS = ["Полное описание", "Поля", "Экземпляры", "Электронные версии", "Метки MARC"];
+ 1107 | // Индексы вкладок с числовыми бейджами (экземпляры / электронные версии).
+ 1108 | const TAB_HOLDINGS = 2;
+ 1109 | const TAB_FILES = 3;
+ 1110 | 
+ 1111 | function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, loggedIn, readerName, toast, onOpenRecord, onViewDoc, inBasket, onToggleBasket }: {
+ 1112 |   rec: RecordData; db: string; tab: number; setTab: (n: number) => void;
+ 1113 |   shareOpen: boolean; setShareOpen: (b: boolean) => void;
+ 1114 |   permalink: string; onCopyPermalink: () => void;
+ 1115 |   onBack: () => void; onOrder: () => void; onHold: () => void; onSubject: (t: string) => void;
+ 1116 |   loggedIn: boolean; readerName?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
+ 1117 |   onOpenRecord: (db: string, mfn: number) => void;
+ 1118 |   onViewDoc: (pages: DocPage[], idx: number, title?: string) => void;
+ 1119 |   inBasket: boolean; onToggleBasket: () => void;
+ 1120 | }) {
+ 1121 |   const v = recView(rec);
+ 1122 |   // «Полное описание» (#1): серверный формат ИРБИС. Цепочка деградации
+ 1123 |   //   @full → (пусто/404) @brief → (пусто/404) показ полей (вкладка «Поля»).
+ 1124 |   // state.text — готовый текст; state.fmt — какой формат отдал результат;
+ 1125 |   // state.status — loading | ok | empty (нет ни @full, ни @brief → откат к полям).
+ 1126 |   const [full, setFull] = React.useState<{ status: "loading" | "ok" | "empty"; text: string; fmt: string }>(
+ 1127 |     { status: "loading", text: "", fmt: "" });
+ 1128 |   React.useEffect(() => {
+ 1129 |     let alive = true;
+ 1130 |     setFull({ status: "loading", text: "", fmt: "" });
+ 1131 |     (async () => {
+ 1132 |       // Пробуем форматы по очереди; первый непустой — победитель.
+ 1133 |       for (const fmt of ["@full", "@brief"] as const) {
+ 1134 |         const r = await api.render(rec.db, rec.mfn, fmt);
+ 1135 |         if (!alive) return;
+ 1136 |         if (r.status === 200 && r.json?.ok && r.json.data) {
+ 1137 |           const text = (r.json.data.rendered || "").trim();
+ 1138 |           if (text) { setFull({ status: "ok", text, fmt }); return; }
+ 1139 |           // 200, но пусто (формат не задан в БД) — пробуем следующий формат.
+ 1140 |           continue;
+ 1141 |         }
+ 1142 |         // 404/501/ошибка эндпойнта — дальше пробовать смысла нет: откат к полям.
+ 1143 |         if (r.status === 404 || r.status === 501) break;
+ 1144 |       }
 ```
 
 <!-- ─── страница 583 ─── -->
 
 ```tsx
- 1145 |                     );
- 1146 |                   })}
- 1147 |                 </div> :
- 1148 |                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Электронные версии к записи не прикреплены.</div>
- 1149 |             )}
- 1150 |             {tab === 3 && (
- 1151 |               <div dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />
- 1152 |             )}
- 1153 |           </div>
- 1154 | 
- 1155 |           {/* Отзывы и оценки (#134) — скрыто при отсутствии эндпойнта. */}
- 1156 |           <ReviewPanel db={rec.db} mfn={rec.mfn} loggedIn={loggedIn} readerName={readerName} toast={toast} />
- 1157 | 
- 1158 |           {/* «Похожие издания» (#133) — скрыто, если рекомендаций нет/404. */}
- 1159 |           <SimilarRecommendations db={rec.db} mfn={rec.mfn} onOpen={(mfn, database) => onOpenRecord(database, mfn)} />
- 1160 |         </div>
- 1161 |       </div>
- 1162 |     </div>
- 1163 |   );
- 1164 | }
- 1165 | 
- 1166 | const exportBtn: React.CSSProperties = {
- 1167 |   display: "inline-flex", alignItems: "center", gap: 5, background: "var(--surface-card,#fff)",
- 1168 |   color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8,
- 1169 |   padding: "6px 10px", cursor: "pointer", fontSize: "var(--text-xs)",
- 1170 | };
- 1171 | 
- 1172 | // --- Корзина (отбор) — модальная панель -----------------------------------
- 1173 | function BasketPanel({ items, onClose, onRemove, onClear, toast }: {
- 1174 |   items: ResultItem[]; onClose: () => void; onRemove: (mfn: number) => void; onClear: () => void;
- 1175 |   toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
- 1176 | }) {
- 1177 |   const empty = items.length === 0;
- 1178 |   const exp = (fmt: "ris" | "bib" | "txt") => { if (empty) return; exportBasket(items, fmt); };
- 1179 |   return (
- 1180 |     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", justifyContent: "flex-end", zIndex: 60 }}>
- 1181 |       <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Корзина отбора"
- 1182 |         style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", width: "min(440px, 96vw)", height: "100%", boxShadow: "var(--shadow-lg, -10px 0 40px rgba(0,0,0,.25))", display: "flex", flexDirection: "column" }}>
- 1183 |         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
- 1184 |           <Icon name="bookmark" size={18} />
- 1185 |           <b style={{ fontSize: "var(--text-lg)" }}>Корзина отбора</b>
- 1186 |           <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>· {items.length}</span>
- 1187 |           <button onClick={onClose} aria-label="Закрыть корзину" style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)" }}><Icon name="x" size={20} /></button>
- 1188 |         </div>
- 1189 |         <div style={{ flex: 1, overflowY: "auto", padding: "12px 18px" }}>
- 1190 |           {empty ? (
- 1191 |             <EmptyState icon="bookmark" title="Корзина пуста" description="Отметьте издания в результатах поиска флажком, чтобы добавить их сюда." />
- 1192 |           ) : (
- 1193 |             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
- 1194 |               {items.map((it) => (
- 1195 |                 <div key={it.mfn} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid var(--border-subtle)" }}>
- 1196 |                   <div style={{ flex: 1, minWidth: 0 }}>
- 1197 |                     <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text-strong)" }}>{it.title || "[Без заглавия]"}</div>
- 1198 |                     {(it.author || it.year) && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2 }}>{[it.author, it.year].filter(Boolean).join(" · ")}</div>}
- 1199 |                   </div>
+ 1145 |       if (alive) setFull({ status: "empty", text: "", fmt: "" });
+ 1146 |     })();
+ 1147 |     return () => { alive = false; };
+ 1148 |   }, [rec.db, rec.mfn]);
+ 1149 |   // Страницы для постраничного просмотрщика (#222): из электронных версий записи.
+ 1150 |   // Картинки (по расширению) — листаются и зумируются во вьюере; прочие файлы —
+ 1151 |   // открываются по ссылке. Только записи со страницами получают кнопку «Открыть просмотр».
+ 1152 |   const docPages: DocPage[] = v.files
+ 1153 |     .filter((f) => f.url)
+ 1154 |     .map((f) => ({ name: f.name || f.url, url: f.url, kind: /\.(png|jpe?g|gif|webp|bmp|tiff?|svg)(\?|#|$)/i.test(f.url) ? ("image" as const) : ("file" as const) }));
+ 1155 |   const hasImagePages = docPages.some((p) => p.kind === "image");
+ 1156 |   const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
+ 1157 |   const lbl: React.CSSProperties = { fontWeight: 600, fontSize: "var(--text-sm)", margin: "0 0 8px" };
+ 1158 |   const onTabKey = (e: React.KeyboardEvent, i: number) => {
+ 1159 |     let next = i;
+ 1160 |     if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (i + 1) % REC_TABS.length;
+ 1161 |     else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (i - 1 + REC_TABS.length) % REC_TABS.length;
+ 1162 |     else if (e.key === "Home") next = 0;
+ 1163 |     else if (e.key === "End") next = REC_TABS.length - 1;
+ 1164 |     else return;
+ 1165 |     e.preventDefault(); setTab(next); tabRefs.current[next]?.focus();
+ 1166 |   };
+ 1167 |   const tabBtn = (active: boolean): React.CSSProperties => ({
+ 1168 |     background: "none", border: "none", borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
+ 1169 |     color: active ? "var(--accent)" : "var(--text-subtle)", fontWeight: active ? 600 : 500,
+ 1170 |     padding: "8px 12px", cursor: "pointer", fontSize: "var(--text-sm)", fontFamily: "var(--font-ui, inherit)", whiteSpace: "nowrap",
+ 1171 |   });
+ 1172 |   return (
+ 1173 |     <div>
+ 1174 |       <Button iconLeft="arrow-left" onClick={onBack}>К результатам</Button>
+ 1175 |       <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+ 1176 |         {rec.hasCover && <img alt="обложка" src={api.coverUrl(db, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
+ 1177 |         <div style={{ flex: 1, minWidth: 300 }}>
+ 1178 |           <h2 style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-2xl, 1.5rem)", lineHeight: 1.3, margin: "2px 0 12px" }}>{v.brief}</h2>
+ 1179 | 
+ 1180 |           {/* Действия: заказ, бронь, список, корзина, поделиться, экспорт */}
+ 1181 |           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14, position: "relative" }}>
+ 1182 |             <Button iconLeft="bookmark" onClick={onOrder}>Заказать</Button>
+ 1183 |             {/* Бронирование (#222) — ставит экземпляр в очередь удержания. */}
+ 1184 |             <Button variant="secondary" iconLeft="clock" onClick={onHold}>Забронировать</Button>
+ 1185 |             {/* «В список ▾» (#222) — доступно вошедшему читателю. */}
+ 1186 |             {loggedIn && <ShelfMenu db={rec.db} mfn={rec.mfn} title={rec.brief || ""} toast={toast} />}
+ 1187 |             <button onClick={onToggleBasket} title={inBasket ? "Убрать из корзины" : "Добавить в корзину"}
+ 1188 |               style={{ display: "inline-flex", alignItems: "center", gap: 6, background: inBasket ? "var(--accent-weak,#eef2f7)" : "transparent", color: inBasket ? "var(--accent)" : "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+ 1189 |               <Icon name={inBasket ? "check" : "plus"} size={15} /> {inBasket ? "В корзине" : "В корзину"}
+ 1190 |             </button>
+ 1191 |             <button onClick={() => setShareOpen(!shareOpen)} aria-expanded={shareOpen} title="Поделиться"
+ 1192 |               style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "7px 11px", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+ 1193 |               <Icon name="share" size={15} /> Поделиться
+ 1194 |             </button>
+ 1195 |             <span style={{ width: 1, height: 22, background: "var(--border-subtle)" }} aria-hidden="true" />
+ 1196 |             <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Экспорт:</span>
+ 1197 |             <button onClick={() => exportRecord(rec, "ris")} style={exportBtn} title="Экспорт в формате RIS"><Icon name="download" size={14} /> RIS</button>
+ 1198 |             <button onClick={() => exportRecord(rec, "bib")} style={exportBtn} title="Экспорт в формате BibTeX"><Icon name="download" size={14} /> BibTeX</button>
+ 1199 |             <button onClick={() => exportRecord(rec, "gost")} style={exportBtn} title="Экспорт по ГОСТ Р 7.0.100"><Icon name="download" size={14} /> ГОСТ</button>
 ```
 
 <!-- ─── страница 584 ─── -->
 
 ```tsx
- 1200 |                   <button onClick={() => onRemove(it.mfn)} aria-label={"Убрать из корзины: " + (it.title || "")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)", flexShrink: 0 }}><Icon name="trash" size={16} /></button>
- 1201 |                 </div>
- 1202 |               ))}
- 1203 |             </div>
- 1204 |           )}
- 1205 |         </div>
- 1206 |         <div style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
- 1207 |           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Экспорт отобранного списка</div>
- 1208 |           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
- 1209 |             <button onClick={() => exp("ris")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> RIS</button>
- 1210 |             <button onClick={() => exp("bib")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> BibTeX</button>
- 1211 |             <button onClick={() => exp("txt")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> Текст</button>
- 1212 |             <a href={empty ? undefined : basketMailto(items)} onClick={(e) => { if (empty) e.preventDefault(); }}
- 1213 |               style={{ ...exportBtn, textDecoration: "none", opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer", marginLeft: "auto" }}><Icon name="share" size={14} /> Отправить на почту</a>
- 1214 |           </div>
- 1215 |           {!empty && <Button variant="ghost" onClick={() => { onClear(); toast({ variant: "info", title: "Корзина очищена" }); }}>Очистить корзину</Button>}
- 1216 |         </div>
- 1217 |       </div>
- 1218 |     </div>
- 1219 |   );
- 1220 | }
+ 1200 |             {shareOpen && (
+ 1201 |               <div role="dialog" aria-label="Постоянная ссылка" style={{ position: "absolute", top: "100%", left: 0, marginTop: 8, zIndex: 20, background: "var(--surface-card,#fff)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 10, padding: 12, boxShadow: "var(--shadow-lg, 0 12px 30px rgba(0,0,0,.18))", width: "min(460px, 92vw)" }}>
+ 1202 |                 <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}><Icon name="link" size={15} /> Постоянная ссылка</div>
+ 1203 |                 <div style={{ display: "flex", gap: 8 }}>
+ 1204 |                   <input readOnly value={permalink} aria-label="Постоянная ссылка на запись" onFocus={(e) => e.currentTarget.select()}
+ 1205 |                     style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", background: "var(--surface-sunken,#f5f5f5)", color: "var(--text-body)" }} />
+ 1206 |                   <Button size="sm" iconLeft="copy" onClick={onCopyPermalink}>Копировать</Button>
+ 1207 |                 </div>
+ 1208 |               </div>
+ 1209 |             )}
+ 1210 |           </div>
+ 1211 | 
+ 1212 |           {/* Вкладки */}
+ 1213 |           <div role="tablist" aria-label="Разделы записи" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", overflowX: "auto" }}>
+ 1214 |             {REC_TABS.map((t, i) => (
+ 1215 |               <button key={t} role="tab" id={"rectab-" + i} aria-selected={tab === i} aria-controls={"recpanel-" + i}
+ 1216 |                 tabIndex={tab === i ? 0 : -1} ref={(el) => { tabRefs.current[i] = el; }}
+ 1217 |                 onClick={() => setTab(i)} onKeyDown={(e) => onTabKey(e, i)} style={tabBtn(tab === i)}>
+ 1218 |                 {t}{i === TAB_HOLDINGS && v.holds.length ? " (" + v.holds.length + ")" : ""}{i === TAB_FILES && v.files.length ? " (" + v.files.length + ")" : ""}
+ 1219 |               </button>
+ 1220 |             ))}
+ 1221 |           </div>
+ 1222 | 
+ 1223 |           <div role="tabpanel" id={"recpanel-" + tab} aria-labelledby={"rectab-" + tab} tabIndex={0} style={{ paddingTop: 16, outline: "none" }}>
+ 1224 |             {/* Вкладка 0 — «Полное описание» (#1): серверный формат ИРБИС (@full/@brief).
+ 1225 |                 При отсутствии серверного формата (empty) — мягкое сообщение со ссылкой
+ 1226 |                 на вкладку «Поля» (тот же разбор полей записи). */}
+ 1227 |             {tab === 0 && (
+ 1228 |               full.status === "loading" ? (
+ 1229 |                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Загрузка описания…</div>
+ 1230 |               ) : full.status === "ok" ? (
+ 1231 |                 <div>
+ 1232 |                   <div style={{
+ 1233 |                     fontFamily: "var(--font-record-body, var(--font-serif, serif))",
+ 1234 |                     fontSize: "var(--text-base, 15.5px)", lineHeight: 1.6, color: "var(--text-body)",
+ 1235 |                     whiteSpace: "pre-wrap", wordBreak: "break-word",
+ 1236 |                   }}
+ 1237 |                     // Серверный PFT сворачивается в текст; переносы строк сохраняем
+ 1238 |                     // через white-space:pre-wrap, разметку не интерпретируем (XSS-safe).
+ 1239 |                   >{full.text}</div>
+ 1240 |                   {full.fmt === "@brief" && (
+ 1241 |                     <div style={{ marginTop: 10, fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>
+ 1242 |                       Показано краткое описание (полный формат для записи не задан).
+ 1243 |                     </div>
+ 1244 |                   )}
+ 1245 |                 </div>
+ 1246 |               ) : (
+ 1247 |                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>
+ 1248 |                   Серверное описание недоступно.{" "}
+ 1249 |                   <button type="button" onClick={() => setTab(1)}
+ 1250 |                     style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", font: "inherit" }}>
+ 1251 |                     Открыть вкладку «Поля»
+ 1252 |                   </button>.
+ 1253 |                 </div>
+ 1254 |               )
+```
+
+<!-- ─── страница 585 ─── -->
+
+```tsx
+ 1255 |             )}
+ 1256 |             {tab === 1 && (
+ 1257 |               <div>
+ 1258 |                 {v.meta.length > 0 ? (
+ 1259 |                   <dl style={{ display: "grid", gridTemplateColumns: "minmax(120px,160px) 1fr", gap: "6px 14px", margin: "0 0 4px", fontSize: "var(--text-sm)" }}>
+ 1260 |                     {v.meta.map((m, i) => <React.Fragment key={i}><dt style={{ color: "var(--text-subtle)" }}>{m.label}</dt><dd style={{ margin: 0 }}>{m.value}</dd></React.Fragment>)}
+ 1261 |                   </dl>
+ 1262 |                 ) : <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Описание отсутствует.</div>}
+ 1263 |                 {v.subjects.length > 0 && <div style={{ marginTop: 18 }}><div style={lbl}>Темы и рубрики</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+ 1264 |                   {v.subjects.map((s, i) => <span key={i} role="button" tabIndex={0}
+ 1265 |                     onClick={() => onSubject(s.split(" — ")[0])}
+ 1266 |                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSubject(s.split(" — ")[0]); } }}
+ 1267 |                     style={{ cursor: "pointer", background: "var(--accent-weak, #eef2f7)", color: "var(--accent)", padding: "3px 11px", borderRadius: 999, fontSize: "var(--text-xs)" }}>{s}</span>)}
+ 1268 |                 </div></div>}
+ 1269 |               </div>
+ 1270 |             )}
+ 1271 |             {tab === 2 && (
+ 1272 |               v.holds.length ?
+ 1273 |                 <div style={{ display: "flex", flexDirection: "column" }}>
+ 1274 |                   {v.holds.map((h, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderTop: i ? "1px solid var(--border-subtle)" : "none", fontSize: "var(--text-sm)" }}>
+ 1275 |                     <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-subtle)", flex: "none", minWidth: 90 }}>{h.inv || "—"}</span>
+ 1276 |                     <span style={{ flex: 1, minWidth: 0 }}>{h.loc || "на руках у читателя"}</span>
+ 1277 |                     <span style={statusChip(h.st)}><span style={statusDot(h.st)} aria-hidden="true" />{(STATUS[h.st] || STATUS.unknown).label}</span>
+ 1278 |                   </div>)}
+ 1279 |                 </div> :
+ 1280 |                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Сведения об экземплярах в записи отсутствуют.</div>
+ 1281 |             )}
+ 1282 |             {tab === 3 && (
+ 1283 |               v.files.length ?
+ 1284 |                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+ 1285 |                   {/* Постраничный просмотрщик (#222): доступен, если есть страницы-файлы. */}
+ 1286 |                   {docPages.length > 0 && (
+ 1287 |                     <div style={{ marginBottom: 6 }}>
+ 1288 |                       <Button size="sm" iconLeft={hasImagePages ? "images" : "book-open"}
+ 1289 |                         onClick={() => onViewDoc(docPages, 0, rec.brief || "")}>
+ 1290 |                         Открыть просмотр{docPages.length > 1 ? " · " + docPages.length + " стр." : ""}
+ 1291 |                       </Button>
+ 1292 |                     </div>
+ 1293 |                   )}
+ 1294 |                   {v.files.map((f, i) => {
+ 1295 |                     const pageIdx = docPages.findIndex((p) => p.url === f.url);
+ 1296 |                     return (
+ 1297 |                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)" }}>
+ 1298 |                         <Icon name="file-text" size={16} style={{ color: "var(--text-subtle)", flexShrink: 0 }} />
+ 1299 |                         {f.url && pageIdx >= 0
+ 1300 |                           ? <button type="button" onClick={() => onViewDoc(docPages, pageIdx, rec.brief || "")}
+ 1301 |                               style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", font: "inherit", display: "inline-flex", alignItems: "center", gap: 5 }}>
+ 1302 |                               {f.name || f.url} <Icon name="eye" size={13} />
+ 1303 |                             </button>
+ 1304 |                           : f.url
+ 1305 |                             ? <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 5 }}>{f.name || f.url} <Icon name="external-link" size={13} /></a>
+ 1306 |                             : <span>{f.name}</span>}
+ 1307 |                       </div>
+ 1308 |                     );
+ 1309 |                   })}
+```
+
+<!-- ─── страница 586 ─── -->
+
+```tsx
+ 1310 |                 </div> :
+ 1311 |                 <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Электронные версии к записи не прикреплены.</div>
+ 1312 |             )}
+ 1313 |             {tab === 4 && (
+ 1314 |               <div dangerouslySetInnerHTML={{ __html: `<table style="border-collapse:collapse;width:100%">${v.rawRows}</table>` }} />
+ 1315 |             )}
+ 1316 |           </div>
+ 1317 | 
+ 1318 |           {/* Отзывы и оценки (#134) — скрыто при отсутствии эндпойнта. */}
+ 1319 |           <ReviewPanel db={rec.db} mfn={rec.mfn} loggedIn={loggedIn} readerName={readerName} toast={toast} />
+ 1320 | 
+ 1321 |           {/* «Похожие издания» (#133) — скрыто, если рекомендаций нет/404. */}
+ 1322 |           <SimilarRecommendations db={rec.db} mfn={rec.mfn} onOpen={(mfn, database) => onOpenRecord(database, mfn)} />
+ 1323 |         </div>
+ 1324 |       </div>
+ 1325 |     </div>
+ 1326 |   );
+ 1327 | }
+ 1328 | 
+ 1329 | const exportBtn: React.CSSProperties = {
+ 1330 |   display: "inline-flex", alignItems: "center", gap: 5, background: "var(--surface-card,#fff)",
+ 1331 |   color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8,
+ 1332 |   padding: "6px 10px", cursor: "pointer", fontSize: "var(--text-xs)",
+ 1333 | };
+ 1334 | 
+ 1335 | // --- Корзина (отбор) — модальная панель -----------------------------------
+ 1336 | function BasketPanel({ items, onClose, onRemove, onClear, toast }: {
+ 1337 |   items: ResultItem[]; onClose: () => void; onRemove: (mfn: number) => void; onClear: () => void;
+ 1338 |   toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
+ 1339 | }) {
+ 1340 |   const empty = items.length === 0;
+ 1341 |   const exp = (fmt: "ris" | "bib" | "txt") => { if (empty) return; exportBasket(items, fmt); };
+ 1342 |   return (
+ 1343 |     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", justifyContent: "flex-end", zIndex: 60 }}>
+ 1344 |       <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Корзина отбора"
+ 1345 |         style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", width: "min(440px, 96vw)", height: "100%", boxShadow: "var(--shadow-lg, -10px 0 40px rgba(0,0,0,.25))", display: "flex", flexDirection: "column" }}>
+ 1346 |         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
+ 1347 |           <Icon name="bookmark" size={18} />
+ 1348 |           <b style={{ fontSize: "var(--text-lg)" }}>Корзина отбора</b>
+ 1349 |           <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>· {items.length}</span>
+ 1350 |           <button onClick={onClose} aria-label="Закрыть корзину" style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)" }}><Icon name="x" size={20} /></button>
+ 1351 |         </div>
+ 1352 |         <div style={{ flex: 1, overflowY: "auto", padding: "12px 18px" }}>
+ 1353 |           {empty ? (
+ 1354 |             <EmptyState icon="bookmark" title="Корзина пуста" description="Отметьте издания в результатах поиска флажком, чтобы добавить их сюда." />
+ 1355 |           ) : (
+ 1356 |             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+ 1357 |               {items.map((it) => (
+ 1358 |                 <div key={it.mfn} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid var(--border-subtle)" }}>
+ 1359 |                   <div style={{ flex: 1, minWidth: 0 }}>
+ 1360 |                     <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text-strong)" }}>{it.title || "[Без заглавия]"}</div>
+ 1361 |                     {(it.author || it.year) && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2 }}>{[it.author, it.year].filter(Boolean).join(" · ")}</div>}
+ 1362 |                   </div>
+ 1363 |                   <button onClick={() => onRemove(it.mfn)} aria-label={"Убрать из корзины: " + (it.title || "")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)", flexShrink: 0 }}><Icon name="trash" size={16} /></button>
+ 1364 |                 </div>
+```
+
+<!-- ─── страница 587 ─── -->
+
+```tsx
+ 1365 |               ))}
+ 1366 |             </div>
+ 1367 |           )}
+ 1368 |         </div>
+ 1369 |         <div style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+ 1370 |           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Экспорт отобранного списка</div>
+ 1371 |           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+ 1372 |             <button onClick={() => exp("ris")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> RIS</button>
+ 1373 |             <button onClick={() => exp("bib")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> BibTeX</button>
+ 1374 |             <button onClick={() => exp("txt")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> Текст</button>
+ 1375 |             <a href={empty ? undefined : basketMailto(items)} onClick={(e) => { if (empty) e.preventDefault(); }}
+ 1376 |               style={{ ...exportBtn, textDecoration: "none", opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer", marginLeft: "auto" }}><Icon name="share" size={14} /> Отправить на почту</a>
+ 1377 |           </div>
+ 1378 |           {!empty && <Button variant="ghost" onClick={() => { onClear(); toast({ variant: "info", title: "Корзина очищена" }); }}>Очистить корзину</Button>}
+ 1379 |         </div>
+ 1380 |       </div>
+ 1381 |     </div>
+ 1382 |   );
+ 1383 | }
 ```
 
 ### Файл: `irbis-web/frontend/src/BookProvisionDesk.tsx`  · строк: 411
@@ -35570,13 +35748,13 @@
    32 | .bp__in:focus,.bp__sel:focus{outline:none;border-color:var(--accent);}
    33 | .bp__row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
    34 | .bp__pick{display:flex;flex-direction:column;gap:2px;margin-bottom:12px;}
-```
-
-<!-- ─── страница 585 ─── -->
-
-```tsx
    35 | .bp__pick-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:none;cursor:pointer;background:transparent;
    36 |   padding:7px 9px;border-radius:var(--radius-md);font:inherit;color:var(--text-muted);}
+```
+
+<!-- ─── страница 588 ─── -->
+
+```tsx
    37 | .bp__pick-item:hover{background:var(--surface-hover);color:var(--text-body);}
    38 | .bp__pick-item--on{background:var(--accent-weak);color:var(--accent-press);font-weight:600;}
    39 | .bp__pick-code{font-family:var(--font-mono);font-size:11px;color:var(--text-subtle);flex:none;}
@@ -35630,13 +35808,13 @@
    87 |   const [specialties, setSpecialties] = React.useState<BpSpecialty[]>([]);
    88 |   const [disciplines, setDisciplines] = React.useState<BpDiscipline[]>([]);
    89 |   const [facId, setFacId] = React.useState<string | number | null>(null);
-```
-
-<!-- ─── страница 586 ─── -->
-
-```tsx
    90 |   const [specId, setSpecId] = React.useState<string | number | null>(null);
    91 |   const [discId, setDiscId] = React.useState<string | number | null>(null);
+```
+
+<!-- ─── страница 589 ─── -->
+
+```tsx
    92 | 
    93 |   // карточки расчёта
    94 |   const [discCard, setDiscCard] = React.useState<BpDisciplineCard | null>(null);
@@ -35690,13 +35868,13 @@
   142 |       const f = r.json.data;
   143 |       setFaculties((xs) => xs.concat([f])); setFacId(f.id); setSpecId(null); setDiscId(null); setSpecCard(null); setDiscCard(null);
   144 |       setFCode(""); setFName("");
-```
-
-<!-- ─── страница 587 ─── -->
-
-```tsx
   145 |       toast({ variant: "success", title: "Факультет добавлен", message: code + " · " + name });
   146 |     } else if (r.status === 401 || r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант на правку справочников." });
+```
+
+<!-- ─── страница 590 ─── -->
+
+```tsx
   147 |     else toast({ variant: "error", title: "Не добавлено", message: "Повторите попытку." });
   148 |   }
   149 |   async function addSpecialty() {
@@ -35750,13 +35928,13 @@
   197 |     if (!t) { toast({ variant: "info", title: "Укажите издание", message: "Заглавие литературы обязательно." }); return; }
   198 |     if (!c || c < 1) { toast({ variant: "info", title: "Проверьте экземпляры", message: "Число экземпляров должно быть ≥ 1." }); return; }
   199 |     const r = await api.bpBind({ disciplineId: discId, title: t, kind: litKind, copies: c });
-```
-
-<!-- ─── страница 588 ─── -->
-
-```tsx
   200 |     if (down404(r)) return;
   201 |     if (r.json?.ok) {
+```
+
+<!-- ─── страница 591 ─── -->
+
+```tsx
   202 |       toast({ variant: "success", title: "Литература привязана", message: (litKind === "main" ? "Осн." : "Доп.") + " · " + t + " · " + c + " экз." });
   203 |       setLitTitle(""); setLitCopies("");
   204 |       void refreshDiscCard(discId); if (specId != null) void refreshSpecCard(specId);
@@ -35810,13 +35988,13 @@
   252 |                   <button key={f.id} type="button" className={"bp__pick-item" + (f.id === facId ? " bp__pick-item--on" : "")} onClick={() => pickFac(f.id)}>
   253 |                     <span className="bp__pick-code">{f.code}</span><span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
   254 |                   </button>
-```
-
-<!-- ─── страница 589 ─── -->
-
-```tsx
   255 |                 ))}
   256 |               </div>
+```
+
+<!-- ─── страница 592 ─── -->
+
+```tsx
   257 |             )}
   258 |             <div className="bp__row2">
   259 |               <div className="bp__fld"><label className="bp__fld-lab">Код</label><input className="bp__in" value={fCode} onChange={(e) => setFCode(e.target.value)} placeholder="ФТ" /></div>
@@ -35870,13 +36048,13 @@
   307 |               <div className="bp__fld"><label className="bp__fld-lab">Шифр</label><input className="bp__in" value={dDiscId} onChange={(e) => setDDiscId(e.target.value)} placeholder="код" disabled={specId == null} /></div>
   308 |               <div className="bp__fld"><label className="bp__fld-lab">Семестр</label><input className="bp__in" type="number" min={1} value={dSem} onChange={(e) => setDSem(e.target.value)} disabled={specId == null} /></div>
   309 |             </div>
-```
-
-<!-- ─── страница 590 ─── -->
-
-```tsx
   310 |             <div className="bp__fld"><label className="bp__fld-lab">Студентов (контингент)</label><input className="bp__in" type="number" min={0} value={dStud} onChange={(e) => setDStud(e.target.value)} disabled={specId == null} /></div>
   311 |             <Button block variant="secondary" size="sm" iconLeft="plus" onClick={addDiscipline} disabled={specId == null}>Добавить дисциплину</Button>
+```
+
+<!-- ─── страница 593 ─── -->
+
+```tsx
   312 |           </div>
   313 |         </div>
   314 | 
@@ -35930,13 +36108,13 @@
   362 |                   <div style={{ marginTop: 14 }}>
   363 |                     {discCard.bindings.map((b, i) => (
   364 |                       <div className="bp__lit" key={(b.id ?? i) + ":" + b.title}>
-```
-
-<!-- ─── страница 591 ─── -->
-
-```tsx
   365 |                         <span className={"bp__lit-kind bp__lit-kind--" + b.kind}>{b.kind === "main" ? "ОСН" : "ДОП"}</span>
   366 |                         <span className="bp__lit-title" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{b.title}{b.author ? <span style={{ fontWeight: 400, color: "var(--text-subtle)" }}> · {b.author}</span> : null}</span>
+```
+
+<!-- ─── страница 594 ─── -->
+
+```tsx
   367 |                         <span className="bp__lit-copies">{b.copies} экз.</span>
   368 |                         {b.mfn != null ? <span className="bp__pick-code">MFN {b.mfn}</span> : <span />}
   369 |                       </div>
@@ -35995,13 +36173,13 @@
     6 | // Клавиатура: билет → экземпляр → Enter выдаёт, поле очищается под следующий скан.
     7 | // Мягкая деградация: если /api/circ/* нет (404/501) — информер, приложение не падает.
     8 | import React from "react";
-```
-
-<!-- ─── страница 592 ─── -->
-
-```tsx
     9 | import { api } from "./api";
    10 | import type { CircFormular, CircLoan, CircFine } from "./api";
+```
+
+<!-- ─── страница 595 ─── -->
+
+```tsx
    11 | import type { ToastVariant } from "../components/feedback/Toast.jsx";
    12 | import { Button } from "../components/forms/Button.jsx";
    13 | import { Icon } from "../components/icon/Icon.jsx";
@@ -36055,13 +36233,13 @@
    61 | 
    62 | /* клавиатурные подсказки */
    63 | .cdesk__hints{display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:8px 14px;margin-bottom:14px;
-```
-
-<!-- ─── страница 593 ─── -->
-
-```tsx
    64 |   background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-md);font-size:11.5px;color:var(--text-subtle);}
    65 | .cdesk__kbd{display:inline-flex;align-items:center;gap:5px;}
+```
+
+<!-- ─── страница 596 ─── -->
+
+```tsx
    66 | .cdesk__kbd kbd{font-family:var(--font-mono);font-size:10.5px;line-height:1;padding:3px 6px;border-radius:var(--radius-sm);
    67 |   background:var(--surface-card);border:1px solid var(--border-subtle);border-bottom-width:2px;color:var(--text-muted);}
    68 | 
@@ -36115,13 +36293,13 @@
   116 |     setLoading(true);
   117 |     const r = await api.circReader(t);
   118 |     setLoading(false);
-```
-
-<!-- ─── страница 594 ─── -->
-
-```tsx
   119 |     if (r.status === 404 || r.status === 501) { setUnavailable(true); return; }
   120 |     if (r.json?.ok && r.json.data && r.json.data.reader) {
+```
+
+<!-- ─── страница 597 ─── -->
+
+```tsx
   121 |       setForm(r.json.data);
   122 |       setUnavailable(false);
   123 |       setSelected(new Set()); // сброс выбора массового возврата под нового читателя
@@ -36175,13 +36353,13 @@
   171 |   }
   172 | 
   173 |   async function doReturn(loan: CircLoan) {
-```
-
-<!-- ─── страница 595 ─── -->
-
-```tsx
   174 |     setBusyItem(loan.item);
   175 |     const r = await api.circReturn(activeTicket, loan.db || CIRC_DB, loan.item);
+```
+
+<!-- ─── страница 598 ─── -->
+
+```tsx
   176 |     setBusyItem(null);
   177 |     if (r.status === 200 && r.json?.ok) {
   178 |       toast({ variant: "success", title: "Экземпляр принят", message: loan.title || loan.item });
@@ -36235,13 +36413,13 @@
   226 |     setSelected(new Set());
   227 |     if (unavailable) toast({ variant: "info", title: "Возврат недоступен", message: "Модуль книговыдачи ещё не подключён." });
   228 |     else if (fail === 0) toast({ variant: "success", title: "Массовый возврат", message: "Принято экземпляров: " + ok + "." });
-```
-
-<!-- ─── страница 596 ─── -->
-
-```tsx
   229 |     else toast({ variant: "warning", title: "Массовый возврат — частично", message: "Принято " + ok + ", не принято " + fail + ". Проверьте оставшиеся." });
   230 |     await refresh();
+```
+
+<!-- ─── страница 599 ─── -->
+
+```tsx
   231 |   }
   232 | 
   233 |   const head = (
@@ -36295,13 +36473,13 @@
   281 |             onChange={(e) => setTicket(e.target.value)}
   282 |             onKeyDown={(e) => { if (e.key === "Enter") loadFormular(ticket); else if (e.key === "Escape") setTicket(""); }} />
   283 |         </div>
-```
-
-<!-- ─── страница 597 ─── -->
-
-```tsx
   284 |         <div className="cdesk__fld">
   285 |           <label className="cdesk__fld-lab" htmlFor="cdesk-item">Экземпляр (инв. / RFID)</label>
+```
+
+<!-- ─── страница 600 ─── -->
+
+```tsx
   286 |           <input id="cdesk-item" ref={itemRef} className="cdesk__in cdesk__in--mono" value={item} placeholder={form ? "скан экземпляра → Enter" : "сначала загрузите формуляр"}
   287 |             autoComplete="off" disabled={!form}
   288 |             onChange={(e) => setItem(e.target.value)}
@@ -36355,13 +36533,13 @@
   336 |                 ))}
   337 |               </div>
   338 |             )}
-```
-
-<!-- ─── страница 598 ─── -->
-
-```tsx
   339 | 
   340 |             {/* шапка раздела выдач + панель массового возврата */}
+```
+
+<!-- ─── страница 601 ─── -->
+
+```tsx
   341 |             {form.loans.length > 0 && (
   342 |               <div className="cdesk__loanhead">
   343 |                 <input type="checkbox" className="cdesk__chk" checked={allSelected} onChange={toggleAll}
@@ -36415,13 +36593,13 @@
   391 |             <span className="cdesk__cap">Штрафы и задолженность</span>
   392 |             {fines === null ? (
   393 |               <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--text-subtle)" }}>
-```
-
-<!-- ─── страница 599 ─── -->
-
-```tsx
   394 |                 Сведения о штрафах подгружаются модулем книговыдачи.
   395 |               </div>
+```
+
+<!-- ─── страница 602 ─── -->
+
+```tsx
   396 |             ) : fines.length === 0 ? (
   397 |               <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--success)" }}>
   398 |                 <Icon name="check-circle" size={15} /> Задолженности нет.
@@ -36480,13 +36658,13 @@
    23 | import { Button } from "../components/forms/Button.jsx";
    24 | import { Icon } from "../components/icon/Icon.jsx";
    25 | import type { IconName } from "../components/icon/Icon.jsx";
-```
-
-<!-- ─── страница 600 ─── -->
-
-```tsx
    26 | import { EmptyState } from "../components/feedback/EmptyState.jsx";
    27 | 
+```
+
+<!-- ─── страница 603 ─── -->
+
+```tsx
    28 | type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) => void;
    29 | 
    30 | // Пространство имён .irb-mig* — не пересекается с .stf__ / .adm__ / .irb-plat* /
@@ -36540,13 +36718,13 @@
    78 | .irb-mig__floading{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-subtle);}
    79 | .irb-mig__spin{display:inline-block;width:13px;height:13px;border:2px solid var(--border-strong);border-top-color:var(--accent);border-radius:var(--radius-full);animation:irb-mig-spin .6s linear infinite;flex:none;}
    80 | @keyframes irb-mig-spin{to{transform:rotate(360deg);}}
-```
-
-<!-- ─── страница 601 ─── -->
-
-```tsx
    81 | .irb-mig__ferr{display:flex;gap:7px;align-items:flex-start;font-size:12px;color:var(--danger-500,#B42318);line-height:1.45;}
    82 | .irb-mig__flink{background:none;border:none;padding:0;margin-left:6px;font:inherit;font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;}
+```
+
+<!-- ─── страница 604 ─── -->
+
+```tsx
    83 | .irb-mig__showf{background:none;border:none;padding:0;font:inherit;font-size:11.5px;color:var(--accent);cursor:pointer;}
    84 | .irb-mig__showf:hover{text-decoration:underline;}
    85 | .irb-mig__chk{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border-subtle);cursor:pointer;}
@@ -36600,13 +36778,13 @@
   133 |   return (
   134 |     <div className="irb-mig__card" style={{ padding: 4 }}>
   135 |       <EmptyState icon="download" title={title}
-```
-
-<!-- ─── страница 602 ─── -->
-
-```tsx
   136 |         description="Мастер свёрстан в Стиле A и работает поверх движка миграции ИРБИС64 → Biblio (#225). На текущем сервере эндпойнт /api/admin/migrate/* ещё не развёрнут — перенос данных станет доступен после его публикации." />
   137 |     </div>
+```
+
+<!-- ─── страница 605 ─── -->
+
+```tsx
   138 |   );
   139 | }
   140 | 
@@ -36660,13 +36838,13 @@
   188 |       const dbs = r.json.data.databases || [];
   189 |       setDatabases(dbs);
   190 |       // По умолчанию отмечаем к миграции все обнаруженные базы.
-```
-
-<!-- ─── страница 603 ─── -->
-
-```tsx
   191 |       const sel: Record<string, boolean> = {};
   192 |       dbs.forEach((d) => { sel[d.code] = true; });
+```
+
+<!-- ─── страница 606 ─── -->
+
+```tsx
   193 |       setSelected(sel);
   194 |       setStep(2);
   195 |       toast({ variant: "success", title: "Источник изучен", message: "Обнаружено баз: " + dbs.length });
@@ -36720,13 +36898,13 @@
   243 |             <button type="button" role="listitem"
   244 |               className={"irb-mig__step" + (state ? " irb-mig__step--" + state : "") + (clickable ? " irb-mig__step--clickable" : "")}
   245 |               aria-current={s.no === step ? "step" : undefined}
-```
-
-<!-- ─── страница 604 ─── -->
-
-```tsx
   246 |               disabled={!clickable && s.no !== step}
   247 |               onClick={() => clickable && setStep(s.no)}>
+```
+
+<!-- ─── страница 607 ─── -->
+
+```tsx
   248 |               <span className="irb-mig__step-no">{s.no < step ? <Icon name="check" size={13} /> : s.no}</span>
   249 |               <span className="irb-mig__step-lab">{s.label}</span>
   250 |             </button>
@@ -36780,13 +36958,13 @@
   298 |   ];
   299 |   return (
   300 |     <div className="irb-mig__card">
-```
-
-<!-- ─── страница 605 ─── -->
-
-```tsx
   301 |       <div className="irb-mig__bar"><span className="irb-mig__cap">Шаг 1 · Источник миграции</span></div>
   302 |       <div className="irb-mig__pad">
+```
+
+<!-- ─── страница 608 ─── -->
+
+```tsx
   303 |         <div className="irb-mig__modes" role="radiogroup" aria-label="Режим источника">
   304 |           {modes.map((m) => (
   305 |             <button key={m.id} type="button" role="radio" aria-checked={mode === m.id}
@@ -36840,13 +37018,13 @@
   353 | }) {
   354 |   if (databases === null) {
   355 |     return (
-```
-
-<!-- ─── страница 606 ─── -->
-
-```tsx
   356 |       <div className="irb-mig__card" style={{ padding: 4 }}>
   357 |         <EmptyState icon="search" title={inspecting ? "Изучаем источник…" : "Источник ещё не изучен"}
+```
+
+<!-- ─── страница 609 ─── -->
+
+```tsx
   358 |           description="Нажмите «Изучить источник» на шаге 1 — мастер обнаружит базы данных, посчитает записи и разберёт состав полей." />
   359 |       </div>
   360 |     );
@@ -36900,13 +37078,13 @@
   408 | function DbRow({ db, mode, buildSource }: {
   409 |   db: MigrateDatabase; mode: MigrateMode; buildSource: () => MigrateSource;
   410 | }) {
-```
-
-<!-- ─── страница 607 ─── -->
-
-```tsx
   411 |   const [open, setOpen] = React.useState(false);
   412 |   // Кэш полей именно этой базы: null — ещё не грузили; массив — загружено.
+```
+
+<!-- ─── страница 610 ─── -->
+
+```tsx
   413 |   const [fields, setFields] = React.useState<MigrateField[] | null>(db.fields ?? null);
   414 |   const [loading, setLoading] = React.useState(false);
   415 |   const [error, setError] = React.useState<string | null>(null);
@@ -36960,13 +37138,13 @@
   463 |             </button>
   464 |           )}
   465 |         </td>
-```
-
-<!-- ─── страница 608 ─── -->
-
-```tsx
   466 |       </tr>
   467 |       {open && (
+```
+
+<!-- ─── страница 611 ─── -->
+
+```tsx
   468 |         <tr className="irb-mig__fields">
   469 |           <td colSpan={7} style={{ padding: "8px 14px 12px 40px" }}>
   470 |             {loading ? (
@@ -37020,13 +37198,13 @@
   518 |       <div>
   519 |         {databases.map((db) => (
   520 |           <label key={db.code} className="irb-mig__chk">
-```
-
-<!-- ─── страница 609 ─── -->
-
-```tsx
   521 |             <input type="checkbox" checked={!!selected[db.code]} onChange={() => toggle(db.code)} aria-label={"Мигрировать базу " + db.code} />
   522 |             <span className="irb-mig__chk-main">
+```
+
+<!-- ─── страница 612 ─── -->
+
+```tsx
   523 |               <span className="irb-mig__chk-name" style={{ display: "block" }}>{db.name || db.code} <span className="irb-mig__mono" style={{ color: "var(--text-subtle)", fontWeight: 400 }}>({db.code})</span></span>
   524 |               <span className="irb-mig__chk-sub" style={{ display: "block" }}>{kindLabel(db.kind)} · записей {fmtNum(db.recordCount)}{typeof db.readerCount === "number" ? " · читателей " + fmtNum(db.readerCount) : ""}{db.fields && db.fields.length ? " · полей " + db.fields.length : ""}</span>
   525 |             </span>
@@ -37080,13 +37258,13 @@
   573 |     { lab: "Загружено записей", icon: "check-circle", val: report.records_loaded },
   574 |     { lab: "Загружено читателей", icon: "users", val: report.readers_loaded },
   575 |     { lab: "Пропущено", icon: "minus", val: report.skipped },
-```
-
-<!-- ─── страница 610 ─── -->
-
-```tsx
   576 |     { lab: "Ошибок", icon: "alert-triangle", val: report.errors, bad: report.errors > 0 },
   577 |   ];
+```
+
+<!-- ─── страница 613 ─── -->
+
+```tsx
   578 |   return (
   579 |     <div className="irb-mig__card">
   580 |       <div className="irb-mig__bar">
@@ -37145,13 +37323,13 @@
    23 | // Пространство имён .irb-plat* — не пересекается с .stf__ / .adm__ / .cdesk__ /
    24 | // .acq__ / .bp__ / прочими .irb-*.
    25 | const CSS = `
-```
-
-<!-- ─── страница 611 ─── -->
-
-```tsx
    26 | .irb-plat{font-family:var(--font-ui);}
    27 | .irb-plat__tabs{display:flex;gap:4px;padding:4px;background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-md);margin-bottom:16px;width:fit-content;flex-wrap:wrap;}
+```
+
+<!-- ─── страница 614 ─── -->
+
+```tsx
    28 | .irb-plat__tab{display:inline-flex;align-items:center;gap:7px;border:none;cursor:pointer;font-family:var(--font-ui);font-size:13px;font-weight:500;padding:7px 14px;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);}
    29 | .irb-plat__tab:hover{color:var(--text-body);}
    30 | .irb-plat__tab--on{background:var(--surface-card);color:var(--text-strong);font-weight:600;box-shadow:var(--shadow-sm);}
@@ -37205,13 +37383,13 @@
    78 | // ответе биллинга; эти значения — запасной справочник для формы создания.
    79 | const PLANS = ["free", "standard", "pro"] as const;
    80 | // Человекочитаемые подписи функциональных модулей. Коды — backend
-```
-
-<!-- ─── страница 612 ─── -->
-
-```tsx
    81 | // entitlements.DEFAULT_MODULES; неизвестный код показываем как есть.
    82 | const MODULE_RU: Record<string, string> = {
+```
+
+<!-- ─── страница 615 ─── -->
+
+```tsx
    83 |   opac: "Читательский портал / поиск",
    84 |   cataloging: "Каталогизация",
    85 |   circulation: "Книговыдача",
@@ -37265,13 +37443,13 @@
   133 |     <div className="irb-plat">
   134 |       {head}
   135 |       <div className="irb-plat__tabs" role="tablist" aria-label="Разделы платформы">
-```
-
-<!-- ─── страница 613 ─── -->
-
-```tsx
   136 |         {TABS.map((t) => (
   137 |           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id}
+```
+
+<!-- ─── страница 616 ─── -->
+
+```tsx
   138 |             className={"irb-plat__tab" + (tab === t.id ? " irb-plat__tab--on" : "")} onClick={() => setTab(t.id)}>
   139 |             <Icon name={t.icon} size={15} />{t.label}
   140 |           </button>
@@ -37325,13 +37503,13 @@
   188 |     else toast({ variant: "error", title: "Не создано", message: "Повторите попытку." });
   189 |   }
   190 | 
-```
-
-<!-- ─── страница 614 ─── -->
-
-```tsx
   191 |   if (down) return <SectionDown icon="layers" title="Управление арендаторами подключается отдельно" />;
   192 | 
+```
+
+<!-- ─── страница 617 ─── -->
+
+```tsx
   193 |   return (
   194 |     <div className="irb-plat__card">
   195 |       <div className="irb-plat__bar">
@@ -37385,13 +37563,13 @@
   243 | // ===== Тариф и лимиты =======================================================
   244 | function BillingTab({ toast, selected, onSelect }: {
   245 |   toast: ToastFn; selected: string | null; onSelect: (slug: string) => void;
-```
-
-<!-- ─── страница 615 ─── -->
-
-```tsx
   246 | }) {
   247 |   const [tenants, setTenants] = React.useState<Tenant[] | null>(null);
+```
+
+<!-- ─── страница 618 ─── -->
+
+```tsx
   248 |   const [tenantsDown, setTenantsDown] = React.useState(false);
   249 |   const [billing, setBilling] = React.useState<BillingInfo | null>(null);
   250 |   const [billingDown, setBillingDown] = React.useState(false);
@@ -37445,13 +37623,13 @@
   298 |     const r = await api.adminSetModule(selected, module, enabled);
   299 |     setBusyModule(null);
   300 |     if (r.status === 200 && r.json?.ok && r.json.data) {
-```
-
-<!-- ─── страница 616 ─── -->
-
-```tsx
   301 |       // Ответ /module несёт обновлённый СПИСОК включённых модулей — берём его.
   302 |       setBilling({ ...billing, modules: r.json.data.modules });
+```
+
+<!-- ─── страница 619 ─── -->
+
+```tsx
   303 |       toast({ variant: "success", title: enabled ? "Модуль включён" : "Модуль отключён", message: moduleLabel(module) });
   304 |     } else if (r.status === 404 || r.status === 501) toast({ variant: "info", title: "Недоступно", message: "Эндпойнт платформы не развёрнут." });
   305 |     else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
@@ -37505,13 +37683,13 @@
   353 |             {planChoices.map((p) => (
   354 |               <button key={p} type="button"
   355 |                 className={"irb-plat__pickbtn" + (billing.plan === p ? " irb-plat__pickbtn--on" : "")}
-```
-
-<!-- ─── страница 617 ─── -->
-
-```tsx
   356 |                 disabled={busyPlan !== null} onClick={() => changePlan(p)}>{p}</button>
   357 |             ))}
+```
+
+<!-- ─── страница 620 ─── -->
+
+```tsx
   358 |           </div>
   359 |         </div>
   360 | 
@@ -37565,13 +37743,13 @@
   408 |   );
   409 | }
   410 | 
-```
-
-<!-- ─── страница 618 ─── -->
-
-```tsx
   411 | // Прогресс-бар «использовано / лимит». Цвет: зелёный < 75% < жёлтый < 90% < красный.
   412 | //   limit: number — ceiling; null/UNLIMITED — без лимита («∞»);
+```
+
+<!-- ─── страница 621 ─── -->
+
+```tsx
   413 | //   used:  number — потребление; undefined — сервер не посчитал («—»).
   414 | function Meter({ icon, name, used, limit, unit = "" }: {
   415 |   icon: IconName; name: string; used?: number; limit: number | null; unit?: string;
@@ -37630,13 +37808,13 @@
    23 | type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: StaffRoute };
    24 | const DOMAINS: DomainTile[] = [
    25 |   { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей RUSMARC", route: "cataloging" as const },
-```
-
-<!-- ─── страница 619 ─── -->
-
-```tsx
    26 |   { id: "acq", label: "Комплектование", icon: "archive", grant: "acq.receipt", desc: "Заказ, поступление, КСУ, списание", route: "acquisition" as const },
    27 |   { id: "circ", label: "Книговыдача", icon: "package", grant: "circ.issue", desc: "Выдача, возврат, продление, штрафы, формуляр читателя", route: "circulation" as const },
+```
+
+<!-- ─── страница 622 ─── -->
+
+```tsx
    28 |   { id: "cells", label: "Ячеистое хранение", icon: "grid", grant: "record.read", desc: "Карта ячеек: занятость, адрес, RFID (наша фишка)", route: "cells" as const },
    29 |   { id: "provision", label: "Книгообеспеченность", icon: "bar-chart", grant: "record.read", desc: "Обеспеченность дисциплин учебной литературой", route: "provision" as const },
    30 |   { id: "inv", label: "Инвентаризация", icon: "scan-line", grant: "record.read", desc: "Сверка фонда с ТСД", route: "stub" as const },
@@ -37690,13 +37868,13 @@
    78 |       const one = occToVal(v);
    79 |       if (one != null) rec[fd.code] = one;
    80 |     }
-```
-
-<!-- ─── страница 620 ─── -->
-
-```tsx
    81 |   });
    82 |   return rec;
+```
+
+<!-- ─── страница 623 ─── -->
+
+```tsx
    83 | }
    84 | 
    85 | function recordToValues(fields: any[], wl: WLField[]) {
@@ -37750,13 +37928,13 @@
   133 |   padding:9px 18px;background:var(--surface-card);border-bottom:1px solid var(--border-subtle);}
   134 | .stf__crumb{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-subtle);min-width:0;}
   135 | .stf__crumb b{color:var(--text-body);font-weight:600;}
-```
-
-<!-- ─── страница 621 ─── -->
-
-```tsx
   136 | .stf__density{margin-left:auto;display:flex;gap:3px;padding:3px;background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-md);}
   137 | .stf__density button{border:none;cursor:pointer;font-family:var(--font-ui);font-size:11.5px;font-weight:500;padding:4px 10px;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);}
+```
+
+<!-- ─── страница 624 ─── -->
+
+```tsx
   138 | .stf__density button[aria-pressed="true"]{background:var(--text-primary);color:var(--surface-1);}
   139 | .stf__online{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:var(--radius-md);
   140 |   background:var(--status-available-bg);color:var(--status-available);font-size:11px;font-weight:600;white-space:nowrap;}
@@ -37810,13 +37988,13 @@
   188 | /* вкладки представления записи (рабочий лист · MARC · каталожная карточка) */
   189 | .stf__tabs{display:flex;gap:3px;padding:3px;background:var(--surface-sunken);border:1px solid var(--border-subtle);
   190 |   border-radius:var(--radius-md);margin-bottom:14px;width:fit-content;max-width:100%;flex-wrap:wrap;}
-```
-
-<!-- ─── страница 622 ─── -->
-
-```tsx
   191 | .stf__tab{display:inline-flex;align-items:center;gap:6px;border:none;cursor:pointer;font-family:var(--font-ui);
   192 |   font-size:12.5px;font-weight:500;padding:6px 12px;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);}
+```
+
+<!-- ─── страница 625 ─── -->
+
+```tsx
   193 | .stf__tab:hover{color:var(--text-body);}
   194 | .stf__tab[aria-selected="true"]{background:var(--surface-card);color:var(--text-strong);font-weight:600;box-shadow:var(--shadow-sm);}
   195 | .stf__tab-count{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:var(--radius-full);
@@ -37870,13 +38048,13 @@
   243 |   .stf__nav{flex-direction:row;flex-wrap:wrap;flex:1 1 100%;}
   244 |   .stf__nav-cap,.stf__user{display:none;}
   245 |   .stf__row{grid-template-columns:1fr;gap:6px;}
-```
-
-<!-- ─── страница 623 ─── -->
-
-```tsx
   246 | }
   247 | `;
+```
+
+<!-- ─── страница 626 ─── -->
+
+```tsx
   248 | if (typeof document !== "undefined" && !document.getElementById("stf-shell-css")) {
   249 |   const s = document.createElement("style"); s.id = "stf-shell-css"; s.textContent = SHELL_CSS; document.head.appendChild(s);
   250 | }
@@ -37930,13 +38108,13 @@
   298 |           <div style={{ minWidth: 0 }}>
   299 |             <div className="stf__brand-name">Biblio</div>
   300 |             <div className="stf__brand-sub">Рабочее пространство</div>
-```
-
-<!-- ─── страница 624 ─── -->
-
-```tsx
   301 |           </div>
   302 |         </div>
+```
+
+<!-- ─── страница 627 ─── -->
+
+```tsx
   303 |         <div className="stf__nav">
   304 |           <span className="stf__nav-cap">Рабочее место</span>
   305 |           <button type="button" className={"stf__nav-item" + (current === "desktop" ? " stf__nav-item--on" : "")}
@@ -37990,13 +38168,13 @@
   353 |         </div>
   354 |       </div>
   355 |     </div>
-```
-
-<!-- ─── страница 625 ─── -->
-
-```tsx
   356 |   );
   357 | }
+```
+
+<!-- ─── страница 628 ─── -->
+
+```tsx
   358 | 
   359 | function StaffDesktop({ staff, tiles, onOpen }: { staff: StaffSession; tiles: typeof DOMAINS; onOpen: (d: typeof DOMAINS[number]) => void }) {
   360 |   return (
@@ -38050,13 +38228,13 @@
   408 | // ============================================================================
   409 | 
   410 | const KIND_RU: Record<string, string> = { building: "Здание", floor: "Этаж", room: "Помещение", rack: "Стеллаж", shelf: "Полка", postamat: "Постамат выдачи", return: "Станция книгоприёма" };
-```
-
-<!-- ─── страница 626 ─── -->
-
-```tsx
   411 | // Цвет ячейки = домен-статус из токенов Стиля A.
   412 | const cellColor = (c: any) => !c.occupied ? "var(--surface-hover)"
+```
+
+<!-- ─── страница 629 ─── -->
+
+```tsx
   413 |   : ({ available: "var(--status-available)", hold: "var(--status-postamat)", returned: "var(--status-return)", issued: "var(--status-issued)" } as any)[c.status] || "var(--text-subtle)";
   414 | 
   415 | function rackFill(r: any) {
@@ -38110,13 +38288,13 @@
   463 |   );
   464 | }
   465 | 
-```
-
-<!-- ─── страница 627 ─── -->
-
-```tsx
   466 | function StorageNode({ node, depth }: { node: any; depth: number }) {
   467 |   const [open, setOpen] = React.useState(depth < 2);
+```
+
+<!-- ─── страница 630 ─── -->
+
+```tsx
   468 |   const kids: any[] = node.children || [];
   469 |   const leaves = kids.filter((k) => k.kind === "cell" || k.kind === "slot");
   470 |   const conts = kids.filter((k) => k.kind !== "cell" && k.kind !== "slot");
@@ -38170,13 +38348,13 @@
   518 |           description="Иерархия здание → этаж → помещение → стеллаж → полка → ячейка (+ постамат и книгоприём) — наша модель ячеистого хранения. На адаптере к ИРБИС64 её нет, поэтому здесь данные пусты. Экран свёрстан в Стиле A и наполняется при работе через server-own." />
   519 |       </div>
   520 |     </div>
-```
-
-<!-- ─── страница 628 ─── -->
-
-```tsx
   521 |   );
   522 |   if (!data) return <div>{head}<div style={{ color: "var(--text-subtle)", fontSize: 13 }}>Загрузка карты хранения…</div></div>;
+```
+
+<!-- ─── страница 631 ─── -->
+
+```tsx
   523 |   return (
   524 |     <div>
   525 |       {head}
@@ -38230,13 +38408,13 @@
   573 |   for (let i = 1; i < parts.length; i++) {
   574 |     const p = parts[i];
   575 |     if (!p) continue;
-```
-
-<!-- ─── страница 629 ─── -->
-
-```tsx
   576 |     out.push({ sf: p[0], text: p.slice(1) });
   577 |   }
+```
+
+<!-- ─── страница 632 ─── -->
+
+```tsx
   578 |   return out;
   579 | }
   580 | 
@@ -38290,13 +38468,13 @@
   628 |   const [violations, setViolations] = React.useState<FlkViolation[]>([]);
   629 |   const [checked, setChecked] = React.useState(false);
   630 |   const [saving, setSaving] = React.useState(false);
-```
-
-<!-- ─── страница 630 ─── -->
-
-```tsx
   631 |   // вкладка представления записи: рабочий лист · MARC-поля · каталожная карточка.
   632 |   const [view, setView] = React.useState<"sheet" | "marc" | "card">("sheet");
+```
+
+<!-- ─── страница 633 ─── -->
+
+```tsx
   633 |   // источник правки (MFN боевой записи, загруженной в форму) — для подписи «правка
   634 |   // на основе …» и понимания режима «создать копию».
   635 |   const [srcMfn, setSrcMfn] = React.useState<number | null>(null);
@@ -38350,13 +38528,13 @@
   683 |     if (r.json?.ok && r.json.data) {
   684 |       setValues(recordToValues(r.json.data.fields, wl!));
   685 |       // экземпляры из поля 910 загруженной записи (b/h/d) — для правки.
-```
-
-<!-- ─── страница 631 ─── -->
-
-```tsx
   686 |       const ex = (r.json.data.fields || []).filter((f: any) => f.tag === "910").map((f: any) => ({
   687 |         b: f.subfields?.b || f.subfields?.B || "", h: f.subfields?.h || f.subfields?.H || "", d: f.subfields?.d || f.subfields?.D || "",
+```
+
+<!-- ─── страница 634 ─── -->
+
+```tsx
   688 |       }));
   689 |       setExemplars(ex);
   690 |       setMfn(0); setSrcMfn(item.mfn); setSaved(null); setErrors({}); setViolations([]); setChecked(false); setView("sheet");
@@ -38410,13 +38588,13 @@
   738 |   }
   739 | 
   740 |   async function checkFlk() {
-```
-
-<!-- ─── страница 632 ─── -->
-
-```tsx
   741 |     setChecked(true);
   742 |     const res = await runFlk();
+```
+
+<!-- ─── страница 635 ─── -->
+
+```tsx
   743 |     if (res.hardBlocked) toast({ variant: "warning", title: "ФЛК: непреодолимые замечания", message: "Сохранение заблокировано — исправьте отмеченные поля." });
   744 |     else if (res.soft) toast({ variant: "info", title: "ФЛК: преодолимые замечания", message: "Можно сохранить с подтверждением." });
   745 |     else toast({ variant: "success", title: "ФЛК пройден", message: res.serverUp ? "Нарушений нет." : "Обязательные поля заполнены." });
@@ -38470,13 +38648,13 @@
   793 |   const cardData = buildCardPreview(currentFields, mfn || srcMfn || 0);
   794 | 
   795 |   const exInputs = (i: number, x: Exemplar) => (
-```
-
-<!-- ─── страница 633 ─── -->
-
-```tsx
   796 |     <div className="stf__ex" key={i}>
   797 |       <input value={x.b} onChange={(e) => setExemplar(i, { b: e.target.value })} placeholder="Инв. номер (^b)" aria-label={"Инвентарный номер экземпляра " + (i + 1)} />
+```
+
+<!-- ─── страница 636 ─── -->
+
+```tsx
   798 |       <input value={x.h} onChange={(e) => setExemplar(i, { h: e.target.value })} placeholder="Штрих-код / RFID (^h)" aria-label={"Штрих-код экземпляра " + (i + 1)} />
   799 |       <input value={x.d} onChange={(e) => setExemplar(i, { d: e.target.value })} placeholder="Место хранения (^d)" aria-label={"Место хранения экземпляра " + (i + 1)} />
   800 |       <Button variant="ghost" size="sm" iconLeft="trash" aria-label="Удалить экземпляр" onClick={() => delExemplar(i)} />
@@ -38530,13 +38708,13 @@
   848 |         <div style={{ display: "flex", gap: 8 }}>
   849 |           <Button variant="secondary" size="sm" iconLeft="search" loading={searching} onClick={runSearch} disabled={!wl}>Найти</Button>
   850 |           <Button variant="secondary" size="sm" iconLeft="plus" onClick={newRecord} disabled={!wl}>Новая</Button>
-```
-
-<!-- ─── страница 634 ─── -->
-
-```tsx
   851 |         </div>
   852 |       </div>
+```
+
+<!-- ─── страница 637 ─── -->
+
+```tsx
   853 | 
   854 |       {results !== null && (
   855 |         results.length === 0
@@ -38590,13 +38768,13 @@
   903 |             <div className="stf__card" role="tabpanel" aria-label="MARC-поля">
   904 |               {currentFields.length === 0
   905 |                 ? <div className="stf__marc-empty" style={{ padding: 18 }}>Запись пуста — заполните поля на вкладке «Рабочий лист», и они появятся здесь как хранятся (тег ^подполе значение).</div>
-```
-
-<!-- ─── страница 635 ─── -->
-
-```tsx
   906 |                 : <div className="stf__marc">
   907 |                     {currentFields.map((f, i) => (
+```
+
+<!-- ─── страница 638 ─── -->
+
+```tsx
   908 |                       <div className="stf__marc-row" key={f.tag + ":" + i}>
   909 |                         <span className="stf__marc-tag">{f.tag}</span>
   910 |                         <span>
@@ -38650,13 +38828,13 @@
   958 |                 <div className="stf__row-lab">
   959 |                   <span className="stf__row-code">{fd.code}</span>
   960 |                   <span className="stf__row-name">{fd.label}{fd.required && <span className="stf__row-req" aria-hidden="true">*</span>}</span>
-```
-
-<!-- ─── страница 636 ─── -->
-
-```tsx
   961 |                   {hasVal && <button type="button" className="stf__row-q" title="Очистить поле" aria-label={"Очистить поле " + fd.label} onClick={() => clearField(fd)}><Icon name="x-circle" size={15} /></button>}
   962 |                 </div>
+```
+
+<!-- ─── страница 639 ─── -->
+
+```tsx
   963 |                 <DynamicField field={{ ...fd, code: undefined } as any} value={values[fd.code]} onChange={(v: any) => set(fd.code, v)} error={errors[fd.code]} />
   964 |               </div>
   965 |             ); })}
@@ -38710,13 +38888,13 @@
  1013 |             )}
  1014 |             <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-subtle)", fontSize: 12, color: checked ? ((hardCount || errCount) ? "var(--danger-500)" : softCount ? "var(--status-issued)" : "var(--success)") : "var(--text-subtle)" }}>
  1015 |               {!checked ? "Нажмите «Проверить ФЛК» перед сохранением."
-```
-
-<!-- ─── страница 637 ─── -->
-
-```tsx
  1016 |                 : hardCount ? hardCount + " непреодолим(ое/ых) — сохранение блокируется" + (softCount ? ", + " + softCount + " преодолим(ое/ых)" : "")
  1017 |                 : softCount ? softCount + " преодолим(ое/ых) — можно сохранить с подтверждением"
+```
+
+<!-- ─── страница 640 ─── -->
+
+```tsx
  1018 |                 : errCount ? errCount + " замечани(е/я) ФЛК"
  1019 |                 : "ФЛК пройден — можно сохранять."}
  1020 |             </div>
@@ -38749,7 +38927,7 @@
  1047 | }
 ```
 
-### Файл: `irbis-web/frontend/src/api.ts`  · строк: 532
+### Файл: `irbis-web/frontend/src/api.ts`  · строк: 560
 
 ```ts
     1 | // Typed client for the IRBIS64 web backend (same-origin /api). Bearer token kept
@@ -38760,580 +38938,608 @@
     6 | export interface ResultItem {
     7 |   mfn: number; title: string; author?: string; year?: string;
     8 |   docType?: string; availability?: "available" | "issued" | "unknown"; hasCover?: boolean;
-    9 | }
-   10 | export interface SearchResult { db: string; expr: string; total: number; page: number; pageSize: number; items: ResultItem[]; }
-   11 | export interface FieldVal { tag: string; value: string; text?: string; subfields: Record<string, string>; }
-   12 | export interface Holding { inv_no: string; status: string; cell: string; rfid: string; location?: string; }
-   13 | export interface RecordData { db: string; mfn: number; version?: string; brief?: string; hasCover?: boolean; fields: FieldVal[]; holdings?: Holding[]; }
-   14 | export interface StorageNode {
-   15 |   id: number; kind: string; code: string; name?: string; address?: string; size?: string;
-   16 |   gx?: number; gy?: number; gw?: number; gh?: number;
-   17 |   cellsTotal?: number; cellsOccupied?: number;
-   18 |   occupied?: boolean; status?: string; title?: string; inv?: string; mfn?: number;
-   19 |   children?: StorageNode[];
-   20 | }
-   21 | export interface Term { count: number; term: string; }
-   22 | export interface FacetValue { value: string; label: string; count: number; }
-   23 | export interface Facet { field: string; prefix: string; label: string; values: FacetValue[]; }
-```
-
-<!-- ─── страница 638 ─── -->
-
-```ts
-   24 | export interface FacetsResult { db: string; expr: string; facets: Facet[]; }
-   25 | export interface Grant { function: string; db: string; level: string; }
-   26 | // Enriched /api/databases item: optional record count + icon/description for the
-   27 | // rich DB selector (G17). Older backends may omit count/icon/description — degrade.
-   28 | export interface DbItem { code: string; name: string; public: boolean; count?: number; icon?: string; description?: string; }
-   29 | export interface Loan { value: string; subfields: Record<string, string>; }
-   30 | export interface CabinetData { mfn: number; name: string; loans: Loan[]; loanCount: number; }
-   31 | // Discovery façade (G2) — a showcase row of new arrivals from /api/showcase.
-   32 | export interface ShowcaseItem { mfn: number; title: string; author?: string; year?: string; cover?: boolean; }
-   33 | // Reader cabinet «Заказы» (G12) — an order with a cancel-before-issue affordance.
-   34 | export interface OrderItem {
-   35 |   id?: string | number; mfn: number; db?: string; title?: string; author?: string;
-   36 |   status?: string; statusLabel?: string; created?: string; place?: string; cancelable?: boolean;
-   37 | }
-   38 | // Бронирование (#222) — заявка на удержание экземпляра с позицией в очереди.
-   39 | //   status: 'ready' — готов к получению; 'queued' — в очереди (position — ваш номер).
-   40 | export interface Hold {
-   41 |   holdId: string; db: string; mfn: number; title?: string;
-   42 |   status: "ready" | "queued"; position?: number; until?: string;
-   43 | }
-   44 | export interface HoldResult { holdId: string; status: "ready" | "queued"; position?: number; }
-   45 | // Уведомления читателя (#222) — почтовый ящик портала. event — машинный тип
-   46 | // события (hold_ready/due_soon/…); subject/body — человекочитаемый текст.
-   47 | export interface Notification {
-   48 |   id: string | number; ts?: string; event?: string; subject?: string; body?: string; read?: boolean;
-   49 | }
-   50 | // Полки / списки чтения (#222). system=true — встроенные («Хочу прочитать»,
-   51 | // «Избранное»), их нельзя удалять; пользовательские списки — system=false.
-   52 | export interface ShelfItem { db: string; mfn: number; title?: string; }
-   53 | export interface Shelf { id: string; name: string; system?: boolean; items: ShelfItem[]; }
-   54 | // Отзывы и оценки (#134). avg/count — агрегат по записи; mine — отзыв текущего
-   55 | // читателя (если оставлял), для режима «редактировать/удалить свой».
-   56 | export interface Review { id: string | number; readerName?: string; rating: number; text?: string; ts?: string; mine?: boolean; }
-   57 | export interface ReviewsResult { avg: number; count: number; mine?: Review | null; items: Review[]; }
-   58 | // Рекомендации (#133). reason — человекочитаемое обоснование («похоже по теме»,
-   59 | // «читатели также брали», «новинка по вашим интересам»).
-   60 | export interface Recommendation { db: string; mfn: number; title: string; author?: string; reason?: string; }
-   61 | // История просмотров (#134). Недавно открытые записи с временной меткой.
-   62 | export interface HistoryItem { db: string; mfn: number; title?: string; ts?: string; }
-   63 | // Сохранённые запросы (#133). prefix/query задают простой поиск; query может
-   64 | // нести готовое выражение, тогда prefix пуст. db — база, в которой искать.
-   65 | export interface SavedSearch { id: string | number; name: string; db: string; prefix?: string; query: string; ts?: string; }
-   66 | 
-   67 | // --- Каталогизация: рабочий лист + ФЛК (#183, #188) ------------------------
-   68 | // Описание поля рабочего листа (.ws/.wss → FIELD_CATALOG). type определяет
-   69 | // контрол в DynamicField: text/menu/dict/tree/bool/authority/date. subfields —
-   70 | // вложенные подполя; repeatable — повторяемое поле (массив вхождений).
-   71 | export interface WorklistSubfield { code: string; label: string; type: string; options?: string[]; }
-   72 | export interface WorklistField {
-   73 |   code: string; label: string; type: string;
-   74 |   required?: boolean; repeatable?: boolean;
-   75 |   options?: string[]; subfields?: WorklistSubfield[];
-   76 |   placeholder?: string; hint?: string;
-   77 | }
-   78 | // Нарушение ФЛК (SPEC §0): severity 0 пройдено · 1 непреодолимая (блокирует
-```
-
-<!-- ─── страница 639 ─── -->
-
-```ts
-   79 | // сохранение) · 2 преодолимая (сохранение после подтверждения). field/subfield —
-   80 | // MARC-адрес для подсветки строки рабочего листа; message — текст оператору.
-   81 | export interface FlkViolation {
-   82 |   ruleId: string; severity: 0 | 1 | 2; message: string;
-   83 |   path?: string; field?: string | null; subfield?: string | null; stub?: boolean;
-   84 | }
-   85 | export interface FlkResult {
-   86 |   db: string; phase: string;
-   87 |   overallSeverity: 0 | 1 | 2; canSave: boolean;
-   88 |   violations: FlkViolation[];
-   89 | }
-   90 | // Запись для ФЛК — карта поле→значение: скаляр, {подполе:значение} или массив
-   91 | // (повторяемое). Совпадает с record-draft движка flk.py.
-   92 | export type FlkRecord = Record<string, string | Record<string, string> | Array<string | Record<string, string>>>;
-   93 | 
-   94 | // --- Книговыдача (#185) ----------------------------------------------------
-   95 | // Формуляр читателя: карточка + активные выдачи. blocks/messages — служебные
-   96 | // сообщения (должник, превышен лимит, бронеблок), debtor/fine — флаги/сумма.
-   97 | export interface CircReader {
-   98 |   ticket: string; name?: string; category?: string; status?: string;
-   99 |   debtor?: boolean; finesTotal?: number; blocks?: string[];
-  100 | }
-  101 | export interface CircLoan {
-  102 |   db?: string; item: string; title?: string; author?: string;
-  103 |   issued?: string; due?: string; overdue?: boolean; renewable?: boolean;
-  104 | }
-  105 | export interface CircFormular { reader: CircReader; loans: CircLoan[]; messages?: string[]; }
-  106 | // Штрафы читателя: список начислений + итог. paid/reason — статус и причина.
-  107 | export interface CircFine { id?: string | number; amount: number; reason?: string; date?: string; paid?: boolean; }
-  108 | export interface CircFines { ticket: string; total: number; items: CircFine[]; }
-  109 | // Результат операции выдачи/возврата/продления: обновлённый займ + сообщение.
-  110 | export interface CircActionResult { ok?: boolean; message?: string; loan?: CircLoan; block?: string; }
-  111 | 
-  112 | // --- Комплектование (#184) -------------------------------------------------
-  113 | // Заказ на комплектование: издание, поставщик, число экземпляров, цена,
-  114 | // источник финансирования. status — стадия (создан / отправлен / частично
-  115 | // получен / получен / отменён); statusLabel — человекочитаемая метка.
-  116 | export interface AcqOrder {
-  117 |   id: string | number; title: string; author?: string; supplier?: string;
-  118 |   copies: number; price?: number; funding_source?: string;
-  119 |   status?: string; statusLabel?: string; created?: string;
-  120 |   received?: number; ksuNo?: string; canceled?: boolean;
-  121 | }
-  122 | // Строка КСУ (книга суммарного учёта) — итог поступления партии: номер записи
-  123 | // КСУ, дата, число и сумма поступивших экземпляров, ссылка на акт/счёт.
-  124 | export interface KsuEntry {
-  125 |   no: string; date?: string; copies?: number; sum?: number;
-  126 |   actRef?: string; orderId?: string | number; supplier?: string;
-  127 | }
-  128 | // Результат поступления (POST /api/acq/receive): запись КСУ + результат ToCat
-  129 | // (создание/правка каталожной записи) с MFN созданной/обновлённой записи.
-  130 | export interface AcqReceiveResult {
-  131 |   ksu?: KsuEntry; ksuNo?: string;
-  132 |   mfn?: number; db?: string; created?: boolean; toCat?: boolean;
-  133 |   copies?: number; message?: string;
-```
-
-<!-- ─── страница 640 ─── -->
-
-```ts
-  134 | }
-  135 | 
-  136 | // --- Книгообеспеченность (#186) --------------------------------------------
-  137 | // Структура связки: факультет → специальность → дисциплина. Идентификаторы
-  138 | // возвращает сервер при создании; код/наименование — реквизиты карточки.
-  139 | export interface BpFaculty { id: string | number; code: string; name: string; }
-  140 | export interface BpSpecialty {
-  141 |   id: string | number; facultyId?: string | number;
-  142 |   napr?: string; spec?: string; vid?: string; form?: string; name: string;
-  143 | }
-  144 | export interface BpDiscipline {
-  145 |   id: string | number; specialtyId?: string | number;
-  146 |   discId?: string; name: string; semester?: number; students?: number;
-  147 | }
-  148 | // Привязанная к дисциплине литература: вид (осн./доп.), число экземпляров.
-  149 | //   kind: 'main' — основная, 'extra' — дополнительная.
-  150 | export interface BpBinding {
-  151 |   id?: string | number; title: string; kind: "main" | "extra";
-  152 |   copies: number; mfn?: number; author?: string;
-  153 | }
-  154 | // Коэффициент книгообеспеченности (Кко). value — сам коэффициент (экз/чел);
-  155 | // underProvided — флаг недообеспеченности (value < норматива); shortfall —
-  156 | // дефицит экземпляров до норматива; norm — применённый норматив.
-  157 | export interface BpKko {
-  158 |   value: number; norm?: number; underProvided: boolean; shortfall?: number;
-  159 |   students?: number; copies?: number; normalized?: boolean;
-  160 | }
-  161 | // Карточка дисциплины с расчётом Кко: реквизиты + привязки + коэффициент.
-  162 | export interface BpDisciplineCard {
-  163 |   discipline: BpDiscipline; bindings: BpBinding[]; kko?: BpKko;
-  164 | }
-  165 | // Карточка специальности: дисциплины с их Кко + сводный Кко по специальности.
-  166 | export interface BpSpecialtyCard {
-  167 |   specialty: BpSpecialty; disciplines: BpDisciplineCard[]; kko?: BpKko;
-  168 | }
-  169 | 
-  170 | // --- Администрирование (#187) ----------------------------------------------
-  171 | // Учётная запись сотрудника: логин, ФИО, активность, набор ролей.
-  172 | export interface AdminUser {
-  173 |   id: string | number; login: string; fullName?: string;
-  174 |   active: boolean; roles: string[]; created?: string; lastLogin?: string;
-  175 | }
-  176 | // Роль (справочник): код, наименование, состав грантов (для подсказки оператору).
-  177 | export interface AdminRole { code: string; name?: string; grants?: string[]; description?: string; }
-  178 | // Запись аудита: метка времени, актор (логин), функция (операция), результат.
-  179 | export interface AuditEntry {
-  180 |   ts?: string; actor?: string; function?: string; fn?: string;
-  181 |   result?: string; ok?: boolean; detail?: string; ip?: string;
-  182 | }
-  183 | // База данных контура (для справочника администратора): код, имя, публичность.
-  184 | export interface AdminDatabase { code: string; name: string; public: boolean; count?: number; }
-  185 | 
-  186 | // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) ----------
-  187 | // Арендатор (tenant) контура SaaS. Бэкенд (#207/#209) возвращает
-  188 | // {slug,name,kind,plan} из контрольного каталога (provision.list_tenants);
+    9 |   // База-источник записи. Заполняется клиентом при поиске «во всех базах»
+   10 |   // (мульти-БД, #3), чтобы открыть/забронировать запись в её собственной БД.
+   11 |   // При обычном одно-БД-поиске поле опущено — действует активная база.
+   12 |   db?: string;
+   13 | }
+   14 | export interface SearchResult { db: string; expr: string; total: number; page: number; pageSize: number; items: ResultItem[]; }
+   15 | export interface FieldVal { tag: string; value: string; text?: string; subfields: Record<string, string>; }
+   16 | export interface Holding { inv_no: string; status: string; cell: string; rfid: string; location?: string; }
+   17 | export interface RecordData { db: string; mfn: number; version?: string; brief?: string; hasCover?: boolean; fields: FieldVal[]; holdings?: Holding[]; }
+   18 | export interface StorageNode {
+   19 |   id: number; kind: string; code: string; name?: string; address?: string; size?: string;
+   20 |   gx?: number; gy?: number; gw?: number; gh?: number;
+   21 |   cellsTotal?: number; cellsOccupied?: number;
+   22 |   occupied?: boolean; status?: string; title?: string; inv?: string; mfn?: number;
+   23 |   children?: StorageNode[];
+   24 | }
+   25 | export interface Term { count: number; term: string; }
 ```
 
 <!-- ─── страница 641 ─── -->
 
 ```ts
-  189 | // kind — тип учреждения (опц., может быть null). Клиент деградирует на 404/501.
-  190 | export interface Tenant {
-  191 |   slug: string; name: string; plan: string;
-  192 |   kind?: string | null;
-  193 | }
-  194 | // Лимиты тарифа (backend snake_case, billing.plan_limits): верхние границы по
-  195 | // записям, читателям и хранилищу (МБ). Значение null/UNLIMITED — без лимита (∞).
-  196 | // Ключи покрывают весь набор LIMIT_RESOURCES.
-  197 | export interface PlanLimits {
-  198 |   max_records: number | null;
-  199 |   max_readers: number | null;
-  200 |   max_storage_mb: number | null;
-  201 | }
-  202 | // Потребление — ЧАСТИЧНАЯ карта тех же ресурсов (billing.tenant_usage). Ресурс,
-  203 | // который сервер не смог посчитать, просто отсутствует (трактуем как «—»/0).
-  204 | export interface PlanUsage {
-  205 |   max_records?: number;
-  206 |   max_readers?: number;
-  207 |   max_storage_mb?: number;
-  208 | }
-  209 | // Элемент каталога тарифов (billing.plans_catalog): код плана, человекочитаемый
-  210 | // заголовок, набор лицензируемых модулей и его лимиты.
-  211 | export interface PlanCatalogItem {
-  212 |   plan: string; title: string; modules: string[]; limits: PlanLimits;
-  213 | }
-  214 | // Тариф/биллинг выбранного арендатора (GET /api/admin/billing):
-  215 | //   plan    — текущий тариф (один из каталога);
-  216 | //   limits  — лимиты тарифа (snake_case, null = без лимита);
-  217 | //   usage   — частичная карта потребления (snake_case);
-  218 | //   modules — СПИСОК включённых модулей (имена); модуль ON ⇔ он в этом списке;
-  219 | //   plans   — каталог всех тарифов (полный набор модулей = объединение их modules).
-  220 | export interface BillingInfo {
-  221 |   tenant?: string;
-  222 |   plan: string;
-  223 |   limits: PlanLimits;
-  224 |   usage: PlanUsage;
-  225 |   modules: string[];
-  226 |   plans?: PlanCatalogItem[];
-  227 | }
-  228 | 
-  229 | // --- Соответствие 152-ФЗ: согласие · право на забвение · журнал ПДн ----------
-  230 | // (MVP фаза 3, аудит V9/V5; #199, epic #223). Бэкенд приземляется отдельно —
-  231 | // клиент деградирует на 404/501 (информер/тихий тост), портал не падает.
-  232 | // Согласие читателя на обработку ПДн: given — дано ли; ts — отметка времени
-  233 | // последнего изменения; version — версия политики/уведомления, на которую
-  234 | // дано согласие (для повторного запроса при обновлении уведомления).
-  235 | export interface ConsentState { given: boolean; ts?: string; version?: string; }
-  236 | // Результат права на забвение (POST /api/reader/erase): счётчики удалённого по
-  237 | // категориям читательских данных. Каталожные записи библиотеки НЕ затрагиваются.
-  238 | export interface ErasureResult {
-  239 |   reviews?: number; holds?: number; shelves?: number; history?: number; savedSearches?: number;
-  240 | }
-  241 | // Запись журнала доступа к ПДн (GET /api/admin/pdn-access): ts — когда; actor —
-  242 | // кто обращался (логин сотрудника/система); subject — субъект ПДн (билет
-  243 | // читателя); action — что сделано (просмотр формуляра, выгрузка, правка, …).
+   26 | // Серверный рендер записи в формате ИРБИС (GET /api/render/{db}/{mfn}?fmt=).
+   27 | // rendered — готовый текст библиографического описания (PFT сворачивается в
+   28 | // текст; HTML-разметка — поздняя фаза движка). fmt — применённый формат (@full,
+   29 | // @brief и т.п.). Пустой rendered → клиент откатывается на следующий формат.
+   30 | export interface RecordRender { db: string; mfn: number; fmt: string; rendered: string; }
+   31 | // «Вы имели в виду» (GET /api/suggest) — варианты исправления/расширения запроса
+   32 | // при нулевой выдаче. Эндпойнт-сиблинг бэкенда может отсутствовать → 404 → блок
+   33 | // скрывается. Сервер может вернуть массив строк или объектов {term,count}.
+   34 | export interface Suggestion { term: string; count?: number; }
+   35 | export interface SuggestResult { db?: string; q?: string; suggestions: Suggestion[]; }
+   36 | export interface FacetValue { value: string; label: string; count: number; }
+   37 | export interface Facet { field: string; prefix: string; label: string; values: FacetValue[]; }
+   38 | export interface FacetsResult { db: string; expr: string; facets: Facet[]; }
+   39 | export interface Grant { function: string; db: string; level: string; }
+   40 | // Enriched /api/databases item: optional record count + icon/description for the
+   41 | // rich DB selector (G17). Older backends may omit count/icon/description — degrade.
+   42 | export interface DbItem { code: string; name: string; public: boolean; count?: number; icon?: string; description?: string; }
+   43 | export interface Loan { value: string; subfields: Record<string, string>; }
+   44 | export interface CabinetData { mfn: number; name: string; loans: Loan[]; loanCount: number; }
+   45 | // Discovery façade (G2) — a showcase row of new arrivals from /api/showcase.
+   46 | export interface ShowcaseItem { mfn: number; title: string; author?: string; year?: string; cover?: boolean; }
+   47 | // Reader cabinet «Заказы» (G12) — an order with a cancel-before-issue affordance.
+   48 | export interface OrderItem {
+   49 |   id?: string | number; mfn: number; db?: string; title?: string; author?: string;
+   50 |   status?: string; statusLabel?: string; created?: string; place?: string; cancelable?: boolean;
+   51 | }
+   52 | // Бронирование (#222) — заявка на удержание экземпляра с позицией в очереди.
+   53 | //   status: 'ready' — готов к получению; 'queued' — в очереди (position — ваш номер).
+   54 | export interface Hold {
+   55 |   holdId: string; db: string; mfn: number; title?: string;
+   56 |   status: "ready" | "queued"; position?: number; until?: string;
+   57 | }
+   58 | export interface HoldResult { holdId: string; status: "ready" | "queued"; position?: number; }
+   59 | // Уведомления читателя (#222) — почтовый ящик портала. event — машинный тип
+   60 | // события (hold_ready/due_soon/…); subject/body — человекочитаемый текст.
+   61 | export interface Notification {
+   62 |   id: string | number; ts?: string; event?: string; subject?: string; body?: string; read?: boolean;
+   63 | }
+   64 | // Полки / списки чтения (#222). system=true — встроенные («Хочу прочитать»,
+   65 | // «Избранное»), их нельзя удалять; пользовательские списки — system=false.
+   66 | export interface ShelfItem { db: string; mfn: number; title?: string; }
+   67 | export interface Shelf { id: string; name: string; system?: boolean; items: ShelfItem[]; }
+   68 | // Отзывы и оценки (#134). avg/count — агрегат по записи; mine — отзыв текущего
+   69 | // читателя (если оставлял), для режима «редактировать/удалить свой».
+   70 | export interface Review { id: string | number; readerName?: string; rating: number; text?: string; ts?: string; mine?: boolean; }
+   71 | export interface ReviewsResult { avg: number; count: number; mine?: Review | null; items: Review[]; }
+   72 | // Рекомендации (#133). reason — человекочитаемое обоснование («похоже по теме»,
+   73 | // «читатели также брали», «новинка по вашим интересам»).
+   74 | export interface Recommendation { db: string; mfn: number; title: string; author?: string; reason?: string; }
+   75 | // История просмотров (#134). Недавно открытые записи с временной меткой.
+   76 | export interface HistoryItem { db: string; mfn: number; title?: string; ts?: string; }
+   77 | // Сохранённые запросы (#133). prefix/query задают простой поиск; query может
+   78 | // нести готовое выражение, тогда prefix пуст. db — база, в которой искать.
+   79 | export interface SavedSearch { id: string | number; name: string; db: string; prefix?: string; query: string; ts?: string; }
+   80 | 
 ```
 
 <!-- ─── страница 642 ─── -->
 
 ```ts
-  244 | export interface PdnAccessEntry { ts?: string; actor?: string; subject?: string; action?: string; }
-  245 | 
-  246 | // --- Миграция данных: онбординг-мастер переноса из ИРБИС64 (#225; epic #223) -
-  247 | // Источник миграции:
-  248 | //   • 'network' — сетевой сервер ИРБИС64 (хост/порт + учётка + рабочая станция);
-  249 | //   • 'local'   — локальный каталог данных ИРБИС (напр. C:\IRBIS64\Datai).
-  250 | // Креды живут только в форме мастера: не сохраняются в клиенте и не логируются.
-  251 | export type MigrateMode = "network" | "local";
-  252 | // Сетевые реквизиты подключения к серверу ИРБИС64 (логин/пароль — транзитом).
-  253 | export interface MigrateNetworkSource { host: string; port: number; user: string; pass: string; workstation?: string; }
-  254 | // Локальный источник — путь к каталогу данных ИРБИС.
-  255 | export interface MigrateLocalSource { path: string; }
-  256 | export type MigrateSource = MigrateNetworkSource | MigrateLocalSource;
-  257 | // Поле обнаруженной БД: MARC-тег, метка, состав подполей, частота встречаемости
-  258 | // и флаг «допполе» (custom:true) — поле вне штатной схемы РУСМАРК (локальное
-  259 | // расширение библиотеки), которое мастер помечает оператору при изучении.
-  260 | export interface MigrateField {
-  261 |   tag: string; label?: string; subfields: string[];
-  262 |   freq?: number; custom?: boolean;
-  263 | }
-  264 | // Обнаруженная при изучении источника база: код, наименование, тип (kind —
-  265 | // напр. bibliographic/reader/authority), число записей и (для читательских БД)
-  266 | // число читателей. Инвентарь полей (fields) грузится ЛЕНИВО — отдельным
-  267 | // вызовом migrateInspect(mode, source, [code]) при раскрытии конкретной БД,
-  268 | // поэтому в быстром списке баз он отсутствует (поле опциональное).
-  269 | export interface MigrateDatabase {
-  270 |   code: string; name: string; kind?: string;
-  271 |   recordCount?: number; readerCount?: number;
-  272 |   fields?: MigrateField[];
-  273 | }
-  274 | // Результат изучения источника (POST /api/admin/migrate/inspect).
-  275 | export interface MigrateInspect { databases: MigrateDatabase[]; }
-  276 | // Отчёт о миграции (POST /api/admin/migrate/run): прочитано/загружено записей,
-  277 | // загружено читателей, пропущено, ошибок. Для dry-run загрузка = 0 (ничего не
-  278 | // записано), но счётчики чтения/пропусков отражают пробный анализ.
-  279 | export interface MigrateReport {
-  280 |   records_read: number; records_loaded: number;
-  281 |   readers_loaded: number; skipped: number; errors: number;
-  282 | }
-  283 | // Ответ запуска миграции: отчёт (синхронно) и/или идентификатор фоновой задачи
-  284 | // (jobId) — тогда статус добирается через GET /api/admin/migrate/status.
-  285 | export interface MigrateRunResult { report: MigrateReport; jobId?: string; }
-  286 | // Статус фоновой задачи миграции (GET /api/admin/migrate/status?jobId=):
-  287 | //   state: queued|running|done|error; report появляется по завершении.
-  288 | export interface MigrateStatus { jobId?: string; state: string; report?: MigrateReport; error?: string; }
-  289 | 
-  290 | let token: string | null = null;
-  291 | const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
-  292 | 
-  293 | async function jget<T>(path: string): Promise<{ status: number; json: Envelope<T> | null }> {
-  294 |   const r = await fetch(path, { headers: authHeaders() });
-  295 |   return { status: r.status, json: await r.json().catch(() => null) };
-  296 | }
-  297 | async function jpost<T>(path: string, body?: unknown): Promise<{ status: number; json: Envelope<T> | null }> {
-  298 |   const r = await fetch(path, {
+   81 | // --- Каталогизация: рабочий лист + ФЛК (#183, #188) ------------------------
+   82 | // Описание поля рабочего листа (.ws/.wss → FIELD_CATALOG). type определяет
+   83 | // контрол в DynamicField: text/menu/dict/tree/bool/authority/date. subfields —
+   84 | // вложенные подполя; repeatable — повторяемое поле (массив вхождений).
+   85 | export interface WorklistSubfield { code: string; label: string; type: string; options?: string[]; }
+   86 | export interface WorklistField {
+   87 |   code: string; label: string; type: string;
+   88 |   required?: boolean; repeatable?: boolean;
+   89 |   options?: string[]; subfields?: WorklistSubfield[];
+   90 |   placeholder?: string; hint?: string;
+   91 | }
+   92 | // Нарушение ФЛК (SPEC §0): severity 0 пройдено · 1 непреодолимая (блокирует
+   93 | // сохранение) · 2 преодолимая (сохранение после подтверждения). field/subfield —
+   94 | // MARC-адрес для подсветки строки рабочего листа; message — текст оператору.
+   95 | export interface FlkViolation {
+   96 |   ruleId: string; severity: 0 | 1 | 2; message: string;
+   97 |   path?: string; field?: string | null; subfield?: string | null; stub?: boolean;
+   98 | }
+   99 | export interface FlkResult {
+  100 |   db: string; phase: string;
+  101 |   overallSeverity: 0 | 1 | 2; canSave: boolean;
+  102 |   violations: FlkViolation[];
+  103 | }
+  104 | // Запись для ФЛК — карта поле→значение: скаляр, {подполе:значение} или массив
+  105 | // (повторяемое). Совпадает с record-draft движка flk.py.
+  106 | export type FlkRecord = Record<string, string | Record<string, string> | Array<string | Record<string, string>>>;
+  107 | 
+  108 | // --- Книговыдача (#185) ----------------------------------------------------
+  109 | // Формуляр читателя: карточка + активные выдачи. blocks/messages — служебные
+  110 | // сообщения (должник, превышен лимит, бронеблок), debtor/fine — флаги/сумма.
+  111 | export interface CircReader {
+  112 |   ticket: string; name?: string; category?: string; status?: string;
+  113 |   debtor?: boolean; finesTotal?: number; blocks?: string[];
+  114 | }
+  115 | export interface CircLoan {
+  116 |   db?: string; item: string; title?: string; author?: string;
+  117 |   issued?: string; due?: string; overdue?: boolean; renewable?: boolean;
+  118 | }
+  119 | export interface CircFormular { reader: CircReader; loans: CircLoan[]; messages?: string[]; }
+  120 | // Штрафы читателя: список начислений + итог. paid/reason — статус и причина.
+  121 | export interface CircFine { id?: string | number; amount: number; reason?: string; date?: string; paid?: boolean; }
+  122 | export interface CircFines { ticket: string; total: number; items: CircFine[]; }
+  123 | // Результат операции выдачи/возврата/продления: обновлённый займ + сообщение.
+  124 | export interface CircActionResult { ok?: boolean; message?: string; loan?: CircLoan; block?: string; }
+  125 | 
+  126 | // --- Комплектование (#184) -------------------------------------------------
+  127 | // Заказ на комплектование: издание, поставщик, число экземпляров, цена,
+  128 | // источник финансирования. status — стадия (создан / отправлен / частично
+  129 | // получен / получен / отменён); statusLabel — человекочитаемая метка.
+  130 | export interface AcqOrder {
+  131 |   id: string | number; title: string; author?: string; supplier?: string;
+  132 |   copies: number; price?: number; funding_source?: string;
+  133 |   status?: string; statusLabel?: string; created?: string;
+  134 |   received?: number; ksuNo?: string; canceled?: boolean;
+  135 | }
 ```
 
 <!-- ─── страница 643 ─── -->
 
 ```ts
-  299 |     method: "POST",
-  300 |     headers: { "Content-Type": "application/json", ...authHeaders() },
-  301 |     body: body !== undefined ? JSON.stringify(body) : undefined,
-  302 |   });
-  303 |   return { status: r.status, json: await r.json().catch(() => null) };
-  304 | }
-  305 | const qs = (o: Record<string, string | number>) =>
-  306 |   Object.keys(o).map((k) => k + "=" + encodeURIComponent(String(o[k]))).join("&");
-  307 | 
-  308 | export const api = {
-  309 |   hasToken: () => !!token,
-  310 |   async initGuest() {
-  311 |     const r = await fetch("/api/auth/guest", { method: "POST" });
-  312 |     const j = await r.json();
-  313 |     token = j.data.token;
-  314 |     return j.data as { token: string; kind: string };
-  315 |   },
-  316 |   health: () => jget<Health>("/api/health"),
-  317 |   databases: () => jget<{ items: DbItem[]; default: string }>("/api/databases"),
-  318 |   search: (db: string, prefix: string, q: string, page: number, pageSize: number) =>
-  319 |     jget<SearchResult>("/api/search?" + qs({ db, prefix, q, page, pageSize })),
-  320 |   searchExpr: (db: string, expr: string, page: number, pageSize: number) =>
-  321 |     jget<SearchResult>("/api/search?" + qs({ db, expr, page, pageSize })),
-  322 |   facets: (db: string, prefix: string, q: string) =>
-  323 |     jget<FacetsResult>("/api/facets?" + qs({ db, prefix, q })),
-  324 |   facetsExpr: (db: string, expr: string) =>
-  325 |     jget<FacetsResult>("/api/facets?" + qs({ db, expr })),
-  326 |   terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
-  327 |   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
-  328 |   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),
-  329 |   order: (db: string, mfn: number) => jpost("/api/order", { db, mfn }),
-  330 |   // Discovery showcase (G2): new arrivals etc. `kind` defaults to "new" on the backend.
-  331 |   showcase: (db: string, kind = "new", limit = 12) =>
-  332 |     jget<{ items: ShowcaseItem[] }>("/api/showcase?" + qs({ db, kind, limit })),
-  333 |   // Rubricator terms with counts (browse navigators) — used for example-query seeds.
-  334 |   rubricator: (db: string, prefix: string, limit = 12) =>
-  335 |     jget<{ terms: Term[] }>("/api/rubricator?" + qs({ db, prefix, limit })),
-  336 |   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
-  337 |   // Reader orders (G12). Endpoint may not exist yet → caller stubs the list on 404.
-  338 |   orders: () => jget<{ items: OrderItem[] }>("/api/me/orders"),
-  339 |   cancelOrder: (id: string | number, db?: string, mfn?: number) =>
-  340 |     jpost("/api/me/orders/cancel", { id, db, mfn }),
-  341 |   storage: (db: string) => jget<{ db: string; tree: StorageNode[]; holdings: number }>("/api/storage?" + qs({ db })),
-  342 |   async loginReader(ticket: string) {
-  343 |     const r = await jpost<{ token: string; name?: string }>("/api/auth/reader", { ticket });
-  344 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
-  345 |     return r;
-  346 |   },
-  347 |   async loginStaff(login: string, password: string) {
-  348 |     const r = await jpost<{ token: string; login: string; name?: string; grants: Grant[] }>("/api/auth/staff", { login, password });
-  349 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
-  350 |     return r;
-  351 |   },
-  352 |   // --- Бронирование (#222) -------------------------------------------------
-  353 |   // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
+  136 | // Строка КСУ (книга суммарного учёта) — итог поступления партии: номер записи
+  137 | // КСУ, дата, число и сумма поступивших экземпляров, ссылка на акт/счёт.
+  138 | export interface KsuEntry {
+  139 |   no: string; date?: string; copies?: number; sum?: number;
+  140 |   actRef?: string; orderId?: string | number; supplier?: string;
+  141 | }
+  142 | // Результат поступления (POST /api/acq/receive): запись КСУ + результат ToCat
+  143 | // (создание/правка каталожной записи) с MFN созданной/обновлённой записи.
+  144 | export interface AcqReceiveResult {
+  145 |   ksu?: KsuEntry; ksuNo?: string;
+  146 |   mfn?: number; db?: string; created?: boolean; toCat?: boolean;
+  147 |   copies?: number; message?: string;
+  148 | }
+  149 | 
+  150 | // --- Книгообеспеченность (#186) --------------------------------------------
+  151 | // Структура связки: факультет → специальность → дисциплина. Идентификаторы
+  152 | // возвращает сервер при создании; код/наименование — реквизиты карточки.
+  153 | export interface BpFaculty { id: string | number; code: string; name: string; }
+  154 | export interface BpSpecialty {
+  155 |   id: string | number; facultyId?: string | number;
+  156 |   napr?: string; spec?: string; vid?: string; form?: string; name: string;
+  157 | }
+  158 | export interface BpDiscipline {
+  159 |   id: string | number; specialtyId?: string | number;
+  160 |   discId?: string; name: string; semester?: number; students?: number;
+  161 | }
+  162 | // Привязанная к дисциплине литература: вид (осн./доп.), число экземпляров.
+  163 | //   kind: 'main' — основная, 'extra' — дополнительная.
+  164 | export interface BpBinding {
+  165 |   id?: string | number; title: string; kind: "main" | "extra";
+  166 |   copies: number; mfn?: number; author?: string;
+  167 | }
+  168 | // Коэффициент книгообеспеченности (Кко). value — сам коэффициент (экз/чел);
+  169 | // underProvided — флаг недообеспеченности (value < норматива); shortfall —
+  170 | // дефицит экземпляров до норматива; norm — применённый норматив.
+  171 | export interface BpKko {
+  172 |   value: number; norm?: number; underProvided: boolean; shortfall?: number;
+  173 |   students?: number; copies?: number; normalized?: boolean;
+  174 | }
+  175 | // Карточка дисциплины с расчётом Кко: реквизиты + привязки + коэффициент.
+  176 | export interface BpDisciplineCard {
+  177 |   discipline: BpDiscipline; bindings: BpBinding[]; kko?: BpKko;
+  178 | }
+  179 | // Карточка специальности: дисциплины с их Кко + сводный Кко по специальности.
+  180 | export interface BpSpecialtyCard {
+  181 |   specialty: BpSpecialty; disciplines: BpDisciplineCard[]; kko?: BpKko;
+  182 | }
+  183 | 
+  184 | // --- Администрирование (#187) ----------------------------------------------
+  185 | // Учётная запись сотрудника: логин, ФИО, активность, набор ролей.
+  186 | export interface AdminUser {
+  187 |   id: string | number; login: string; fullName?: string;
+  188 |   active: boolean; roles: string[]; created?: string; lastLogin?: string;
+  189 | }
+  190 | // Роль (справочник): код, наименование, состав грантов (для подсказки оператору).
 ```
 
 <!-- ─── страница 644 ─── -->
 
 ```ts
-  354 |   hold: (db: string, mfn: number) => jpost<HoldResult>("/api/hold", { db, mfn }),
-  355 |   // Список активных броней читателя с позицией в очереди.
-  356 |   holds: () => jget<{ items: Hold[] }>("/api/holds"),
-  357 |   // Снять бронь по её идентификатору.
-  358 |   cancelHold: (holdId: string) => jpost("/api/hold/cancel", { holdId }),
-  359 |   // --- Уведомления читателя (#222) -----------------------------------------
-  360 |   // Лента уведомлений; unread=1 — только непрочитанные. Возвращает счётчик unread.
-  361 |   notifications: (unreadOnly = false) =>
-  362 |     jget<{ items: Notification[]; unread: number }>("/api/notifications?" + qs({ unread: unreadOnly ? 1 : 0 })),
-  363 |   // Отметить прочитанным: одно (по id) либо все (all:true).
-  364 |   markNotificationRead: (idOrAll: { id: string | number } | { all: true }) =>
-  365 |     jpost<{ unread: number }>("/api/notifications/read", idOrAll),
-  366 |   // --- Полки / списки чтения (#222) ----------------------------------------
-  367 |   shelves: () => jget<{ lists: Shelf[] }>("/api/shelves"),
-  368 |   createShelf: (name: string) => jpost<{ id: string; name: string; system?: boolean }>("/api/shelves", { name }),
-  369 |   addToShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item", { listId, db, mfn }),
-  370 |   removeFromShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item/remove", { listId, db, mfn }),
-  371 |   worklist: (db: string) => jget<{ db: string; fields: WorklistField[] }>("/api/worklist/" + db),
-  372 |   saveRecord: (db: string, mfn: number, fields: { tag: string; value: string }[]) =>
-  373 |     jpost<{ db: string; mfn: number; created: boolean; returnCode: number; violations?: FlkViolation[] }>("/api/record/" + db + "/" + mfn, { fields }),
-  374 |   // --- ФЛК «на лету» (#188) ------------------------------------------------
-  375 |   // Прогнать декларативный ФЛК по черновику записи. record — карта поле→значение
-  376 |   // (см. FlkRecord). phase: 'save' (полная проверка) | 'field' (точечная по
-  377 |   // одному полю). 404/501 → деградируем к клиентской проверке обязательных полей.
-  378 |   validate: (db: string, record: FlkRecord, phase: "save" | "field" = "save", field?: string, currentMfn?: number) =>
-  379 |     jpost<FlkResult>("/api/validate", { db, record, phase, field, currentMfn }),
-  380 |   // --- Книговыдача (#185) --------------------------------------------------
-  381 |   // Формуляр читателя по билету: карточка + активные выдачи + служебные блоки.
-  382 |   circReader: (ticket: string) => jget<CircFormular>("/api/circ/reader?" + qs({ ticket })),
-  383 |   // Выдать экземпляр (инв./RFID) читателю. Сервер запускает контроль (должник,
-  384 |   // лимит, бронеблок) и возвращает block при отказе.
-  385 |   circIssue: (ticket: string, db: string, item: string) =>
-  386 |     jpost<CircActionResult>("/api/circ/issue", { ticket, db, item }),
-  387 |   // Принять возврат экземпляра.
-  388 |   circReturn: (ticket: string, db: string, item: string) =>
-  389 |     jpost<CircActionResult>("/api/circ/return", { ticket, db, item }),
-  390 |   // Продлить выдачу (новый срок — в loan.due).
-  391 |   circRenew: (ticket: string, db: string, item: string) =>
-  392 |     jpost<CircActionResult>("/api/circ/renew", { ticket, db, item }),
-  393 |   // Штрафы читателя: список начислений + итог.
-  394 |   circFines: (ticket: string) => jget<CircFines>("/api/circ/fines?" + qs({ ticket })),
-  395 |   // --- Отзывы и оценки (#134) ----------------------------------------------
-  396 |   // Отзывы по записи: средняя оценка, число, список и (если вошёл) свой отзыв.
-  397 |   reviews: (db: string, mfn: number) =>
-  398 |     jget<ReviewsResult>("/api/reviews?" + qs({ db, mfn })),
-  399 |   // Оставить / обновить свой отзыв (1–5 звёзд + опц. текст). 404/501 → degrade.
-  400 |   postReview: (db: string, mfn: number, rating: number, text?: string) =>
-  401 |     jpost<Review>("/api/review", { db, mfn, rating, text }),
-  402 |   // Удалить свой отзыв по идентификатору.
-  403 |   deleteReview: (id: string | number) => jpost("/api/review/delete", { id }),
-  404 |   // --- Рекомендации (#133) -------------------------------------------------
-  405 |   // «Похожие издания» к конкретной записи.
-  406 |   recommendations: (db: string, mfn: number) =>
-  407 |     jget<{ items: Recommendation[] }>("/api/recommendations?" + qs({ db, mfn })),
-  408 |   // «Для вас» — персональная подборка на главной (по истории/интересам).
+  191 | export interface AdminRole { code: string; name?: string; grants?: string[]; description?: string; }
+  192 | // Запись аудита: метка времени, актор (логин), функция (операция), результат.
+  193 | export interface AuditEntry {
+  194 |   ts?: string; actor?: string; function?: string; fn?: string;
+  195 |   result?: string; ok?: boolean; detail?: string; ip?: string;
+  196 | }
+  197 | // База данных контура (для справочника администратора): код, имя, публичность.
+  198 | export interface AdminDatabase { code: string; name: string; public: boolean; count?: number; }
+  199 | 
+  200 | // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) ----------
+  201 | // Арендатор (tenant) контура SaaS. Бэкенд (#207/#209) возвращает
+  202 | // {slug,name,kind,plan} из контрольного каталога (provision.list_tenants);
+  203 | // kind — тип учреждения (опц., может быть null). Клиент деградирует на 404/501.
+  204 | export interface Tenant {
+  205 |   slug: string; name: string; plan: string;
+  206 |   kind?: string | null;
+  207 | }
+  208 | // Лимиты тарифа (backend snake_case, billing.plan_limits): верхние границы по
+  209 | // записям, читателям и хранилищу (МБ). Значение null/UNLIMITED — без лимита (∞).
+  210 | // Ключи покрывают весь набор LIMIT_RESOURCES.
+  211 | export interface PlanLimits {
+  212 |   max_records: number | null;
+  213 |   max_readers: number | null;
+  214 |   max_storage_mb: number | null;
+  215 | }
+  216 | // Потребление — ЧАСТИЧНАЯ карта тех же ресурсов (billing.tenant_usage). Ресурс,
+  217 | // который сервер не смог посчитать, просто отсутствует (трактуем как «—»/0).
+  218 | export interface PlanUsage {
+  219 |   max_records?: number;
+  220 |   max_readers?: number;
+  221 |   max_storage_mb?: number;
+  222 | }
+  223 | // Элемент каталога тарифов (billing.plans_catalog): код плана, человекочитаемый
+  224 | // заголовок, набор лицензируемых модулей и его лимиты.
+  225 | export interface PlanCatalogItem {
+  226 |   plan: string; title: string; modules: string[]; limits: PlanLimits;
+  227 | }
+  228 | // Тариф/биллинг выбранного арендатора (GET /api/admin/billing):
+  229 | //   plan    — текущий тариф (один из каталога);
+  230 | //   limits  — лимиты тарифа (snake_case, null = без лимита);
+  231 | //   usage   — частичная карта потребления (snake_case);
+  232 | //   modules — СПИСОК включённых модулей (имена); модуль ON ⇔ он в этом списке;
+  233 | //   plans   — каталог всех тарифов (полный набор модулей = объединение их modules).
+  234 | export interface BillingInfo {
+  235 |   tenant?: string;
+  236 |   plan: string;
+  237 |   limits: PlanLimits;
+  238 |   usage: PlanUsage;
+  239 |   modules: string[];
+  240 |   plans?: PlanCatalogItem[];
+  241 | }
+  242 | 
+  243 | // --- Соответствие 152-ФЗ: согласие · право на забвение · журнал ПДн ----------
+  244 | // (MVP фаза 3, аудит V9/V5; #199, epic #223). Бэкенд приземляется отдельно —
+  245 | // клиент деградирует на 404/501 (информер/тихий тост), портал не падает.
 ```
 
 <!-- ─── страница 645 ─── -->
 
 ```ts
-  409 |   recommendationsForYou: () =>
-  410 |     jget<{ items: Recommendation[] }>("/api/recommendations/foryou"),
-  411 |   // --- История просмотров (#134) -------------------------------------------
-  412 |   history: () => jget<{ items: HistoryItem[] }>("/api/history"),
-  413 |   // --- Сохранённые запросы (#133) ------------------------------------------
-  414 |   savedSearches: () => jget<{ items: SavedSearch[] }>("/api/savedsearch"),
-  415 |   saveSearch: (name: string, db: string, prefix: string, query: string) =>
-  416 |     jpost<SavedSearch>("/api/savedsearch", { name, db, prefix, query }),
-  417 |   deleteSavedSearch: (id: string | number) => jpost("/api/savedsearch/delete", { id }),
-  418 | 
-  419 |   // --- Комплектование (#184) ----------------------------------------------
-  420 |   // Создать заказ на комплектование. → AcqOrder. 404/501 → degrade (информер).
-  421 |   acqOrder: (o: { title: string; author?: string; supplier?: string; copies: number; price?: number; funding_source?: string }) =>
-  422 |     jpost<AcqOrder>("/api/acq/order", o),
-  423 |   // Отменить заказ (до поступления).
-  424 |   acqCancelOrder: (id: string | number) => jpost<AcqOrder>("/api/acq/order/cancel", { id }),
-  425 |   // Оформить поступление по заказу → запись КСУ + ToCat (создание/правка
-  426 |   // каталожной записи). Возвращает номер КСУ и MFN созданной/обновлённой записи.
-  427 |   acqReceive: (r: { orderId: string | number; ksuNo?: string; copies: number; unitPrice?: number; invNumbers?: string[]; actRef?: string }) =>
-  428 |     jpost<AcqReceiveResult>("/api/acq/receive", r),
-  429 |   // Получить заказ по идентификатору (для обновления карточки / списка).
-  430 |   acqGetOrder: (id: string | number) => jget<{ items?: AcqOrder[]; order?: AcqOrder }>("/api/acq/order?" + qs({ id })),
-  431 |   // Лента/список заказов (без id). 404 → degrade.
-  432 |   acqOrders: () => jget<{ items: AcqOrder[] }>("/api/acq/order"),
-  433 |   // Найти запись КСУ по номеру.
-  434 |   acqKsu: (no: string) => jget<{ entry?: KsuEntry; items?: KsuEntry[] }>("/api/acq/ksu?" + qs({ no })),
-  435 | 
-  436 |   // --- Книгообеспеченность (#186) -----------------------------------------
-  437 |   // Создать факультет связки.
-  438 |   bpFaculty: (f: { code: string; name: string }) => jpost<BpFaculty>("/api/bp/faculty", f),
-  439 |   // Создать специальность под факультетом.
-  440 |   bpSpecialty: (s: { facultyId: string | number; napr?: string; spec?: string; vid?: string; form?: string; name: string }) =>
-  441 |     jpost<BpSpecialty>("/api/bp/specialty", s),
-  442 |   // Создать дисциплину под специальностью (семестр, число студентов).
-  443 |   bpDiscipline: (d: { specialtyId: string | number; discId?: string; name: string; semester?: number; students?: number }) =>
-  444 |     jpost<BpDiscipline>("/api/bp/discipline", d),
-  445 |   // Задать контингент (число студентов) дисциплины — пересчитывает Кко.
-  446 |   bpContingent: (c: { discId: string | number; students: number }) =>
-  447 |     jpost<BpDiscipline>("/api/bp/contingent", c),
-  448 |   // Привязать литературу (осн./доп.) к дисциплине.
-  449 |   bpBind: (b: { disciplineId: string | number; title: string; kind: "main" | "extra"; copies: number }) =>
-  450 |     jpost<BpBinding>("/api/bp/bind", b),
-  451 |   // Карточка дисциплины с расчётом Кко. normalize — применить нормализацию
-  452 |   // (учёт многоразового использования/семестровой нагрузки) при расчёте.
-  453 |   bpDisciplineCard: (id: string | number, normalize = false) =>
-  454 |     jget<BpDisciplineCard>("/api/bp/discipline?" + qs({ id, normalize: normalize ? 1 : 0 })),
-  455 |   // Карточка специальности: дисциплины с Кко + сводный Кко.
-  456 |   bpSpecialtyCard: (id: string | number, normalize = false) =>
-  457 |     jget<BpSpecialtyCard>("/api/bp/specialty?" + qs({ id, normalize: normalize ? 1 : 0 })),
-  458 | 
-  459 |   // --- Администрирование (#187) -------------------------------------------
-  460 |   // Список учётных записей сотрудников.
-  461 |   adminUsers: () => jget<{ items: AdminUser[] }>("/api/admin/users"),
-  462 |   // Создать учётную запись (логин, ФИО, пароль, опц. роли).
-  463 |   adminCreateUser: (u: { login: string; fullName: string; password: string; roles?: string[] }) =>
+  246 | // Согласие читателя на обработку ПДн: given — дано ли; ts — отметка времени
+  247 | // последнего изменения; version — версия политики/уведомления, на которую
+  248 | // дано согласие (для повторного запроса при обновлении уведомления).
+  249 | export interface ConsentState { given: boolean; ts?: string; version?: string; }
+  250 | // Результат права на забвение (POST /api/reader/erase): счётчики удалённого по
+  251 | // категориям читательских данных. Каталожные записи библиотеки НЕ затрагиваются.
+  252 | export interface ErasureResult {
+  253 |   reviews?: number; holds?: number; shelves?: number; history?: number; savedSearches?: number;
+  254 | }
+  255 | // Запись журнала доступа к ПДн (GET /api/admin/pdn-access): ts — когда; actor —
+  256 | // кто обращался (логин сотрудника/система); subject — субъект ПДн (билет
+  257 | // читателя); action — что сделано (просмотр формуляра, выгрузка, правка, …).
+  258 | export interface PdnAccessEntry { ts?: string; actor?: string; subject?: string; action?: string; }
+  259 | 
+  260 | // --- Миграция данных: онбординг-мастер переноса из ИРБИС64 (#225; epic #223) -
+  261 | // Источник миграции:
+  262 | //   • 'network' — сетевой сервер ИРБИС64 (хост/порт + учётка + рабочая станция);
+  263 | //   • 'local'   — локальный каталог данных ИРБИС (напр. C:\IRBIS64\Datai).
+  264 | // Креды живут только в форме мастера: не сохраняются в клиенте и не логируются.
+  265 | export type MigrateMode = "network" | "local";
+  266 | // Сетевые реквизиты подключения к серверу ИРБИС64 (логин/пароль — транзитом).
+  267 | export interface MigrateNetworkSource { host: string; port: number; user: string; pass: string; workstation?: string; }
+  268 | // Локальный источник — путь к каталогу данных ИРБИС.
+  269 | export interface MigrateLocalSource { path: string; }
+  270 | export type MigrateSource = MigrateNetworkSource | MigrateLocalSource;
+  271 | // Поле обнаруженной БД: MARC-тег, метка, состав подполей, частота встречаемости
+  272 | // и флаг «допполе» (custom:true) — поле вне штатной схемы РУСМАРК (локальное
+  273 | // расширение библиотеки), которое мастер помечает оператору при изучении.
+  274 | export interface MigrateField {
+  275 |   tag: string; label?: string; subfields: string[];
+  276 |   freq?: number; custom?: boolean;
+  277 | }
+  278 | // Обнаруженная при изучении источника база: код, наименование, тип (kind —
+  279 | // напр. bibliographic/reader/authority), число записей и (для читательских БД)
+  280 | // число читателей. Инвентарь полей (fields) грузится ЛЕНИВО — отдельным
+  281 | // вызовом migrateInspect(mode, source, [code]) при раскрытии конкретной БД,
+  282 | // поэтому в быстром списке баз он отсутствует (поле опциональное).
+  283 | export interface MigrateDatabase {
+  284 |   code: string; name: string; kind?: string;
+  285 |   recordCount?: number; readerCount?: number;
+  286 |   fields?: MigrateField[];
+  287 | }
+  288 | // Результат изучения источника (POST /api/admin/migrate/inspect).
+  289 | export interface MigrateInspect { databases: MigrateDatabase[]; }
+  290 | // Отчёт о миграции (POST /api/admin/migrate/run): прочитано/загружено записей,
+  291 | // загружено читателей, пропущено, ошибок. Для dry-run загрузка = 0 (ничего не
+  292 | // записано), но счётчики чтения/пропусков отражают пробный анализ.
+  293 | export interface MigrateReport {
+  294 |   records_read: number; records_loaded: number;
+  295 |   readers_loaded: number; skipped: number; errors: number;
+  296 | }
+  297 | // Ответ запуска миграции: отчёт (синхронно) и/или идентификатор фоновой задачи
+  298 | // (jobId) — тогда статус добирается через GET /api/admin/migrate/status.
+  299 | export interface MigrateRunResult { report: MigrateReport; jobId?: string; }
+  300 | // Статус фоновой задачи миграции (GET /api/admin/migrate/status?jobId=):
 ```
 
 <!-- ─── страница 646 ─── -->
 
 ```ts
-  464 |     jpost<AdminUser>("/api/admin/users", u),
-  465 |   // Назначить набор ролей пользователю.
-  466 |   adminSetRoles: (userId: string | number, roles: string[]) =>
-  467 |     jpost<AdminUser>("/api/admin/users/roles", { userId, roles }),
-  468 |   // Включить / отключить учётную запись.
-  469 |   adminSetActive: (userId: string | number, active: boolean) =>
-  470 |     jpost<AdminUser>("/api/admin/users/active", { userId, active }),
-  471 |   // Справочник ролей.
-  472 |   adminRoles: () => jget<{ items: AdminRole[] }>("/api/admin/roles"),
-  473 |   // Журнал аудита (последние limit записей).
-  474 |   adminAudit: (limit = 50) => jget<{ items: AuditEntry[] }>("/api/admin/audit?" + qs({ limit })),
-  475 |   // Список баз данных контура (код / имя / публичность).
-  476 |   adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
-  477 | 
-  478 |   // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) -------
-  479 |   // Список арендаторов контура. 404/501 → degrade (информер).
-  480 |   adminTenants: () => jget<{ tenants: Tenant[] }>("/api/admin/tenants"),
-  481 |   // Создать (провизионировать) арендатора: слаг, наименование, логин админа,
-  482 |   // тариф. → отчёт о провизионировании {slug,name,plan,modules,admin,postgres}.
-  483 |   // 404/501/403 → degrade.
-  484 |   adminCreateTenant: (t: { slug: string; name: string; adminLogin: string; plan: string }) =>
-  485 |     jpost<{ slug: string; name: string; plan: string; modules: string[];
-  486 |             admin: { id: number | string; login: string }; postgres: boolean }>(
-  487 |       "/api/admin/tenant", t),
-  488 |   // Тариф, лимиты, потребление, модули и каталог тарифов выбранного арендатора.
-  489 |   adminBilling: (tenant: string) => jget<BillingInfo>("/api/admin/billing?" + qs({ tenant })),
-  490 |   // Сменить тариф арендатора → {tenant,plan,modules,limits,applied}. После смены
-  491 |   // плана клиент перечитывает биллинг, чтобы обновить usage/plans.
-  492 |   adminSetPlan: (tenant: string, plan: string) =>
-  493 |     jpost<{ tenant: string; plan: string; modules: string[]; limits: PlanLimits; applied: boolean }>(
-  494 |       "/api/admin/billing/plan", { tenant, plan }),
-  495 |   // Включить / отключить функциональный модуль арендатора →
-  496 |   // {tenant,module,enabled,applied,modules} (modules — обновлённый список включённых).
-  497 |   adminSetModule: (tenant: string, module: string, enabled: boolean) =>
-  498 |     jpost<{ tenant: string; module: string; enabled: boolean; applied: boolean; modules: string[] }>(
-  499 |       "/api/admin/billing/module", { tenant, module, enabled }),
-  500 | 
-  501 |   // --- Соответствие 152-ФЗ (#199; MVP фаза 3) ------------------------------
-  502 |   // Текущее согласие читателя на обработку ПДн. 404/501 → согласие не запрашиваем.
-  503 |   readerConsent: () => jget<ConsentState>("/api/reader/consent"),
-  504 |   // Дать / отозвать согласие на обработку ПДн. → {ok}. 404/501/401 → degrade.
-  505 |   setReaderConsent: (given: boolean) => jpost<{ ok: boolean }>("/api/reader/consent", { given }),
-  506 |   // Право на забвение: удалить читательские данные (отзывы/брони/полки/история/
-  507 |   // запросы). confirm:true — обязательное подтверждение. Каталог библиотеки не
-  508 |   // трогается. → {erased:{…счётчики}}. 404/501/401 → degrade.
-  509 |   eraseReaderData: () => jpost<{ erased: ErasureResult }>("/api/reader/erase", { confirm: true }),
-  510 |   // Журнал доступа к ПДн (последние limit записей) — для админ-деска. 404/501 → информер.
-  511 |   pdnAccess: (limit = 50) => jget<{ items: PdnAccessEntry[] }>("/api/admin/pdn-access?" + qs({ limit })),
-  512 | 
-  513 |   // --- Миграция данных из ИРБИС64 (#225; epic #223) ------------------------
-  514 |   // Изучить источник (сетевой сервер ИРБИС64 / локальный каталог данных):
-  515 |   // обнаружить базы, число записей и состав полей (с пометкой «допполе» для
-  516 |   // кастомных). dbs — опц. сужение перечня изучаемых баз. 404/501 → degrade.
-  517 |   migrateInspect: (mode: MigrateMode, source: MigrateSource, dbs?: string[]) =>
-  518 |     jpost<MigrateInspect>("/api/admin/migrate/inspect", { mode, source, dbs }),
+  301 | //   state: queued|running|done|error; report появляется по завершении.
+  302 | export interface MigrateStatus { jobId?: string; state: string; report?: MigrateReport; error?: string; }
+  303 | 
+  304 | let token: string | null = null;
+  305 | const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
+  306 | 
+  307 | async function jget<T>(path: string): Promise<{ status: number; json: Envelope<T> | null }> {
+  308 |   const r = await fetch(path, { headers: authHeaders() });
+  309 |   return { status: r.status, json: await r.json().catch(() => null) };
+  310 | }
+  311 | async function jpost<T>(path: string, body?: unknown): Promise<{ status: number; json: Envelope<T> | null }> {
+  312 |   const r = await fetch(path, {
+  313 |     method: "POST",
+  314 |     headers: { "Content-Type": "application/json", ...authHeaders() },
+  315 |     body: body !== undefined ? JSON.stringify(body) : undefined,
+  316 |   });
+  317 |   return { status: r.status, json: await r.json().catch(() => null) };
+  318 | }
+  319 | const qs = (o: Record<string, string | number>) =>
+  320 |   Object.keys(o).map((k) => k + "=" + encodeURIComponent(String(o[k]))).join("&");
+  321 | 
+  322 | export const api = {
+  323 |   hasToken: () => !!token,
+  324 |   async initGuest() {
+  325 |     const r = await fetch("/api/auth/guest", { method: "POST" });
+  326 |     const j = await r.json();
+  327 |     token = j.data.token;
+  328 |     return j.data as { token: string; kind: string };
+  329 |   },
+  330 |   health: () => jget<Health>("/api/health"),
+  331 |   databases: () => jget<{ items: DbItem[]; default: string }>("/api/databases"),
+  332 |   search: (db: string, prefix: string, q: string, page: number, pageSize: number) =>
+  333 |     jget<SearchResult>("/api/search?" + qs({ db, prefix, q, page, pageSize })),
+  334 |   searchExpr: (db: string, expr: string, page: number, pageSize: number) =>
+  335 |     jget<SearchResult>("/api/search?" + qs({ db, expr, page, pageSize })),
+  336 |   facets: (db: string, prefix: string, q: string) =>
+  337 |     jget<FacetsResult>("/api/facets?" + qs({ db, prefix, q })),
+  338 |   facetsExpr: (db: string, expr: string) =>
+  339 |     jget<FacetsResult>("/api/facets?" + qs({ db, expr })),
+  340 |   terms: (start: string, count = 8) => jget<{ db: string; terms: Term[] }>("/api/terms?" + qs({ start, count })),
+  341 |   record: (db: string, mfn: number) => jget<RecordData>("/api/record/" + db + "/" + mfn),
+  342 |   // Серверный рендер записи в формате ИРБИС: путь /api/render/{db}/{mfn}, формат
+  343 |   // в query (?fmt=@full). По умолчанию @brief (как на бэкенде). 404/501 → fallback
+  344 |   // делает вызывающий код (на @brief, затем на показ полей).
+  345 |   render: (db: string, mfn: number, fmt = "@full") =>
+  346 |     jget<RecordRender>("/api/render/" + db + "/" + mfn + "?" + qs({ fmt })),
+  347 |   // «Вы имели в виду» (GET /api/suggest) при нулевой выдаче. db/prefix/q —
+  348 |   // контекст исходного поиска. 404/501 → блок подсказок скрыт.
+  349 |   suggest: (db: string, prefix: string, q: string) =>
+  350 |     jget<SuggestResult>("/api/suggest?" + qs({ db, prefix, q })),
+  351 |   coverUrl: (db: string, mfn: number) => "/api/cover/" + db + "/" + mfn + (token ? "?t=" + encodeURIComponent(token) : ""),
+  352 |   order: (db: string, mfn: number) => jpost("/api/order", { db, mfn }),
+  353 |   // Discovery showcase (G2): new arrivals etc. `kind` defaults to "new" on the backend.
+  354 |   showcase: (db: string, kind = "new", limit = 12) =>
+  355 |     jget<{ items: ShowcaseItem[] }>("/api/showcase?" + qs({ db, kind, limit })),
 ```
 
 <!-- ─── страница 647 ─── -->
 
 ```ts
-  519 |   // Запустить миграцию выбранных баз в арендатора. dryRun:true — пробный прогон
-  520 |   // (ничего не записывается). → отчёт {records_read, records_loaded,
-  521 |   // readers_loaded, skipped, errors} (+ опц. jobId фоновой задачи). 404/501 → degrade.
-  522 |   migrateRun: (params: { mode: MigrateMode; source: MigrateSource; tenant: string; dbs: string[]; dryRun: boolean }) =>
-  523 |     jpost<MigrateRunResult>("/api/admin/migrate/run", params),
-  524 |   // Статус фоновой задачи миграции по её jobId (если run вернул jobId).
-  525 |   migrateStatus: (jobId: string) =>
-  526 |     jget<MigrateStatus>("/api/admin/migrate/status?" + qs({ jobId })),
-  527 | };
+  356 |   // Rubricator terms with counts (browse navigators) — used for example-query seeds.
+  357 |   rubricator: (db: string, prefix: string, limit = 12) =>
+  358 |     jget<{ terms: Term[] }>("/api/rubricator?" + qs({ db, prefix, limit })),
+  359 |   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
+  360 |   // Reader orders (G12). Endpoint may not exist yet → caller stubs the list on 404.
+  361 |   orders: () => jget<{ items: OrderItem[] }>("/api/me/orders"),
+  362 |   cancelOrder: (id: string | number, db?: string, mfn?: number) =>
+  363 |     jpost("/api/me/orders/cancel", { id, db, mfn }),
+  364 |   storage: (db: string) => jget<{ db: string; tree: StorageNode[]; holdings: number }>("/api/storage?" + qs({ db })),
+  365 |   // Вход читателя по билету и паролю. Пароль передаётся в теле {ticket,password};
+  366 |   // если пуст — поле просто опускается (совместимо со старым бэкендом, который
+  367 |   // читает только ticket). Пароль — «как в читательском билете».
+  368 |   async loginReader(ticket: string, password?: string) {
+  369 |     const body: { ticket: string; password?: string } = { ticket };
+  370 |     if (password) body.password = password;
+  371 |     const r = await jpost<{ token: string; name?: string }>("/api/auth/reader", body);
+  372 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
+  373 |     return r;
+  374 |   },
+  375 |   async loginStaff(login: string, password: string) {
+  376 |     const r = await jpost<{ token: string; login: string; name?: string; grants: Grant[] }>("/api/auth/staff", { login, password });
+  377 |     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
+  378 |     return r;
+  379 |   },
+  380 |   // --- Бронирование (#222) -------------------------------------------------
+  381 |   // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
+  382 |   hold: (db: string, mfn: number) => jpost<HoldResult>("/api/hold", { db, mfn }),
+  383 |   // Список активных броней читателя с позицией в очереди.
+  384 |   holds: () => jget<{ items: Hold[] }>("/api/holds"),
+  385 |   // Снять бронь по её идентификатору.
+  386 |   cancelHold: (holdId: string) => jpost("/api/hold/cancel", { holdId }),
+  387 |   // --- Уведомления читателя (#222) -----------------------------------------
+  388 |   // Лента уведомлений; unread=1 — только непрочитанные. Возвращает счётчик unread.
+  389 |   notifications: (unreadOnly = false) =>
+  390 |     jget<{ items: Notification[]; unread: number }>("/api/notifications?" + qs({ unread: unreadOnly ? 1 : 0 })),
+  391 |   // Отметить прочитанным: одно (по id) либо все (all:true).
+  392 |   markNotificationRead: (idOrAll: { id: string | number } | { all: true }) =>
+  393 |     jpost<{ unread: number }>("/api/notifications/read", idOrAll),
+  394 |   // --- Полки / списки чтения (#222) ----------------------------------------
+  395 |   shelves: () => jget<{ lists: Shelf[] }>("/api/shelves"),
+  396 |   createShelf: (name: string) => jpost<{ id: string; name: string; system?: boolean }>("/api/shelves", { name }),
+  397 |   addToShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item", { listId, db, mfn }),
+  398 |   removeFromShelf: (listId: string, db: string, mfn: number) => jpost("/api/shelves/item/remove", { listId, db, mfn }),
+  399 |   worklist: (db: string) => jget<{ db: string; fields: WorklistField[] }>("/api/worklist/" + db),
+  400 |   saveRecord: (db: string, mfn: number, fields: { tag: string; value: string }[]) =>
+  401 |     jpost<{ db: string; mfn: number; created: boolean; returnCode: number; violations?: FlkViolation[] }>("/api/record/" + db + "/" + mfn, { fields }),
+  402 |   // --- ФЛК «на лету» (#188) ------------------------------------------------
+  403 |   // Прогнать декларативный ФЛК по черновику записи. record — карта поле→значение
+  404 |   // (см. FlkRecord). phase: 'save' (полная проверка) | 'field' (точечная по
+  405 |   // одному полю). 404/501 → деградируем к клиентской проверке обязательных полей.
+  406 |   validate: (db: string, record: FlkRecord, phase: "save" | "field" = "save", field?: string, currentMfn?: number) =>
+  407 |     jpost<FlkResult>("/api/validate", { db, record, phase, field, currentMfn }),
+  408 |   // --- Книговыдача (#185) --------------------------------------------------
+  409 |   // Формуляр читателя по билету: карточка + активные выдачи + служебные блоки.
+  410 |   circReader: (ticket: string) => jget<CircFormular>("/api/circ/reader?" + qs({ ticket })),
+```
+
+<!-- ─── страница 648 ─── -->
+
+```ts
+  411 |   // Выдать экземпляр (инв./RFID) читателю. Сервер запускает контроль (должник,
+  412 |   // лимит, бронеблок) и возвращает block при отказе.
+  413 |   circIssue: (ticket: string, db: string, item: string) =>
+  414 |     jpost<CircActionResult>("/api/circ/issue", { ticket, db, item }),
+  415 |   // Принять возврат экземпляра.
+  416 |   circReturn: (ticket: string, db: string, item: string) =>
+  417 |     jpost<CircActionResult>("/api/circ/return", { ticket, db, item }),
+  418 |   // Продлить выдачу (новый срок — в loan.due).
+  419 |   circRenew: (ticket: string, db: string, item: string) =>
+  420 |     jpost<CircActionResult>("/api/circ/renew", { ticket, db, item }),
+  421 |   // Штрафы читателя: список начислений + итог.
+  422 |   circFines: (ticket: string) => jget<CircFines>("/api/circ/fines?" + qs({ ticket })),
+  423 |   // --- Отзывы и оценки (#134) ----------------------------------------------
+  424 |   // Отзывы по записи: средняя оценка, число, список и (если вошёл) свой отзыв.
+  425 |   reviews: (db: string, mfn: number) =>
+  426 |     jget<ReviewsResult>("/api/reviews?" + qs({ db, mfn })),
+  427 |   // Оставить / обновить свой отзыв (1–5 звёзд + опц. текст). 404/501 → degrade.
+  428 |   postReview: (db: string, mfn: number, rating: number, text?: string) =>
+  429 |     jpost<Review>("/api/review", { db, mfn, rating, text }),
+  430 |   // Удалить свой отзыв по идентификатору.
+  431 |   deleteReview: (id: string | number) => jpost("/api/review/delete", { id }),
+  432 |   // --- Рекомендации (#133) -------------------------------------------------
+  433 |   // «Похожие издания» к конкретной записи.
+  434 |   recommendations: (db: string, mfn: number) =>
+  435 |     jget<{ items: Recommendation[] }>("/api/recommendations?" + qs({ db, mfn })),
+  436 |   // «Для вас» — персональная подборка на главной (по истории/интересам).
+  437 |   recommendationsForYou: () =>
+  438 |     jget<{ items: Recommendation[] }>("/api/recommendations/foryou"),
+  439 |   // --- История просмотров (#134) -------------------------------------------
+  440 |   history: () => jget<{ items: HistoryItem[] }>("/api/history"),
+  441 |   // --- Сохранённые запросы (#133) ------------------------------------------
+  442 |   savedSearches: () => jget<{ items: SavedSearch[] }>("/api/savedsearch"),
+  443 |   saveSearch: (name: string, db: string, prefix: string, query: string) =>
+  444 |     jpost<SavedSearch>("/api/savedsearch", { name, db, prefix, query }),
+  445 |   deleteSavedSearch: (id: string | number) => jpost("/api/savedsearch/delete", { id }),
+  446 | 
+  447 |   // --- Комплектование (#184) ----------------------------------------------
+  448 |   // Создать заказ на комплектование. → AcqOrder. 404/501 → degrade (информер).
+  449 |   acqOrder: (o: { title: string; author?: string; supplier?: string; copies: number; price?: number; funding_source?: string }) =>
+  450 |     jpost<AcqOrder>("/api/acq/order", o),
+  451 |   // Отменить заказ (до поступления).
+  452 |   acqCancelOrder: (id: string | number) => jpost<AcqOrder>("/api/acq/order/cancel", { id }),
+  453 |   // Оформить поступление по заказу → запись КСУ + ToCat (создание/правка
+  454 |   // каталожной записи). Возвращает номер КСУ и MFN созданной/обновлённой записи.
+  455 |   acqReceive: (r: { orderId: string | number; ksuNo?: string; copies: number; unitPrice?: number; invNumbers?: string[]; actRef?: string }) =>
+  456 |     jpost<AcqReceiveResult>("/api/acq/receive", r),
+  457 |   // Получить заказ по идентификатору (для обновления карточки / списка).
+  458 |   acqGetOrder: (id: string | number) => jget<{ items?: AcqOrder[]; order?: AcqOrder }>("/api/acq/order?" + qs({ id })),
+  459 |   // Лента/список заказов (без id). 404 → degrade.
+  460 |   acqOrders: () => jget<{ items: AcqOrder[] }>("/api/acq/order"),
+  461 |   // Найти запись КСУ по номеру.
+  462 |   acqKsu: (no: string) => jget<{ entry?: KsuEntry; items?: KsuEntry[] }>("/api/acq/ksu?" + qs({ no })),
+  463 | 
+  464 |   // --- Книгообеспеченность (#186) -----------------------------------------
+  465 |   // Создать факультет связки.
+```
+
+<!-- ─── страница 649 ─── -->
+
+```ts
+  466 |   bpFaculty: (f: { code: string; name: string }) => jpost<BpFaculty>("/api/bp/faculty", f),
+  467 |   // Создать специальность под факультетом.
+  468 |   bpSpecialty: (s: { facultyId: string | number; napr?: string; spec?: string; vid?: string; form?: string; name: string }) =>
+  469 |     jpost<BpSpecialty>("/api/bp/specialty", s),
+  470 |   // Создать дисциплину под специальностью (семестр, число студентов).
+  471 |   bpDiscipline: (d: { specialtyId: string | number; discId?: string; name: string; semester?: number; students?: number }) =>
+  472 |     jpost<BpDiscipline>("/api/bp/discipline", d),
+  473 |   // Задать контингент (число студентов) дисциплины — пересчитывает Кко.
+  474 |   bpContingent: (c: { discId: string | number; students: number }) =>
+  475 |     jpost<BpDiscipline>("/api/bp/contingent", c),
+  476 |   // Привязать литературу (осн./доп.) к дисциплине.
+  477 |   bpBind: (b: { disciplineId: string | number; title: string; kind: "main" | "extra"; copies: number }) =>
+  478 |     jpost<BpBinding>("/api/bp/bind", b),
+  479 |   // Карточка дисциплины с расчётом Кко. normalize — применить нормализацию
+  480 |   // (учёт многоразового использования/семестровой нагрузки) при расчёте.
+  481 |   bpDisciplineCard: (id: string | number, normalize = false) =>
+  482 |     jget<BpDisciplineCard>("/api/bp/discipline?" + qs({ id, normalize: normalize ? 1 : 0 })),
+  483 |   // Карточка специальности: дисциплины с Кко + сводный Кко.
+  484 |   bpSpecialtyCard: (id: string | number, normalize = false) =>
+  485 |     jget<BpSpecialtyCard>("/api/bp/specialty?" + qs({ id, normalize: normalize ? 1 : 0 })),
+  486 | 
+  487 |   // --- Администрирование (#187) -------------------------------------------
+  488 |   // Список учётных записей сотрудников.
+  489 |   adminUsers: () => jget<{ items: AdminUser[] }>("/api/admin/users"),
+  490 |   // Создать учётную запись (логин, ФИО, пароль, опц. роли).
+  491 |   adminCreateUser: (u: { login: string; fullName: string; password: string; roles?: string[] }) =>
+  492 |     jpost<AdminUser>("/api/admin/users", u),
+  493 |   // Назначить набор ролей пользователю.
+  494 |   adminSetRoles: (userId: string | number, roles: string[]) =>
+  495 |     jpost<AdminUser>("/api/admin/users/roles", { userId, roles }),
+  496 |   // Включить / отключить учётную запись.
+  497 |   adminSetActive: (userId: string | number, active: boolean) =>
+  498 |     jpost<AdminUser>("/api/admin/users/active", { userId, active }),
+  499 |   // Справочник ролей.
+  500 |   adminRoles: () => jget<{ items: AdminRole[] }>("/api/admin/roles"),
+  501 |   // Журнал аудита (последние limit записей).
+  502 |   adminAudit: (limit = 50) => jget<{ items: AuditEntry[] }>("/api/admin/audit?" + qs({ limit })),
+  503 |   // Список баз данных контура (код / имя / публичность).
+  504 |   adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
+  505 | 
+  506 |   // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) -------
+  507 |   // Список арендаторов контура. 404/501 → degrade (информер).
+  508 |   adminTenants: () => jget<{ tenants: Tenant[] }>("/api/admin/tenants"),
+  509 |   // Создать (провизионировать) арендатора: слаг, наименование, логин админа,
+  510 |   // тариф. → отчёт о провизионировании {slug,name,plan,modules,admin,postgres}.
+  511 |   // 404/501/403 → degrade.
+  512 |   adminCreateTenant: (t: { slug: string; name: string; adminLogin: string; plan: string }) =>
+  513 |     jpost<{ slug: string; name: string; plan: string; modules: string[];
+  514 |             admin: { id: number | string; login: string }; postgres: boolean }>(
+  515 |       "/api/admin/tenant", t),
+  516 |   // Тариф, лимиты, потребление, модули и каталог тарифов выбранного арендатора.
+  517 |   adminBilling: (tenant: string) => jget<BillingInfo>("/api/admin/billing?" + qs({ tenant })),
+  518 |   // Сменить тариф арендатора → {tenant,plan,modules,limits,applied}. После смены
+  519 |   // плана клиент перечитывает биллинг, чтобы обновить usage/plans.
+  520 |   adminSetPlan: (tenant: string, plan: string) =>
+```
+
+<!-- ─── страница 650 ─── -->
+
+```ts
+  521 |     jpost<{ tenant: string; plan: string; modules: string[]; limits: PlanLimits; applied: boolean }>(
+  522 |       "/api/admin/billing/plan", { tenant, plan }),
+  523 |   // Включить / отключить функциональный модуль арендатора →
+  524 |   // {tenant,module,enabled,applied,modules} (modules — обновлённый список включённых).
+  525 |   adminSetModule: (tenant: string, module: string, enabled: boolean) =>
+  526 |     jpost<{ tenant: string; module: string; enabled: boolean; applied: boolean; modules: string[] }>(
+  527 |       "/api/admin/billing/module", { tenant, module, enabled }),
   528 | 
-  529 | export const LANG: Record<string, string> = {
-  530 |   rus: "русский", eng: "английский", fre: "французский", ger: "немецкий",
-  531 |   ita: "итальянский", spa: "испанский", lat: "латинский", ukr: "украинский",
-  532 | };
+  529 |   // --- Соответствие 152-ФЗ (#199; MVP фаза 3) ------------------------------
+  530 |   // Текущее согласие читателя на обработку ПДн. 404/501 → согласие не запрашиваем.
+  531 |   readerConsent: () => jget<ConsentState>("/api/reader/consent"),
+  532 |   // Дать / отозвать согласие на обработку ПДн. → {ok}. 404/501/401 → degrade.
+  533 |   setReaderConsent: (given: boolean) => jpost<{ ok: boolean }>("/api/reader/consent", { given }),
+  534 |   // Право на забвение: удалить читательские данные (отзывы/брони/полки/история/
+  535 |   // запросы). confirm:true — обязательное подтверждение. Каталог библиотеки не
+  536 |   // трогается. → {erased:{…счётчики}}. 404/501/401 → degrade.
+  537 |   eraseReaderData: () => jpost<{ erased: ErasureResult }>("/api/reader/erase", { confirm: true }),
+  538 |   // Журнал доступа к ПДн (последние limit записей) — для админ-деска. 404/501 → информер.
+  539 |   pdnAccess: (limit = 50) => jget<{ items: PdnAccessEntry[] }>("/api/admin/pdn-access?" + qs({ limit })),
+  540 | 
+  541 |   // --- Миграция данных из ИРБИС64 (#225; epic #223) ------------------------
+  542 |   // Изучить источник (сетевой сервер ИРБИС64 / локальный каталог данных):
+  543 |   // обнаружить базы, число записей и состав полей (с пометкой «допполе» для
+  544 |   // кастомных). dbs — опц. сужение перечня изучаемых баз. 404/501 → degrade.
+  545 |   migrateInspect: (mode: MigrateMode, source: MigrateSource, dbs?: string[]) =>
+  546 |     jpost<MigrateInspect>("/api/admin/migrate/inspect", { mode, source, dbs }),
+  547 |   // Запустить миграцию выбранных баз в арендатора. dryRun:true — пробный прогон
+  548 |   // (ничего не записывается). → отчёт {records_read, records_loaded,
+  549 |   // readers_loaded, skipped, errors} (+ опц. jobId фоновой задачи). 404/501 → degrade.
+  550 |   migrateRun: (params: { mode: MigrateMode; source: MigrateSource; tenant: string; dbs: string[]; dryRun: boolean }) =>
+  551 |     jpost<MigrateRunResult>("/api/admin/migrate/run", params),
+  552 |   // Статус фоновой задачи миграции по её jobId (если run вернул jobId).
+  553 |   migrateStatus: (jobId: string) =>
+  554 |     jget<MigrateStatus>("/api/admin/migrate/status?" + qs({ jobId })),
+  555 | };
+  556 | 
+  557 | export const LANG: Record<string, string> = {
+  558 |   rus: "русский", eng: "английский", fre: "французский", ger: "немецкий",
+  559 |   ita: "итальянский", spa: "испанский", lat: "латинский", ukr: "украинский",
+  560 | };
 ```
 
 ### Файл: `irbis-web/frontend/src/biblio-bridge.css`  · строк: 104
@@ -39354,6 +39560,11 @@
    13 |         JS-injected bundle, so Biblio's :root wins over the app's older
    14 |         tokens/colors.css :root for the names that exist in BOTH layers
    15 |         (--accent, --accent-hover, --text-subtle, --border-strong,
+```
+
+<!-- ─── страница 651 ─── -->
+
+```css
    16 |         --status-available[-bg], --status-issued[-bg], --font-sans, --font-serif,
    17 |         --shadow-sm/md/lg). Same URL, one cached fetch, zero duplicated content.
    18 | 
@@ -39380,11 +39591,6 @@
    39 |   --bg-page:        var(--bg);
    40 |   --surface-card:   var(--surface-1);
    41 |   --surface-sunken: var(--surface-2);
-```
-
-<!-- ─── страница 648 ─── -->
-
-```css
    42 |   --surface-hover:  var(--surface-3);
    43 |   --surface-active: var(--surface-3);
    44 | 
@@ -39414,6 +39620,11 @@
    68 |   --status-available-border: color-mix(in srgb, var(--status-available) 34%, transparent);
    69 |   --status-issued-strong:    var(--status-issued);
    70 |   --status-issued-border:    color-mix(in srgb, var(--status-issued) 34%, transparent);
+```
+
+<!-- ─── страница 652 ─── -->
+
+```css
    71 | 
    72 |   --status-hold:    var(--status-postamat);
    73 |   --status-hold-bg: var(--status-postamat-bg);
@@ -39440,11 +39651,6 @@
    94 |   /* Radii — softer Style A corners (app keeps --radius-sm / -pill / -round) */
    95 |   --radius-md: 9px;
    96 |   --radius-lg: 13px;
-```
-
-<!-- ─── страница 649 ─── -->
-
-```css
    97 | }
    98 | 
    99 | /* Dark mode: Biblio redefines the underlying tokens under data-mode="dark";
@@ -39479,6 +39685,11 @@
    19 |   publisher: string;   // 210c
    20 |   year: string;        // 210d
    21 |   extent: string;      // 215a (+ c/e)
+```
+
+<!-- ─── страница 653 ─── -->
+
+```ts
    22 |   isbn: string;        // 10a
    23 |   lang: string;        // 101a (код)
    24 |   udc: string;         // 675a
@@ -39505,11 +39716,6 @@
    45 |     responsibility: sf(f200, "F"),
    46 |     authors: ["700", "701"].flatMap(F).map(authorName).filter(Boolean),
    47 |     place: sf(f210, "A"),
-```
-
-<!-- ─── страница 650 ─── -->
-
-```ts
    48 |     publisher: sf(f210, "C"),
    49 |     year: sf(f210, "D"),
    50 |     extent: [sf(f215, "A"), sf(f215, "C"), sf(f215, "E")].filter(Boolean).join(" : "),
@@ -39539,6 +39745,11 @@
    74 |   return L.join("\r\n") + "\r\n";
    75 | }
    76 | 
+```
+
+<!-- ─── страница 654 ─── -->
+
+```ts
    77 | function bibKey(c: CiteFields): string {
    78 |   const first = (c.authors[0] || c.title || "rec").split(/[\s,]+/)[0].replace(/[^A-Za-zА-Яа-я0-9]/g, "");
    79 |   return (first || "rec") + (yearDigits(c.year) || c.mfn);
@@ -39565,11 +39776,6 @@
   100 |   const parts: string[] = [];
   101 |   let head = "";
   102 |   if (c.authors.length === 1) head = c.authors[0] + ". ";
-```
-
-<!-- ─── страница 651 ─── -->
-
-```ts
   103 |   let area = c.title || "[Без заглавия]";
   104 |   // сведения об ответственности
   105 |   const resp = c.responsibility || (c.authors.length ? c.authors.join(", ") : "");
@@ -39599,6 +39805,11 @@
   129 | };
   130 | 
   131 | // Browser download via Blob + object URL. UTF-8, BOM for txt so Windows-кириллица
+```
+
+<!-- ─── страница 655 ─── -->
+
+```ts
   132 | // открывается корректно в блокноте.
   133 | export function downloadText(filename: string, text: string, ext: string): void {
   134 |   const isTxt = ext === "txt";
@@ -39625,11 +39836,6 @@
   155 | // --- Корзина (отбор) -------------------------------------------------------
   156 | // Basket items carry only brief search-result data (нет полной записи), поэтому
   157 | // CiteFields строится из заглавия/автора/года.
-```
-
-<!-- ─── страница 652 ─── -->
-
-```ts
   158 | export function citeFromItem(it: ResultItem): CiteFields {
   159 |   return {
   160 |     mfn: it.mfn,
@@ -39659,6 +39865,11 @@
   184 |   const lines = items.map((it, i) => (i + 1) + ". " + toPlainLine(citeFromItem(it)));
   185 |   const subject = "Список изданий из каталога (" + items.length + ")";
   186 |   const body = "Отобранные издания:\n\n" + lines.join("\n") + "\n";
+```
+
+<!-- ─── страница 656 ─── -->
+
+```ts
   187 |   return "mailto:?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
   188 | }
 ```
@@ -39695,11 +39906,6 @@
    11 |   background:var(--surface-card,#fff);border:1px solid var(--border-subtle);border-radius:var(--radius-2xl,20px);box-shadow:var(--shadow-sm);}
    12 | .irb-about__col{padding:18px 20px;}
    13 | .irb-about__col + .irb-about__col{border-left:1px solid var(--border-subtle);}
-```
-
-<!-- ─── страница 653 ─── -->
-
-```tsx
    14 | .irb-about__title{display:flex;align-items:center;gap:8px;font-family:var(--font-display,var(--font-serif));
    15 |   font-weight:var(--weight-semibold,600);font-size:var(--text-base,1rem);color:var(--text-strong);margin:0 0 8px;}
    16 | .irb-about__name{font-size:var(--text-sm);font-weight:600;color:var(--text-strong);margin:0 0 6px;line-height:1.3;}
@@ -39729,6 +39935,11 @@
    40 |   const telHref = "tel:" + about.phone.replace(/[^\d+]/g, "");
    41 | 
    42 |   return (
+```
+
+<!-- ─── страница 657 ─── -->
+
+```tsx
    43 |     <section className="irb-about" aria-label="О библиотеке">
    44 |       {/* О фонде */}
    45 |       <div className="irb-about__col">
@@ -39755,11 +39966,6 @@
    66 |           <div className="irb-about__c"><Icon name="bell" size={15} className="irb-about__ic" /><a href={telHref}>{about.phone}</a></div>
    67 |           <div className="irb-about__c"><Icon name="share" size={15} className="irb-about__ic" /><a href={"mailto:" + about.email}>{about.email}</a></div>
    68 |           {about.site && <div className="irb-about__c"><Icon name="globe" size={15} className="irb-about__ic" /><a href={"https://" + about.site} target="_blank" rel="noopener noreferrer">{about.site}</a></div>}
-```
-
-<!-- ─── страница 654 ─── -->
-
-```tsx
    69 |         </div>
    70 |       </div>
    71 |     </section>
@@ -39794,6 +40000,11 @@
    22 | .irb-arch__body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
    23 | .irb-arch__title{font-size:var(--text-sm,14px);font-weight:var(--weight-semibold,600);color:var(--text-strong);
    24 |   line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+```
+
+<!-- ─── страница 658 ─── -->
+
+```tsx
    25 | .irb-arch__meta{font-size:var(--text-xs);color:var(--text-subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
    26 | .irb-arch__aside{flex:none;display:flex;align-items:center;gap:10px;}
    27 | .irb-arch__check{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;flex:none;
@@ -39820,11 +40031,6 @@
    48 |   return (
    49 |     <div className="irb-arch" role="list">
    50 |       {items.map((it, i) => {
-```
-
-<!-- ─── страница 655 ─── -->
-
-```tsx
    51 |         const on = inBasket(it.mfn);
    52 |         return (
    53 |           <div
@@ -39854,6 +40060,11 @@
    77 |           </div>
    78 |         );
    79 |       })}
+```
+
+<!-- ─── страница 659 ─── -->
+
+```tsx
    80 |     </div>
    81 |   );
    82 | }
@@ -39885,11 +40096,6 @@
    21 |   border:1px solid var(--border-subtle);border-radius:var(--radius-lg,13px);padding:13px 14px;text-align:left;
    22 |   cursor:pointer;font-family:inherit;transition:border-color var(--dur,.18s) var(--ease-standard,ease),box-shadow var(--dur,.18s) var(--ease-standard,ease);}
    23 | .irb-cal__card:hover{border-color:var(--border-strong,#cdd3da);box-shadow:var(--shadow-sm);}
-```
-
-<!-- ─── страница 656 ─── -->
-
-```tsx
    24 | .irb-cal__card:focus-visible{outline:2px solid var(--focus-ring-color,var(--accent));outline-offset:2px;}
    25 | .irb-cal__title{font-family:var(--font-record-title,var(--font-display,inherit));font-size:var(--text-base,15.5px);
    26 |   font-weight:var(--weight-semibold,600);color:var(--text-strong);line-height:1.25;
@@ -39919,6 +40125,11 @@
    50 |   items: ResultItem[];
    51 |   inBasket: (mfn: number) => boolean;
    52 |   onToggleBasket: (it: ResultItem) => void;
+```
+
+<!-- ─── страница 660 ─── -->
+
+```tsx
    53 |   onOpen: (mfn: number) => void;
    54 | }) {
    55 |   // Группируем по году, сохраняя порядок появления групп (новые/известные сначала).
@@ -39945,11 +40156,6 @@
    76 |         <section key={year} className="irb-cal__group" aria-label={"Год: " + year}>
    77 |           <div className="irb-cal__year">
    78 |             <Icon name="calendar" size={17} style={{ color: "var(--accent)" }} />
-```
-
-<!-- ─── страница 657 ─── -->
-
-```tsx
    79 |             {year}
    80 |             <span className="irb-cal__year-badge">{list.length}</span>
    81 |           </div>
@@ -39979,6 +40185,11 @@
   105 |               );
   106 |             })}
   107 |           </div>
+```
+
+<!-- ─── страница 661 ─── -->
+
+```tsx
   108 |         </section>
   109 |       ))}
   110 |     </div>
@@ -40010,11 +40221,6 @@
    19 |   border:none;border-radius:var(--radius-xl,16px);padding:16px;cursor:pointer;text-align:left;
    20 |   color:#fff;font-family:inherit;box-shadow:var(--shadow-md);
    21 |   transition:transform var(--dur,.18s) var(--ease-standard,ease),box-shadow var(--dur,.18s) var(--ease-standard,ease);}
-```
-
-<!-- ─── страница 658 ─── -->
-
-```tsx
    22 | .irb-coll__card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);}
    23 | .irb-coll__card:focus-visible{outline:var(--focus-ring-width,2px) solid var(--focus-ring-color,var(--accent));outline-offset:2px;}
    24 | .irb-coll__card::after{content:"";position:absolute;inset:0;pointer-events:none;
@@ -40044,6 +40250,11 @@
    48 |       </div>
    49 |       <div className="irb-coll__rail" role="list">
    50 |         {collections.map((c) => (
+```
+
+<!-- ─── страница 662 ─── -->
+
+```tsx
    51 |           <button
    52 |             key={c.id} type="button" role="listitem" className="irb-coll__card"
    53 |             onClick={() => onSearch(c.prefix, c.query)}
@@ -40075,11 +40286,6 @@
     8 | //   ConsentToggle — переключатель «Согласие на обработку ПДн» в кабинете:
     9 | //     показать/отозвать согласие; persist через POST /api/reader/consent.
    10 | //   EraseDataCard — «Удалить мои данные» (право на забвение): диалог
-```
-
-<!-- ─── страница 659 ─── -->
-
-```tsx
    11 | //     подтверждения со списком удаляемого; POST /api/reader/erase {confirm:true};
    12 | //     на успехе — счётчики удалённого.
    13 | // Грациозная деградация: при 404/501 баннер не показываем; тумблер/карточка
@@ -40109,6 +40315,11 @@
    37 | .irb-consent-banner__txt{flex:1;min-width:0;font-size:var(--text-sm);line-height:1.5;}
    38 | .irb-consent-banner__title{font-weight:600;color:var(--text-strong);margin-bottom:3px;}
    39 | .irb-consent-banner__link{color:var(--accent);text-decoration:underline;cursor:pointer;}
+```
+
+<!-- ─── страница 663 ─── -->
+
+```tsx
    40 | .irb-consent-banner__actions{display:flex;gap:8px;align-items:center;flex:none;align-self:center;}
    41 | .irb-consent-toggle{display:flex;align-items:flex-start;gap:13px;}
    42 | .irb-consent-toggle__main{flex:1;min-width:0;}
@@ -40135,11 +40346,6 @@
    63 | if (typeof document !== "undefined" && !document.getElementById("irb-consent-css")) {
    64 |   const s = document.createElement("style"); s.id = "irb-consent-css"; s.textContent = CSS; document.head.appendChild(s);
    65 | }
-```
-
-<!-- ─── страница 660 ─── -->
-
-```tsx
    66 | 
    67 | // Категории читательских данных, удаляемые правом на забвение (порядок = порядок
    68 | // счётчиков в ErasureResult). Каталог библиотеки сюда не входит — он неприкосновенен.
@@ -40169,6 +40375,11 @@
    92 | // Рендерится App.tsx только для вошедшего читателя (не для гостей). Показывается,
    93 | // пока согласие не дано и эндпойнт доступен. «Принять» сохраняет согласие.
    94 | export function ConsentBanner({ toast }: { toast: Toast }) {
+```
+
+<!-- ─── страница 664 ─── -->
+
+```tsx
    95 |   const { state, setState, unavailable } = useConsent();
    96 |   const [dismissed, setDismissed] = React.useState(false);
    97 |   const [busy, setBusy] = React.useState(false);
@@ -40195,11 +40406,6 @@
   118 |     <div className="irb-consent-banner" role="region" aria-label="Согласие на обработку персональных данных">
   119 |       <div className="irb-consent-banner__inner">
   120 |         <span className="irb-consent-banner__ic" aria-hidden="true"><Icon name="shield" size={20} /></span>
-```
-
-<!-- ─── страница 661 ─── -->
-
-```tsx
   121 |         <div className="irb-consent-banner__txt">
   122 |           <div className="irb-consent-banner__title">Обработка персональных данных</div>
   123 |           Портал обрабатывает ваши персональные данные (формуляр, история, заказы) для библиотечного
@@ -40229,6 +40435,11 @@
   147 |     const r = await api.setReaderConsent(given);
   148 |     setBusy(false);
   149 |     if (r.status === 200 && r.json?.ok) {
+```
+
+<!-- ─── страница 665 ─── -->
+
+```tsx
   150 |       setState((s) => ({ given, ts: new Date().toISOString(), version: s?.version }));
   151 |       toast({ variant: given ? "success" : "info", title: given ? "Согласие дано" : "Согласие отозвано",
   152 |         message: given ? "Спасибо." : "Часть сервисов портала может стать недоступной." });
@@ -40255,11 +40466,6 @@
   173 |                 : "Согласие не дано. Часть персональных сервисов портала недоступна."}
   174 |           </div>
   175 |         </div>
-```
-
-<!-- ─── страница 662 ─── -->
-
-```tsx
   176 |         <span className={"irb-consent-state irb-consent-state--" + (given ? "on" : "off")}>
   177 |           <Icon name={given ? "check-circle" : "info"} size={13} />{given ? "Дано" : "Не дано"}
   178 |         </span>
@@ -40289,6 +40495,11 @@
   202 |     setBusy(false);
   203 |     setConfirmOpen(false);
   204 |     if (r.status === 200 && r.json?.ok && r.json.data) {
+```
+
+<!-- ─── страница 666 ─── -->
+
+```tsx
   205 |       setResult(r.json.data.erased || {});
   206 |       const total = ERASE_CATEGORIES.reduce((n, c) => n + (Number(r.json!.data!.erased?.[c.key]) || 0), 0);
   207 |       toast({ variant: "success", title: "Данные удалены", message: "Удалено записей: " + total + ". Каталог библиотеки не затронут." });
@@ -40315,11 +40526,6 @@
   228 |             Право на забвение (152-ФЗ): удаление ваших читательских данных с портала. Действие необратимо.
   229 |           </div>
   230 |         </div>
-```
-
-<!-- ─── страница 663 ─── -->
-
-```tsx
   231 |       </div>
   232 | 
   233 |       {result ? (
@@ -40349,6 +40555,11 @@
   257 |             </p>
   258 |             <ul className="irb-erase__list">
   259 |               {ERASE_CATEGORIES.map((c) => (
+```
+
+<!-- ─── страница 667 ─── -->
+
+```tsx
   260 |                 <li key={c.key} className="irb-erase__li"><i aria-hidden="true"><Icon name="x" size={14} /></i>{c.label}</li>
   261 |               ))}
   262 |             </ul>
@@ -40375,11 +40586,6 @@
   283 |     if (isNaN(d.getTime())) return ts;
   284 |     return d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
   285 |   } catch { return ts; }
-```
-
-<!-- ─── страница 664 ─── -->
-
-```tsx
   286 | }
 ```
 
@@ -40414,6 +40620,11 @@
    26 |   return /\.(png|jpe?g|gif|webp|bmp|tiff?|svg)(\?|#|$)/i.test(url);
    27 | }
    28 | 
+```
+
+<!-- ─── страница 668 ─── -->
+
+```tsx
    29 | const CSS = `
    30 | .irb-doc{position:fixed;inset:0;z-index:80;background:rgba(15,12,10,.86);display:flex;flex-direction:column;
    31 |   backdrop-filter:blur(2px);}
@@ -40440,11 +40651,6 @@
    52 |   justify-content:center;cursor:pointer;}
    53 | .irb-doc__nav:hover:not(:disabled){background:rgba(0,0,0,.6);}
    54 | .irb-doc__nav:disabled{opacity:.35;cursor:not-allowed;}
-```
-
-<!-- ─── страница 665 ─── -->
-
-```tsx
    55 | .irb-doc__nav--prev{left:14px;}
    56 | .irb-doc__nav--next{right:14px;}
    57 | .irb-doc__thumbs{display:flex;gap:6px;overflow-x:auto;padding:8px 14px;background:rgba(0,0,0,.32);
@@ -40474,6 +40680,11 @@
    81 | 
    82 |   const go = React.useCallback((next: number) => {
    83 |     setIdx((cur) => {
+```
+
+<!-- ─── страница 669 ─── -->
+
+```tsx
    84 |       const n = Math.min(Math.max(0, next), Math.max(0, total - 1));
    85 |       if (n !== cur) { setZoom(1); setImgError(false); }
    86 |       return n;
@@ -40500,11 +40711,6 @@
   107 |       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
   108 |       {/* Верхняя панель */}
   109 |       <div className="irb-doc__bar">
-```
-
-<!-- ─── страница 666 ─── -->
-
-```tsx
   110 |         <span className="irb-doc__title">{title || page.name || "Документ"}</span>
   111 |         <span className="irb-doc__count">стр. {idx + 1} из {total}</span>
   112 |         <span className="irb-doc__spacer" />
@@ -40534,6 +40740,11 @@
   136 | 
   137 |       {/* Сцена с навигацией */}
   138 |       <div className="irb-doc__stage" style={{ position: "relative" }}>
+```
+
+<!-- ─── страница 670 ─── -->
+
+```tsx
   139 |         {total > 1 && (
   140 |           <button type="button" className="irb-doc__nav irb-doc__nav--prev" onClick={() => go(idx - 1)} disabled={idx === 0} aria-label="Предыдущая страница">
   141 |             <Icon name="chevron-left" size={22} />
@@ -40560,11 +40771,6 @@
   162 |             {page.url && (
   163 |               <a className="irb-doc__btn" href={page.url} target="_blank" rel="noopener noreferrer">
   164 |                 <Icon name="external-link" size={15} /> Открыть файл
-```
-
-<!-- ─── страница 667 ─── -->
-
-```tsx
   165 |               </a>
   166 |             )}
   167 |           </div>
@@ -40599,6 +40805,11 @@
 ```tsx
     1 | // Галерея-сетка результатов (G4) — обложки-карточки вместо строк. Для каждой
     2 | // записи: обложка (api.coverUrl при hasCover, иначе тонированный плейсхолдер с
+```
+
+<!-- ─── страница 671 ─── -->
+
+```tsx
     3 | // заглавием), заглавие/автор/год, статус-бейдж, чек «в корзину» в углу. Тот же
     4 | // набор данных, что у списка (ResultItem) — переключается тумблером в тулбаре.
     5 | import React from "react";
@@ -40625,11 +40836,6 @@
    26 | .irb-gcard__ph{padding:12px;color:rgba(255,255,255,.92);font-family:var(--font-display,var(--font-serif));
    27 |   font-size:var(--text-sm);font-weight:var(--weight-semibold,600);line-height:1.22;width:100%;box-sizing:border-box;
    28 |   text-shadow:0 1px 4px rgba(0,0,0,.35);
-```
-
-<!-- ─── страница 668 ─── -->
-
-```tsx
    29 |   display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;}
    30 | .irb-gcard__check{position:absolute;top:8px;left:8px;width:26px;height:26px;border-radius:var(--radius-sm,7px);
    31 |   border:1px solid rgba(255,255,255,.7);background:rgba(20,16,14,.4);color:#fff;cursor:pointer;
@@ -40659,6 +40865,11 @@
    55 |   items, db, inBasket, onToggleBasket, onOpen, onHold, renderShelf,
    56 | }: {
    57 |   items: ResultItem[];
+```
+
+<!-- ─── страница 672 ─── -->
+
+```tsx
    58 |   db: string;
    59 |   inBasket: (mfn: number) => boolean;
    60 |   onToggleBasket: (it: ResultItem) => void;
@@ -40685,11 +40896,6 @@
    81 |                 ? <img src={api.coverUrl(db, it.mfn)} alt="" onError={(e) => { const img = e.currentTarget; img.style.display = "none"; const p = img.parentElement; if (p) p.style.background = tint; }} />
    82 |                 : <span className="irb-gcard__ph">{it.title || "Без заглавия"}</span>}
    83 |               <button
-```
-
-<!-- ─── страница 669 ─── -->
-
-```tsx
    84 |                 type="button" className={"irb-gcard__check" + (on ? " irb-gcard__check--on" : "")}
    85 |                 aria-pressed={on} aria-label={on ? "Убрать из корзины" : "Добавить в корзину"}
    86 |                 onClick={(e) => { e.stopPropagation(); onToggleBasket(it); }}
@@ -40719,6 +40925,11 @@
   110 |       })}
   111 |     </div>
   112 |   );
+```
+
+<!-- ─── страница 673 ─── -->
+
+```tsx
   113 | }
 ```
 
@@ -40750,11 +40961,6 @@
    23 | 
    24 | export function HistoryTab({ cardSx, h2Sx, onUnavailable, refreshKey, onOpenRecord, standalone }: {
    25 |   cardSx: React.CSSProperties;
-```
-
-<!-- ─── страница 670 ─── -->
-
-```tsx
    26 |   h2Sx: React.CSSProperties;
    27 |   onUnavailable?: () => void;
    28 |   refreshKey?: number;
@@ -40784,6 +40990,11 @@
    52 |     if (!standalone) return null;
    53 |     return (
    54 |       <section aria-labelledby="cab-history">
+```
+
+<!-- ─── страница 674 ─── -->
+
+```tsx
    55 |         <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
    56 |           <h2 id="cab-history" style={h2Sx}>История просмотров</h2>
    57 |         </div>
@@ -40810,11 +41021,6 @@
    78 |           <EmptyState icon="clock" title="История пуста" description="Открытые вами записи появятся здесь — чтобы быстро к ним вернуться." />
    79 |         </div>
    80 |       ) : (
-```
-
-<!-- ─── страница 671 ─── -->
-
-```tsx
    81 |         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
    82 |           {items.map((it, i) => (
    83 |             <button key={it.db + ":" + it.mfn + ":" + i} type="button" onClick={() => onOpenRecord?.(it.db, it.mfn)} disabled={!onOpenRecord}
@@ -40849,6 +41055,11 @@
     5 | // эндпойнта брони ещё нет → деградируем: блок прячется (onUnavailable), кабинет не падает.
     6 | import React from "react";
     7 | import { api } from "../api";
+```
+
+<!-- ─── страница 675 ─── -->
+
+```tsx
     8 | import type { Hold } from "../api";
     9 | import type { ToastVariant } from "../../components/feedback/Toast.jsx";
    10 | import { Button } from "../../components/forms/Button.jsx";
@@ -40875,11 +41086,6 @@
    31 | 
    32 | export function HoldsTab({
    33 |   cardSx, h2Sx, demoHint, toast, onUnavailable, refreshKey,
-```
-
-<!-- ─── страница 672 ─── -->
-
-```tsx
    34 | }: {
    35 |   cardSx: React.CSSProperties;
    36 |   h2Sx: React.CSSProperties;
@@ -40909,6 +41115,11 @@
    60 |     setBusy(null);
    61 |     if (r.status === 200) {
    62 |       setHolds((list) => (list || []).filter((x) => x.holdId !== h.holdId));
+```
+
+<!-- ─── страница 676 ─── -->
+
+```tsx
    63 |       toast({ variant: "success", title: "Бронь снята", message: h.title || "" });
    64 |     } else if (r.status === 401 || r.status === 403) {
    65 |       toast({ variant: "info", title: "Требуется вход", message: "Войдите по читательскому билету." });
@@ -40935,11 +41146,6 @@
    86 |         <div style={cardSx}>
    87 |           <EmptyState icon="clock" title="Активных броней нет" description="Забронируйте издание в каталоге — оно появится здесь с позицией в очереди." />
    88 |         </div>
-```
-
-<!-- ─── страница 673 ─── -->
-
-```tsx
    89 |       ) : (
    90 |         <div className="irb-cab-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
    91 |           {holds.map((h, i) => {
@@ -40969,6 +41175,11 @@
   115 |             );
   116 |           })}
   117 |         </div>
+```
+
+<!-- ─── страница 677 ─── -->
+
+```tsx
   118 |       )}
   119 |     </section>
   120 |   );
@@ -41000,11 +41211,6 @@
    20 | 
    21 | // Базовые примеры запросов (онбординг поиска). Дополняются «живыми» рубриками
    22 | // из /api/rubricator, если эндпойнт доступен.
-```
-
-<!-- ─── страница 674 ─── -->
-
-```tsx
    23 | const SEED_EXAMPLES = ["Программирование", "История России", "Психология", "Математика", "Менеджмент", "Право"];
    24 | 
    25 | const CSS = `
@@ -41034,6 +41240,11 @@
    49 | .irb-hero-chip:focus-visible{outline:2px solid #fff;outline-offset:2px;}
    50 | .irb-home__pick{max-width:520px;margin:0 auto;width:100%;display:flex;flex-direction:column;gap:8px;}
    51 | .irb-home__picklabel{font-size:var(--text-sm);font-weight:var(--weight-semibold,600);color:var(--text-strong);text-align:center;}
+```
+
+<!-- ─── страница 678 ─── -->
+
+```tsx
    52 | @media (max-width:560px){
    53 |   .irb-hero__search{flex-direction:column;}
    54 |   .irb-hero__field{min-width:0;}
@@ -41060,11 +41271,6 @@
    75 |   onSearch: (prefix: string, query: string) => void;
    76 |   onOpen: (mfn: number, db: string) => void;
    77 | }) {
-```
-
-<!-- ─── страница 675 ─── -->
-
-```tsx
    78 |   const [prefix, setPrefix] = React.useState("K");
    79 |   const [q, setQ] = React.useState("");
    80 |   const [examples, setExamples] = React.useState<string[]>(SEED_EXAMPLES);
@@ -41094,6 +41300,11 @@
   104 |     description: d.description,
   105 |     count: d.count,
   106 |   }));
+```
+
+<!-- ─── страница 679 ─── -->
+
+```tsx
   107 | 
   108 |   const submit = (query: string) => { const v = query.trim(); if (v) onSearch(prefix, v); };
   109 | 
@@ -41120,11 +41331,6 @@
   130 |                 placeholder="Например: основы программирования" buttonLabel="Найти" />
   131 |             </div>
   132 |           </div>
-```
-
-<!-- ─── страница 676 ─── -->
-
-```tsx
   133 | 
   134 |           <div className="irb-home__examples" role="group" aria-label="Примеры запросов">
   135 |             <span className="irb-home__exlabel">Популярные запросы</span>
@@ -41154,6 +41360,11 @@
   159 |           <DatabaseSelector
   160 |             databases={selectorDbs}
   161 |             value={[db]}
+```
+
+<!-- ─── страница 680 ─── -->
+
+```tsx
   162 |             title="Электронный каталог и базы данных"
   163 |             onChange={(ids: string[]) => {
   164 |               // Селектор многозначный по типу; портал ищет в одной базе → берём
@@ -41185,11 +41396,6 @@
     4 | //   LibraryEvents — «События и выставки»: карточки с датой, местом и типом.
     5 | // Контент в пилоте задаётся библиотекой (сид-набор СПб ГТБ) и помечен пометкой
     6 | // «редактируется библиотекой». Сетевых вызовов нет → блоки устойчивы; при пустом
-```
-
-<!-- ─── страница 677 ─── -->
-
-```tsx
     7 | // наборе блок не рендерится (грациозная деградация).
     8 | import React from "react";
     9 | import { Icon } from "../../components/icon/Icon.jsx";
@@ -41219,6 +41425,11 @@
    33 |   font-size:var(--text-base,1rem);line-height:1.25;color:var(--text-strong);margin:0;}
    34 | .irb-news__text{font-size:var(--text-sm);color:var(--text-muted,var(--text-secondary));line-height:1.45;margin:0;
    35 |   display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;}
+```
+
+<!-- ─── страница 681 ─── -->
+
+```tsx
    36 | 
    37 | .irb-ev__card{display:flex;gap:14px;background:var(--surface-card,#fff);
    38 |   border:1px solid var(--border-subtle);border-radius:var(--radius-xl,16px);padding:14px 16px;box-shadow:var(--shadow-sm);
@@ -41245,11 +41456,6 @@
    59 | }
    60 | 
    61 | function EditableBadge() {
-```
-
-<!-- ─── страница 678 ─── -->
-
-```tsx
    62 |   return (
    63 |     <span className="irb-feed__edit" title="Содержимое блока настраивается библиотекой">
    64 |       <Icon name="edit" size={11} /> редактируется библиотекой
@@ -41279,6 +41485,11 @@
    88 |             </div>
    89 |             <h3 className="irb-news__name">{n.title}</h3>
    90 |             <p className="irb-news__text">{n.excerpt}</p>
+```
+
+<!-- ─── страница 682 ─── -->
+
+```tsx
    91 |           </article>
    92 |         ))}
    93 |       </div>
@@ -41305,11 +41516,6 @@
   114 | export function LibraryEvents() {
   115 |   const { events, editable } = getTenantContent();
   116 |   if (!events.length) return null;
-```
-
-<!-- ─── страница 679 ─── -->
-
-```tsx
   117 |   const items = [...events].sort((a, b) => (a.date || "").localeCompare(b.date || "")).slice(0, 4);
   118 | 
   119 |   return (
@@ -41339,6 +41545,11 @@
   143 |             </article>
   144 |           );
   145 |         })}
+```
+
+<!-- ─── страница 683 ─── -->
+
+```tsx
   146 |       </div>
   147 |     </section>
   148 |   );
@@ -41370,11 +41581,6 @@
    20 | .irb-npanel{position:absolute;top:calc(100% + 8px);right:0;z-index:70;width:min(380px,92vw);
    21 |   background:var(--surface-card,#fff);color:var(--text-body);border:1px solid var(--border-strong,#cdd3da);
    22 |   border-radius:14px;box-shadow:var(--shadow-lg,0 16px 40px rgba(0,0,0,.22));overflow:hidden;
-```
-
-<!-- ─── страница 680 ─── -->
-
-```tsx
    23 |   display:flex;flex-direction:column;max-height:min(70vh,520px);}
    24 | .irb-npanel__head{display:flex;align-items:center;gap:8px;padding:13px 15px;border-bottom:1px solid var(--border-subtle);}
    25 | .irb-npanel__title{font-weight:600;font-size:var(--text-base,15px);}
@@ -41404,6 +41610,11 @@
    49 |   const s = document.createElement("style"); s.id = "irb-ninbox-css"; s.textContent = CSS; document.head.appendChild(s);
    50 | }
    51 | 
+```
+
+<!-- ─── страница 684 ─── -->
+
+```tsx
    52 | // Относительное время «N мин/ч/дн назад» из ISO/epoch строки; пусто если не парсится.
    53 | function relTime(ts?: string): string {
    54 |   if (!ts) return "";
@@ -41430,11 +41641,6 @@
    75 | 
    76 | export function NotificationInbox() {
    77 |   const [open, setOpen] = React.useState(false);
-```
-
-<!-- ─── страница 681 ─── -->
-
-```tsx
    78 |   const [items, setItems] = React.useState<Notification[] | null>(null);
    79 |   const [unread, setUnread] = React.useState(0);
    80 |   const [unavailable, setUnavailable] = React.useState(false);
@@ -41464,6 +41670,11 @@
   104 |     poll();
   105 |     const t = setInterval(poll, 60000);
   106 |     return () => { alive = false; clearInterval(t); };
+```
+
+<!-- ─── страница 685 ─── -->
+
+```tsx
   107 |   }, []);
   108 | 
   109 |   // Закрытие по клику вне панели / Escape.
@@ -41490,11 +41701,6 @@
   130 |     const r = await api.markNotificationRead({ id: n.id });
   131 |     if (r.json?.ok && r.json.data && typeof r.json.data.unread === "number") setUnread(r.json.data.unread);
   132 |   }
-```
-
-<!-- ─── страница 682 ─── -->
-
-```tsx
   133 |   async function markAll() {
   134 |     setItems((list) => (list || []).map((x) => ({ ...x, read: true })));
   135 |     setUnread(0);
@@ -41524,6 +41730,11 @@
   159 |           <div className="irb-npanel__list">
   160 |             {items === null ? (
   161 |               <div className="irb-npanel__empty">Загрузка…</div>
+```
+
+<!-- ─── страница 686 ─── -->
+
+```tsx
   162 |             ) : items.length === 0 ? (
   163 |               <div className="irb-npanel__empty">
   164 |                 {unavailable ? "Уведомления появятся после подключения модуля оповещений." : "Новых уведомлений нет."}
@@ -41550,11 +41761,6 @@
   185 |       )}
   186 |     </div>
   187 |   );
-```
-
-<!-- ─── страница 683 ─── -->
-
-```tsx
   188 | }
 ```
 
@@ -41589,6 +41795,11 @@
    26 | 
    27 | // Демо-заглушка, если backend заказов ещё не подключён (эндпойнт 404).
    28 | const STUB_ORDERS: OrderItem[] = [
+```
+
+<!-- ─── страница 687 ─── -->
+
+```tsx
    29 |   { id: "demo-1", mfn: 0, title: "Совершенный код : практическое руководство", author: "С. Макконнелл", status: "queued", statusLabel: "В очереди", created: "сегодня", place: "Абонемент", cancelable: true },
    30 |   { id: "demo-2", mfn: 0, title: "Чистая архитектура : искусство разработки ПО", author: "Р. Мартин", status: "ready", statusLabel: "Готов к выдаче", created: "вчера", place: "Зал № 2", cancelable: false },
    31 | ];
@@ -41615,11 +41826,6 @@
    52 | 
    53 |   async function cancel(o: OrderItem) {
    54 |     const key = o.id ?? o.mfn;
-```
-
-<!-- ─── страница 684 ─── -->
-
-```tsx
    55 |     if (stub) {
    56 |       // Демо-режим: отменяем локально, backend ещё нет.
    57 |       setOrders((list) => (list || []).map((x) => (x.id ?? x.mfn) === key ? { ...x, status: "cancelled", statusLabel: "Отменён", cancelable: false } : x));
@@ -41649,6 +41855,11 @@
    81 |       <div style={cardSx}>
    82 |         <EmptyState icon="clipboard-check" title="Заказов нет" description="Закажите издание в каталоге — заказ появится здесь со статусом выдачи." />
    83 |       </div>
+```
+
+<!-- ─── страница 688 ─── -->
+
+```tsx
    84 |     );
    85 |   }
    86 | 
@@ -41675,11 +41886,6 @@
   107 |                   {o.author && <span>{o.author}</span>}
   108 |                   {o.place && <span><Icon name="map-pin" size={11} style={{ verticalAlign: "-1px" }} /> {o.place}</span>}
   109 |                   {o.created && <span>заказан {o.created}</span>}
-```
-
-<!-- ─── страница 685 ─── -->
-
-```tsx
   110 |                 </div>
   111 |               </div>
   112 |               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flex: "none" }}>
@@ -41714,6 +41920,11 @@
    12 | const COVER_TINTS = [
    13 |   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
    14 |   "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
+```
+
+<!-- ─── страница 689 ─── -->
+
+```tsx
    15 | ];
    16 | 
    17 | const CSS = `
@@ -41740,11 +41951,6 @@
    38 |   border-radius:999px;padding:2px 8px;align-self:flex-start;display:inline-flex;align-items:center;gap:4px;max-width:100%;
    39 |   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
    40 | `;
-```
-
-<!-- ─── страница 686 ─── -->
-
-```tsx
    41 | if (typeof document !== "undefined" && !document.getElementById("irb-recs-css")) {
    42 |   const s = document.createElement("style"); s.id = "irb-recs-css"; s.textContent = CSS; document.head.appendChild(s);
    43 | }
@@ -41774,6 +41980,11 @@
    67 |               {it.reason && <span className="irb-recs__reason" title={it.reason}><Icon name="sliders" size={10} /> {it.reason}</span>}
    68 |             </span>
    69 |           </button>
+```
+
+<!-- ─── страница 690 ─── -->
+
+```tsx
    70 |         ))}
    71 |       </div>
    72 |     </section>
@@ -41800,11 +42011,6 @@
    93 |   return <RecsRail title="Похожие издания" sub="вам также может быть интересно" items={items} onOpen={onOpen} variant="rec" />;
    94 | }
    95 | 
-```
-
-<!-- ─── страница 687 ─── -->
-
-```tsx
    96 | // «Для вас» — на главной (персональная подборка). Скрыт, если пусто.
    97 | export function ForYouRecommendations({ onOpen, refreshKey }: {
    98 |   onOpen: (mfn: number, db: string) => void; refreshKey?: number;
@@ -41839,6 +42045,11 @@
     8 | export type ViewMode = "list" | "gallery";
     9 | export type SortKey = "relevance" | "year-desc" | "year-asc" | "title";
    10 | 
+```
+
+<!-- ─── страница 691 ─── -->
+
+```tsx
    11 | const SORTS: { key: SortKey; label: string }[] = [
    12 |   { key: "relevance", label: "По релевантности" },
    13 |   { key: "year-desc", label: "Год: новые сначала" },
@@ -41865,11 +42076,6 @@
    34 | if (typeof document !== "undefined" && !document.getElementById("irb-rtoolbar-css")) {
    35 |   const s = document.createElement("style"); s.id = "irb-rtoolbar-css"; s.textContent = CSS; document.head.appendChild(s);
    36 | }
-```
-
-<!-- ─── страница 688 ─── -->
-
-```tsx
    37 | 
    38 | // Извлекает 4-значный год из строки year ("М. : Изд, 2019" → 2019); 0 если нет.
    39 | function yearOf(y?: string): number {
@@ -41899,6 +42105,11 @@
    63 |   total: number; page: number; pageCount: number;
    64 |   view: ViewMode; onView: (v: ViewMode) => void;
    65 |   sort: SortKey; onSort: (s: SortKey) => void;
+```
+
+<!-- ─── страница 692 ─── -->
+
+```tsx
    66 |   // Показывать ли тумблер «Список/Галерея». Для баз с календарным/архивным
    67 |   // профилем (#222) тумблер скрыт — вид задаётся профилем базы.
    68 |   showToggle?: boolean;
@@ -41925,11 +42136,6 @@
    89 |           <button type="button" className={"irb-seg__b" + (view === "gallery" ? " irb-seg__b--on" : "")}
    90 |             aria-pressed={view === "gallery"} onClick={() => onView("gallery")} title="Галерея">
    91 |             <Icon name="grid" size={16} /> Галерея
-```
-
-<!-- ─── страница 689 ─── -->
-
-```tsx
    92 |           </button>
    93 |         </div>
    94 |       )}
@@ -41964,6 +42170,11 @@
    21 | .irb-rev__title{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-semibold,600);
    22 |   font-size:var(--text-xl,1.25rem);letter-spacing:-.01em;margin:0;color:var(--text-strong);}
    23 | .irb-rev__avg{display:inline-flex;align-items:center;gap:8px;}
+```
+
+<!-- ─── страница 693 ─── -->
+
+```tsx
    24 | .irb-rev__avgnum{font-family:var(--font-display,var(--font-serif));font-weight:600;font-size:var(--text-lg);
    25 |   font-variant-numeric:tabular-nums;color:var(--text-strong);}
    26 | .irb-rev__count{font-size:var(--text-sm);color:var(--text-subtle);}
@@ -41990,11 +42201,6 @@
    47 |   border:1px solid var(--border-subtle);border-radius:var(--radius-lg,13px);padding:11px 14px;margin:0 0 18px;
    48 |   font-size:var(--text-sm);color:var(--text-subtle);}
    49 | .irb-rev__mineactions{display:flex;gap:10px;margin-top:6px;}
-```
-
-<!-- ─── страница 690 ─── -->
-
-```tsx
    50 | .irb-rev__minebtn{background:none;border:none;cursor:pointer;color:var(--accent);font-size:var(--text-xs);
    51 |   font-family:var(--font-ui,inherit);padding:0;display:inline-flex;align-items:center;gap:4px;}
    52 | .irb-rev__minebtn--danger{color:var(--error,var(--danger-500));}
@@ -42024,6 +42230,11 @@
    76 | }
    77 | 
    78 | // Звёзды только для чтения (агрегат / чужой отзыв).
+```
+
+<!-- ─── страница 694 ─── -->
+
+```tsx
    79 | function Stars({ value, size = 16 }: { value: number; size?: number }) {
    80 |   return (
    81 |     <span className="irb-stars" aria-label={"Оценка: " + (Math.round(value * 10) / 10) + " из 5"}>
@@ -42050,11 +42261,6 @@
   102 |             style={n <= shown ? { fill: "currentColor" } : undefined} />
   103 |         </button>
   104 |       ))}
-```
-
-<!-- ─── страница 691 ─── -->
-
-```tsx
   105 |     </span>
   106 |   );
   107 | }
@@ -42084,6 +42290,11 @@
   131 |   const mine: Review | null = data ? (data.mine || data.items.find((x) => x.mine) || null) : null;
   132 | 
   133 |   function openForm() {
+```
+
+<!-- ─── страница 695 ─── -->
+
+```tsx
   134 |     setRating(mine?.rating || 0);
   135 |     setText(mine?.text || "");
   136 |     setEditing(true);
@@ -42110,11 +42321,6 @@
   157 |     setBusy(true);
   158 |     const r = await api.deleteReview(mine.id);
   159 |     setBusy(false);
-```
-
-<!-- ─── страница 692 ─── -->
-
-```tsx
   160 |     if (r.status === 200) {
   161 |       toast({ variant: "success", title: "Отзыв удалён" });
   162 |       setEditing(false);
@@ -42144,6 +42350,11 @@
   186 |         <h3 className="irb-rev__title">Отзывы и оценки</h3>
   187 |         {count > 0 ? (
   188 |           <span className="irb-rev__avg">
+```
+
+<!-- ─── страница 696 ─── -->
+
+```tsx
   189 |             <Stars value={avg} />
   190 |             <span className="irb-rev__avgnum">{(Math.round(avg * 10) / 10).toString().replace(".", ",")}</span>
   191 |             <span className="irb-rev__count">· {count} {plural(count, "отзыв", "отзыва", "отзывов")}</span>
@@ -42170,11 +42381,6 @@
   212 |             <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Отмена</Button>
   213 |             <Button size="sm" iconLeft="check" loading={busy} onClick={submit}>{mine ? "Сохранить" : "Опубликовать"}</Button>
   214 |           </div>
-```
-
-<!-- ─── страница 693 ─── -->
-
-```tsx
   215 |         </div>
   216 |       )}
   217 | 
@@ -42204,6 +42410,11 @@
   241 |               </div>
   242 |             </div>
   243 |           </div>
+```
+
+<!-- ─── страница 697 ─── -->
+
+```tsx
   244 |         </div>
   245 |       )}
   246 | 
@@ -42230,11 +42441,6 @@
   267 |         </div>
   268 |       ) : null)}
   269 |     </div>
-```
-
-<!-- ─── страница 694 ─── -->
-
-```tsx
   270 |   );
   271 | }
 ```
@@ -42269,6 +42475,11 @@
    25 |   display:inline-flex;align-items:center;justify-content:center;}
    26 | .irb-rubr__body{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px;}
    27 | .irb-rubr__name{font-size:var(--text-sm);font-weight:var(--weight-semibold,600);color:var(--text-strong);line-height:1.2;
+```
+
+<!-- ─── страница 698 ─── -->
+
+```tsx
    28 |   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;}
    29 | .irb-rubr__count{font-size:var(--text-xs);color:var(--text-subtle);font-variant-numeric:tabular-nums;}
    30 | `;
@@ -42295,11 +42506,6 @@
    51 |     (async () => {
    52 |       // Тематический рубрикатор — по ключевым словам (K). Берём с запасом и
    53 |       // отсеиваем служебные/короткие термины.
-```
-
-<!-- ─── страница 695 ─── -->
-
-```tsx
    54 |       const r = await api.rubricator(db, "K", 18);
    55 |       if (!alive) return;
    56 |       const terms: Term[] = r.json?.ok && r.json.data ? (r.json.data.terms || []) : [];
@@ -42329,6 +42535,11 @@
    80 | 
    81 |   return (
    82 |     <section className="irb-rubr" aria-label="Просмотр по разделам">
+```
+
+<!-- ─── страница 699 ─── -->
+
+```tsx
    83 |       <div className="irb-rubr__head">
    84 |         <h2 className="irb-rubr__title">Просмотр по разделам</h2>
    85 |         <span className="irb-rubr__sub">навигация по фонду — выберите раздел</span>
@@ -42360,11 +42571,6 @@
     2 | //   SaveSearchButton — кнопка «Сохранить запрос» на странице результатов: спрашивает
     3 | //     имя и сохраняет (db/prefix/query) через POST /api/savedsearch;
     4 | //   SavedSearchMenu — выпадающий список в шапке/тулбаре для повторного запуска/удаления;
-```
-
-<!-- ─── страница 696 ─── -->
-
-```tsx
     5 | //   SavedSearchesPanel — раздел кабинета с тем же списком (re-run / delete).
     6 | // Грациозная деградация: при 404/501 кнопка тихо тостит «модуль ещё подключается»,
     7 | // меню/панель показывают пустое состояние и не рушат страницу.
@@ -42394,6 +42600,11 @@
    31 |   text-transform:uppercase;color:var(--text-subtle);border-bottom:1px solid var(--border-subtle);}
    32 | .irb-ssmenu__list{overflow-y:auto;}
    33 | .irb-ssrow{display:flex;align-items:center;gap:8px;padding:9px 13px;border-top:1px solid var(--border-subtle);}
+```
+
+<!-- ─── страница 700 ─── -->
+
+```tsx
    34 | .irb-ssrow:first-child{border-top:none;}
    35 | .irb-ssrow__main{flex:1;min-width:0;background:none;border:none;text-align:left;cursor:pointer;padding:0;
    36 |   font-family:var(--font-ui,inherit);color:var(--text-body);}
@@ -42420,11 +42631,6 @@
    57 | 
    58 |   React.useEffect(() => {
    59 |     if (!open) return;
-```
-
-<!-- ─── страница 697 ─── -->
-
-```tsx
    60 |     const onDoc = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false); };
    61 |     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
    62 |     document.addEventListener("mousedown", onDoc); document.addEventListener("keydown", onKey);
@@ -42454,6 +42660,11 @@
    86 | 
    87 |   const btnSx: React.CSSProperties = {
    88 |     display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", color: "var(--text-body)",
+```
+
+<!-- ─── страница 701 ─── -->
+
+```tsx
    89 |     border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: compact ? "5px 10px" : "7px 11px",
    90 |     cursor: "pointer", fontSize: compact ? "var(--text-xs)" : "var(--text-sm)",
    91 |   };
@@ -42480,11 +42691,6 @@
   112 |           </div>
   113 |         </div>
   114 |       )}
-```
-
-<!-- ─── страница 698 ─── -->
-
-```tsx
   115 |     </div>
   116 |   );
   117 | }
@@ -42514,6 +42720,11 @@
   141 | }
   142 | 
   143 | // Выпадающее меню сохранённых запросов (шапка/тулбар).
+```
+
+<!-- ─── страница 702 ─── -->
+
+```tsx
   144 | export function SavedSearchMenu({ toast, onRun, refreshKey }: {
   145 |   toast: Toast; onRun: (s: SavedSearch) => void; refreshKey?: number;
   146 | }) {
@@ -42540,11 +42751,6 @@
   167 |   return (
   168 |     <div className="irb-ssmenu" ref={wrapRef}>
   169 |       <button type="button" style={btnSx} onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="menu" title="Сохранённые запросы">
-```
-
-<!-- ─── страница 699 ─── -->
-
-```tsx
   170 |         <Icon name="bookmark" size={15} /> Мои запросы <Icon name="chevron-down" size={13} />
   171 |       </button>
   172 |       {open && (
@@ -42574,6 +42780,11 @@
   196 | export function SavedSearchesPanel({ cardSx, h2Sx, toast, onRun, onUnavailable, refreshKey, standalone }: {
   197 |   cardSx: React.CSSProperties; h2Sx: React.CSSProperties; toast: Toast;
   198 |   onRun: (s: SavedSearch) => void; onUnavailable?: () => void; refreshKey?: number;
+```
+
+<!-- ─── страница 703 ─── -->
+
+```tsx
   199 |   // standalone=true — отдельная вкладка кабинета: при недоступности показываем
   200 |   // информер, а не скрываем целиком (null).
   201 |   standalone?: boolean;
@@ -42600,11 +42811,6 @@
   222 |       <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 14px" }}>
   223 |         <h2 id="cab-saved" style={h2Sx}>Сохранённые запросы</h2>
   224 |         {items && items.length > 0 && (
-```
-
-<!-- ─── страница 700 ─── -->
-
-```tsx
   225 |           <span style={{ fontSize: "var(--text-sm)", color: "var(--text-subtle)" }}>· {items.length}</span>
   226 |         )}
   227 |       </div>
@@ -42634,6 +42840,11 @@
   251 |                 </button>
   252 |               </div>
   253 |             </div>
+```
+
+<!-- ─── страница 704 ─── -->
+
+```tsx
   254 |           ))}
   255 |         </div>
   256 |       )}
@@ -42665,11 +42876,6 @@
    18 | 
    19 | // Иконка для встроенных списков по имени; пользовательские → «star».
    20 | function shelfIcon(name: string, system?: boolean): IconName {
-```
-
-<!-- ─── страница 701 ─── -->
-
-```tsx
    21 |   const n = (name || "").toLowerCase();
    22 |   if (n.includes("прочит")) return "book";
    23 |   if (n.includes("избран")) return "star";
@@ -42699,6 +42905,11 @@
    47 | .irb-shmenu__opt-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
    48 | .irb-shmenu__create{display:flex;gap:6px;padding:9px 11px;border-top:1px solid var(--border-subtle);}
    49 | .irb-shmenu__create input{flex:1;min-width:0;padding:6px 9px;border-radius:7px;border:1px solid var(--border-strong,#cdd3da);
+```
+
+<!-- ─── страница 705 ─── -->
+
+```tsx
    50 |   font-size:var(--text-sm);background:var(--surface-card,#fff);color:var(--text-body);}
    51 | `;
    52 | if (typeof document !== "undefined" && !document.getElementById("irb-shmenu-css")) {
@@ -42725,11 +42936,6 @@
    73 |   }, [open]);
    74 | 
    75 |   async function loadLists() {
-```
-
-<!-- ─── страница 702 ─── -->
-
-```tsx
    76 |     const r = await api.shelves();
    77 |     if (r.json?.ok && r.json.data && Array.isArray(r.json.data.lists)) setLists(r.json.data.lists);
    78 |     else setLists([]);
@@ -42759,6 +42965,11 @@
   102 |     const name = newName.trim();
   103 |     if (!name) return;
   104 |     const r = await api.createShelf(name);
+```
+
+<!-- ─── страница 706 ─── -->
+
+```tsx
   105 |     if (r.json?.ok && r.json.data) {
   106 |       const created: Shelf = { id: r.json.data.id, name: r.json.data.name || name, system: false, items: [] };
   107 |       setLists((ls) => [...(ls || []), created]);
@@ -42785,11 +42996,6 @@
   128 |             {lists === null ? (
   129 |               <div style={{ padding: "12px 13px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Загрузка…</div>
   130 |             ) : lists.length === 0 ? (
-```
-
-<!-- ─── страница 703 ─── -->
-
-```tsx
   131 |               <div style={{ padding: "12px 13px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Создайте первый список ниже.</div>
   132 |             ) : (
   133 |               lists.map((l) => {
@@ -42819,6 +43025,11 @@
   157 | export function ShelvesPanel({
   158 |   cardSx, h2Sx, toast, onUnavailable, refreshKey, onOpenRecord,
   159 | }: {
+```
+
+<!-- ─── страница 707 ─── -->
+
+```tsx
   160 |   cardSx: React.CSSProperties;
   161 |   h2Sx: React.CSSProperties;
   162 |   toast: Toast;
@@ -42845,11 +43056,6 @@
   183 |     const name = newName.trim();
   184 |     if (!name) return;
   185 |     const r = await api.createShelf(name);
-```
-
-<!-- ─── страница 704 ─── -->
-
-```tsx
   186 |     if (r.json?.ok && r.json.data) {
   187 |       setLists((ls) => [...(ls || []), { id: r.json!.data!.id, name: r.json!.data!.name || name, system: false, items: [] }]);
   188 |       setNewName(""); setCreating(false);
@@ -42879,6 +43085,11 @@
   212 |           {creating ? (
   213 |             <span style={{ display: "inline-flex", gap: 6 }}>
   214 |               <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Название списка"
+```
+
+<!-- ─── страница 708 ─── -->
+
+```tsx
   215 |                 onKeyDown={(e) => { if (e.key === "Enter") createList(); if (e.key === "Escape") { setCreating(false); setNewName(""); } }}
   216 |                 aria-label="Название нового списка"
   217 |                 style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border-strong,#cdd3da)", fontSize: "var(--text-sm)" }} />
@@ -42905,11 +43116,6 @@
   238 |               <div key={l.id} style={{ ...cardSx, borderRadius: "var(--radius-lg,13px)", overflow: "hidden" }}>
   239 |                 <button type="button" onClick={() => setOpenId(expanded ? null : l.id)} aria-expanded={expanded}
   240 |                   style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "none", border: "none", textAlign: "left", padding: 16, cursor: "pointer", fontFamily: "var(--font-ui,inherit)" }}>
-```
-
-<!-- ─── страница 705 ─── -->
-
-```tsx
   241 |                   <span aria-hidden="true" style={{ width: 38, height: 38, flex: "none", borderRadius: 11, background: "var(--accent-weak,var(--accent-tint))", border: "1px solid var(--accent-weak-border,var(--accent-tint-border))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent)" }}>
   242 |                     <Icon name={shelfIcon(l.name, l.system)} size={18} />
   243 |                   </span>
@@ -42939,6 +43145,11 @@
   267 |                       ))
   268 |                     )}
   269 |                   </div>
+```
+
+<!-- ─── страница 709 ─── -->
+
+```tsx
   270 |                 )}
   271 |               </div>
   272 |             );
@@ -42970,11 +43181,6 @@
    15 | const CSS = `
    16 | .irb-showcase{margin:0 0 6px;}
    17 | .irb-showcase__head{display:flex;align-items:baseline;gap:10px;margin:0 0 12px;}
-```
-
-<!-- ─── страница 706 ─── -->
-
-```tsx
    18 | .irb-showcase__title{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-semibold,600);
    19 |   font-size:var(--text-xl,1.25rem);letter-spacing:-.01em;margin:0;color:var(--text-strong);}
    20 | .irb-showcase__sub{font-size:var(--text-sm);color:var(--text-subtle);}
@@ -43004,6 +43210,11 @@
    44 |   overflow:hidden;overflow-wrap:break-word;word-break:break-word;}
    45 | .irb-showcase__by{display:block;width:100%;font-size:var(--text-xs);color:var(--text-subtle);margin-top:2px;
    46 |   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+```
+
+<!-- ─── страница 710 ─── -->
+
+```tsx
    47 | `;
    48 | 
    49 | if (typeof document !== "undefined" && !document.getElementById("irb-showcase-css")) {
@@ -43030,11 +43241,6 @@
    70 |     return (
    71 |       <section className="irb-showcase" aria-label="Новые поступления">
    72 |         <div className="irb-showcase__head"><h2 className="irb-showcase__title">Новые поступления</h2></div>
-```
-
-<!-- ─── страница 707 ─── -->
-
-```tsx
    73 |         <div className="irb-showcase__rail" aria-hidden="true">
    74 |           {Array.from({ length: 6 }).map((_, i) => (
    75 |             <div key={i} className="irb-showcase__card" style={{ pointerEvents: "none" }}>
@@ -43064,6 +43270,11 @@
    99 |               className="irb-showcase__cover"
   100 |               style={it.cover ? undefined : { background: "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.42))" }}
   101 |             >
+```
+
+<!-- ─── страница 711 ─── -->
+
+```tsx
   102 |               <span className="irb-showcase__badge"><Icon name="star" size={11} /> Новинка</span>
   103 |               {it.cover
   104 |                 ? <img src={api.coverUrl(db, it.mfn)} alt="" onError={(e) => { const img = e.currentTarget; img.style.display = "none"; const p = img.parentElement; if (p) { p.style.background = "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.42))"; } }} />
@@ -43095,11 +43306,6 @@
     9 | // доступны — поэтому в `views` для list/gallery-баз держим обе опции.
    10 | 
    11 | export type LayoutKind = "list" | "gallery" | "calendar" | "archive";
-```
-
-<!-- ─── страница 708 ─── -->
-
-```ts
    12 | 
    13 | export interface DbLayoutProfile {
    14 |   // Доступные виды в порядке предпочтения; первый — вид по умолчанию.
@@ -43129,6 +43335,11 @@
    38 | 
    39 | // Вид по умолчанию для базы.
    40 | export function defaultLayout(db: string): LayoutKind {
+```
+
+<!-- ─── страница 712 ─── -->
+
+```ts
    41 |   return layoutProfile(db).views[0];
    42 | }
    43 | 
@@ -43160,11 +43371,6 @@
    17 |   id: string;
    18 |   date: string;        // ISO YYYY-MM-DD — для сортировки и форматирования
    19 |   title: string;
-```
-
-<!-- ─── страница 709 ─── -->
-
-```ts
    20 |   excerpt: string;
    21 |   tag?: string;        // короткая метка-рубрика анонса
    22 | }
@@ -43194,6 +43400,11 @@
    46 | export interface AboutInfo {
    47 |   name: string;
    48 |   blurb: string;       // краткое «о фонде»
+```
+
+<!-- ─── страница 713 ─── -->
+
+```ts
    49 |   hours: { label: string; value: string }[];
    50 |   address: string;
    51 |   phone: string;
@@ -43220,11 +43431,6 @@
    72 |   { id: "acting", title: "Актёрское мастерство", subtitle: "Школы и методики игры", prefix: "K", query: "Актёрское мастерство", icon: "users", tint: 5 },
    73 |   { id: "ballet", title: "Балет и опера", subtitle: "Музыкальный театр", prefix: "K", query: "Балет", icon: "music", tint: 4 },
    74 | ];
-```
-
-<!-- ─── страница 710 ─── -->
-
-```ts
    75 | 
    76 | // Новости библиотеки (анонсы) — реалистичные плейсхолдеры в духе СПб ГТБ.
    77 | const THEATRE_NEWS: NewsItem[] = [
@@ -43254,6 +43460,11 @@
   101 | const THEATRE_EVENTS: EventItem[] = [
   102 |   {
   103 |     id: "e1", date: "2026-06-25", dateLabel: "25 июня — 30 августа",
+```
+
+<!-- ─── страница 714 ─── -->
+
+```ts
   104 |     title: "Выставка «Сцена и эскиз: театральный костюм»",
   105 |     place: "Выставочный зал, ул. Зодчего Росси, 2",
   106 |     kind: "exhibition",
@@ -43280,11 +43491,6 @@
   127 |     kind: "meeting",
   128 |     excerpt: "Презентация новых изданий по истории петербургской сцены.",
   129 |   },
-```
-
-<!-- ─── страница 711 ─── -->
-
-```ts
   130 | ];
   131 | 
   132 | // «О библиотеке» — фактические реквизиты СПб ГТБ (публичные данные учреждения).
@@ -43314,6 +43520,11 @@
   156 | // фетч GET /api/tenant/content с фолбэком на этот же набор. Сигнатура оставлена
   157 | // синхронной, чтобы компоненты не зависели от способа доставки.
   158 | export function getTenantContent(): TenantContent {
+```
+
+<!-- ─── страница 715 ─── -->
+
+```ts
   159 |   return PILOT;
   160 | }
   161 | 
