@@ -197,6 +197,47 @@ FIELD66_TAG = '66'
 # «перенесён, помечен на удаление». :func:`is_source_deleted` её читает.
 VD_DEL = 'DEL'
 
+# --------------------------------------------------------------------------- #
+# КСУ ↔ экземпляры (INTEGRATION_MAP кластер 5, рёбра 5.1/5.3).
+# --------------------------------------------------------------------------- #
+# Подполе экземпляра (910), несущее №КСУ поступления. DB_ACQUISITION A.3.1
+# (910^U «№КСУ», индекс `KSU=`). При приёме партии №КСУ проставляется в каждый
+# экземпляр; поиск экземпляров партии — по этому подполю (точка доступа 5/7
+# CMPL.INI: `KSU=` / `NKSUK=`).
+EXEMPLAR_KSU_SUB = 'u'
+
+# Точка доступа CMPL.INI: «Запись КСУ поступления партии книг» (поиск 5, `KSU=`) и
+# «Книги партии с N КСУ поступления» (поиск 7, `NKSUK=`). Наш каталог-handle НЕ
+# инвертирует 910^U под `KSU=` (его INDEX_SPEC = T/A/K/IN/…, ребро его не правим),
+# поэтому поиск экземпляров по №КСУ в каталоге идёт сканированием записей через
+# handle (как find_exemplar), а основной — по собственному ledger'у поступлений.
+KSU_PREFIX = 'KSU='
+
+# КСУ «Пополнение записи» — авто-распределение партии (ребро 5.3, DB_ACQUISITION
+# A.4/A.3.1 строка «КСУ-распределение»). Поля распределения, которые Мастер
+# «Пополнение записи КСУ» заполняет авточислами на записи КСУ (920=KSU). Здесь —
+# КАРТА полей (recon A.3.1/A.4), по которым раскладывается партия. Поля-СУММАТОРЫ
+# (наименования/экземпляры) считаем БАЗОВО (выводимо из recon); грани, чей точный
+# алгоритм во внешнем Мастере не транскрибирован, — TODO(recon #CMPL-05).
+KSU_DISTRIBUTION_FIELDS = {
+    '17': 'число наименований (поступило)',          # A.4 «17/18/19 числа наимен.»
+    '18': 'число наименований (в т.ч. ...)',         # точное членение — #CMPL-05
+    '19': 'число наименований (в т.ч. ...)',         # точное членение — #CMPL-05
+    '44': 'направления',                             # A.3.1 «44/744 направления»
+    '45': 'по типу/языку',                           # A.3.1 «45 по типу/языку»
+    '48': 'УДК',                                     # A.3.1 «48 УДК»
+    '49': 'ББК',                                     # A.3.1 «49 ББК»
+    '145': 'печатные/непечатные',                    # A.3.1 «145–150 ...»
+    '146': 'характер',
+    '147': 'отеч./иностранные',
+    '148': 'фонды',
+    '149': 'канал',
+    '150': 'прочее',
+    '151': 'разделы',                                # A.3.1 «151 разделы»
+    '155': 'периодика',                              # A.3.1 «155 периодика»
+    '158': 'ВУЗ',                                    # A.3.1 «158/248/249 ВУЗ»
+}
+
 
 # --------------------------------------------------------------------------- #
 # ККО formulas (SPEC §2). Pure functions — no store, fully unit-testable.
@@ -296,7 +337,7 @@ CREATE TABLE IF NOT EXISTS acq_receipt (
 CREATE INDEX IF NOT EXISTS acq_receipt_order_idx ON acq_receipt(order_id);
 CREATE TABLE IF NOT EXISTS acq_inventory (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  receipt_id INTEGER NOT NULL REFERENCES acq_receipt(id),
+  receipt_id INTEGER REFERENCES acq_receipt(id),  -- NULL: каталог-side КСУ-линк (5.1)
   ksu_no TEXT NOT NULL,                -- 910^U back-link to КСУ
   inv_no TEXT NOT NULL,               -- 910^b inventory number
   UNIQUE(inv_no)
@@ -458,6 +499,34 @@ class AcquisitionStore:
             'SELECT ksu_no FROM acq_inventory WHERE inv_no=?',
             (inv_no,)).fetchone()
         return r['ksu_no'] if r else None
+
+    def set_inventory_ksu(self, inv_no, ksu_no):
+        """Проставить №КСУ поступления (910^U / `KSU=`) на строку инв.№ ledger'а.
+
+        Учётная связь партия↔экземпляр (INTEGRATION_MAP ребро 5.1): №КСУ
+        поступления записывается в учётную строку экземпляра. Возвращает ``True``,
+        если строка ``inv_no`` существовала и была обновлена, иначе ``False``
+        (экземпляр неизвестен ledger'у — caller решает, регистрировать ли его)."""
+        c = self._conn()
+        cur = c.execute('UPDATE acq_inventory SET ksu_no=? WHERE inv_no=?',
+                        (ksu_no, inv_no))
+        c.commit()
+        return cur.rowcount > 0
+
+    def register_inventory_ksu(self, ksu_no, inv_no):
+        """Зарегистрировать инв.№ с №КСУ поступления без привязки к receipt.
+
+        Idempotent на ``inv_no``: если строка уже есть — обновляет её №КСУ
+        (:meth:`set_inventory_ksu`); иначе вставляет «бесхозную» строку (без
+        ``receipt_id``) с указанным №КСУ. Используется, когда №КСУ проставляется
+        в каталоге на экземпляр, которого ещё нет в ledger'е поступлений."""
+        if self.set_inventory_ksu(inv_no, ksu_no):
+            return False                          # already known → re-linked
+        c = self._conn()
+        c.execute('INSERT INTO acq_inventory(receipt_id,ksu_no,inv_no) '
+                  'VALUES(NULL,?,?)', (ksu_no, inv_no))
+        c.commit()
+        return True                               # newly registered
 
     # ---- disposals (КСУ выбытия / списание) ------------------------------- #
     def add_disposal(self, inv_no, ksu_disp_no, reason='lost',
@@ -1437,6 +1506,347 @@ class AcquisitionEngine:
     def disposal_summary(self, ksu_disp_no):
         """Rollup of one акт списания (copies + total amount). See store method."""
         return self.store.disposal_summary(ksu_disp_no)
+
+    # ---- 5.1 КСУ поступления (88^U) ↔ экземпляры (910^U) ------------------- #
+    def link_ksu_to_exemplars(self, ksu_no, inv_numbers, catalog_db=None):
+        """Проставить №КСУ поступления (88^U) в экземпляры (910^U). Ребро 5.1.
+
+        Учётная связь «партия ↔ экземпляр» (INTEGRATION_MAP кластер 5, ребро 5.1,
+        DB_ACQUISITION A.3.1: 910^U «№КСУ», индекс ``KSU=``). При приёме партии
+        №КСУ поступления записывается в каждый указанный экземпляр — и в
+        собственный ledger поступлений (``acq_inventory.ksu_no``), и, если подключён
+        catalog-handle, в подполе ``910^U`` записи каталога (через ``find_exemplar``
+        / ``save`` — без правки самого ``catalog.py``).
+
+        ``ksu_no`` — № записи КСУ поступления (88^A, ключ ``KSU=``).
+        ``inv_numbers`` — инв.№ экземпляров партии (910^b).
+        ``catalog_db`` — БД ЭК (по умолчанию :attr:`catalog_db`); используется лишь
+        при наличии catalog-handle.
+
+        Back-compat: без catalog-handle связь проставляется ТОЛЬКО в ledger'е
+        поступлений (модуль автономен) — каталог-сторона тогда ``catalog=[]``.
+
+        Returns::
+
+            {
+              'ksu_no': <№КСУ>,
+              'ledger': [inv_no, ...],    # экз., у которых 910^U проставлен в ledger'е
+              'catalog': [inv_no, ...],   # экз., у которых 910^U проставлен в каталоге
+              'registered': [inv_no, ...],# экз., впервые зарегистрированные в ledger'е
+              'missing': [inv_no, ...],   # инв.№, не найденные в каталоге (handle есть)
+            }
+        """
+        if not ksu_no or not str(ksu_no).strip():
+            raise AcquisitionError('link_ksu requires a КСУ number')
+        ksu_no = str(ksu_no).strip()
+        invs = [str(x).strip() for x in (inv_numbers or []) if str(x).strip()]
+        result = {'ksu_no': ksu_no, 'ledger': [], 'catalog': [],
+                  'registered': [], 'missing': []}
+
+        # --- ledger-сторона: 910^U в собственном учёте экземпляров ---
+        for inv in invs:
+            if self.store.register_inventory_ksu(ksu_no, inv):
+                result['registered'].append(inv)
+            result['ledger'].append(inv)
+
+        # --- каталог-сторона (опц. handle): 910^U в записи ЭК ---
+        if self.catalog is not None:
+            db = catalog_db or self.catalog_db
+            for inv in invs:
+                if self._stamp_catalog_ksu(db, inv, ksu_no):
+                    result['catalog'].append(inv)
+                else:
+                    result['missing'].append(inv)
+        return result
+
+    def _stamp_catalog_ksu(self, db, inv_no, ksu_no):
+        """Проставить 910^U=№КСУ на экземпляр ``inv_no`` записи ЭК. Best-effort.
+
+        Находит экземпляр по инв.№ (``catalog.find_exemplar`` → mfn/индекс), пишет
+        ``910^U`` в этот инстанс и пересохраняет запись через handle. Возвращает
+        ``True`` при успехе, ``False`` если экземпляр не найден в каталоге или запись
+        не сохранилась. Никогда не бросает наружу (как ToCat — best-effort шов)."""
+        try:
+            found = self.catalog.find_exemplar(db, inv_no)
+            if found is None:
+                return False
+            mfn, idx, _inst = found
+            record = self.catalog.get(db, mfn)
+            if record is None:
+                return False
+            insts = record.get('910')
+            if not isinstance(insts, list):
+                insts = [insts] if insts is not None else []
+                record['910'] = insts
+            if idx >= len(insts):
+                return False
+            inst = insts[idx]
+            if not isinstance(inst, dict):
+                inst = {'b': str(inv_no)}
+                insts[idx] = inst
+            # уже та же связь — идемпотентно ничего не переписываем.
+            cur = inst.get('u') or inst.get('U')
+            if str(cur or '') == ksu_no:
+                return True
+            inst.pop('U', None)
+            inst[EXEMPLAR_KSU_SUB] = ksu_no
+            res = self.catalog.save(db, record, mfn=mfn)
+            return bool(res and res.get('saved'))
+        except Exception:
+            return False
+
+    def find_exemplars_by_ksu(self, ksu_no, catalog_db=None):
+        """Найти экземпляры партии по №КСУ поступления (точки доступа ``KSU=``/``NKSUK=``).
+
+        Поиск экземпляров «Книги партии с N КСУ поступления» (CMPL.INI поиск 5/7).
+        Источник истины — собственный ledger поступлений (``acq_inventory`` по
+        ``ksu_no``). Если подключён catalog-handle — дополнительно сканирует записи
+        ЭК и собирает инв.№ экземпляров с ``910^U == ksu_no`` (handle не индексирует
+        ``KSU=``, поэтому скан, как ``find_exemplar`` — без правки ``catalog.py``).
+
+        Returns::
+
+            {
+              'ksu_no': <№КСУ>,
+              'inv_numbers': [inv_no, ...],   # объединение ledger + каталог (упоряд.)
+              'ledger': [inv_no, ...],
+              'catalog': [{'mfn': <mfn>, 'inv_no': <inv>}, ...],
+            }
+        """
+        if not ksu_no or not str(ksu_no).strip():
+            raise AcquisitionError('find_exemplars_by_ksu requires a КСУ number')
+        ksu_no = str(ksu_no).strip()
+        ledger = self.store.inventory_for_ksu(ksu_no)
+        catalog_hits = []
+        if self.catalog is not None:
+            db = catalog_db or self.catalog_db
+            catalog_hits = self._scan_catalog_ksu(db, ksu_no)
+        # объединение инв.№, порядок: ledger first, затем новые из каталога.
+        merged = list(ledger)
+        seen = set(merged)
+        for hit in catalog_hits:
+            if hit['inv_no'] not in seen:
+                merged.append(hit['inv_no'])
+                seen.add(hit['inv_no'])
+        return {'ksu_no': ksu_no, 'inv_numbers': merged, 'ledger': ledger,
+                'catalog': catalog_hits}
+
+    def _scan_catalog_ksu(self, db, ksu_no):
+        """Просканировать записи ЭК и собрать экз. с ``910^U == ksu_no``. Best-effort.
+
+        Handle не инвертирует ``KSU=`` (ребро его INDEX_SPEC не правим), поэтому
+        ищем через ``search``-по-заглавию мы не можем — обходим записи. Контракт
+        catalog-handle не даёт «перечислить все записи» напрямую, но даёт
+        ``find_exemplar``/``get``; для скана используем (если есть) метод
+        ``iter_records``/``all_records``, иначе деградируем до пустого списка с
+        опорой на ledger. Никогда не бросает наружу."""
+        hits = []
+        try:
+            # 1) если handle умеет перечислять записи — пройдём по ним.
+            iterator = (getattr(self.catalog, 'iter_records', None) or
+                        getattr(self.catalog, 'all_records', None))
+            if iterator is not None:
+                for mfn, record in self._iter_handle_records(iterator, db):
+                    for inst in _as_list(record.get('910')):
+                        if not isinstance(inst, dict):
+                            continue
+                        u = inst.get('u') or inst.get('U')
+                        b = inst.get('b') or inst.get('B')
+                        if u is not None and str(u) == ksu_no and b:
+                            hits.append({'mfn': mfn, 'inv_no': str(b)})
+                return hits
+            # 2) фолбэк: подтверждаем ledger-инв.№ через find_exemplar (каталог как
+            # источник-сверка), собирая mfn для тех, что реально лежат в ЭК.
+            for inv in self.store.inventory_for_ksu(ksu_no):
+                found = self.catalog.find_exemplar(db, inv)
+                if found is not None:
+                    hits.append({'mfn': found[0], 'inv_no': str(inv)})
+        except Exception:
+            return hits
+        return hits
+
+    @staticmethod
+    def _iter_handle_records(iterator, db):
+        """Нормализовать ответ ``iter_records``/``all_records`` → (mfn, record).
+
+        Терпим к форме: handle может вернуть список ``(mfn, record)``, список
+        ``{'mfn':…, 'record':…}`` или список записей-dict'ов с ключом ``mfn``."""
+        for item in (iterator(db) or []):
+            if isinstance(item, tuple) and len(item) == 2:
+                yield item[0], (item[1] or {})
+            elif isinstance(item, dict) and 'record' in item:
+                yield item.get('mfn'), (item.get('record') or {})
+            elif isinstance(item, dict):
+                yield item.get('mfn'), item
+
+    # ---- 5.3 КСУ «Пополнение записи» — авто-распределение партии ----------- #
+    def distribute_ksu_batch(self, ksu_no, exemplars=None, catalog_db=None):
+        """Базовое авто-распределение партии КСУ по разделам/типам/языкам. Ребро 5.3.
+
+        Эмулирует Мастер «Пополнение записи КСУ» в ЧАСТИ, выводимой из recon
+        (DB_ACQUISITION A.5 шаг 4, A.4): по экземплярам партии раскладывает СУММЫ —
+        число наименований (поле 17), число экземпляров — и группирует партию по
+        наблюдаемым граням (тип/язык 45, УДК 48, ББК 49, разделы 151, МХР/фонды),
+        НАСКОЛЬКО эти грани видны на экземплярах/записях. Поле 17 и сумматоры
+        экземпляров — базовая, точная логика; распределение по граням — НАБЛЮДАЕМОЕ
+        (считаем то, что реально размечено на экземплярах), без домысливания членения.
+
+        ``exemplars`` — список dict'ов-экземпляров (контракт 910: ``b`` инв.№,
+        опц. ``45``/``type``/``lang``, ``48``/``udk``, ``49``/``bbk``, ``151``/
+        ``section``, ``d``/``mhr``). Если не передан И подключён catalog-handle —
+        грани собираются из записей ЭК по №КСУ (через :meth:`find_exemplars_by_ksu`
+        + сами записи). Если не передан и handle'а нет — раскладка по ledger'у
+        (только сумматоры; граней на ledger'е нет).
+
+        Returns запись-распределения КСУ (поле 88 + поля A.4)::
+
+            {
+              'ksu_no': <№КСУ>,
+              '17': <число наименований>,           # titles
+              'copies': <число экземпляров>,         # 88^F
+              'by_type': {<тип/язык>: n, ...},       # поле 45
+              'by_udk': {<индекс>: n, ...},          # поле 48
+              'by_bbk': {<индекс>: n, ...},          # поле 49
+              'by_section': {<раздел>: n, ...},      # поле 151
+              'by_mhr': {<МХР>: n, ...},             # фонды (поле 148)
+              'fields': {'45': {...}, '48': {...}, ...},  # тот же расклад под № полей
+              'todo': [<нераскрытые в recon грани>], # #CMPL-05
+            }
+
+        TODO(recon #CMPL-05): точные алгоритмы заполнения авто-полей
+        17/18/19/44/744/45/48/49/145–158 (членение наименований 17→18/19, направления
+        44, печатные/непечатные 145–150, ВУЗ 158/248/249) — во ВНЕШНЕМ Мастере
+        «Пополнение записи КСУ», построчно НЕ транскрибированы. Здесь НЕ домысливаем:
+        считаем лишь сумматоры (наименования/экземпляры) и наблюдаемые на экземплярах
+        грани (тип/язык/УДК/ББК/раздел/МХР); нераскрытые членения помечаем в ``todo``.
+        """
+        if not ksu_no or not str(ksu_no).strip():
+            raise AcquisitionError('distribute_ksu_batch requires a КСУ number')
+        ksu_no = str(ksu_no).strip()
+        rows = list(exemplars) if exemplars is not None \
+            else self._collect_exemplars_for_distribution(ksu_no, catalog_db)
+
+        def bucket(getter):
+            out = {}
+            for ex in rows:
+                if not isinstance(ex, dict):
+                    continue
+                key = getter(ex)
+                if key is None or str(key).strip() == '':
+                    continue
+                out[str(key)] = out.get(str(key), 0) + 1
+            return out
+
+        def pick(ex, *keys):
+            for k in keys:
+                v = ex.get(k) if isinstance(ex, dict) else None
+                if v not in (None, ''):
+                    return v
+            return None
+
+        by_type = bucket(lambda ex: pick(ex, '45', 'type', 'lang', 'language'))
+        by_udk = bucket(lambda ex: pick(ex, '48', 'udk', 'UDK', '675'))
+        by_bbk = bucket(lambda ex: pick(ex, '49', 'bbk', 'BBK', '621'))
+        by_section = bucket(lambda ex: pick(ex, '151', 'section', 'razdel'))
+        by_mhr = bucket(lambda ex: pick(ex, 'd', 'D', 'mhr', 'MHR'))
+
+        copies = len([ex for ex in rows if isinstance(ex, dict)])
+        # «наименование» в партии — этот №КСУ относится к одной партии приёма, но
+        # партия может нести несколько наименований; считаем наименования по числу
+        # различных записей каталога, иначе (только ledger) — базово 1 на партию.
+        titles = self._count_titles(ksu_no, rows, catalog_db)
+
+        result = {
+            'ksu_no': ksu_no,
+            '17': titles,
+            'copies': copies,
+            'by_type': by_type,
+            'by_udk': by_udk,
+            'by_bbk': by_bbk,
+            'by_section': by_section,
+            'by_mhr': by_mhr,
+            'fields': {'45': by_type, '48': by_udk, '49': by_bbk,
+                       '151': by_section, '148': by_mhr},
+            # нераскрытые в recon членения (#CMPL-05) — НЕ заполняем, лишь называем.
+            'todo': ['18', '19', '44', '744', '145', '146', '147', '149', '150',
+                     '155', '158', '248', '249'],
+        }
+        return result
+
+    def _collect_exemplars_for_distribution(self, ksu_no, catalog_db):
+        """Собрать экземпляры партии для авто-распределения (5.3).
+
+        Если подключён catalog-handle — берёт записи ЭК, несущие экз. с
+        ``910^U==ksu_no``, и собирает их грани (тип/язык/УДК/ББК/раздел) с самой
+        записи + МХР с экземпляра. Иначе — деградирует до ledger'а (только инв.№,
+        без граней). Best-effort, наружу не бросает."""
+        invs = self.store.inventory_for_ksu(ksu_no)
+        if self.catalog is None:
+            return [{'b': inv} for inv in invs]
+        db = catalog_db or self.catalog_db
+        rows = []
+        try:
+            scan = self._scan_catalog_ksu(db, ksu_no)
+            seen_mfn = {}
+            for hit in scan:
+                mfn = hit['mfn']
+                rec = seen_mfn.get(mfn)
+                if rec is None:
+                    rec = self.catalog.get(db, mfn) or {}
+                    seen_mfn[mfn] = rec
+                rows.append(self._exemplar_facets(rec, hit['inv_no'], ksu_no))
+            if rows:
+                return rows
+        except Exception:
+            pass
+        return [{'b': inv} for inv in invs]
+
+    @staticmethod
+    def _exemplar_facets(record, inv_no, ksu_no):
+        """Грани экземпляра для распределения: тип/язык (101), УДК (675), ББК (621),
+        раздел (621/906), МХР (910^d) — НАБЛЮДАЕМЫЕ на записи/экземпляре.
+
+        Поле 45 «по типу/языку» в записи КСУ выводится из языка БО (101) — берём
+        язык записи; УДК/ББК — из 675/621; раздел — базово из ББК (621) как
+        наблюдаемая грань (точное членение разделов 151 — #CMPL-05); МХР — из
+        конкретного экземпляра 910^d."""
+        facet = {'b': str(inv_no)}
+        lang = _first_value(record, '101', '') or _first_value(record, '101', 'a')
+        if lang:
+            facet['45'] = str(lang)
+        udk = _first_value(record, '675', 'a') or _first_value(record, '675', '')
+        if udk:
+            facet['48'] = str(udk)
+        bbk = _first_value(record, '621', 'a') or _first_value(record, '621', '')
+        if bbk:
+            facet['49'] = str(bbk)
+            facet['151'] = str(bbk)            # раздел ≈ ББК (наблюдаемая грань)
+        # МХР конкретного экземпляра (910^d) по его инв.№.
+        for inst in _as_list(record.get('910')):
+            if isinstance(inst, dict) and \
+                    str(inst.get('b') or inst.get('B') or '') == str(inv_no):
+                mhr = inst.get('d') or inst.get('D')
+                if mhr:
+                    facet['d'] = str(mhr)
+                break
+        return facet
+
+    def _count_titles(self, ksu_no, rows, catalog_db):
+        """Число наименований партии (поле 17): различные записи ЭК с экз. этой КСУ.
+
+        С catalog-handle — число различных mfn в скане по №КСУ. Без handle (или
+        нет каталога) — базово 1 наименование на запись КСУ (учётная единица КСУ —
+        запись поступления партии; членение наименований 17→18/19 — #CMPL-05)."""
+        if self.catalog is None:
+            return 1 if rows else 0
+        try:
+            db = catalog_db or self.catalog_db
+            mfns = {h['mfn'] for h in self._scan_catalog_ksu(db, ksu_no)}
+            if mfns:
+                return len(mfns)
+        except Exception:
+            pass
+        return 1 if rows else 0
 
 
 # --------------------------------------------------------------------------- #
