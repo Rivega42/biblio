@@ -59,11 +59,9 @@ if (typeof document !== "undefined" && !document.getElementById("irb-feed-css"))
 }
 
 function EditableBadge() {
-  return (
-    <span className="irb-feed__edit" title="Содержимое блока настраивается библиотекой">
-      <Icon name="edit" size={11} /> редактируется библиотекой
-    </span>
-  );
+  // #247: служебный CMS-флаг скрыт от читателя — он выглядел как «сайт недоделан».
+  // Вернётся только в режиме редактора (когда появится админ-CMS).
+  return null;
 }
 
 // --- Новости библиотеки -----------------------------------------------------

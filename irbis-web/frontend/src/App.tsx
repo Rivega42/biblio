@@ -117,11 +117,11 @@ export function App() {
   const [databases, setDatabases] = React.useState<DbItem[]>([]);
   const [db, setDb] = React.useState("IBIS");
   const [prefix, setPrefix] = React.useState("ALL");
-  const [q, setQ] = React.useState("Android");
+  const [q, setQ] = React.useState("");
   const [mode, setMode] = React.useState<"simple" | "advanced" | "expert">("simple");
   const [advRows, setAdvRows] = React.useState([{ field: "A", value: "" }, { field: "T", value: "" }]);
   const [advCombine, setAdvCombine] = React.useState<"and" | "or">("and");
-  const [expertExpr, setExpertExpr] = React.useState('"K=Android" + "K=PHP"');
+  const [expertExpr, setExpertExpr] = React.useState("");
   const [sug, setSug] = React.useState<any[]>([]);
   // «Вы имели в виду» (#4): варианты при нулевой выдаче. Пусто → блок скрыт.
   const [didYouMean, setDidYouMean] = React.useState<{ term: string; count?: number }[]>([]);
@@ -954,11 +954,8 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSe
             <span aria-hidden="true" style={{ width: 64, height: 64, borderRadius: 999, background: "linear-gradient(150deg, var(--accent), var(--accent-hover))", color: "var(--accent-fg,#fff)", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "600 24px var(--font-ui)", margin: "0 auto" }}>{initials(name)}</span>
             <h2 style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-lg,19px)", margin: "14px 0 2px" }}>{name}</h2>
             <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>{ticket ? "Билет № " + ticket : "Читательский билет"}</span>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "4px 11px", borderRadius: 999, ...statusChip("available") }}>
-              <span style={statusDot("available")} aria-hidden="true" />Активен
-            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border-subtle)" }}>
-              {[{ n: onHand.length, l: "на руках" }, { n: holdsCount, l: "в брони" }, { n: challengeDone, l: "прочитано", demo: true }].map((s, i) => (
+              {[{ n: onHand.length, l: "на руках" }, { n: holdsCount, l: "в брони" }, { n: returnedCount, l: "возвращено" }].map((s, i) => (
                 <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   <span style={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: 21, fontVariantNumeric: "tabular-nums" }}>{s.n}</span>
                   <span style={{ fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)" }}>{s.l}</span>
