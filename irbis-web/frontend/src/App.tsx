@@ -19,6 +19,9 @@ import { HomeScreen } from "./reader/HomeScreen";
 // Бренд пилота (СПб ГТБ) — официальный логотип-логотип (лира + название).
 // #255 п.1. Позже — из конфигурации арендатора (мультиарендность).
 import sptlLogo from "./assets/sptl-logo.svg";
+// #255 п.4: per-base формы расширенного поиска (реплика jirbis).
+import { PerBaseSearchForm } from "./reader/PerBaseSearchForm";
+import { baseFormFor } from "./reader/baseSearchForms";
 import { GalleryGrid } from "./reader/GalleryGrid";
 import { CalendarGrid } from "./reader/CalendarGrid";
 import { ArchiveList } from "./reader/ArchiveList";
@@ -464,6 +467,8 @@ export function App() {
   const DB = db;
   // Человекочитаемое имя текущей базы для пилюли в шапке (G18).
   const dbName = (databases.find((d) => d.code === db)?.name) || db;
+  // #255 п.4: форма расширенного поиска под конкретную базу (в режиме «во всех» — нет).
+  const perBaseForm = !allDbs ? baseFormFor(db) : undefined;
   const hbtn = (active: boolean): React.CSSProperties => ({ background: active ? "rgba(255,255,255,.25)" : "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" });
   const selStyle: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", maxWidth: 240 };
   const modeBtn = (active: boolean): React.CSSProperties => ({ background: active ? "var(--accent)" : "transparent", color: active ? "var(--text-on-accent, #fff)" : "var(--text-body)", border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: "var(--text-sm)" });
@@ -588,6 +593,10 @@ export function App() {
                   <Button iconLeft="search" onClick={runExpert}>Найти</Button>
                 </div>
               </div>
+            ) : perBaseForm ? (
+              <PerBaseSearchForm form={perBaseForm} db={db}
+                onSearch={(expr) => { setMode("advanced"); runExpr(db, expr, 1, true); }}
+                onWarn={(m) => toast({ variant: "warning", title: "Уточните запрос", message: m })} />
             ) : (
               <div style={{ marginBottom: 14, background: "var(--surface-card,#fff)", border: "1px solid var(--border-subtle)", borderRadius: 12, padding: 14 }}>
                 {advRows.map((r, i) => (
