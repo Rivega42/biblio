@@ -57,6 +57,20 @@ export const BASE_SEARCH_FORMS: Record<string, BaseFormDef> = {
     { label: 'Наличие «Электронная копия / полный текст»', prefix: "ed_filter", type: "bool" },
   ]},
 
+  // ── Статьи из книг и периодических изданий (код SBO) ──────────────────────
+  SBO: { base: "Статьи из книг и периодических изданий", fields: [
+    { label: "Ключевые слова", prefix: "K", type: "text" },
+    { label: "Автор/Персоналия", prefix: "A", type: "text" },
+    { label: "Заглавие статьи", prefix: "T", type: "text" },
+    { label: "Предмет / тема", prefix: "S", type: "text" },
+    { label: "Наименование произведения", prefix: "NPS", type: "text" },
+    { label: "Коллектив / мероприятие", prefix: "M", type: "text" },
+    { label: "Год источника статьи", prefix: "GI", type: "text" },
+    { label: "Заглавие источника статьи", prefix: "TI", type: "text" },
+    { label: "Наличие «изоматериал»", prefix: "IZ606", type: "bool" },
+    { label: 'Наличие «Электронная копия изображения»', prefix: "ed_filter", type: "bool" },
+  ]},
+
   // ── Аннотированный указатель пьес (с блоком «Роли») ───────────────────────
   PLAY: { base: "Аннотированный указатель пьес", fields: [
     { label: "Ключевые слова", prefix: "K", type: "text" },
@@ -126,10 +140,8 @@ export const BASE_SEARCH_FORMS: Record<string, BaseFormDef> = {
     { label: "Заглавие", prefix: "T", type: "text" },
   ]},
 
-  // ── Календарь премьер / хронологии (область «Дата события») ───────────────
-  // Сопоставление кода TUAR подтверждено как база с «Датой события»; набор взят
-  // от «Календаря премьер». Если на проде TUAR = «Хронологии» — поправлю.
-  TUAR: { base: "Календарь премьер петербургских театров", note: "уточнить: Календарь премьер или Хронологии", fields: [
+  // ── Календарь премьер Петербургских театров (подтверждено по имени БД на проде) ──
+  TUAR: { base: "Календарь премьер Петербургских театров", fields: [
     { label: "Ключевые слова", prefix: "K", type: "text" },
     { label: "Персоны", prefix: "A", type: "text" },
     { label: "Спектакли / события", prefix: "TP", type: "text" },
@@ -143,22 +155,36 @@ export const BASE_SEARCH_FORMS: Record<string, BaseFormDef> = {
     { label: "Заглавие источника", prefix: "BZ", type: "text", group: "Библиографический источник" },
   ]},
 
-  // ── Имидж-базы (иллюстративные коллекции) ─────────────────────────────────
-  // Общий «изо»-пресет. IMGZENZ ≈ драматическая цензура; уточнить отдельные поля.
-  IMAGE: { base: "Иллюстративные коллекции", note: "общий изо-пресет, уточнить", fields: [
+  // ── Картотека Всеволодского-Гернгросса (общий имидж-каталог) ───────────────
+  IMAGE: { base: "Картотека Всеволодского-Гернгросса", fields: [
     { label: "Ключевые слова", prefix: "K", type: "text" },
     { label: "Автор/Персоналия", prefix: "A", type: "text" },
     { label: "Заглавие", prefix: "T", type: "text" },
     { label: "Предмет / тема", prefix: "S", type: "text" },
     { label: 'Наличие «Электронная копия изображения»', prefix: "ed_filter", type: "bool" },
   ]},
+
+  // ── Цензура пьес на языках народов Российской империи (имидж-каталог) ──────
+  IMGZENZ: { base: "Цензура пьес на языках народов Российской империи", fields: [
+    { label: "Ключевые слова", prefix: "KT=FT!", type: "text" },
+    { label: "Автор и др. ответственные лица", prefix: "A", type: "text" },
+    { label: "Заглавие", prefix: "T", type: "text" },
+    { label: "Язык", prefix: "J", type: "select" },
+  ]},
+
+  // ── Либретто балетов / опер (имидж-каталог, лёгкий пресет) ─────────────────
+  IMGBALET: { base: "Либретто балетов", fields: [
+    { label: "Ключевые слова", prefix: "KT=FT!", type: "text" },
+    { label: "Автор и др. ответственные лица", prefix: "A", type: "text" },
+    { label: "Заглавие", prefix: "T", type: "text" },
+  ]},
+  IMGOPERA: { base: "Либретто опер, оперетт", fields: [
+    { label: "Ключевые слова", prefix: "KT=FT!", type: "text" },
+    { label: "Автор и др. ответственные лица", prefix: "A", type: "text" },
+    { label: "Заглавие", prefix: "T", type: "text" },
+  ]},
 };
-// IMG-коллекции делят общий пресет до уточнения:
-for (const code of ["IMGBALET", "IMGOPERA", "IMGZENZ"]) {
-  BASE_SEARCH_FORMS[code] = { ...BASE_SEARCH_FORMS.IMAGE };
-}
-// Не включены (фолбэк на генерик-форму, требуют подтверждения состава):
-//   SBO — назначение кода не подтверждено.
+// Все 14 публичных баз СПб ГТБ покрыты per-base формами (SBO=Статьи добавлена).
 
 export function baseFormFor(code: string): BaseFormDef | undefined {
   return BASE_SEARCH_FORMS[code];
