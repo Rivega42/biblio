@@ -435,7 +435,8 @@ class Api:
         self.irbis = ResilientIrbis(
             SessionManager(self.cfg.irbis_host, self.cfg.irbis_port,
                            self.cfg.workstation, self.cfg.irbis_user,
-                           self.cfg.irbis_pass, self.cfg.timeout),
+                           self.cfg.irbis_pass, self.cfg.timeout,
+                           encoding=self.cfg.irbis_encoding),
             retries=self.cfg.irbis_retries, backoff=self.cfg.irbis_backoff)
         self.access = make_access_store(self.cfg)   # sqlite (default) or Postgres via ACCESS_BACKEND
         seed(self.access)                      # idempotent dev seed
@@ -986,9 +987,12 @@ class Api:
     def search(self, session, db, expr, page, page_size):
         self._guard(session, 'search', db, 'read')
         self._public_db_guard(session, db)
-        count, mfns = self.irbis.search(db, expr)
         start = (page - 1) * page_size
-        items = [self._brief_item(db, mfn) for mfn in mfns[start:start + page_size]]
+        # Window the result set server-side (#233): pass first/maxn so ИРБИС returns
+        # only this page's MFNs (the count still arrives in data[0]) instead of the
+        # whole posting list — deep paging was O(N) in the corpus, not the page.
+        count, mfns = self.irbis.search(db, expr, first=start + 1, maxn=page_size)
+        items = [self._brief_item(db, mfn) for mfn in mfns]
         out = {'db': db, 'expr': expr, 'total': count,
                'page': page, 'pageSize': page_size, 'items': items}
         # На пустую выдачу — добавим «Вы имели в виду …» (тем же механизмом, что

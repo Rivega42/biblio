@@ -25,9 +25,9 @@ class IrbisError(Exception):
 
 class Response:
     """Parsed server response frame."""
-    def __init__(self, raw: bytes):
+    def __init__(self, raw: bytes, encoding: str = 'utf-8'):
         self.raw = raw
-        self.lines = raw.decode('utf-8', 'replace').split('\r\n')
+        self.lines = raw.decode(encoding, 'replace').split('\r\n')
         self.return_code = None
         if len(self.lines) > 10 and self.lines[10].lstrip('-').isdigit():
             self.return_code = int(self.lines[10])
@@ -38,10 +38,11 @@ class Response:
 
 
 class IrbisClient:
-    def __init__(self, host='127.0.0.1', port=6666, workstation='A', timeout=8.0):
+    def __init__(self, host='127.0.0.1', port=6666, workstation='A', timeout=8.0, encoding='utf-8'):
         self.host, self.port = host, port
         self.workstation = workstation
         self.timeout = timeout
+        self.encoding = encoding   # bibliographic data encoding (UTF-8 default; CP1251 for classic ИРБИС, #228)
         self.user = self.password = ''
         self.client_id = 100000 + random.randint(0, 899999)
         self.query_id = 0
@@ -55,7 +56,7 @@ class IrbisClient:
                  str(self.query_id), self.password, self.user, '', '', '']
         if args:
             lines += [a if isinstance(a, str) else str(a) for a in args]
-        body = ('\n'.join(lines) + '\n').encode('utf-8')
+        body = ('\n'.join(lines) + '\n').encode(self.encoding)
         packet = (str(len(body)) + '\n').encode('ascii') + body
         s = socket.create_connection((self.host, self.port), timeout=self.timeout)
         s.settimeout(self.timeout)
@@ -74,7 +75,7 @@ class IrbisClient:
                 s.close()
             except Exception:
                 pass
-        return Response(data)
+        return Response(data, self.encoding)
 
     # ---- session ----
     def connect(self, user, password):
