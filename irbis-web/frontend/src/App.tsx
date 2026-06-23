@@ -476,9 +476,13 @@ export function App() {
       <header style={{ background: "var(--accent)", color: "var(--text-on-accent, #fff)", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
         <button onClick={goHome} title="На главную" aria-label="На главную"
           style={{ display: "inline-flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
-          {/* #255 п.1: официальный логотип СПб ГТБ (лира + название) на белой подложке. */}
-          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", height: 44, padding: "5px 13px", borderRadius: 12, background: "#fff", boxShadow: "var(--shadow-sm)" }}>
-            <img src={sptlLogo} alt="Санкт-Петербургская государственная театральная библиотека" style={{ height: 32, width: "auto", display: "block" }} />
+          {/* #255 п.1: официальный логотип СПб ГТБ (лира) на белой подложке + название текстом. */}
+          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", height: 42, padding: "5px 12px", borderRadius: 12, background: "#fff", boxShadow: "var(--shadow-sm)" }}>
+            <img src={sptlLogo} alt="Санкт-Петербургская государственная театральная библиотека" style={{ height: 30, width: "auto", display: "block" }} />
+          </span>
+          <span style={{ display: "flex", flexDirection: "column", lineHeight: 1.13, textAlign: "left", whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: "var(--text-2xs, 11px)", opacity: .9, letterSpacing: ".01em" }}>Санкт-Петербургская государственная</span>
+            <b style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-base, 15px)", letterSpacing: "-.01em" }}>Театральная библиотека</b>
           </span>
         </button>
         {/* Пилюля текущей базы (G18) — контекст «где я ищу». */}
@@ -487,7 +491,6 @@ export function App() {
             <Icon name="layers" size={13} /> {dbName}
           </span>
         )}
-        <span style={{ opacity: .85, fontSize: "var(--text-xs)" }}>ИРБИС {server?.version}{home ? " · база " + DB : ""}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
           <div style={{ display: "flex", gap: 4, marginRight: 6, padding: 2, background: "rgba(255,255,255,.12)", borderRadius: 10 }}>
             <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>Читатель</button>
