@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-23**
-- Версия кода (git): **`a2c3ade`**
-- Файлов: **157** · строк: **51164** · условных страниц: **931**
-- **SHA-256 всего листинга:** `93f5cda1eb680709811aa2b5ccab984d294087a175e37278014595aca4caa8f2`
+- Версия кода (git): **`73d87c5`**
+- Файлов: **157** · строк: **51165** · условных страниц: **931**
+- **SHA-256 всего листинга:** `7799593ae5f769b579d77d02a787ba32bfa96dda744bfe814408bfe28307bb2a`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -11,7 +11,7 @@
 | Файл | Строк | SHA-256 |
 |---|---:|---|
 | `irbis-web/backend/server.py` | 114 | `a01cef21d45f79d5051b35c0a7c0a2b22d647c85ebff748be0e37f0d0efdfab8` |
-| `irbis-web/backend/core.py` | 3400 | `f2e68baf352463791dc6ca4df86399b065a4064a9a45bcb8a618ae00bfb2d0c5` |
+| `irbis-web/backend/core.py` | 3401 | `16fda35fecaa86e5a5cd5a7a620c113f886a977aad87ed4db47421590b053371` |
 | `irbis-web/backend/config.py` | 90 | `01fb629218c76153c2a7f1ab6c03587b097871080986cfaa6c831f93de145c32` |
 | `irbis-web/backend/access/catalog.py` | 948 | `a13522a49d43e51bf23b129f902a5242128d748629738cf3ed6619147390e435` |
 | `irbis-web/backend/access/circulation.py` | 1411 | `04c43d5f15cae6e92626dbbf43b97b7b196faf1d9e7bb59dbef5a82e1a47d81d` |
