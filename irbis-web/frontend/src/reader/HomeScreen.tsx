@@ -75,7 +75,7 @@ export function HomeScreen({
   onSearch: (prefix: string, query: string) => void;
   onOpen: (mfn: number, db: string) => void;
 }) {
-  const [prefix, setPrefix] = React.useState("K");
+  const [prefix, setPrefix] = React.useState("ALL");
   const [q, setQ] = React.useState("");
   const [examples, setExamples] = React.useState<string[]>(SEED_EXAMPLES);
 
