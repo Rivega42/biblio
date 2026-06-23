@@ -987,12 +987,13 @@ class Api:
     def search(self, session, db, expr, page, page_size):
         self._guard(session, 'search', db, 'read')
         self._public_db_guard(session, db)
+        # NB (#233 revert): IRBIS 'K' returns the FULL MFN list regardless of maxn
+        # (verified on the СПб ГТБ server — maxn is ignored), so windowing must be
+        # CLIENT-SIDE. MFN transfer is cheap; the expensive cost is reading records
+        # (_brief_item), so we slice to just this page's MFNs and read only those.
+        count, mfns = self.irbis.search(db, expr)
         start = (page - 1) * page_size
-        # Window the result set server-side (#233): pass first/maxn so ИРБИС returns
-        # only this page's MFNs (the count still arrives in data[0]) instead of the
-        # whole posting list — deep paging was O(N) in the corpus, not the page.
-        count, mfns = self.irbis.search(db, expr, first=start + 1, maxn=page_size)
-        items = [self._brief_item(db, mfn) for mfn in mfns]
+        items = [self._brief_item(db, mfn) for mfn in mfns[start:start + page_size]]
         out = {'db': db, 'expr': expr, 'total': count,
                'page': page, 'pageSize': page_size, 'items': items}
         # На пустую выдачу — добавим «Вы имели в виду …» (тем же механизмом, что
