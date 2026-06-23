@@ -24,12 +24,6 @@ function chip(st: string): React.CSSProperties {
   return { display: "inline-flex", alignItems: "center", gap: 6, background: c.bg, color: c.fg, borderRadius: "var(--radius-md,6px)", padding: "4px 10px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" };
 }
 
-// Демо-заглушка, если backend заказов ещё не подключён (эндпойнт 404).
-const STUB_ORDERS: OrderItem[] = [
-  { id: "demo-1", mfn: 0, title: "Совершенный код : практическое руководство", author: "С. Макконнелл", status: "queued", statusLabel: "В очереди", created: "сегодня", place: "Абонемент", cancelable: true },
-  { id: "demo-2", mfn: 0, title: "Чистая архитектура : искусство разработки ПО", author: "Р. Мартин", status: "ready", statusLabel: "Готов к выдаче", created: "вчера", place: "Зал № 2", cancelable: false },
-];
-
 export function OrdersTab({ toast, cardSx }: {
   toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
   cardSx: React.CSSProperties;
@@ -43,8 +37,8 @@ export function OrdersTab({ toast, cardSx }: {
     if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) {
       setOrders(r.json.data.items); setStub(false);
     } else {
-      // Эндпойнта нет / не готов → демонстрационный список.
-      setOrders(STUB_ORDERS); setStub(true);
+      // Эндпойнта нет / не готов → честный пустой список (без выдуманных заказов).
+      setOrders([]); setStub(false);
     }
   }, []);
 
