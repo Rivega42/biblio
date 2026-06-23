@@ -33,12 +33,12 @@ const CSS = `
 .irb-gcard__check--on{background:var(--accent);border-color:var(--accent);}
 .irb-gcard__check:focus-visible{outline:2px solid #fff;outline-offset:1px;}
 .irb-gcard__status{position:absolute;bottom:8px;right:8px;}
-.irb-gcard__meta{min-width:0;}
+.irb-gcard__meta{display:flex;flex-direction:column;min-width:0;}
 .irb-gcard__title{font-family:var(--font-record-title,var(--font-display,inherit));font-size:var(--text-base,15.5px);
   font-weight:var(--weight-semibold,600);color:var(--text-strong);line-height:1.25;cursor:pointer;
-  background:none;border:none;padding:0;text-align:left;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  background:none;border:none;padding:0;text-align:left;max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .irb-gcard__title:hover{color:var(--accent-hover);text-decoration:underline;text-underline-offset:3px;}
-.irb-gcard__by{font-size:var(--text-xs);color:var(--text-subtle);margin-top:3px;
+.irb-gcard__by{display:block;max-width:100%;font-size:var(--text-xs);color:var(--text-subtle);margin-top:3px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .irb-gcard__acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;}
 .irb-gcard__act{display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--text-body);
