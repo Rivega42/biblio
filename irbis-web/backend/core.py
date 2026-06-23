@@ -435,7 +435,8 @@ class Api:
         self.irbis = ResilientIrbis(
             SessionManager(self.cfg.irbis_host, self.cfg.irbis_port,
                            self.cfg.workstation, self.cfg.irbis_user,
-                           self.cfg.irbis_pass, self.cfg.timeout),
+                           self.cfg.irbis_pass, self.cfg.timeout,
+                           encoding=self.cfg.irbis_encoding),
             retries=self.cfg.irbis_retries, backoff=self.cfg.irbis_backoff)
         self.access = make_access_store(self.cfg)   # sqlite (default) or Postgres via ACCESS_BACKEND
         seed(self.access)                      # idempotent dev seed

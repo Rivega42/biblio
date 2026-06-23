@@ -12,9 +12,9 @@ from .client import IrbisClient, IrbisError
 
 
 class SessionManager:
-    def __init__(self, host, port, workstation, user, password, timeout=8.0):
+    def __init__(self, host, port, workstation, user, password, timeout=8.0, encoding='utf-8'):
         self._lock = threading.Lock()
-        self._client = IrbisClient(host, port, workstation, timeout)
+        self._client = IrbisClient(host, port, workstation, timeout, encoding)
         self._creds = (user, password)
         self.connected = False
 

@@ -43,6 +43,10 @@ class Config:
         # resource spec of the database-list menu (pathcode.db.file); from connect INI
         self.db_menu = os.environ.get('IRBIS_DB_MENU', '1.&.dbnam1.mnu')
         self.timeout = float(os.environ.get('IRBIS_TIMEOUT', '8'))
+        # Кодировка библиоданных сервера (записи / словарь / поиск). UTF-8 по
+        # умолчанию; классический ИРБИС с CP1251-индексом → IRBIS_ENCODING=cp1251
+        # (#228). read_file (ресурсы/INI) всегда CP1251 независимо от этого.
+        self.irbis_encoding = os.environ.get('IRBIS_ENCODING', 'utf-8')
         # ИРБИС resilience (self-heal a stale session after a server Стоп/Старт or
         # the demo "max 3 clients" cap, without a process restart). On a connection
         # or registration failure the client re-registers and retries this many
