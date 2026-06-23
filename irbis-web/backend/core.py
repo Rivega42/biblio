@@ -3395,7 +3395,13 @@ def build_expr(query):
     q = (query.get('q', [''])[0] or '').strip().replace('"', '')
     if not q:
         return None
-    prefix = (query.get('prefix', ['K'])[0] or 'K').strip().upper()
+    prefix = (query.get('prefix', ['ALL'])[0] or 'ALL').strip().upper()
+    # Multi-field default (#245): OR across title + author + keywords so a cyrillic
+    # query returns hits even where the K= keyword index is unreliable on the server.
+    # Each leg is truncated ($) for recall. IRBIS query OR operator is ' + '.
+    if prefix in ('ALL', '*', ''):
+        qu = q.upper()   # match the UPPERCASE dictionary form (recall for lowercase input)
+        return ' + '.join('"%s=%s$"' % (p, qu) for p in ('T', 'A', 'K'))
     if prefix in _TRUNCATED_PREFIXES and not q.endswith('$'):
         q += '$'
     return '"%s=%s"' % (prefix, q)

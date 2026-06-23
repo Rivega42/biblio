@@ -38,6 +38,7 @@ import { layoutProfile, defaultLayout, layoutAllows } from "./reader/dbLayout";
 import type { LayoutKind } from "./reader/dbLayout";
 
 const PREFIXES = [
+  { code: "ALL", label: "Везде" },
   { code: "K", label: "Ключевые слова" }, { code: "A", label: "Автор" },
   { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
 ];
@@ -115,7 +116,7 @@ export function App() {
   const [a11y, setA11y] = React.useState(false);
   const [databases, setDatabases] = React.useState<DbItem[]>([]);
   const [db, setDb] = React.useState("IBIS");
-  const [prefix, setPrefix] = React.useState("K");
+  const [prefix, setPrefix] = React.useState("ALL");
   const [q, setQ] = React.useState("Android");
   const [mode, setMode] = React.useState<"simple" | "advanced" | "expert">("simple");
   const [advRows, setAdvRows] = React.useState([{ field: "A", value: "" }, { field: "T", value: "" }]);
@@ -280,8 +281,9 @@ export function App() {
     setQ(v); clearTimeout(tRef.current);
     if (v.trim().length < 2) { setSug([]); return; }
     tRef.current = setTimeout(async () => {
-      const r = await api.terms(prefix + "=" + v.toUpperCase(), 8, db);
-      if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(prefix + "=") === 0).map((t) => ({ term: t.term.slice(prefix.length + 1), count: t.count })));
+      const sp = prefix === "ALL" ? "T" : prefix;   // #245: подсказки в режиме «Везде» берём из заглавий
+      const r = await api.terms(sp + "=" + v.toUpperCase(), 8, db);
+      if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(sp + "=") === 0).map((t) => ({ term: t.term.slice(sp.length + 1), count: t.count })));
     }, 200);
   }
   async function runExpr(database: string, expr: string, pg: number, asBase = false) {
