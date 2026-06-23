@@ -7,9 +7,10 @@ const CSS = `
   font-family:var(--font-ui);font-size:var(--text-sm);font-weight:var(--weight-medium);
   height:var(--control-h-sm);padding:0 var(--space-1) 0 var(--space-3);
   border-radius:var(--radius-pill);border:var(--border-width) solid var(--accent-weak-border);
-  background:var(--accent-weak);color:var(--accent-press);white-space:nowrap;
+  background:var(--accent-weak);color:var(--accent-press);white-space:nowrap;max-width:100%;
   transition:background-color var(--dur) var(--ease-standard);
 }
+.irb-chip__label{overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .irb-chip--plain{background:var(--surface-sunken);border-color:var(--border-default);color:var(--text-body);}
 .irb-chip__group{font-weight:var(--weight-regular);color:var(--text-muted);}
 .irb-chip__remove{
@@ -55,7 +56,7 @@ export function FilterChip({
         onClick={onToggle}
         {...rest}
       >
-        <span>{label}</span>
+        <span className="irb-chip__label">{label}</span>
         {count != null && <span className="irb-chip__count">{count}</span>}
       </button>
     );
@@ -64,7 +65,7 @@ export function FilterChip({
   return (
     <span className={`irb-chip${plain ? " irb-chip--plain" : ""} ${className}`} {...rest}>
       {group && <span className="irb-chip__group">{group}:</span>}
-      <span>{label}</span>
+      <span className="irb-chip__label">{label}</span>
       {onRemove && (
         <button
           type="button"
