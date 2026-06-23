@@ -47,6 +47,16 @@ const CSS = `
   transition:background-color var(--dur,.18s) var(--ease-standard,ease);}
 .irb-hero-chip:hover{background:rgba(255,255,255,.28);}
 .irb-hero-chip:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+.irb-hero__scope{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap;}
+.irb-hero__scopelabel{font-size:var(--text-sm);opacity:.92;}
+.irb-hero__scopesel{background:rgba(255,255,255,.16);color:var(--accent-fg,#fff);
+  border:1px solid rgba(255,255,255,.38);border-radius:var(--radius-pill,999px);
+  padding:6px 30px 6px 14px;font-family:var(--font-ui,inherit);font-size:var(--text-sm);cursor:pointer;
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;}
+.irb-hero__scopesel:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+.irb-hero__scopesel option{color:var(--text-body);background:var(--surface-card);}
 .irb-home__pick{max-width:520px;margin:0 auto;width:100%;display:flex;flex-direction:column;gap:8px;}
 .irb-home__picklabel{font-size:var(--text-sm);font-weight:var(--weight-semibold,600);color:var(--text-strong);text-align:center;}
 @media (max-width:560px){
@@ -60,9 +70,11 @@ if (typeof document !== "undefined" && !document.getElementById("irb-home-css"))
 }
 
 const PREFIX_OPTS = [
-  { code: "K", label: "Везде" }, { code: "A", label: "Автор" },
+  { code: "ALL", label: "Везде" }, { code: "A", label: "Автор" },
   { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
 ];
+// «Во всех базах» — то же значение, что ALL_DBS в App.tsx (#255 п.2).
+const ALL_BASES = "__ALL__";
 
 const DB_ICONS: Record<string, string> = { IBIS: "book", IMAGE: "images", PERIO: "newspaper", ARCH: "archive" };
 
@@ -72,11 +84,12 @@ export function HomeScreen({
   databases: DbItem[];
   db: string;
   onPickDb: (code: string) => void;
-  onSearch: (prefix: string, query: string) => void;
+  onSearch: (prefix: string, query: string, base?: string) => void;
   onOpen: (mfn: number, db: string) => void;
 }) {
   const [prefix, setPrefix] = React.useState("ALL");
   const [q, setQ] = React.useState("");
+  const [base, setBase] = React.useState(ALL_BASES);   // #255 п.2: дефолт — во всех базах
   const [examples, setExamples] = React.useState<string[]>(SEED_EXAMPLES);
 
   // Подмешиваем «живые» рубрики из словаря (если backend отдаёт). Не критично:
@@ -105,7 +118,7 @@ export function HomeScreen({
     count: d.count,
   }));
 
-  const submit = (query: string) => { const v = query.trim(); if (v) onSearch(prefix, v); };
+  const submit = (query: string) => { const v = query.trim(); if (v) onSearch(prefix, v, base); };
 
   return (
     <div className="irb-home">
@@ -131,11 +144,23 @@ export function HomeScreen({
             </div>
           </div>
 
+          {/* #255 п.2: выбор базы под поиском; по умолчанию — во всех базах сразу. */}
+          {publicDbs.length > 1 && (
+            <div className="irb-hero__scope" role="group" aria-label="База поиска">
+              <span className="irb-hero__scopelabel">Искать в:</span>
+              <select className="irb-hero__scopesel" aria-label="Выбор базы поиска"
+                value={base} onChange={(e) => setBase(e.target.value)}>
+                <option value={ALL_BASES}>Во всех базах</option>
+                {publicDbs.map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
+              </select>
+            </div>
+          )}
+
           <div className="irb-home__examples" role="group" aria-label="Примеры запросов">
             <span className="irb-home__exlabel">Популярные запросы</span>
             {examples.map((ex) => (
               <button key={ex} type="button" className="irb-hero-chip"
-                onClick={() => { setQ(ex); onSearch(prefix, ex); }}>
+                onClick={() => { setQ(ex); onSearch(prefix, ex, base); }}>
                 <Icon name="search" size={13} /> {ex}
               </button>
             ))}
@@ -152,23 +177,8 @@ export function HomeScreen({
       {/* ===== Рубрикатор «Просмотр по разделам» — живой словарь /api/rubricator ===== */}
       <Rubricator db={db} onSearch={onSearch} />
 
-      {/* ===== Богатый селектор баз (G17) ===== */}
-      {selectorDbs.length > 1 && (
-        <div className="irb-home__pick">
-          <div className="irb-home__picklabel">Где искать</div>
-          <DatabaseSelector
-            databases={selectorDbs}
-            value={[db]}
-            title="Электронный каталог и базы данных"
-            onChange={(ids: string[]) => {
-              // Селектор многозначный по типу; портал ищет в одной базе → берём
-              // последнюю изменённую (отличную от текущей) или первую выбранную.
-              const next = ids.find((id) => id !== db) || ids[0];
-              if (next && next !== db) onPickDb(next);
-            }}
-          />
-        </div>
-      )}
+      {/* Селектор баз перенесён под строку поиска (hero, #255 п.2) — здесь больше
+          не дублируем «Где искать», чтобы не было двух конкурирующих выборов базы. */}
 
       {/* ===== Новости + события (редактируемый per-tenant контент) ===== */}
       <LibraryNews />

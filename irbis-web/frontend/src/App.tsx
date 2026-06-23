@@ -16,6 +16,9 @@ import { StaffArea, StaffLoginOverlay } from "./Staff";
 import type { StaffSession } from "./Staff";
 import { exportRecord, exportBasket, basketMailto } from "./export";
 import { HomeScreen } from "./reader/HomeScreen";
+// Бренд пилота (СПб ГТБ) — официальный логотип-логотип (лира + название).
+// #255 п.1. Позже — из конфигурации арендатора (мультиарендность).
+import sptlLogo from "./assets/sptl-logo.svg";
 import { GalleryGrid } from "./reader/GalleryGrid";
 import { CalendarGrid } from "./reader/CalendarGrid";
 import { ArchiveList } from "./reader/ArchiveList";
@@ -239,6 +242,33 @@ export function App() {
     if (grand === 0) loadSuggestions(pubs[0], px, query);
     setLoading(false);
   }
+  // Смена базы из ЛЮБОГО селектора (верхний на выдаче / хлебные крошки). #255 п.3:
+  // раньше верхний select ре-искал только в простом режиме → в расширенном/экспертном
+  // «молчал». Теперь переключаем базу и перезапускаем поиск ТЕКУЩЕГО режима.
+  function applyBaseChange(val: string) {
+    if (val === ALL_DBS) {
+      setAllDbs(true);
+      if (mode === "simple") { if (q.trim()) runSearchAll(prefix, q); }
+      else { const ex = mode === "advanced" ? buildAdvExpr() : expertExpr.trim(); if (ex) runSearchAllExpr(ex); }
+    } else {
+      setAllDbs(false); setDb(val);
+      if (mode === "simple") { if (q.trim()) runSearch(val, prefix, q, 1); }
+      else { const ex = mode === "advanced" ? buildAdvExpr() : expertExpr.trim(); if (ex) runExpr(val, ex, 1, true); }
+    }
+  }
+  // Веерный поиск ПО ВЫРАЖЕНИЮ (для «во всех базах» в расширенном/экспертном режиме).
+  async function runSearchAllExpr(expr: string) {
+    const pubs = databases.filter((d) => d.public).map((d) => d.code);
+    if (pubs.length <= 1) { runExpr(pubs[0] || db, expr, 1, true); return; }
+    setHome(false); setAllDbs(true); setLoading(true); setRec(null); setPage(1);
+    setBaseExpr(null); setActiveFacets([]); setFacets([]);
+    const merged: ResultItem[] = []; let grand = 0;
+    for (const code of pubs) {
+      const r = await api.searchExpr(code, expr, 1, pageSize);
+      if (r.json?.ok && r.json.data) { grand += r.json.data.total; for (const it of r.json.data.items) merged.push({ ...it, db: code }); }
+    }
+    setItems(merged); setTotal(grand); setLoading(false);
+  }
   // «Вы имели в виду» (#4): дёргаем GET /api/suggest. 404/501 (эндпойнт-сиблинг
   // ещё не приземлён) или пустой ответ → блок остаётся скрытым (мягкая деградация).
   async function loadSuggestions(database: string, px: string, query: string) {
@@ -258,9 +288,11 @@ export function App() {
     if (r.json?.ok && r.json.data) setFacets(r.json.data.facets);
   }
   // С главной-лендинга: задаём поле/запрос, уходим в результаты и ищем (G1).
-  function goSearch(px: string, query: string) {
+  function goSearch(px: string, query: string, database?: string) {
     setHome(false); setMode("simple"); setPrefix(px); setQ(query); setRec(null);
-    runSearch(db, px, query, 1);
+    // #255 п.2: с главной можно выбрать базу; по умолчанию — «во всех базах».
+    if (database === ALL_DBS) { setAllDbs(true); runSearchAll(px, query); }
+    else { setAllDbs(false); if (database) setDb(database); runSearch(database || db, px, query, 1); }
   }
   // Сохранённые запросы (#133): повторно запустить сохранённый поиск. Если задан
   // префикс — простой поиск; иначе query трактуется как поисковое выражение.
@@ -444,8 +476,10 @@ export function App() {
       <header style={{ background: "var(--accent)", color: "var(--text-on-accent, #fff)", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
         <button onClick={goHome} title="На главную" aria-label="На главную"
           style={{ display: "inline-flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
-          <span style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(255,255,255,.18)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="book" size={19} /></span>
-          <b style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-lg)", letterSpacing: "-.01em" }}>Читательский портал</b>
+          {/* #255 п.1: официальный логотип СПб ГТБ (лира + название) на белой подложке. */}
+          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", height: 44, padding: "5px 13px", borderRadius: 12, background: "#fff", boxShadow: "var(--shadow-sm)" }}>
+            <img src={sptlLogo} alt="Санкт-Петербургская государственная театральная библиотека" style={{ height: 32, width: "auto", display: "block" }} />
+          </span>
         </button>
         {/* Пилюля текущей базы (G18) — контекст «где я ищу». */}
         {context === "reader" && !home && (
@@ -483,7 +517,7 @@ export function App() {
             <HomeScreen
               databases={databases} db={db}
               onPickDb={(code) => setDb(code)}
-              onSearch={(px, query) => goSearch(px, query)}
+              onSearch={(px, query, base) => goSearch(px, query, base)}
               onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }}
             />
             {/* «Для вас» (#133) — персональная подборка; скрыта, если эндпойнт пуст/404. */}
@@ -497,11 +531,7 @@ export function App() {
             <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
               {databases.filter((d) => d.public).length > 1 && (
                 <select value={allDbs ? ALL_DBS : db}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === ALL_DBS) { setAllDbs(true); if (mode === "simple" && q.trim()) runSearchAll(prefix, q); }
-                    else { setAllDbs(false); setDb(val); if (mode === "simple") runSearch(val, prefix, q, 1); }
-                  }} title="База поиска" style={selStyle}>
+                  onChange={(e) => applyBaseChange(e.target.value)} title="База поиска" style={selStyle}>
                   {/* Мульти-БД (#3): поиск сразу по всем публичным базам. */}
                   <option value={ALL_DBS}>Во всех базах</option>
                   {databases.filter((d) => d.public).map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
@@ -582,7 +612,7 @@ export function App() {
             {/* Хлебные крошки + контекст запроса (что и где искали + сколько найдено). */}
             <SearchBreadcrumb db={dbName} dbCode={db} databases={databases.filter((d) => d.public)} mode={mode} prefix={prefix} prefixes={PREFIXES}
               query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome}
-              onBase={(code) => { setAllDbs(false); setDb(code); runSearch(code, prefix, q, 1); }}
+              onBase={(code) => applyBaseChange(code)}
               onPrefix={(px) => { setPrefix(px); runSearch(allDbs ? ALL_DBS : db, px, q, 1); }}
               onResearch={() => runSearch(allDbs ? ALL_DBS : db, prefix, q, 1)} />
             {loading && !items.length ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
@@ -769,7 +799,7 @@ function SearchBreadcrumb({ db, dbCode, databases, mode, prefix, prefixes, query
   const crumbSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-subtle)" };
   const pickSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "none", borderBottom: "1px dashed var(--accent)", padding: "0 2px", cursor: "pointer", font: "inherit" };
   const pub = (databases || []).filter((d) => d.public !== false);
-  const baseOk = mode === "simple" && !!onBase && pub.length > 1 && !!dbCode;
+  const baseOk = !!onBase && pub.length > 1 && !!dbCode;
   const areaOk = mode === "simple" && !!onPrefix && !!areaLabel;
   return (
     <nav aria-label="Хлебные крошки" style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", margin: "0 0 12px" }}>
