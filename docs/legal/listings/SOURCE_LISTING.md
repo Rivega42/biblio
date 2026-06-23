@@ -10,11 +10,11 @@
 |---|---|
 | Продукт | Biblio — система автоматизации библиотек (АБИС) |
 | Дата сборки листинга | 2026-06-23 |
-| Версия кода (git) | `5a8acbf` |
+| Версия кода (git) | `8ca7290` |
 | Файлов в листинге | 160 |
-| Всего строк исходного кода | 51618 |
+| Всего строк исходного кода | 51644 |
 | Условных страниц (~55 строк) | 939 |
-| **SHA-256 всего листинга** | `738a804e9f47f8f0068c589545073529544ab5c867617516bc724222dd1d557d` |
+| **SHA-256 всего листинга** | `de80d2aaebae1c623394910c057589218b81f158e8781b0f56017c2cc73b9adb` |
 
 Перечень файлов и их контрольные суммы — в `MANIFEST.sha256.md`.
 
@@ -56691,7 +56691,7 @@
   116 | }
 ```
 
-### Файл: `irbis-web/frontend/src/reader/baseSearchForms.ts`  · строк: 165
+### Файл: `irbis-web/frontend/src/reader/baseSearchForms.ts`  · строк: 191
 
 ```ts
     1 | // Декларативные формы расширенного поиска под каждую базу — реплика боевого
@@ -56758,122 +56758,148 @@
    57 |     { label: 'Наличие «Электронная копия / полный текст»', prefix: "ed_filter", type: "bool" },
    58 |   ]},
    59 | 
-   60 |   // ── Аннотированный указатель пьес (с блоком «Роли») ───────────────────────
-   61 |   PLAY: { base: "Аннотированный указатель пьес", fields: [
+   60 |   // ── Статьи из книг и периодических изданий (код SBO) ──────────────────────
+   61 |   SBO: { base: "Статьи из книг и периодических изданий", fields: [
    62 |     { label: "Ключевые слова", prefix: "K", type: "text" },
-   63 |     { label: "Персоны", prefix: "A", type: "text" },
-   64 |     { label: "Заглавия", prefix: "TP", type: "text" },
-   65 |     { label: "Жанры и темы", prefix: "DES", type: "select" },
-   66 |     { label: "Время написания пьесы", prefix: "G", type: "text" },
-   67 |     { label: "Место написания пьесы", prefix: "MN", type: "text" },
-   68 |     { label: "Язык написания", prefix: "JZI", type: "text" },
-   69 |     { label: "Женские", prefix: "NJ", type: "text", group: "Роли" },
-   70 |     { label: "Мужские", prefix: "NM", type: "text", group: "Роли" },
-   71 |     { label: "Детские", prefix: "ND", type: "text", group: "Роли" },
-   72 |     { label: "Куклы", prefix: "NK", type: "text", group: "Роли" },
-   73 |     { label: "Животные", prefix: "NG", type: "text", group: "Роли" },
-   74 |     { label: "Сказочные персонажи", prefix: "NS", type: "text", group: "Роли" },
-   75 |     { label: "Без определения", prefix: "NO", type: "text", group: "Роли" },
-   76 |     { label: "Эпизодические", prefix: "NE", type: "text", group: "Роли" },
-   77 |     { label: "Количество действий", prefix: "KDP", type: "text" },
-   78 |     { label: "Время действия", prefix: "HS", type: "text" },
-   79 |     { label: "Место действия", prefix: "GEO", type: "text" },
-   80 |   ]},
-   81 | 
-   82 |   // ── Эскизный фонд ─────────────────────────────────────────────────────────
-   83 |   ESKIZ: { base: "Эскизный фонд", fields: [
-   84 |     { label: "Автор эскиза, художник", prefix: "AU", type: "text" },
-   85 |     { label: "Персоналия", prefix: "P", type: "text" },
-   86 |     { label: "Заглавие", prefix: "T", type: "text" },
+   63 |     { label: "Автор/Персоналия", prefix: "A", type: "text" },
+   64 |     { label: "Заглавие статьи", prefix: "T", type: "text" },
+   65 |     { label: "Предмет / тема", prefix: "S", type: "text" },
+   66 |     { label: "Наименование произведения", prefix: "NPS", type: "text" },
+   67 |     { label: "Коллектив / мероприятие", prefix: "M", type: "text" },
+   68 |     { label: "Год источника статьи", prefix: "GI", type: "text" },
+   69 |     { label: "Заглавие источника статьи", prefix: "TI", type: "text" },
+   70 |     { label: "Наличие «изоматериал»", prefix: "IZ606", type: "bool" },
+   71 |     { label: 'Наличие «Электронная копия изображения»', prefix: "ed_filter", type: "bool" },
+   72 |   ]},
+   73 | 
+   74 |   // ── Аннотированный указатель пьес (с блоком «Роли») ───────────────────────
+   75 |   PLAY: { base: "Аннотированный указатель пьес", fields: [
+   76 |     { label: "Ключевые слова", prefix: "K", type: "text" },
+   77 |     { label: "Персоны", prefix: "A", type: "text" },
+   78 |     { label: "Заглавия", prefix: "TP", type: "text" },
+   79 |     { label: "Жанры и темы", prefix: "DES", type: "select" },
+   80 |     { label: "Время написания пьесы", prefix: "G", type: "text" },
+   81 |     { label: "Место написания пьесы", prefix: "MN", type: "text" },
+   82 |     { label: "Язык написания", prefix: "JZI", type: "text" },
+   83 |     { label: "Женские", prefix: "NJ", type: "text", group: "Роли" },
+   84 |     { label: "Мужские", prefix: "NM", type: "text", group: "Роли" },
+   85 |     { label: "Детские", prefix: "ND", type: "text", group: "Роли" },
+   86 |     { label: "Куклы", prefix: "NK", type: "text", group: "Роли" },
 ```
 
 <!-- ─── страница 934 ─── -->
 
 ```ts
-   87 |     { label: "Коллектив / мероприятие", prefix: "M", type: "text" },
-   88 |     { label: "Ключевые слова", prefix: "K", type: "text" },
-   89 |     { label: "Год издания", prefix: "G", type: "year" },
-   90 |     { label: "Эскизы художников (комплекты)", prefix: "TS", type: "text" },
-   91 |     { label: "Характер документа", prefix: "HD", type: "select" },
-   92 |     { label: "Инвентарь", prefix: "IN", type: "text" },
-   93 |     { label: 'Наличие «Электронная копия / полный текст»', prefix: "ed_filter", type: "bool" },
+   87 |     { label: "Животные", prefix: "NG", type: "text", group: "Роли" },
+   88 |     { label: "Сказочные персонажи", prefix: "NS", type: "text", group: "Роли" },
+   89 |     { label: "Без определения", prefix: "NO", type: "text", group: "Роли" },
+   90 |     { label: "Эпизодические", prefix: "NE", type: "text", group: "Роли" },
+   91 |     { label: "Количество действий", prefix: "KDP", type: "text" },
+   92 |     { label: "Время действия", prefix: "HS", type: "text" },
+   93 |     { label: "Место действия", prefix: "GEO", type: "text" },
    94 |   ]},
    95 | 
-   96 |   // ── Иллюстративные и историко-бытовые материалы ───────────────────────────
-   97 |   HPO: { base: "Иллюстративные и историко-бытовые материалы", fields: [
-   98 |     { label: "Ключевые слова", prefix: "K", type: "text" },
-   99 |     { label: "Автор/Персоналия", prefix: "A", type: "text" },
-  100 |     { label: "Заглавие", prefix: "NSI", type: "text" },
-  101 |     { label: "Предмет / тема", prefix: "S", type: "text" },
-  102 |     { label: "Коллектив", prefix: "M", type: "text" },
-  103 |     { label: "Географическое наименование", prefix: "GST", type: "text" },
-  104 |     { label: "Народы", prefix: "GPN", type: "text" },
-  105 |     { label: "Хронология", prefix: "HS", type: "text" },
-  106 |     { label: "Наличие «изоматериал»", prefix: "IZ900", type: "bool" },
-  107 |     { label: 'Наличие «Электронная копия изображения»', prefix: "ed_filter", type: "bool" },
+   96 |   // ── Эскизный фонд ─────────────────────────────────────────────────────────
+   97 |   ESKIZ: { base: "Эскизный фонд", fields: [
+   98 |     { label: "Автор эскиза, художник", prefix: "AU", type: "text" },
+   99 |     { label: "Персоналия", prefix: "P", type: "text" },
+  100 |     { label: "Заглавие", prefix: "T", type: "text" },
+  101 |     { label: "Коллектив / мероприятие", prefix: "M", type: "text" },
+  102 |     { label: "Ключевые слова", prefix: "K", type: "text" },
+  103 |     { label: "Год издания", prefix: "G", type: "year" },
+  104 |     { label: "Эскизы художников (комплекты)", prefix: "TS", type: "text" },
+  105 |     { label: "Характер документа", prefix: "HD", type: "select" },
+  106 |     { label: "Инвентарь", prefix: "IN", type: "text" },
+  107 |     { label: 'Наличие «Электронная копия / полный текст»', prefix: "ed_filter", type: "bool" },
   108 |   ]},
   109 | 
-  110 |   // ── Собрание архивных документов (Фонд↔Опись, поле 488) ───────────────────
-  111 |   GUAR: { base: "Собрание архивных документов", fields: [
+  110 |   // ── Иллюстративные и историко-бытовые материалы ───────────────────────────
+  111 |   HPO: { base: "Иллюстративные и историко-бытовые материалы", fields: [
   112 |     { label: "Ключевые слова", prefix: "K", type: "text" },
-  113 |     { label: "Все фонды", prefix: "IFT", type: "text" },
-  114 |     { label: "Название фонда", prefix: "T", type: "text" },
-  115 |     { label: "Номер фонда", prefix: "IF", type: "select" },
-  116 |     { label: "Персоналия", prefix: "A", type: "text" },
-  117 |     { label: "Организация", prefix: "M", type: "text" },
-  118 |     { label: "Год создания документов", prefix: "DN", type: "year" },
-  119 |     { label: 'Наличие «Электронные копии»', prefix: "ed_filter", type: "bool" },
-  120 |   ]},
-  121 | 
-  122 |   // ── Указатель литературы о СПбГТБ (лёгкий пресет) ─────────────────────────
-  123 |   UKAZ: { base: "Указатель литературы о СПбГТБ", fields: [
-  124 |     { label: "Ключевые слова", prefix: "KT=FT!", type: "text" },
-  125 |     { label: "Автор и др. ответственные лица", prefix: "A", type: "text" },
-  126 |     { label: "Заглавие", prefix: "T", type: "text" },
-  127 |   ]},
-  128 | 
-  129 |   // ── Календарь премьер / хронологии (область «Дата события») ───────────────
-  130 |   // Сопоставление кода TUAR подтверждено как база с «Датой события»; набор взят
-  131 |   // от «Календаря премьер». Если на проде TUAR = «Хронологии» — поправлю.
-  132 |   TUAR: { base: "Календарь премьер петербургских театров", note: "уточнить: Календарь премьер или Хронологии", fields: [
-  133 |     { label: "Ключевые слова", prefix: "K", type: "text" },
-  134 |     { label: "Персоны", prefix: "A", type: "text" },
-  135 |     { label: "Спектакли / события", prefix: "TP", type: "text" },
-  136 |     { label: "Год события", prefix: "SG", type: "text", group: "Дата события" },
-  137 |     { label: "Месяц", prefix: "SM", type: "select", group: "Дата события" },
-  138 |     { label: "День", prefix: "SD", type: "select", group: "Дата события" },
-  139 |     { label: "Коллектив", prefix: "M", type: "text" },
-  140 |     { label: "Вид и тип события", prefix: "VTS", type: "select" },
-  141 |     { label: "Роли и представления", prefix: "RS", type: "text" },
+  113 |     { label: "Автор/Персоналия", prefix: "A", type: "text" },
+  114 |     { label: "Заглавие", prefix: "NSI", type: "text" },
+  115 |     { label: "Предмет / тема", prefix: "S", type: "text" },
+  116 |     { label: "Коллектив", prefix: "M", type: "text" },
+  117 |     { label: "Географическое наименование", prefix: "GST", type: "text" },
+  118 |     { label: "Народы", prefix: "GPN", type: "text" },
+  119 |     { label: "Хронология", prefix: "HS", type: "text" },
+  120 |     { label: "Наличие «изоматериал»", prefix: "IZ900", type: "bool" },
+  121 |     { label: 'Наличие «Электронная копия изображения»', prefix: "ed_filter", type: "bool" },
+  122 |   ]},
+  123 | 
+  124 |   // ── Собрание архивных документов (Фонд↔Опись, поле 488) ───────────────────
+  125 |   GUAR: { base: "Собрание архивных документов", fields: [
+  126 |     { label: "Ключевые слова", prefix: "K", type: "text" },
+  127 |     { label: "Все фонды", prefix: "IFT", type: "text" },
+  128 |     { label: "Название фонда", prefix: "T", type: "text" },
+  129 |     { label: "Номер фонда", prefix: "IF", type: "select" },
+  130 |     { label: "Персоналия", prefix: "A", type: "text" },
+  131 |     { label: "Организация", prefix: "M", type: "text" },
+  132 |     { label: "Год создания документов", prefix: "DN", type: "year" },
+  133 |     { label: 'Наличие «Электронные копии»', prefix: "ed_filter", type: "bool" },
+  134 |   ]},
+  135 | 
+  136 |   // ── Указатель литературы о СПбГТБ (лёгкий пресет) ─────────────────────────
+  137 |   UKAZ: { base: "Указатель литературы о СПбГТБ", fields: [
+  138 |     { label: "Ключевые слова", prefix: "KT=FT!", type: "text" },
+  139 |     { label: "Автор и др. ответственные лица", prefix: "A", type: "text" },
+  140 |     { label: "Заглавие", prefix: "T", type: "text" },
+  141 |   ]},
 ```
 
 <!-- ─── страница 935 ─── -->
 
 ```ts
-  142 |     { label: "Автор источника", prefix: "BA1", type: "text", group: "Библиографический источник" },
-  143 |     { label: "Заглавие источника", prefix: "BZ", type: "text", group: "Библиографический источник" },
-  144 |   ]},
-  145 | 
-  146 |   // ── Имидж-базы (иллюстративные коллекции) ─────────────────────────────────
-  147 |   // Общий «изо»-пресет. IMGZENZ ≈ драматическая цензура; уточнить отдельные поля.
-  148 |   IMAGE: { base: "Иллюстративные коллекции", note: "общий изо-пресет, уточнить", fields: [
-  149 |     { label: "Ключевые слова", prefix: "K", type: "text" },
-  150 |     { label: "Автор/Персоналия", prefix: "A", type: "text" },
-  151 |     { label: "Заглавие", prefix: "T", type: "text" },
-  152 |     { label: "Предмет / тема", prefix: "S", type: "text" },
-  153 |     { label: 'Наличие «Электронная копия изображения»', prefix: "ed_filter", type: "bool" },
-  154 |   ]},
-  155 | };
-  156 | // IMG-коллекции делят общий пресет до уточнения:
-  157 | for (const code of ["IMGBALET", "IMGOPERA", "IMGZENZ"]) {
-  158 |   BASE_SEARCH_FORMS[code] = { ...BASE_SEARCH_FORMS.IMAGE };
-  159 | }
-  160 | // Не включены (фолбэк на генерик-форму, требуют подтверждения состава):
-  161 | //   SBO — назначение кода не подтверждено.
-  162 | 
-  163 | export function baseFormFor(code: string): BaseFormDef | undefined {
-  164 |   return BASE_SEARCH_FORMS[code];
-  165 | }
+  142 | 
+  143 |   // ── Календарь премьер Петербургских театров (подтверждено по имени БД на проде) ──
+  144 |   TUAR: { base: "Календарь премьер Петербургских театров", fields: [
+  145 |     { label: "Ключевые слова", prefix: "K", type: "text" },
+  146 |     { label: "Персоны", prefix: "A", type: "text" },
+  147 |     { label: "Спектакли / события", prefix: "TP", type: "text" },
+  148 |     { label: "Год события", prefix: "SG", type: "text", group: "Дата события" },
+  149 |     { label: "Месяц", prefix: "SM", type: "select", group: "Дата события" },
+  150 |     { label: "День", prefix: "SD", type: "select", group: "Дата события" },
+  151 |     { label: "Коллектив", prefix: "M", type: "text" },
+  152 |     { label: "Вид и тип события", prefix: "VTS", type: "select" },
+  153 |     { label: "Роли и представления", prefix: "RS", type: "text" },
+  154 |     { label: "Автор источника", prefix: "BA1", type: "text", group: "Библиографический источник" },
+  155 |     { label: "Заглавие источника", prefix: "BZ", type: "text", group: "Библиографический источник" },
+  156 |   ]},
+  157 | 
+  158 |   // ── Картотека Всеволодского-Гернгросса (общий имидж-каталог) ───────────────
+  159 |   IMAGE: { base: "Картотека Всеволодского-Гернгросса", fields: [
+  160 |     { label: "Ключевые слова", prefix: "K", type: "text" },
+  161 |     { label: "Автор/Персоналия", prefix: "A", type: "text" },
+  162 |     { label: "Заглавие", prefix: "T", type: "text" },
+  163 |     { label: "Предмет / тема", prefix: "S", type: "text" },
+  164 |     { label: 'Наличие «Электронная копия изображения»', prefix: "ed_filter", type: "bool" },
+  165 |   ]},
+  166 | 
+  167 |   // ── Цензура пьес на языках народов Российской империи (имидж-каталог) ──────
+  168 |   IMGZENZ: { base: "Цензура пьес на языках народов Российской империи", fields: [
+  169 |     { label: "Ключевые слова", prefix: "KT=FT!", type: "text" },
+  170 |     { label: "Автор и др. ответственные лица", prefix: "A", type: "text" },
+  171 |     { label: "Заглавие", prefix: "T", type: "text" },
+  172 |     { label: "Язык", prefix: "J", type: "select" },
+  173 |   ]},
+  174 | 
+  175 |   // ── Либретто балетов / опер (имидж-каталог, лёгкий пресет) ─────────────────
+  176 |   IMGBALET: { base: "Либретто балетов", fields: [
+  177 |     { label: "Ключевые слова", prefix: "KT=FT!", type: "text" },
+  178 |     { label: "Автор и др. ответственные лица", prefix: "A", type: "text" },
+  179 |     { label: "Заглавие", prefix: "T", type: "text" },
+  180 |   ]},
+  181 |   IMGOPERA: { base: "Либретто опер, оперетт", fields: [
+  182 |     { label: "Ключевые слова", prefix: "KT=FT!", type: "text" },
+  183 |     { label: "Автор и др. ответственные лица", prefix: "A", type: "text" },
+  184 |     { label: "Заглавие", prefix: "T", type: "text" },
+  185 |   ]},
+  186 | };
+  187 | // Все 14 публичных баз СПб ГТБ покрыты per-base формами (SBO=Статьи добавлена).
+  188 | 
+  189 | export function baseFormFor(code: string): BaseFormDef | undefined {
+  190 |   return BASE_SEARCH_FORMS[code];
+  191 | }
 ```
 
 ### Файл: `irbis-web/frontend/src/reader/dbLayout.ts`  · строк: 47
@@ -56884,6 +56910,11 @@
     3 | //   list     — компактные строки (каталог книг);
     4 | //   gallery  — сетка обложек (используем существующий GalleryGrid);
     5 | //   calendar — группировка по дате/году/выпуску (периодика);
+```
+
+<!-- ─── страница 936 ─── -->
+
+```ts
     6 | //   archive  — плотные архивные строки (фонды, дела).
     7 | // Профиль выбирается по коду активной базы; неизвестные базы → дефолт (list+gallery).
     8 | // Пользовательский тумблер «Список/Галерея» по-прежнему работает там, где оба вида
@@ -56910,11 +56941,6 @@
    29 |   ARCH: { views: ["archive", "list"], hint: "Архив: дела и единицы хранения" },
    30 | };
    31 | 
-```
-
-<!-- ─── страница 936 ─── -->
-
-```ts
    32 | // Дефолт для неизвестных баз: список + галерея (как у книжного каталога).
    33 | const DEFAULT_PROFILE: DbLayoutProfile = { views: ["list", "gallery"] };
    34 | 
@@ -56949,6 +56975,11 @@
    11 | // (СПб ГТБ): фактические реквизиты (адрес/часы/контакты) и театральная специфика
    12 | // фонда. Содержимое — реалистичные плейсхолдеры в духе учреждения, НЕ копия
    13 | // чужого сайта.
+```
+
+<!-- ─── страница 937 ─── -->
+
+```ts
    14 | import type { IconName } from "../../components/icon/Icon";
    15 | 
    16 | export interface NewsItem {
@@ -56975,11 +57006,6 @@
    37 |   id: string;
    38 |   title: string;
    39 |   subtitle: string;
-```
-
-<!-- ─── страница 937 ─── -->
-
-```ts
    40 |   prefix: string;      // область поиска ИРБИС (K/A/T/...)
    41 |   query: string;       // поисковый термин
    42 |   icon: IconName;      // имя иконки из набора Icon
@@ -57009,6 +57035,11 @@
    66 | // Театральные подборки: каждая ведёт в поиск каталога по ключевым словам.
    67 | const THEATRE_COLLECTIONS: CollectionDef[] = [
    68 |   { id: "theatre", title: "Театр", subtitle: "Искусство сцены и режиссура", prefix: "K", query: "Театр", icon: "drama", tint: 2 },
+```
+
+<!-- ─── страница 938 ─── -->
+
+```ts
    69 |   { id: "drama", title: "Драматургия", subtitle: "Пьесы и инсценировки", prefix: "K", query: "Драматургия", icon: "book-open", tint: 1 },
    70 |   { id: "scenography", title: "Сценография", subtitle: "Декорации и сценический костюм", prefix: "K", query: "Сценография", icon: "image", tint: 0 },
    71 |   { id: "history", title: "История театра", subtitle: "От истоков до наших дней", prefix: "K", query: "История театра", icon: "stamp", tint: 3 },
@@ -57035,11 +57066,6 @@
    92 |   },
    93 |   {
    94 |     id: "n4", date: "2026-05-28", tag: "События",
-```
-
-<!-- ─── страница 938 ─── -->
-
-```ts
    95 |     title: "Открыта запись на летние экскурсии по фонду",
    96 |     excerpt: "Приглашаем на тематические экскурсии по историческому книгохранилищу. Запись по читательскому билету; число мест ограничено.",
    97 |   },
@@ -57069,6 +57095,11 @@
   121 |     excerpt: "Знакомство с редким фондом и закулисьем библиотечного хранения.",
   122 |   },
   123 |   {
+```
+
+<!-- ─── страница 939 ─── -->
+
+```ts
   124 |     id: "e4", date: "2026-07-11", dateLabel: "11 июля, 19:00",
   125 |     title: "Встреча с театральными исследователями",
   126 |     place: "Конференц-зал",
@@ -57095,11 +57126,6 @@
   147 | const PILOT: TenantContent = {
   148 |   editable: true,
   149 |   collections: THEATRE_COLLECTIONS,
-```
-
-<!-- ─── страница 939 ─── -->
-
-```ts
   150 |   news: THEATRE_NEWS,
   151 |   events: THEATRE_EVENTS,
   152 |   about: THEATRE_ABOUT,

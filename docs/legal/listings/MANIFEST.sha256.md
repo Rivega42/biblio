@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-23**
-- Версия кода (git): **`5a8acbf`**
-- Файлов: **160** · строк: **51618** · условных страниц: **939**
-- **SHA-256 всего листинга:** `738a804e9f47f8f0068c589545073529544ab5c867617516bc724222dd1d557d`
+- Версия кода (git): **`8ca7290`**
+- Файлов: **160** · строк: **51644** · условных страниц: **939**
+- **SHA-256 всего листинга:** `de80d2aaebae1c623394910c057589218b81f158e8781b0f56017c2cc73b9adb`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -167,6 +167,6 @@
 | `irbis-web/frontend/src/reader/SavedSearches.tsx` | 259 | `e3852cf9ea6d3d7dcd89bc095e79a0f9c3c395f810a1d3e77233618c5d765606` |
 | `irbis-web/frontend/src/reader/Shelves.tsx` | 278 | `987f8c741aded51fc664db6101ad28da810c38b58394adebea1d8a43ed0665bf` |
 | `irbis-web/frontend/src/reader/Showcase.tsx` | 116 | `a9889d2a8c71e0ee60d8c1dc5ac02b1708d35c193b24e44968ed1e4cf7e19189` |
-| `irbis-web/frontend/src/reader/baseSearchForms.ts` | 165 | `3459d11666043e2c05014df8fbb6e93e878abb0d9cd3bc1dceb29e951e72a9cc` |
+| `irbis-web/frontend/src/reader/baseSearchForms.ts` | 191 | `fd06bbcc7676dd12ed9bcd32ba499b1a4bd73a7c3abc479a2183bd67bccf4cc7` |
 | `irbis-web/frontend/src/reader/dbLayout.ts` | 47 | `c2ac61d0432bc2e0484663eab46a05fb7f46b6633c17550255ec691d78dde893` |
 | `irbis-web/frontend/src/reader/tenantContent.ts` | 177 | `56804e8b28f830bff69cf311ac7f9f601effcb563b1f8a560107c8ccc99ab827` |
