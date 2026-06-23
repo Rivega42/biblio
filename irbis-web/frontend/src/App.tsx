@@ -104,7 +104,7 @@ function recView(d: RecordData) {
     return { name: name.trim(), url: isUrl ? (link.trim().startsWith("www.") ? "http://" + link.trim() : link.trim()) : "" };
   }).filter((x) => x.name || x.url);
   const rawRows = d.fields.map((x) => `<tr><td style="color:var(--text-subtle);font-family:var(--font-mono);padding-right:12px;vertical-align:top">${x.tag}</td><td style="font-family:var(--font-mono);font-size:12px">${esc(x.value)}</td></tr>`).join("");
-  return { brief: d.brief || "", meta, subjects, holds, files, rawRows };
+  return { brief: d.brief || "", meta, authorsList: authors.concat(orgs), subjects, holds, files, rawRows };
 }
 
 export function App() {
@@ -280,7 +280,7 @@ export function App() {
     setQ(v); clearTimeout(tRef.current);
     if (v.trim().length < 2) { setSug([]); return; }
     tRef.current = setTimeout(async () => {
-      const r = await api.terms(prefix + "=" + v.toUpperCase(), 8);
+      const r = await api.terms(prefix + "=" + v.toUpperCase(), 8, db);
       if (r.json?.ok && r.json.data) setSug(r.json.data.terms.filter((t) => t.term.indexOf(prefix + "=") === 0).map((t) => ({ term: t.term.slice(prefix.length + 1), count: t.count })));
     }, 200);
   }
@@ -578,8 +578,11 @@ export function App() {
               </div>
             )}
             {/* Хлебные крошки + контекст запроса (что и где искали + сколько найдено). */}
-            <SearchBreadcrumb db={dbName} mode={mode} prefix={prefix} prefixes={PREFIXES}
-              query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome} />
+            <SearchBreadcrumb db={dbName} dbCode={db} databases={databases.filter((d) => d.public)} mode={mode} prefix={prefix} prefixes={PREFIXES}
+              query={q} expr={baseExpr || expertExpr} total={total} loading={loading} onHome={goHome}
+              onBase={(code) => { setAllDbs(false); setDb(code); runSearch(code, prefix, q, 1); }}
+              onPrefix={(px) => { setPrefix(px); runSearch(allDbs ? ALL_DBS : db, px, q, 1); }}
+              onResearch={() => runSearch(allDbs ? ALL_DBS : db, prefix, q, 1)} />
             {loading && !items.length ? <div style={{ color: "var(--text-subtle)" }}>Поиск…</div> :
               total === 0 && !activeFacets.length ? (
                 <div>
@@ -633,7 +636,7 @@ export function App() {
                                   const itDbName = (databases.find((d) => d.code === itDb)?.name) || itDb;
                                   return (
                                   <div key={itDb + ":" + it.mfn} style={{ position: "relative" }}>
-                                    <ResultCard item={it} dbTag={itDbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn, itDb)} />
+                                    <ResultCard item={(it as any).hasCover ? { ...it, thumb: api.coverUrl(itDb, it.mfn) } : it} showThumb={true} dbTag={itDbName} typeIcon="book" showCheck={true} checked={inBasket(it.mfn)} onToggleCheck={() => toggleBasket(it)} onOpen={() => openRecord(it.mfn, itDb)} />
                                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0 2px 0", paddingLeft: 4 }}>
                                       <button type="button" onClick={() => hold(it.mfn, itDb)} title="Забронировать"
                                         style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "transparent", color: "var(--text-body)", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)" }}>
@@ -657,20 +660,24 @@ export function App() {
           </>
         )}
 
-        {rec && (
+        {rec && (() => { const navList = sortItems(items, sort); const ni = navList.findIndex((it) => it.mfn === rec.mfn && (it.db || db) === rec.db); return (
           <RecordCard
             rec={rec} db={DB} tab={recTab} setTab={setRecTab}
             shareOpen={shareOpen} setShareOpen={setShareOpen}
             permalink={permalink()} onCopyPermalink={copyPermalink}
             onBack={closeRecord} onOrder={() => order(rec.mfn)} onHold={() => hold(rec.mfn, rec.db)}
             onSubject={(t: string) => { setMode("simple"); setPrefix("K"); setQ(t); closeRecord(); runSearch(db, "K", t, 1); }}
+            onAuthor={(t: string) => { setMode("simple"); setPrefix("A"); setQ(t); closeRecord(); runSearch(db, "A", t, 1); }}
             loggedIn={account.loggedIn} readerName={cab?.name} toast={toast}
             onOpenRecord={(database, mfn) => openRecord(mfn, database)}
             onViewDoc={(pages, idx, title) => setDocView({ pages, idx, title })}
             inBasket={inBasket(rec.mfn)}
             onToggleBasket={() => toggleBasket({ mfn: rec.mfn, title: rec.brief || "", author: recView(rec).meta.find((m) => m.label === "Авторы")?.value, year: recView(rec).meta.find((m) => m.label === "Выходные данные")?.value })}
+            pos={ni >= 0 ? { idx: ni, total: navList.length } : undefined}
+            onPrev={ni > 0 ? () => { const p = navList[ni - 1]; openRecord(p.mfn, p.db || db); } : undefined}
+            onNext={ni >= 0 && ni < navList.length - 1 ? () => { const n = navList[ni + 1]; openRecord(n.mfn, n.db || db); } : undefined}
           />
-        )}
+        ); })()}
         </>
         )}
       </main>
@@ -747,24 +754,39 @@ function DidYouMean({ suggestions, onPick }: {
 // тулбара (тот показывает счётчик/страницу; крошки — путь и сам запрос). Для
 // простого поиска показываем область (Автор/Заглавие/…) и термин; для расш./эксп.
 // — компактное выражение.
-function SearchBreadcrumb({ db, mode, prefix, prefixes, query, expr, total, loading, onHome }: {
-  db: string; mode: "simple" | "advanced" | "expert";
+function SearchBreadcrumb({ db, dbCode, databases, mode, prefix, prefixes, query, expr, total, loading, onHome, onBase, onPrefix, onResearch }: {
+  db: string; dbCode?: string; databases?: { code: string; name?: string; public?: boolean }[];
+  mode: "simple" | "advanced" | "expert";
   prefix: string; prefixes: { code: string; label: string }[];
   query: string; expr: string; total: number; loading: boolean; onHome: () => void;
+  onBase?: (code: string) => void; onPrefix?: (code: string) => void; onResearch?: () => void;
 }) {
   const term = mode === "simple" ? query.trim() : (expr || "").trim();
   if (!term) return null;
   const areaLabel = mode === "simple" ? (prefixes.find((p) => p.code === prefix)?.label || "") : "";
   const crumbSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-subtle)" };
+  const pickSx: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "none", borderBottom: "1px dashed var(--accent)", padding: "0 2px", cursor: "pointer", font: "inherit" };
+  const pub = (databases || []).filter((d) => d.public !== false);
+  const baseOk = mode === "simple" && !!onBase && pub.length > 1 && !!dbCode;
+  const areaOk = mode === "simple" && !!onPrefix && !!areaLabel;
   return (
     <nav aria-label="Хлебные крошки" style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", margin: "0 0 12px" }}>
       <button onClick={onHome} style={{ ...crumbSx, background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
         <Icon name="book" size={13} /> Главная
       </button>
       <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
-      <span style={crumbSx}>Поиск в «{db}»{areaLabel ? " · " + areaLabel : ""}</span>
+      <span style={crumbSx}>Поиск в{" "}
+        {baseOk
+          ? <select value={dbCode} onChange={(e) => onBase!(e.target.value)} title="Выбрать базу" style={pickSx}>{pub.map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}</select>
+          : <b style={{ color: "var(--text-body)", fontWeight: 600 }}>«{db}»</b>}
+        {areaLabel ? (areaOk
+          ? <> · <select value={prefix} onChange={(e) => onPrefix!(e.target.value)} title="Область поиска" style={pickSx}>{prefixes.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}</select></>
+          : <> · {areaLabel}</>) : null}
+      </span>
       <Icon name="chevron-right" size={12} style={{ color: "var(--text-subtle)", opacity: .7 }} />
-      <span style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={term}>«{term}»</span>
+      {onResearch
+        ? <button onClick={onResearch} title="Повторить поиск" style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "none", border: "none", cursor: "pointer", padding: 0 }}>«{term}»</button>
+        : <span style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: 600, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={term}>«{term}»</span>}
       {!loading && (
         <span style={{ marginLeft: 4, fontSize: "var(--text-2xs,11px)", color: "var(--text-subtle)", background: "var(--surface-sunken)", borderRadius: 999, padding: "2px 9px", fontVariantNumeric: "tabular-nums" }}>
           найдено {total.toLocaleString("ru-RU")}
@@ -1109,15 +1131,16 @@ const REC_TABS = ["Полное описание", "Поля", "Экземпля
 const TAB_HOLDINGS = 2;
 const TAB_FILES = 3;
 
-function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, loggedIn, readerName, toast, onOpenRecord, onViewDoc, inBasket, onToggleBasket }: {
+function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, onCopyPermalink, onBack, onOrder, onHold, onSubject, onAuthor, loggedIn, readerName, toast, onOpenRecord, onViewDoc, inBasket, onToggleBasket, pos, onPrev, onNext }: {
   rec: RecordData; db: string; tab: number; setTab: (n: number) => void;
   shareOpen: boolean; setShareOpen: (b: boolean) => void;
   permalink: string; onCopyPermalink: () => void;
-  onBack: () => void; onOrder: () => void; onHold: () => void; onSubject: (t: string) => void;
+  onBack: () => void; onOrder: () => void; onHold: () => void; onSubject: (t: string) => void; onAuthor: (t: string) => void;
   loggedIn: boolean; readerName?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
   onOpenRecord: (db: string, mfn: number) => void;
   onViewDoc: (pages: DocPage[], idx: number, title?: string) => void;
   inBasket: boolean; onToggleBasket: () => void;
+  pos?: { idx: number; total: number }; onPrev?: () => void; onNext?: () => void;
 }) {
   const v = recView(rec);
   // «Полное описание» (#1): серверный формат ИРБИС. Цепочка деградации
@@ -1172,7 +1195,16 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
   });
   return (
     <div>
-      <Button iconLeft="arrow-left" onClick={onBack}>К результатам</Button>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <Button iconLeft="arrow-left" onClick={onBack}>К результатам</Button>
+        {pos && pos.total > 1 && (
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: "auto" }} aria-label="Навигация по записям">
+            <button type="button" onClick={onPrev} disabled={!onPrev} title="Предыдущая запись" aria-label="Предыдущая запись" style={{ display: "inline-flex", background: "transparent", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 9px", cursor: onPrev ? "pointer" : "not-allowed", opacity: onPrev ? 1 : .4 }}><Icon name="chevron-left" size={16} /></button>
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{pos.idx + 1} из {pos.total}</span>
+            <button type="button" onClick={onNext} disabled={!onNext} title="Следующая запись" aria-label="Следующая запись" style={{ display: "inline-flex", background: "transparent", border: "1px solid var(--border-strong,#cdd3da)", borderRadius: 8, padding: "5px 9px", cursor: onNext ? "pointer" : "not-allowed", opacity: onNext ? 1 : .4 }}><Icon name="chevron-right" size={16} /></button>
+          </div>
+        )}
+      </div>
       <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
         {rec.hasCover && <img alt="обложка" src={api.coverUrl(db, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
         <div style={{ flex: 1, minWidth: 300 }}>
@@ -1258,7 +1290,7 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
               <div>
                 {v.meta.length > 0 ? (
                   <dl style={{ display: "grid", gridTemplateColumns: "minmax(120px,160px) 1fr", gap: "6px 14px", margin: "0 0 4px", fontSize: "var(--text-sm)" }}>
-                    {v.meta.map((m, i) => <React.Fragment key={i}><dt style={{ color: "var(--text-subtle)" }}>{m.label}</dt><dd style={{ margin: 0 }}>{m.value}</dd></React.Fragment>)}
+                    {v.meta.map((m, i) => <React.Fragment key={i}><dt style={{ color: "var(--text-subtle)" }}>{m.label}</dt><dd style={{ margin: 0 }}>{m.label === "Авторы" && v.authorsList.length ? <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{v.authorsList.map((a, j) => { const term = a.split(",")[0].trim(); return <span key={j} role="button" tabIndex={0} title={"Все книги: " + term} onClick={() => onAuthor(term)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onAuthor(term); } }} style={{ cursor: "pointer", color: "var(--accent)", textDecoration: "underline", textUnderlineOffset: 2 }}>{a}</span>; })}</span> : m.value}</dd></React.Fragment>)}
                   </dl>
                 ) : <div style={{ color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Описание отсутствует.</div>}
                 {v.subjects.length > 0 && <div style={{ marginTop: 18 }}><div style={lbl}>Темы и рубрики</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

@@ -886,6 +886,21 @@ class Api:
         password = body.get('password', '') or ''
         tenant = self._tenant_of(body)
         store = self._store_for(tenant)
+        # Демо/QA-читатель (env-gated, по умолчанию ВЫКЛ). Когда заданы оба
+        # TEST_READER_TICKET/TEST_READER_PASS — вход в портал по этому
+        # билет+паролю БЕЗ записи RDR: ИРБИС не трогаем, auth реальных читателей
+        # (ниже) не ослабляем. Только для пилотов/демо.
+        demo_ticket = self.cfg.test_reader_ticket
+        demo_pass = self.cfg.test_reader_pass
+        if demo_ticket and demo_pass and ticket == demo_ticket:
+            if password != demo_pass:
+                store.audit('RI=%s' % ticket, 'auth.reader', None, None, 'denied')
+                return 401, err('auth_failed', 'invalid credentials')
+            token, _ = self._new_session('reader', 'RI=%s' % ticket, READER_GRANTS,
+                                         tenant=tenant, rdr_mfn=0)
+            store.audit('RI=%s' % ticket, 'auth.reader', None, None, 'ok_demo')
+            return 200, ok({'token': token, 'kind': 'reader',
+                            'name': 'Демо-читатель', 'mfn': 0, 'demo': True})
         try:
             _count, mfns = self.irbis.search('RDR', '"RI=%s"' % ticket)
         except IrbisError:
