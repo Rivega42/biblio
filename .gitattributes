@@ -1,0 +1,2 @@
+# Shell-скрипты деплоятся на Linux — всегда LF (CRLF в shebang ломает интерпретатор).
+*.sh text eol=lf

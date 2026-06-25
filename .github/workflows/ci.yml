@@ -70,6 +70,29 @@ jobs:
           ACCESS_PG_DSN: postgresql://postgres:postgres@127.0.0.1:5432/irbis_access
         run: python irbis-web/backend/tests/test_access.py
 
+      # ──────────────────────────────────────────────────────────────────────
+      # Полный набор движков + роутов (sqlite-режим). Раньше CI гонял только
+      # test_access.py — десятки тестов (circulation/acquisition/catalog/authority/
+      # flk/ko/bookprovision/identity/…) НЕ были под гейтом. Этот шаг закрывает
+      # пробел: любая правка движков ловится до прода (предохранитель для вывода
+      # staff-АРМов). irbis_mst/benchmark требуют живого ИРБИС → исключены.
+      # Все 41 standalone-теста проходят headless (классифицировано прогоном CI
+      # 28153665217: 41 PASS / 0 FAIL / 2 skip-irbis) → ЖЁСТКИЙ гейт без исключений.
+      - name: Engine + route suite (sqlite)
+        run: |
+          fail=0
+          for f in irbis-web/backend/tests/test_*.py; do
+            case "$f" in
+              */test_access.py) continue;;
+              */test_irbis_mst.py|*/test_benchmark.py) echo "skip(irbis) $f"; continue;;
+            esac
+            echo "::group::$f"
+            if python "$f"; then echo "PASS $f"; else echo "FAIL $f"; fail=1; fi
+            echo "::endgroup::"
+          done
+          echo "engine-suite combined exit=$fail"
+          exit $fail
+
   # ---------------------------------------------------------------------------
   # OpenAPI contract must lint clean. Redocly exits non-zero on any error.
   # ---------------------------------------------------------------------------
