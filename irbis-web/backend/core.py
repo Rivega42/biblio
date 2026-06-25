@@ -939,6 +939,12 @@ class Api:
             rec = self.irbis.read_record(db, mfn)
         except IrbisError:
             return {'mfn': mfn, 'title': 'MFN %d' % mfn, 'availability': 'unknown'}
+        return self._brief_from_record(mfn, rec)
+
+    def _brief_from_record(self, mfn, rec):
+        """Тот же структурный бриф, но из УЖЕ загруженной записи — чтобы own-index
+        путь поиска (#229, в обход сломанного ИРБИС-K=) строил идентичную форму
+        карточки без чтения записи из ИРБИС по каждому MFN."""
         title = sf(field(rec, '200'), 'A') or sf(field(rec, '200'), 'a')
         au = field(rec, '700')
         author = ''
