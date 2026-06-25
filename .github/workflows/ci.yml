@@ -76,10 +76,9 @@ jobs:
       # flk/ko/bookprovision/identity/…) НЕ были под гейтом. Этот шаг закрывает
       # пробел: любая правка движков ловится до прода (предохранитель для вывода
       # staff-АРМов). irbis_mst/benchmark требуют живого ИРБИС → исключены.
-      # ПЕРВЫЙ прогон — информационный (continue-on-error): классифицируем зелёные
-      # по логам, затем включаем как жёсткий гейт по зелёному списку.
+      # Все 41 standalone-теста проходят headless (классифицировано прогоном CI
+      # 28153665217: 41 PASS / 0 FAIL / 2 skip-irbis) → ЖЁСТКИЙ гейт без исключений.
       - name: Engine + route suite (sqlite)
-        continue-on-error: true
         run: |
           fail=0
           for f in irbis-web/backend/tests/test_*.py; do
