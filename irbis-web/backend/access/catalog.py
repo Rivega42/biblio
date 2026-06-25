@@ -834,6 +834,37 @@ class CatalogStore:
             })
         return {'total': total, 'items': items, 'prefix': prefix, 'term': term}
 
+    def search_records(self, db, expr, limit=20, offset=0):
+        """Как ``search``, но возвращает РАЗОБРАННЫЕ записи (не PFT-бриф), чтобы
+        вызывающий построил свою форму карточки. Одиночный ``PREFIX=term``;
+        хвостовой ``$`` => префиксное совпадение (усечение). Возврат
+        ``{total, items:[{mfn, record}], prefix, term}`` (#229 — own-index поиск
+        за флагом OWN_SEARCH_DBS, в обход сломанного ИРБИС-K=)."""
+        prefix, term = parse_expr(expr)
+        trunc = term.endswith('$')
+        base = _norm(term[:-1] if trunc else term)
+        conn = self._conn()
+        if trunc:
+            esc = base.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            cond = "ri.prefix=? AND ri.term_norm LIKE ? ESCAPE '\\'"
+            targs = (prefix, esc + '%')
+        else:
+            cond = 'ri.prefix=? AND ri.term_norm=?'
+            targs = (prefix, base)
+        total = conn.execute(
+            'SELECT COUNT(DISTINCT r.id) AS n FROM record_index ri '
+            'JOIN record r ON r.id = ri.record_id '
+            "WHERE r.db=? AND r.status='active' AND " + cond,
+            (db,) + targs).fetchone()['n']
+        rows = conn.execute(
+            'SELECT DISTINCT r.id, r.mfn, r.data_json FROM record_index ri '
+            'JOIN record r ON r.id = ri.record_id '
+            "WHERE r.db=? AND r.status='active' AND " + cond +
+            ' ORDER BY r.mfn LIMIT ? OFFSET ?',
+            (db,) + targs + (limit, offset)).fetchall()
+        items = [{'mfn': r['mfn'], 'record': json.loads(r['data_json'])} for r in rows]
+        return {'total': total, 'items': items, 'prefix': prefix, 'term': term}
+
     # ------------------------------------------------------------------- #
     # Поиск-по-связи иерархии записей (INTEGRATION_MAP кластер 9, рёбра
     # 9.1/9.2/9.3). Связь хранится как повтор ключа издания-хозяина в поле-связи

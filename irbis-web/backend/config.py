@@ -67,6 +67,14 @@ class Config:
         _pub = os.environ.get('IRBIS_PUBLIC_DBS', 'IBIS')
         self.public_dbs = frozenset(
             d.strip().upper() for d in _pub.replace(';', ',').replace(' ', ',').split(',') if d.strip())
+        # #229: базы, поиск по которым обслуживается из НАШЕГО индекса (CatalogStore
+        # FTS) в обход ИРБИС — например, чтобы обойти сломанный индекс K=. Дефолт
+        # ПУСТО → весь поиск идёт через ИРБИС, поведение не меняется. Требует
+        # предварительной индексации базы в CatalogStore (ops-миграция). Только
+        # одиночные префиксные запросы; составные (+/*/^) пока всегда через ИРБИС.
+        _own = os.environ.get('OWN_SEARCH_DBS', '')
+        self.own_search_dbs = frozenset(
+            d.strip().upper() for d in _own.replace(';', ',').replace(' ', ',').split(',') if d.strip())
         # Access store: sqlite path (dev) or Postgres DSN (prod) — ADR-004
         self.access_db = os.environ.get('ACCESS_DB', os.path.join(here, 'access.db'))
         self.pg_dsn = os.environ.get('PG_DSN', '')      # prod: postgresql://...
