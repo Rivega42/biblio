@@ -53,6 +53,27 @@ def _title(rec):
     return vals[0] if vals else ''
 
 
+def _route_check():
+    """Активация маршрута /api/search за флагом OWN_SEARCH_DBS через Api: одиночный
+    префиксный запрос по EK обслуживается из нашего индекса (source='own')."""
+    os.environ['ACCESS_DB'] = ':memory:'
+    os.environ.setdefault('APP_SECRET', 'own-search-test')
+    import core as _core
+    from access.authz import GUEST_GRANTS
+    api = _core.Api()
+    seed_vocab.seed_vocabularies(api.access, from_catalog=False)
+    api.catalog = CatalogStore(':memory:', access_store=api.access)
+    api.cfg.public_dbs = frozenset(set(api.cfg.public_dbs) | {'EK'})
+    api.cfg.own_search_dbs = frozenset({'EK'})
+    api.catalog.save('EK', _book('Чайка', 'Чехов А.П.', ['пьеса', 'театр'], '5001'))
+    _tok, sess = api._new_session('guest', 'guest', GUEST_GRANTS, tenant='public')
+    code, body = api.search(sess, 'EK', 'K=театр', 1, 20)
+    data = body.get('data', {}) if isinstance(body, dict) else {}
+    check('route: 200', code == 200)
+    check('route: source=own (обошли ИРБИС)', data.get('source') == 'own')
+    check('route: нашёл запись по K=', any(i.get('title') == 'Чайка' for i in data.get('items', [])))
+
+
 def main():
     cat = _store()
     cat.save('EK', _book('Основы каталогизации', 'Петров П.П.', ['каталогизация', 'библиография'], '1001'))
@@ -87,12 +108,25 @@ def main():
     r = cat.search_records('PERIO', 'K=каталогизация')
     check('db-scoped: другая БД пуста', r['total'] == 0)
 
+    # 6b. search_items — структурная карточка (та же форма, что /api/search).
+    si = cat.search_items('EK', 'A=Петров П.П.')
+    check('search_items: верная карточка',
+          bool(si['items']) and si['items'][0]['title'] == 'Основы каталогизации')
+    check('search_items: availability из 910^a',
+          bool(si['items']) and si['items'][0]['availability'] == 'available')
+    check('search_items: contract-поля',
+          bool(si['items']) and set(si['items'][0]) >= {'mfn', 'title', 'author', 'year',
+                                                        'docType', 'availability', 'hasCover'})
+
     # 7. Конфиг-флаг OWN_SEARCH_DBS парсится (csv, upper).
     os.environ['OWN_SEARCH_DBS'] = 'ek, perio'
     from config import Config
     cfg = Config()
     check('OWN_SEARCH_DBS -> upper frozenset', cfg.own_search_dbs == frozenset({'EK', 'PERIO'}))
     os.environ.pop('OWN_SEARCH_DBS', None)
+
+    # 8. Маршрут /api/search за флагом (через Api) — активация + source='own'.
+    _route_check()
 
     print('%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)

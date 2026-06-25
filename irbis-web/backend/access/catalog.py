@@ -295,6 +295,33 @@ def _field_values(record, field, subfield=None):
     return out
 
 
+def brief_item_from_record(mfn, record):
+    """Структурная карточка результата (mfn/title/author/year/docType/availability/
+    hasCover) из НАШЕЙ tag-keyed записи — зеркало Api._brief_from_record, но через
+    _field_values (регистр подполя нечувствителен). Чтобы own-индекс отдавал поиск
+    под тем же контрактом /api/search, в обход сломанного ИРБИС-K= (#229/#262)."""
+    def first(field, sub=None):
+        vals = _field_values(record, field, sub)
+        return vals[0] if vals else ''
+    title = first('200', 'a')
+    author = first('700', 'a')
+    if author:
+        g = first('700', 'g')
+        if g:
+            author = author + ', ' + g
+    else:
+        author = first('200', 'f')
+    year = first('210', 'd')
+    doctype = first('900', 't') or first('900', 'b')
+    avail = 'unknown'
+    holds = _field_values(record, '910', 'a')
+    if holds:
+        avail = 'available' if holds[0] in ('0', '') else 'issued'
+    return {'mfn': mfn, 'title': title or ('MFN %d' % mfn), 'author': author,
+            'year': year, 'docType': doctype, 'availability': avail,
+            'hasCover': bool(_instances(record, '953'))}
+
+
 def _norm(term):
     """Normalize a term for matching (casefold + trim). ИРБИS inverted terms are
     matched case-insensitively; we keep the original ``term`` for display."""
@@ -864,6 +891,14 @@ class CatalogStore:
             (db,) + targs + (limit, offset)).fetchall()
         items = [{'mfn': r['mfn'], 'record': json.loads(r['data_json'])} for r in rows]
         return {'total': total, 'items': items, 'prefix': prefix, 'term': term}
+
+    def search_items(self, db, expr, limit=20, offset=0):
+        """Как ``search_records``, но возвращает СТРУКТУРНЫЕ карточки той же формы,
+        что ИРБИС-путь /api/search (через ``brief_item_from_record``). Это вход для
+        маршрута own-индекса за флагом OWN_SEARCH_DBS (#262)."""
+        res = self.search_records(db, expr, limit, offset)
+        res['items'] = [brief_item_from_record(it['mfn'], it['record']) for it in res['items']]
+        return res
 
     # ------------------------------------------------------------------- #
     # Поиск-по-связи иерархии записей (INTEGRATION_MAP кластер 9, рёбра
