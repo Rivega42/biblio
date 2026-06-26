@@ -82,6 +82,13 @@ services:
       # #262: базы, чей поиск идёт из СОБСТВЕННОГО индекса (CatalogStore) в обход
       # ИРБИС (напр. сломанный K=). Пусто → весь поиск через ИРБИС (как раньше).
       OWN_SEARCH_DBS: ${OWN_SEARCH_DBS:-}
+      # Узел 3 MVP-2b: вход через внешний OIDC (Яндекс/Сбер/ЕСИА). OFF по
+      # умолчанию (OIDC_PROVIDER пуст). Креды — только из окружения/.env, не в код.
+      OIDC_PROVIDER: ${OIDC_PROVIDER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      OIDC_DB: ${OIDC_DB:-/data/oidc.db}
     volumes:
       - backend-data:/data
     # No host port published — the proxy reaches the backend over the compose
