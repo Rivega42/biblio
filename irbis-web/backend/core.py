@@ -42,6 +42,8 @@ from access import locker as _locker
 from access import readers as _readers
 from access import tag_codec as _tag_codec
 from access import reader_agent as _reader_agent
+from access import inventory as _inventory
+from access import vision as _vision
 from access import compat_devices as _compat_devices
 from access import demo_requests as _demo_requests
 from access.catalog import CatalogStore
@@ -646,10 +648,25 @@ class Api:
             self.reader_agent = _reader_agent.ReaderAgentService(codec=_tag_codec)
         except Exception:
             self.reader_agent = None
+        # Фаза 2: ТСД-инвентаризация фонда + камеры/FaceID. Свои own-store домены
+        # (env INVENTORY_DB / VISION_DB). vision хранит только токены лиц, не
+        # биометрию. Реконсиляция инвентаризации с каталогом — отдельный адаптер
+        # (нужен индекс «место→экземпляры»), пока catalog-сид не подключён. Best-effort.
+        try:
+            inv_db = os.environ.get('INVENTORY_DB', os.path.join(here, 'inventory.db'))
+            self.inventory = _inventory.InventoryService(_inventory.InventoryStore(inv_db))
+        except Exception:
+            self.inventory = None
+        try:
+            vis_db = os.environ.get('VISION_DB', os.path.join(here, 'vision.db'))
+            self.vision = _vision.VisionService(_vision.VisionStore(vis_db))
+        except Exception:
+            self.vision = None
         try:
             self.compat_devices = _compat_devices.CompatDevicesService(
                 devices=self.devices, readers=self.readers, holds=self.holds,
                 circulation=_circ_adapter, locker=self.locker, codec=_tag_codec,
+                inventory=self.inventory, vision=self.vision,
                 legacy_pass=os.environ.get('EASYBOOK_LEGACY_PASS'))
         except Exception:
             self.compat_devices = None
