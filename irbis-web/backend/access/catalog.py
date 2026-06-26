@@ -348,6 +348,41 @@ def parse_expr(expr):
     return ('T', s)
 
 
+def _tokenize_search_expr(expr):
+    """Токенизировать ИРБИС-K-выражение в список токенов:
+    ``('op', '(')|')'|'+'|'*'|'^'`` и ``('term', '<PREFIX=term[$]>')``. Внутри
+    кавычек — литерал; снаружи операторы/скобки разделяют термины (#262)."""
+    toks = []
+    s = expr or ''
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c in '()+*^':
+            toks.append(('op', c))
+            i += 1
+            continue
+        if c == '"':
+            j = s.find('"', i + 1)
+            if j == -1:
+                j = n
+            toks.append(('term', s[i + 1:j]))
+            i = j + 1
+            continue
+        # bare-термин: значение может содержать пробелы (напр. ``A=Чехов А.П.``),
+        # поэтому читаем до ОПЕРАТОРА/скобки/кавычки (не до пробела) и обрезаем края.
+        j = i
+        while j < n and s[j] not in '()+*^"':
+            j += 1
+        term = s[i:j].strip()
+        if term:
+            toks.append(('term', term))
+        i = j
+    return toks
+
+
 class CatalogError(Exception):
     """A catalog operation error (record not found, etc.)."""
 
@@ -862,15 +897,47 @@ class CatalogStore:
         return {'total': total, 'items': items, 'prefix': prefix, 'term': term}
 
     def search_records(self, db, expr, limit=20, offset=0):
-        """Как ``search``, но возвращает РАЗОБРАННЫЕ записи (не PFT-бриф), чтобы
-        вызывающий построил свою форму карточки. Одиночный ``PREFIX=term``;
-        хвостовой ``$`` => префиксное совпадение (усечение). Возврат
-        ``{total, items:[{mfn, record}], prefix, term}`` (#229 — own-index поиск
-        за флагом OWN_SEARCH_DBS, в обход сломанного ИРБИС-K=)."""
-        prefix, term = parse_expr(expr)
+        """Поиск по выражению — ОДИНОЧНОМУ ``PREFIX=term`` ИЛИ СОСТАВНОМУ ИРБИС-K
+        (``+`` ИЛИ · ``*`` И · ``^`` НЕ · скобки · кавычки · ``$`` усечение). Возврат
+        ``{total, items:[{mfn, record}], expr}`` в порядке mfn (#229/#262 — own-index
+        поиск за флагом OWN_SEARCH_DBS, в обход сломанного ИРБИС-K=; покрывает и
+        дефолтный мультиполевой запрос портала ``("T=q$" + "A=q$" + "K=q$")``)."""
+        conn = self._conn()
+        ids = self._eval_search_expr(conn, db, expr)
+        total = len(ids)
+        if not ids:
+            return {'total': 0, 'items': [], 'expr': expr}
+        # Упорядочим по mfn и возьмём страницу. id-множество тащим чанками, чтобы
+        # не упереться в лимит числа параметров SQLite на больших выборках.
+        ordered = sorted(self._mfns_for_ids(conn, ids), key=lambda r: r['mfn'])
+        page = ordered[offset:offset + limit]
+        if not page:
+            return {'total': total, 'items': [], 'expr': expr}
+        page_ids = [r['id'] for r in page]
+        ph = ','.join('?' * len(page_ids))
+        recs = {r['id']: r for r in conn.execute(
+            'SELECT id, mfn, data_json FROM record WHERE id IN (%s)' % ph,
+            page_ids).fetchall()}
+        items = [{'mfn': recs[i]['mfn'], 'record': json.loads(recs[i]['data_json'])}
+                 for i in page_ids if i in recs]
+        return {'total': total, 'items': items, 'expr': expr}
+
+    def _mfns_for_ids(self, conn, ids):
+        """``[(id, mfn)]`` для множества record.id — чанками по 900 (лимит SQLite)."""
+        out = []
+        ids = list(ids)
+        for k in range(0, len(ids), 900):
+            chunk = ids[k:k + 900]
+            ph = ','.join('?' * len(chunk))
+            out.extend(conn.execute(
+                'SELECT id, mfn FROM record WHERE id IN (%s)' % ph, chunk).fetchall())
+        return out
+
+    def _term_record_ids(self, conn, db, single_expr):
+        """Множество record.id для ОДНОГО ``PREFIX=term`` (+ усечение ``$``)."""
+        prefix, term = parse_expr(single_expr)
         trunc = term.endswith('$')
         base = _norm(term[:-1] if trunc else term)
-        conn = self._conn()
         if trunc:
             esc = base.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
             cond = "ri.prefix=? AND ri.term_norm LIKE ? ESCAPE '\\'"
@@ -878,19 +945,54 @@ class CatalogStore:
         else:
             cond = 'ri.prefix=? AND ri.term_norm=?'
             targs = (prefix, base)
-        total = conn.execute(
-            'SELECT COUNT(DISTINCT r.id) AS n FROM record_index ri '
-            'JOIN record r ON r.id = ri.record_id '
-            "WHERE r.db=? AND r.status='active' AND " + cond,
-            (db,) + targs).fetchone()['n']
         rows = conn.execute(
-            'SELECT DISTINCT r.id, r.mfn, r.data_json FROM record_index ri '
-            'JOIN record r ON r.id = ri.record_id '
-            "WHERE r.db=? AND r.status='active' AND " + cond +
-            ' ORDER BY r.mfn LIMIT ? OFFSET ?',
-            (db,) + targs + (limit, offset)).fetchall()
-        items = [{'mfn': r['mfn'], 'record': json.loads(r['data_json'])} for r in rows]
-        return {'total': total, 'items': items, 'prefix': prefix, 'term': term}
+            'SELECT DISTINCT r.id FROM record_index ri JOIN record r ON r.id = ri.record_id '
+            "WHERE r.db=? AND r.status='active' AND " + cond, (db,) + targs).fetchall()
+        return {r['id'] for r in rows}
+
+    def _eval_search_expr(self, conn, db, expr):
+        """Вычислить выражение → множество record.id. Рекурсивный спуск с
+        приоритетом: OR (``+``) ниже AND/НЕ (``*``/``^``); скобки переопределяют;
+        листы — термины ``PREFIX=term``. Множества: ``+`` union, ``*`` intersect,
+        ``^`` difference (#262)."""
+        toks = _tokenize_search_expr(expr)
+        pos = [0]
+
+        def peek():
+            return toks[pos[0]] if pos[0] < len(toks) else None
+
+        def parse_or():
+            left = parse_and()
+            while peek() == ('op', '+'):
+                pos[0] += 1
+                left = left | parse_and()
+            return left
+
+        def parse_and():
+            left = parse_factor()
+            while peek() in (('op', '*'), ('op', '^')):
+                op = toks[pos[0]][1]
+                pos[0] += 1
+                right = parse_factor()
+                left = (left & right) if op == '*' else (left - right)
+            return left
+
+        def parse_factor():
+            t = peek()
+            if t == ('op', '('):
+                pos[0] += 1
+                inner = parse_or()
+                if peek() == ('op', ')'):
+                    pos[0] += 1
+                return inner
+            if t is not None and t[0] == 'term':
+                pos[0] += 1
+                return self._term_record_ids(conn, db, t[1])
+            if t is not None:        # неожиданный токен — пропустить, не зациклиться
+                pos[0] += 1
+            return set()
+
+        return parse_or()
 
     def search_items(self, db, expr, limit=20, offset=0):
         """Как ``search_records``, но возвращает СТРУКТУРНЫЕ карточки той же формы,

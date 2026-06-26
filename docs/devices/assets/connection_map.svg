@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 660" font-family="Segoe UI, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#334155"/>
+    </marker>
+    <marker id="arrd" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#9333ea"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1180" height="660" fill="#ffffff"/>
+  <text x="20" y="28" font-size="18" font-weight="700" fill="#0f172a">Карта подключений — IDlogic Admin Server / EasyBook (надстройка ИРБИС64)</text>
+
+  <!-- ===== column captions ===== -->
+  <text x="160" y="60" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">ПО-КЛИЕНТЫ</text>
+  <text x="585" y="60" font-size="12" font-weight="700" fill="#b45309" text-anchor="middle">СЕРВЕРЫ</text>
+  <text x="1010" y="60" font-size="12" font-weight="700" fill="#15803d" text-anchor="middle">ОКОНЕЧНЫЕ УСТРОЙСТВА</text>
+
+  <!-- ===== servers ===== -->
+  <rect x="455" y="80" width="260" height="74" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+  <text x="585" y="106" text-anchor="middle" font-weight="700" fill="#7c2d12">САБ ИРБИС64 — irbis_server</text>
+  <text x="585" y="124" text-anchor="middle" fill="#7c2d12">БД: RDR · RQST · KNIGA</text>
+  <text x="585" y="143" text-anchor="middle" font-weight="700" fill="#7c2d12">TCP : 6666</text>
+
+  <rect x="445" y="345" width="280" height="96" rx="8" fill="#fde68a" stroke="#b45309" stroke-width="2.5"/>
+  <text x="585" y="372" text-anchor="middle" font-weight="700" fill="#7c2d12">Центральный сервис IDlogic</text>
+  <text x="585" y="391" text-anchor="middle" font-weight="700" fill="#7c2d12">api.svc — REST/JSON</text>
+  <text x="585" y="409" text-anchor="middle" font-weight="700" fill="#7c2d12">HTTP : 8005  (Basic-auth)</text>
+  <text x="585" y="429" text-anchor="middle" font-size="11" fill="#92400e">ХАБ парка устройств · /easybookdll/*</text>
+
+  <!-- ===== clients ===== -->
+  <rect x="40" y="120" width="245" height="96" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="162" y="146" text-anchor="middle" font-weight="700" fill="#1e3a8a">LibraryAdminServer (LAS)</text>
+  <text x="162" y="165" text-anchor="middle" font-size="11" fill="#1e3a8a">ПК администратора · WPF</text>
+  <text x="162" y="183" text-anchor="middle" font-size="11" fill="#1e3a8a">Библиотекарь · SafeKeeper ·</text>
+  <text x="162" y="199" text-anchor="middle" font-size="11" fill="#1e3a8a">Vending · Ворота · СКУД · FaceID</text>
+
+  <rect x="40" y="330" width="245" height="104" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="162" y="356" text-anchor="middle" font-weight="700" fill="#1e3a8a">EasyBook TagService</text>
+  <text x="162" y="374" text-anchor="middle" font-size="11" fill="#1e3a8a">ПК сотрудника / киоск</text>
+  <text x="162" y="392" text-anchor="middle" font-size="11" fill="#1e3a8a">драйвит настольный считыватель</text>
+  <text x="162" y="409" text-anchor="middle" font-size="11" fill="#1e3a8a">SendChar · SocketServer (слушает)</text>
+  <text x="162" y="426" text-anchor="middle" font-size="11" fill="#1e3a8a">EasyBook_RFid.dll (ядро)</text>
+
+  <rect x="60" y="500" width="205" height="48" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+  <text x="162" y="521" text-anchor="middle" font-weight="700" fill="#14532d">Настольный RFID-считыватель</text>
+  <text x="162" y="538" text-anchor="middle" font-size="11" fill="#14532d">FEIG/ChaFon/NUR/Andea/ACS…</text>
+
+  <!-- ===== devices (right) ===== -->
+  <g fill="#dcfce7" stroke="#15803d" stroke-width="2">
+    <rect x="880" y="80"  width="270" height="56" rx="8"/>
+    <rect x="880" y="150" width="270" height="56" rx="8"/>
+    <rect x="880" y="220" width="270" height="56" rx="8"/>
+    <rect x="880" y="290" width="270" height="56" rx="8"/>
+    <rect x="880" y="360" width="270" height="56" rx="8"/>
+    <rect x="880" y="430" width="270" height="56" rx="8"/>
+  </g>
+  <g text-anchor="middle" fill="#14532d">
+    <text x="1015" y="103" font-weight="700">Противокражные ворота</text>
+    <text x="1015" y="122" font-size="11">COM · EAS (Andea R-Pan/FEIG) ✓ + счётчик</text>
+    <text x="1015" y="173" font-weight="700">Постаматы / станции самообсл.</text>
+    <text x="1015" y="192" font-size="11">принтер · конвейер (прошивка)</text>
+    <text x="1015" y="243" font-weight="700">SafeKeeper (шкафы ячеек)</text>
+    <text x="1015" y="262" font-size="11">мастер-ключ RFID открывает ячейки</text>
+    <text x="1015" y="313" font-weight="700">Умные полки SmartShelf</text>
+    <text x="1015" y="332" font-size="11">RFID-инвентаризация полки</text>
+    <text x="1015" y="383" font-weight="700">СКУД (турникеты/зоны)</text>
+    <text x="1015" y="402" font-size="11">стационарные считыватели/антенны</text>
+    <text x="1015" y="453" font-weight="700">Камеры Dahua + NVR</text>
+    <text x="1015" y="472" font-size="11">FaceID · счётчик посетителей</text>
+  </g>
+
+  <!-- ===== solid edges (confirmed) ===== -->
+  <g stroke="#334155" stroke-width="2" fill="none" marker-end="url(#arr)">
+    <!-- LAS -> IRBIS -->
+    <path d="M285,150 C360,135 405,118 453,110"/>
+    <!-- LAS -> api.svc -->
+    <path d="M285,190 C360,260 410,330 470,345"/>
+    <!-- TagService -> IRBIS -->
+    <path d="M285,355 C370,300 410,180 453,140"/>
+    <!-- TagService -> api.svc -->
+    <path d="M285,388 C360,392 410,393 445,393"/>
+    <!-- TagService -> reader -->
+    <path d="M162,434 L162,498"/>
+    <!-- LAS -> Dahua camera (FaceID) -->
+    <path d="M285,135 C520,70 760,120 878,452"/>
+  </g>
+
+  <!-- ===== dashed edges (inferred: device -> hub) ===== -->
+  <g stroke="#9333ea" stroke-width="1.8" fill="none" stroke-dasharray="6 4" marker-end="url(#arrd)">
+    <path d="M880,108 C800,150 740,330 726,372"/>
+    <path d="M880,178 C800,230 745,360 726,388"/>
+    <path d="M880,248 C810,290 745,375 726,398"/>
+    <path d="M880,318 C815,350 745,388 726,404"/>
+    <path d="M880,388 C815,400 760,402 726,402"/>
+    <path d="M880,458 C800,450 745,420 726,410"/>
+  </g>
+
+  <!-- ===== edge labels ===== -->
+  <g font-size="11" fill="#334155">
+    <text x="345" y="118">IRBIS-TCP:6666 ✓</text>
+    <text x="320" y="285">REST:8005 ✓</text>
+    <text x="312" y="250" fill="#1e3a8a">arm=B/C · SendChar</text>
+    <text x="300" y="382">EBWEB:8005 ✓</text>
+    <text x="175" y="478">COM/USB/PCSC ✓</text>
+    <text x="600" y="200" fill="#334155">Dahua:37777 ✓</text>
+  </g>
+  <g font-size="11" fill="#9333ea">
+    <text x="735" y="300" transform="rotate(0)">отчёт состояния [~]</text>
+    <text x="735" y="316" font-size="10">(протокол в прошивке станций)</text>
+  </g>
+
+  <!-- ===== legend ===== -->
+  <g font-size="12">
+    <rect x="40" y="588" width="1100" height="52" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <line x1="60" y1="606" x2="100" y2="606" stroke="#334155" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="110" y="610" fill="#0f172a">сплошная = подтверждено строками/конфигом/логом  [✓]</text>
+    <line x1="470" y1="606" x2="510" y2="606" stroke="#9333ea" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrd)"/>
+    <text x="520" y="610" fill="#0f172a">пунктир = инференс: устройство → сервер, протокол в прошивке  [~]</text>
+    <text x="60" y="630" fill="#475569">Локально «по проводу» из этого ПО управляются: настольный считыватель, ворота (COM/EAS), камеры Dahua. Ячейки постаматов/SafeKeeper — в прошивке станций.</text>
+  </g>
+</svg>

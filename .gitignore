@@ -65,3 +65,6 @@ irbis-web/backend/tests/*_results.txt
 *.db
 *.sqlite
 *.sqlite3
+
+# ── Device recon scratch (string dumps / extracted manual — may contain secrets) ──
+_scratch_devices/

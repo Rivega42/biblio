@@ -72,6 +72,10 @@ def _route_check():
     check('route: 200', code == 200)
     check('route: source=own (обошли ИРБИС)', data.get('source') == 'own')
     check('route: нашёл запись по K=', any(i.get('title') == 'Чайка' for i in data.get('items', [])))
+    code2, body2 = api.search(sess, 'EK', '("T=Чайка$" + "K=пьеса")', 1, 20)
+    data2 = body2.get('data', {}) if isinstance(body2, dict) else {}
+    check('route: составное → source=own', data2.get('source') == 'own')
+    check('route: составное нашло запись', any(i.get('title') == 'Чайка' for i in data2.get('items', [])))
 
 
 def main():
@@ -117,6 +121,24 @@ def main():
     check('search_items: contract-поля',
           bool(si['items']) and set(si['items'][0]) >= {'mfn', 'title', 'author', 'year',
                                                         'docType', 'availability', 'hasCover'})
+
+    # 6c. Составные выражения (#262) — для дефолтного мультиполевого поиска портала.
+    r = cat.search_records('EK', '("A=Петров$" + "A=Чехов$")')
+    check('compound OR: оба', r['total'] == 2)
+    r = cat.search_records('EK', '("T=Основы$" * "A=Петров$")')
+    check('compound AND: пересечение',
+          r['total'] == 1 and _title(r['items'][0]['record']) == 'Основы каталогизации')
+    r = cat.search_records('EK', '("T=Основы$" * "A=Чехов$")')
+    check('compound AND: пусто', r['total'] == 0)
+    r = cat.search_records('EK', '"A=Чехов$" ^ "K=каталогизация"')
+    check('compound NOT: разность',
+          r['total'] == 1 and _title(r['items'][0]['record']) == 'Театральная история')
+    r = cat.search_records('EK', '("A=Петров$" + "A=Чехов$") * "K=театр"')
+    check('compound скобки+приоритет',
+          r['total'] == 1 and _title(r['items'][0]['record']) == 'Театральная история')
+    r = cat.search_records('EK', '("T=Театр$" + "A=Театр$" + "K=Театр$")')
+    check('multi-field union (как build_expr портала)',
+          r['total'] == 1 and _title(r['items'][0]['record']) == 'Театральная история')
 
     # 7. Конфиг-флаг OWN_SEARCH_DBS парсится (csv, upper).
     os.environ['OWN_SEARCH_DBS'] = 'ek, perio'
