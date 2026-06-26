@@ -21,7 +21,8 @@
 | [EASYBOOKABIS_IRBIS_MAP.md](EASYBOOKABIS_IRBIS_MAP.md) | Построчно: точные поля ИРБИС (RDR 40, каталог 910/903/999) для Checkout/Checkin/Renew/AddReader/AddEkp |
 | [EASYBOOKABIS_SIP2_MAP.md](EASYBOOKABIS_SIP2_MAP.md) | Построчно: SIP2‑клиент — кадры 93/99/63/17/11/09/15/29, коды полей, чек‑сумма |
 | [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) | Пробелы и нужный стенд/доступы |
-| [BIBLIO_DEVICE_INTEGRATION_DESIGN.md](BIBLIO_DEVICE_INTEGRATION_DESIGN.md) | **Проект:** как Biblio (интерфейс ИРБИС, замена JIRBIS) полноформатно работает со всеми устройствами + Android ТСД; замена стека IDlogic целиком |
+| [BIBLIO_DEVICE_INTEGRATION_DESIGN.md](BIBLIO_DEVICE_INTEGRATION_DESIGN.md) | **Проект:** как Biblio (два режима: замена JIRBIS / замена ИРБИС) полноформатно работает со всеми устройствами + Android ТСД через ABIS‑порт; замена стека IDlogic |
+| [TZ_PHASE1_abis_device_core.md](TZ_PHASE1_abis_device_core.md) | **ТЗ Фаза 1:** контракт IAbis, нативная БД (режим 2), эндпоинты Device Service, протокол Reader Agent; разделы «бесшовный подхват устройств» и «покрытие интерфейсов сотрудников» |
 
 ## Ключевые выводы
 - **Архитектура:** три центра — ИРБИС64 (`:6666`, читатели/выдача), центральный сервис IDlogic (`api.svc :8005`, парк устройств), локальные шины (COM/USB/PCSC/Dahua).
