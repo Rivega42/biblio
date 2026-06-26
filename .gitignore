@@ -68,3 +68,8 @@ irbis-web/backend/tests/*_results.txt
 
 # ── Device recon scratch (string dumps / extracted manual — may contain secrets) ──
 _scratch_devices/
+
+# ── Secrets register (local only — NEVER commit) ──
+SECRETS_INVENTORY*
+*.local.md
+*.secrets.md
