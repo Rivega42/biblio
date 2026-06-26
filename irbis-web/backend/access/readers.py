@@ -117,3 +117,19 @@ class ReaderService:
 
     def cards_for(self, abis_code):
         return self.store.list_for(abis_code)
+
+    # kind карты → поле RDR (источник истины карт в ИРБИС)
+    KIND_FIELD = {KIND_MAIN: '30', KIND_EXTRA: '24', KIND_EKP: '28'}
+
+    def rdr_sync_plan(self, abis_code):
+        """DRY-RUN: какие правки RDR-полей (30/24/28) НУЖНО внести в живой ИРБИС,
+        чтобы привязки own-реестра отразились в RDR читателя. Сам ИРБИС НЕ пишем
+        (#222) — это план для явной админ-синхронизации/экспорта.
+
+        Возврат: список ``{'field','value','kind','op':'set'}`` по картам читателя."""
+        plan = []
+        for c in self.store.list_for(abis_code):
+            field = self.KIND_FIELD.get(c['kind'], '30')
+            plan.append({'field': field, 'value': c['rfid_code'],
+                         'kind': c['kind'], 'op': 'set'})
+        return plan

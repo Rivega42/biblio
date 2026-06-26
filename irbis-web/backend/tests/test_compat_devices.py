@@ -214,6 +214,8 @@ class FakeAbis:
         return {'mfn': 5, 'title': 'Кнут'} if code == 'INV-1' else None
     def set_doc_state(self, code, state):
         return True
+    def doc_cenz(self, code):
+        return 18 if code == 'INV-1' else None
 
 
 def test_iabis_circulation():
@@ -323,6 +325,9 @@ def test_iabis_rest_and_sip2():
     check('GetDocInfo unknown -> []', c.handle('easybookdll/GetDocInfo', {'bookCode': 'NOPE'}) == [])
     check('SetBookState True', c.handle('easybookdll/SetBookState', {'bookCode': 'INV-1', 'state': '9'}) is True)
     check('SetBookState no code -> False', c.handle('easybookdll/SetBookState', {'state': '9'}) is False)
+    cz = c.handle('easybookdll/GetBookCenz', {'bookCode': 'INV-1'})
+    check('GetBookCenz MinAge', cz['MinAge'] == 18)
+    check('GetBookCenz unknown -> {}', c.handle('easybookdll/GetBookCenz', {'bookCode': 'NOPE'}) == {})
     r = c.handle('easybookdll/Sip2', {'line': '9300CNuser|CObarcode|'})
     check('Sip2 response frame', isinstance(r['Response'], str) and r['Response'].startswith('94'))
     c0 = CompatDevicesService(DeviceService(DeviceStore(':memory:')))
