@@ -30,6 +30,7 @@ from access import entitlements
 from access import billing as _billing
 from access import provision as _provision
 from access import flk
+from access import gbl as _gbl
 from access import notifications as _notifications
 from access import circulation as _circulation
 from access.holds import HoldService
@@ -47,7 +48,7 @@ from access import vision as _vision
 from access import sip2 as _sip2
 from access import compat_devices as _compat_devices
 from access import demo_requests as _demo_requests
-from access.catalog import CatalogStore
+from access.catalog import CatalogStore, CatalogError
 from access import oidc as _oidc
 from access.oidc_store import OidcStore
 from access.identity_store import IdentityStore
@@ -89,6 +90,25 @@ def ok(data):
 
 def err(code, message):
     return {'ok': False, 'error': {'code': code, 'message': message}}
+
+
+def _unwrap_mfn(value):
+    """Снять MFN из служебного ``*mfn``, который мог пройти ``normalize_record``.
+
+    Резолвер глоб.корректировки планирует MFN как ``rec['*mfn'] = <int>``; gbl
+    нормализует запись (``_op_correc`` → ``normalize_record``), превращая бэр-инт в
+    ``[{'': '2'}]``. Принимаем оба вида (а также None) и возвращаем ``int`` или
+    None, не падая на мусоре."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, dict):
+        value = value.get('', '')
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class _DeviceCircAdapter:
@@ -1847,6 +1867,274 @@ class Api:
                         'overallSeverity': result['overallSeverity'],
                         'canSave': result['canSave'],
                         'violations': result['violations']})
+
+    # ------------------------------------------------------------------- #
+    # Глобальная корректировка (.gbl) по выборке записей каталога — ребро
+    # 11.2 INTEGRATION_MAP. Замыкает шов «интерпретатор gbl (access/gbl.py) ↔
+    # собственный стор каталога (access/catalog.py)»: эндпоинт прогоняет
+    # распарсенное задание .gbl по явной выборке MFN, читая/сохраняя записи
+    # через CatalogStore (НЕ через живой ИРБИС — та же посадка, что у
+    # circulation/holds/acquisition, #222).
+    # ------------------------------------------------------------------- #
+    def _gbl_resolver(self, db):
+        """Построить ``resolver(db, term) -> record | None`` поверх CatalogStore.
+
+        CORREC резолвит чужую запись ПО ТЕРМИНУ (значение из ФОРМАТ-словаря,
+        напр. инв.№/штрих-код или ``PREFIX=term``). Стратегия резолва:
+          1. голый integer ⇒ это MFN — прямое чтение ``catalog.get``;
+          2. иначе пробуем как инв.№/штрих-код экземпляра (``find_exemplar`` →
+             MFN-владелец) — типовой кейс кросс-БД заданий (InsteadLost ищет по
+             ``IN=``);
+          3. иначе как поисковое выражение (``search_records``) — берём первую
+             запись совпадения.
+
+        Резолвленный MFN планируется в служебное поле ``*mfn`` записи, чтобы
+        ``emit`` обновил ИМЕННО эту запись (а не вставил дубль с новым MFN).
+        ``*``-теги сохраняются ``normalize_record`` и игнорируются ``diff_records``
+        (как и статус-маркеры), так что в БО они не попадают. Возвращает запись
+        (``tag -> [...]``) или None (промах — gbl запишет его в ``correc_misses``,
+        не падая)."""
+        def _tag(rec, target_db, mfn):
+            rec = dict(rec)
+            rec['*db'] = target_db
+            rec['*mfn'] = mfn
+            return rec
+
+        def resolver(target_db, term):
+            if self.catalog is None:
+                return None
+            t = str(term).strip()
+            if not t:
+                return None
+            # 1) голый MFN
+            if t.isdigit():
+                rec = self.catalog.get(target_db, int(t))
+                if rec is not None:
+                    return _tag(rec, target_db, int(t))
+            # 2) инв.№/штрих-код экземпляра → запись-владелец
+            try:
+                found = self.catalog.find_exemplar(target_db, t)
+                if found is not None:
+                    rec = self.catalog.get(target_db, found[0])
+                    if rec is not None:
+                        return _tag(rec, target_db, found[0])
+            except Exception:
+                pass
+            # 3) поисковое выражение (PREFIX=term) → первая запись
+            try:
+                res = self.catalog.search_records(target_db, t, limit=1)
+                items = res.get('items') or []
+                if items:
+                    return _tag(items[0]['record'], target_db, items[0]['mfn'])
+            except Exception:
+                pass
+            return None
+        return resolver
+
+    def _gbl_emit(self, db, results, audit_actor, tenant):
+        """Построить ``emit(db, record) -> mfn`` поверх CatalogStore.
+
+        Персистит созданную (NEWMFN/NEWREC) или кросс-правленую (CORREC) ЧУЖУЮ
+        запись через ``catalog.save`` (та же запись персиста, что у обычного
+        ``save_record``: ФЛК + переиндексация). Если запись несёт служебный
+        ``*mfn`` (CORREC резолвил существующую запись — см. ``_gbl_resolver``),
+        это UPDATE по тому MFN; иначе INSERT с новым MFN (NEWMFN/NEWREC). Служебные
+        ``*``-теги вычищаются перед персистом, чтобы не попасть в БО. MFN
+        присваивается/подтверждается стором; ``save`` возвращает его в ``mfn``.
+        Накапливает аудит-сводку в ``results`` и пишет строку аудита (как соседние
+        write-эндпоинты). Если ``save`` отклонил запись (severity-1 ФЛК) —
+        поднимаем ``CatalogError``, чтобы вызывающий пометил конкретную запись
+        ошибкой, а не молча потерял правку."""
+        def emit(target_db, record):
+            if self.catalog is None:
+                raise CatalogError('catalog store not configured')
+            # CORREC: UPDATE по резолвленному MFN. ``*mfn`` мог пройти через
+            # ``normalize_record`` (стать ``[{'': '2'}]``) — снимаем оба варианта.
+            existing_mfn = _unwrap_mfn(record.pop('*mfn', None))
+            # вычистить все служебные '*'-теги (db/mfn/статус) из БО.
+            for k in [t for t in record if isinstance(t, str) and t.startswith('*')]:
+                record.pop(k, None)
+            save_kwargs = {'mfn': existing_mfn} if existing_mfn is not None else {}
+            saved = self.catalog.save(target_db, record, **save_kwargs)
+            if not saved.get('saved'):
+                raise CatalogError(
+                    'ФЛК отклонил запись (severity-1) при emit в %s' % target_db)
+            mfn = saved['mfn']
+            results.append({'db': target_db, 'mfn': mfn})
+            try:
+                self._store_for(tenant).audit(
+                    audit_actor, 'cat.gbl', target_db, mfn, 'ok',
+                    {'op': 'emit'})
+            except Exception:
+                pass
+            return mfn
+        return emit
+
+    def cataloging_gbl(self, session, body):
+        """POST /api/cataloging/gbl — исполнить глобальную корректировку .gbl по
+        явной выборке записей каталога (ребро 11.2 INTEGRATION_MAP).
+
+        Тело запроса::
+
+            { "db": "IBIS",                  # БД каталога (по умолчанию db_default)
+              "mfns": [12, 34, ...],         # явная выборка MFN
+              "gbl": "<текст .gbl>",         # задание (str CP1251/utf8 ИЛИ {params,body})
+              "params": {"1": "20240101"},   # опц. значения параметров %1..%9
+              "mode": "preview" | "apply" }  # сухой прогон ИЛИ персист (по умолчанию preview)
+
+        Гард: только сотрудник с правом каталогизации (``cat.gbl``/write) —
+        гость/читатель → 403 (``_require_staff`` + ``_guard`` + ``_public_db_guard``).
+        Энтайтлмент-гейт (FUNCTION_MODULE → 'cataloging') действует тоже.
+
+        Семантика:
+          * парсинг через ``access.gbl.parse`` (ParseError → 400);
+          * ``format_eval`` НЕ задаётся явно — ``gbl`` сам делегирует его в реальный
+            PFT-движок ``access.pft.eval`` (он импортируем); параметры ``%1..%9``
+            прокидываются через ``ctx['params']``;
+          * ``resolver``/``emit`` завязаны на CatalogStore (см. ``_gbl_resolver`` /
+            ``_gbl_emit``): resolver — чтение чужой записи по терму, emit — персист
+            созданной/правленой записи с возвратом MFN;
+          * ``mode=preview`` — возврат предпросмотра (before/after + дельта полей +
+            что СОЗДАЛОСЬ бы (NEWMFN) и кросс-правилось бы (CORREC)); НИЧЕГО не
+            персистится (хост-emit подавлен внутри ``preview``);
+          * ``mode=apply`` — каждая запись выборки правится и персистится обратно
+            (DELR ⇒ логическое удаление, EMPTY ⇒ опустошение), чужие созданные/
+            правленые записи эмитятся, пишется аудит. Ошибка отдельной записи
+            оборачивается (per-record ``status='error'``) — пачка не падает целиком.
+
+        Возврат ``{db, mode, processed, changed, deleted, emptied, errors,
+        createdCount, correcCount, records:[...]}``; в режиме preview ``records``
+        несёт дельту/before/after, в режиме apply — итоговый статус по каждой MFN."""
+        self._require_staff(session)
+        db = (body.get('db') or self.cfg.db_default)
+        self._guard(session, 'cat.gbl', db, 'write')
+        self._public_db_guard(session, db)
+        if self.catalog is None:
+            return 503, err('unavailable', 'catalog store not configured')
+        mfns = body.get('mfns') or []
+        if not isinstance(mfns, list):
+            return 400, err('bad_request', 'mfns must be a list')
+        mode = (body.get('mode') or 'preview').strip().lower()
+        if mode not in ('preview', 'apply'):
+            return 400, err('bad_request', "mode must be 'preview' or 'apply'")
+        # Распарсить задание (текст .gbl ИЛИ уже-распарсенный Program-словарь).
+        raw = body.get('gbl')
+        if isinstance(raw, dict) and 'body' in raw:
+            ast = raw
+        else:
+            if not raw:
+                return 400, err('bad_request', 'gbl text required')
+            try:
+                ast = _gbl.parse(raw)
+            except _gbl.ParseError as e:
+                return 400, err('bad_request', 'gbl parse error: %s' % e)
+        params = body.get('params') or {}
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        actor = session['actor']
+
+        # Прочитать выборку записей (отсутствующие MFN помечаем, не падаем).
+        loaded = []          # (mfn, record | None)
+        for m in mfns:
+            try:
+                mi = int(m)
+            except (TypeError, ValueError):
+                loaded.append((m, None))
+                continue
+            loaded.append((mi, self.catalog.get(db, mi)))
+
+        if mode == 'preview':
+            return self._gbl_preview(db, ast, params, loaded)
+        return self._gbl_apply(db, ast, params, loaded, tenant, actor)
+
+    def _gbl_preview(self, db, ast, params, loaded):
+        """Сухой прогон .gbl по выборке: дельта по каждой записи + что создалось/
+        кросс-правилось бы. Ничего не персистит (``gbl.preview`` чист)."""
+        records, present = [], []
+        for mfn, rec in loaded:
+            if rec is None:
+                records.append({'mfn': mfn, 'status': 'missing', 'changes': []})
+                continue
+            present.append((mfn, rec))
+        # gbl.preview принимает список записей; пройдём их одним вызовом, но нам
+        # нужны MFN рядом с каждой дельтой — прогоняем по одной, чтобы не терять
+        # привязку (выборки малы; per-record изоляция — это и есть AC9).
+        for mfn, rec in present:
+            ctx = {'db': db, 'params': params,
+                   'resolver': self._gbl_resolver(db)}
+            rep = _gbl.preview(ast, [rec], ctx)[0]
+            rep['mfn'] = mfn
+            records.append(rep)
+        changed = sum(1 for r in records if r.get('status') == 'changed')
+        deleted = sum(1 for r in records if r.get('status') == 'deleted')
+        emptied = sum(1 for r in records if r.get('status') == 'emptied')
+        errors = sum(1 for r in records if r.get('status') == 'error')
+        created = sum(len(r.get('created') or []) for r in records)
+        correc = sum(len(r.get('correc') or []) for r in records)
+        return 200, ok({
+            'db': db, 'mode': 'preview', 'processed': len(loaded),
+            'changed': changed, 'deleted': deleted, 'emptied': emptied,
+            'errors': errors, 'createdCount': created, 'correcCount': correc,
+            'records': records,
+        })
+
+    def _gbl_apply(self, db, ast, params, loaded, tenant, actor):
+        """Исполнить .gbl по выборке и ПЕРСИСТИТЬ результат через CatalogStore.
+
+        По каждой записи: ``gbl.apply`` (с resolver/emit поверх стора), затем
+        персист обратно (``save``/``delete``), аудит. Ошибка отдельной записи
+        изолируется в per-record статус — пачка не падает целиком."""
+        emitted = []                              # сводка emit (NEWMFN/CORREC)
+        emit = self._gbl_emit(db, emitted, actor, tenant)
+        resolver = self._gbl_resolver(db)
+        records = []
+        changed = deleted = emptied = errors = 0
+        for mfn, rec in loaded:
+            if rec is None:
+                records.append({'mfn': mfn, 'status': 'missing'})
+                continue
+            ctx = {'db': db, 'params': params, 'resolver': resolver, 'emit': emit}
+            try:
+                before = _gbl.normalize_record(rec)
+                after = _gbl.apply(ast, rec, ctx)
+                state = ctx.get('_state', {})
+                if state.get('emptied'):
+                    # EMPTY очистил запись — логически удаляем её из стора.
+                    self.catalog.delete(db, mfn)
+                    status = 'emptied'
+                    emptied += 1
+                elif state.get('deleted'):
+                    # DELR — логическое удаление записи.
+                    self.catalog.delete(db, mfn)
+                    status = 'deleted'
+                    deleted += 1
+                else:
+                    diff = _gbl.diff_records(before, after)
+                    if diff:
+                        saved = self.catalog.save(db, after, mfn=mfn)
+                        if not saved.get('saved'):
+                            raise CatalogError('ФЛК отклонил запись (severity-1)')
+                        status = 'changed'
+                        changed += 1
+                    else:
+                        status = 'unchanged'
+                try:
+                    self._store_for(tenant).audit(
+                        actor, 'cat.gbl', db, mfn, 'ok',
+                        {'mode': 'apply', 'status': status,
+                         'putlog': state.get('putlog', [])})
+                except Exception:
+                    pass
+                records.append({'mfn': mfn, 'status': status,
+                                'putlog': state.get('putlog', [])})
+            except Exception as e:                # изоляция одной записи (AC9)
+                errors += 1
+                records.append({'mfn': mfn, 'status': 'error', 'error': str(e)})
+        return 200, ok({
+            'db': db, 'mode': 'apply', 'processed': len(loaded),
+            'changed': changed, 'deleted': deleted, 'emptied': emptied,
+            'errors': errors, 'createdCount': len(emitted), 'emitted': emitted,
+            'records': records,
+        })
 
     def order(self, session, body):
         db = body.get('db', self.cfg.db_default)
@@ -3639,6 +3927,9 @@ class Api:
                 return self.example_queries(session, db)
             if method == 'POST' and path == '/api/validate':
                 return self.validate_record(session, body or {})
+            # ---- Глобальная корректировка .gbl по выборке каталога (ребро 11.2) ----
+            if method == 'POST' and path == '/api/cataloging/gbl':
+                return self.cataloging_gbl(session, body or {})
             if method == 'POST' and path == '/api/order':
                 return self.order(session, body or {})
             # ---- reader-portal: holds, notifications inbox, shelves (#222) ----
