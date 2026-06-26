@@ -9,6 +9,7 @@ tools/irbis-probe/*.bin
 .env
 .env.*
 !.env.example
+!.env*.example
 *.secret
 *.key
 *.pem
