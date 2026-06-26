@@ -3,9 +3,10 @@
 Картография ПО управления внешними оконечными устройствами библиотеки поверх САБ ИРБИС64 — **IDlogic Library Admin Server (LAS)** + агент **EasyBook TagService**, распакованного в `C:\IRBIS64\Library Admin Server\`. Метод: статический анализ + полная C#‑декомпиляция (бинарники не запускались).
 
 ## С чего начать
-1. [DEVICE_INVENTORY.md](DEVICE_INVENTORY.md) — что за поставка, реестр всех файлов.
-2. [DEVICE_CONNECTION_MAP.md](DEVICE_CONNECTION_MAP.md) — кто к кому подключается ([схема](assets/connection_map.svg)).
-3. [DEVICE_CONTROL_MAP.md](DEVICE_CONTROL_MAP.md) — как драйвится каждый класс устройств.
+1. [CONTROL_CAPABILITY.md](CONTROL_CAPABILITY.md) — **сможем ли управлять устройствами** (матрица: да для RFID/камер, станционная механика — нужна прошивка).
+2. [DEVICE_INVENTORY.md](DEVICE_INVENTORY.md) — что за поставка, реестр всех файлов.
+3. [DEVICE_CONNECTION_MAP.md](DEVICE_CONNECTION_MAP.md) — кто к кому подключается ([схема](assets/connection_map.svg)).
+4. [DEVICE_CONTROL_MAP.md](DEVICE_CONTROL_MAP.md) — как драйвится каждый класс устройств.
 
 ## Все документы
 | Документ | О чём |
