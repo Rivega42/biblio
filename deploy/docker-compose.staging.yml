@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Biblio — OVERLAY STAGING-СТЕНДА (узкое место «нет безопасного не-прод стенда»).
+#
+# Накладывается ПОВЕРХ базового docker-compose.yml и поднимается ОТДЕЛЬНЫМ
+# compose-проектом РЯДОМ с продом на том же хосте (pve / LXC 100):
+#
+#   cd /opt/biblio/deploy
+#   cp .env.staging.example .env.staging          # заполнить секреты
+#   docker compose -p biblio-staging \
+#     --env-file .env.staging \
+#     -f docker-compose.yml -f docker-compose.staging.yml up -d --build
+#
+# `-p biblio-staging` даёт ОТДЕЛЬНЫЕ контейнеры (biblio-staging-*) и ОТДЕЛЬНЫЕ
+# тома (biblio-staging_pgdata/…), не задевая прод-стек (deploy-*). Порты задаются
+# в .env.staging (HTTP_PORT/HTTPS_PORT — напр. 8080/8443), чтобы не конфликтовать
+# с боевыми 80/443.
+#
+# ── Зачем staging (что он разблокирует) ──────────────────────────────────────
+#   • Безопасный вывод staff-АРМов: каталогизация/книговыдача/комплектование/КО
+#     пишут в СОБСТВЕННЫЕ sqlite-сторы стенда (свои тома) — НЕ в боевой ИРБИС/RDR.
+#   • Прогон ops (индексатор, .env, деплой) без риска для прода и без прод-гейтов.
+#   • Работа через PR → staging → прод вместо ad-hoc prod-ssh (вывод из памяти).
+#
+# ── Безопасность: ИРБИС ОТКЛЮЧЁН ─────────────────────────────────────────────
+#   IRBIS_HOST="" → НИКАКОГО моста к живому ИРБИС (как в demo-overlay). Каталог и
+#   поиск идут из own-store (OWN_SEARCH_DBS) — стенд сидируется КОПИЕЙ боевого
+#   catalog.db (реалистичные данные), а все правки staff-АРМов остаются в томах
+#   стенда. Прод-данные физически недостижимы → запись в боевой ИРБИС невозможна.
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-staging-logging: &staging-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    logging: *staging-logging
+    labels:
+      com.biblio.role: "staging"
+
+  backend:
+    environment:
+      # Маркер режима для бэкенда/оператора.
+      APP_ENV: "staging"
+      # ИРБИС на staging ОТКЛЮЧЁН — own-store only, прод-данные недостижимы.
+      # (Перебивает дефолт базового compose, чтобы стенд НИКОГДА не пошёл в
+      # боевой ИРБИС и не написал в чужой RDR.)
+      IRBIS_HOST: ""
+      IRBIS_PASS: ""
+    logging: *staging-logging
+    labels:
+      com.biblio.role: "staging"
+
+  proxy:
+    logging: *staging-logging
+    labels:
+      com.biblio.role: "staging"
