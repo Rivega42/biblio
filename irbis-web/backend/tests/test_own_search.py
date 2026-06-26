@@ -140,6 +140,18 @@ def main():
     check('multi-field union (как build_expr портала)',
           r['total'] == 1 and _title(r['items'][0]['record']) == 'Театральная история')
 
+    # 6d. Пословный K= (#270): многословное ключевое слово 610 разбивается на слова —
+    # точное слово находит запись (раньше «театральное искусство; театр» целым
+    # термином давало 0 на точное K=театр).
+    cat.save('EK', _book('Театр и зритель', 'Островский А.Н.',
+                         ['театральное искусство; театр'], '1003'))
+    r = cat.search_records('EK', 'K=театр')
+    check('K= пословно: точное слово из многословного 610',
+          any(_title(it['record']) == 'Театр и зритель' for it in r['items']))
+    r = cat.search_records('EK', 'K=искусство')
+    check('K= пословно: слово «искусство» из «театральное искусство»',
+          r['total'] == 1 and _title(r['items'][0]['record']) == 'Театр и зритель')
+
     # 7. Конфиг-флаг OWN_SEARCH_DBS парсится (csv, upper).
     os.environ['OWN_SEARCH_DBS'] = 'ek, perio'
     from config import Config
