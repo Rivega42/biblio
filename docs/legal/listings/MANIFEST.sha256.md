@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-26**
-- Версия кода (git): **`00bfc71`**
-- Файлов: **163** · строк: **53303** · условных страниц: **970**
-- **SHA-256 всего листинга:** `41e342cd6fd2f62d6350754776566791f5f5fb6bdd43cd967c9a5e1ba8c14977`
+- Версия кода (git): **`3d0e817`**
+- Файлов: **165** · строк: **53531** · условных страниц: **974**
+- **SHA-256 всего листинга:** `81052a8ee87814185aa7a00808a785beecfba947286ca4a8dfee01d1f05082fc`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -12,7 +12,7 @@
 |---|---:|---|
 | `irbis-web/backend/server.py` | 114 | `a01cef21d45f79d5051b35c0a7c0a2b22d647c85ebff748be0e37f0d0efdfab8` |
 | `irbis-web/backend/core.py` | 3462 | `8dd7f0262e98212b2d50d6797268c888879dafea5b672a8dbc258db01341c6b5` |
-| `irbis-web/backend/config.py` | 98 | `c119a9eb9e27a60048c44c8727a812c77b166174169b9411fa87ead9cdedce3c` |
+| `irbis-web/backend/config.py` | 111 | `986ca510188827c1ad225a34c16f2c1c99c5105918e035a0162ce5057cbd2da8` |
 | `irbis-web/backend/access/catalog.py` | 1116 | `065108a66a37a2bbc8f68d4c67d641098697917ac1cf6d3fa9d8af5b982d5a31` |
 | `irbis-web/backend/access/circulation.py` | 1411 | `04c43d5f15cae6e92626dbbf43b97b7b196faf1d9e7bb59dbef5a82e1a47d81d` |
 | `irbis-web/backend/access/acquisition.py` | 1869 | `bd1678b2f963891e7208cad04da34158170193dbae44a9f42b0e2925ad5bbb0c` |
@@ -37,6 +37,7 @@
 | `irbis-web/backend/access/fulltext.py` | 516 | `6c84c873712087205d830950304379bd0138abecd1e5dacc8be5dff77b9a608b` |
 | `irbis-web/backend/access/lich.py` | 401 | `dff9c64036d594c746da6a1496e33c8180a0ebe515843422272a9d3482f139e3` |
 | `irbis-web/backend/access/mnu.py` | 121 | `e35a9cc932f96d8b25f4d07d1d4dc8a570c5461b327892a35a54cce570c897c5` |
+| `irbis-web/backend/access/oidc.py` | 126 | `434eeeaafa3b94e985c8da21a8e056b3a8b611d43294db27870e8f866a2d78e9` |
 | `irbis-web/backend/access/rights.py` | 491 | `e7a92e97b3ed65d68e83616ef2759f0c1afbd2947a9f5248b7df7599217cc676` |
 | `irbis-web/backend/access/seed.py` | 56 | `fff0ed81295a8bc26497406ddeb3cc8993d5972b7b3cbd0a148a7721654959ef` |
 | `irbis-web/backend/access/seed_data.py` | 156 | `818b331db5c8d7b4d009383959f6b077c12ef9e1ea77eabff0e264cb647dc008` |
@@ -85,6 +86,7 @@
 | `irbis-web/backend/tests/test_migrate_introspect.py` | 693 | `df1d339d63658e4e755c6003c273552ad70120ee62a13a6004112dcef318bce1` |
 | `irbis-web/backend/tests/test_notifications.py` | 332 | `1dc6fd39293bde3716c19cdd3be5b392073869b46c9af54d8242b441ffb98422` |
 | `irbis-web/backend/tests/test_notifications_dispatch.py` | 310 | `0ea03f8b1881458eb4784219e83102a348ae55b54c7d9e677e5831a5531f9c37` |
+| `irbis-web/backend/tests/test_oidc.py` | 89 | `8a590cdd3888dd05b5ce48800e2b2cb2b3408cee8ffc9558dbc40ad513ce511a` |
 | `irbis-web/backend/tests/test_own_search.py` | 158 | `aac8884329e8b7edfbb245690d417f87790606d5d4bd6e2b324e7d01129cb104` |
 | `irbis-web/backend/tests/test_pft.py` | 412 | `ec5a2291b73bbbac31dd2f1c91f7b16c1b234e24e7dc7e0bff2b8b85b209f49a` |
 | `irbis-web/backend/tests/test_platform.py` | 543 | `8ff70e5ff654ec00457002151b2fe0ed9bb9c54f8b700f0ce15a1d07b9e067d5` |
