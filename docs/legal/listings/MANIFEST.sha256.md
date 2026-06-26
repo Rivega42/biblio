@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-26**
-- Версия кода (git): **`7d27796`**
-- Файлов: **161** · строк: **51993** · условных страниц: **946**
-- **SHA-256 всего листинга:** `a4d54f11a2c9368271f1181789397dbdc7e2dc6764e21ee8944bffb1e2e8e4b0`
+- Версия кода (git): **`003f75f`**
+- Файлов: **163** · строк: **52775** · условных страниц: **960**
+- **SHA-256 всего листинга:** `713dced9dff5b05a472719c58172dbe1f2f5e6e9386aeadabfa6b324eff4514d`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -76,6 +76,7 @@
 | `irbis-web/backend/tests/test_fulltext.py` | 382 | `0d7903d2b9925ac3679141857272f568b045afeaf2f43fab6226ed366a340c69` |
 | `irbis-web/backend/tests/test_gbl.py` | 590 | `b1c8ebda5f02758f3e7cadabddbec8376764c7f0b4af6c8d798bbe5857cbbbf0` |
 | `irbis-web/backend/tests/test_identity.py` | 324 | `c2df0e59f9471ec547713781f4f01f475e6d282b38f7425442682fb8f238dd43` |
+| `irbis-web/backend/tests/test_indexer.py` | 364 | `28e90c2036c4a9466a8f266a23f7872f38f680a80f194d7badb5f16c62b75f74` |
 | `irbis-web/backend/tests/test_integration.py` | 625 | `55fc8050db79ae59c07a8e910e44c353bbe5dc3be4b5812de3c7734f51f31dad` |
 | `irbis-web/backend/tests/test_irbis_mst.py` | 314 | `b6a084833024cf2c532ffb0fa7686154ecb80e4094025776c8952d40acccf6cb` |
 | `irbis-web/backend/tests/test_ko.py` | 539 | `b3b081e883a82419352a968a20acf7ec52ba1c2086e7be261d9a8d60b751dd70` |
@@ -100,6 +101,7 @@
 | `irbis-web/backend/tests/test_tenancy.py` | 178 | `6ac4fb82070748edd90830860cc6021b949f2401df43488407d4b295e9bda2d5` |
 | `irbis-web/backend/tests/test_tocat.py` | 775 | `5eee5cdecea02c8ee3bb68e44a1f698b5ab9a924dfa4663e264d3e2fab84832e` |
 | `irbis-web/backend/tools/__init__.py` | 2 | `9429ccfe3888ed585e0fb562fc3f19065ba0d5aab15f4176bfa6558489a17628` |
+| `irbis-web/backend/tools/index_catalog.py` | 418 | `cf9049e6b339e391550e4012d40f6a0abddeaa4a6b7dbf405040dcf8c6ba1215` |
 | `irbis-web/backend/tools/irbis_mst.py` | 450 | `634fa789876ec924d26569a6d935629dd259c7129f62747611dec2bac6b15da0` |
 | `irbis-web/backend/tools/migrate_irbis.py` | 1116 | `0c55dfe2c4ac62bca4c686f3a9b4d30ede8fe3feb1ffcff831304b4e501ba595` |
 | `irbis-web/frontend/components/catalog/DatabaseSelector.jsx` | 219 | `44a5bee92c3e5a0496ce02dbc2cc98aa7d8321b4d9c7c4e9070309c4cc758c5a` |
