@@ -102,6 +102,42 @@ class _DeviceCircAdapter:
         reader_id = self.api._circ_reader(ticket)
         return self.api.circulation.checkout(reader_id, code, self.api._circ_today())
 
+    def checkin(self, ticket, code):
+        """Возврат (IAbis Checkin) по (билет, экземпляр): резолв займа → return_item.
+        None — нет выданного экземпляра у читателя."""
+        if self.api.circulation is None:
+            return False
+        reader_id = self.api._circ_reader(ticket)
+        loan = self.api._circ_find_loan(reader_id, code)
+        if loan is None:
+            return None
+        return self.api.circulation.return_item(loan['id'], self.api._circ_today())
+
+    def renew(self, ticket, code):
+        """Продление (IAbis Renew/Prolong) по (билет, экземпляр)."""
+        if self.api.circulation is None:
+            return False
+        reader_id = self.api._circ_reader(ticket)
+        loan = self.api._circ_find_loan(reader_id, code)
+        if loan is None:
+            return None
+        return self.api.circulation.renew(loan['id'], self.api._circ_today())
+
+    def loans(self, ticket):
+        """Выданные экземпляры читателя (IAbis GetClientChargedDocs) — карточки 40."""
+        if self.api.circulation is None:
+            return []
+        reader_id = self.api._circ_reader(ticket)
+        today = self.api._circ_today()
+        return [self.api._loan_card(ln, today=today)
+                for ln in self.api.circulation.store.loans_on_hand(reader_id)]
+
+    def doc_state(self, code):
+        """Статус экземпляра 910^A (IAbis GetDocState) по инвентарному номеру."""
+        if self.api.catalog is None:
+            return None
+        return self.api.catalog.exemplar_status(self.api.cfg.db_default, code)
+
 
 # Поля RDR, где может храниться пароль читателя для входа на портал:
 #   130 — «Пароль» (ИРБИС64+, основной рабочий лист читателя);

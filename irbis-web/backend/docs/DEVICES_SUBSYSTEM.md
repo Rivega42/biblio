@@ -76,6 +76,10 @@
 - `/easybookdll/*`: `IsServerAlive`, `LibraryInfoGet`, `ReaderInfoGet`/`ReaderModify`
   (через `readers`-сид, поля 28/30/24), `DeviceIsLicenseValid`,
   `DeviceDataAdd`→`devices.heartbeat`, `BooksCacheAddUpdate`.
+- **IAbis (роль A), реальная книговыдача** через `circulation`-сид (`_DeviceCircAdapter`):
+  `Checkout`/`Checkin`/`Renew` (билет — явный `abisCode` ИЛИ резолв RFID-карты через
+  `readers`), `GetClientChargedDocs` (выданные экземпляры = карточки поля 40),
+  `GetDocState` (910^A экземпляра). Результат Decision сводится к `{Success, Reasons, Due}`.
 - station-facing: `MastersRFIDGet`/`SafeKeeperMasterRFIDModify` → `devices`;
   `OrdersGet`/`SafeKeeperInfoGet2`(CellsState наружу)/`OrderBookProcessedSet`/
   `OrderModify`(opID/stateID→create/staff/issue/cancel) → `locker`.
@@ -102,10 +106,12 @@
 - **Подключение движков** (`Api.__init__`, best-effort, env-DB-пути): `self.devices`
   (DEVICES_DB), `self.readers` (READERS_DB), `self.locker` (LOCKER_DB),
   `self.compat_devices`.
-- **Реальная книговыдача:** `_DeviceCircAdapter(api)` — склейка device-сида
-  `checkout(ticket, code)` с боевым `CirculationEngine.checkout(reader_id, item, today)`
-  (ленивая регистрация читателя `_circ_reader` + clock `_circ_today`); locker читает
-  `Decision.ok/.reasons`. Тот же engine, что АРМ выдачи — никакой второй книговыдачи.
+- **Реальная книговыдача:** `_DeviceCircAdapter(api)` — склейка device-сидов с боевым
+  `CirculationEngine`: `checkout`/`checkin`(`return_item` по `_circ_find_loan`)/`renew`/
+  `loans`(`loans_on_hand`→`_loan_card`)/`doc_state`(`catalog.exemplar_status`). Ленивая
+  регистрация читателя `_circ_reader` + clock `_circ_today`; locker/IAbis читают
+  `Decision.ok/.reasons`. Тот же engine и каталог 910^A, что АРМ выдачи — никакой
+  второй книговыдачи.
 
 ## 4. Тесты
 
@@ -113,20 +119,22 @@
 py -3.12 tests/test_devices.py         # 36 — домен devices
 py -3.12 tests/test_locker.py          # 33 — locker-заказы/ячейки
 py -3.12 tests/test_readers.py         # 15 — реестр карт RFID↔билет
-py -3.12 tests/test_compat_devices.py  # 43 — шим (включая station-facing)
-py -3.12 tests/test_device_routes.py   # 11 — HTTP-маршруты POST /api/devices/* (через Api.route)
+py -3.12 tests/test_compat_devices.py  # 55 — шим (станц. + IAbis книговыдача)
+py -3.12 tests/test_device_routes.py   # 17 — HTTP /api/devices/* (вкл. реальный e2e Checkout→Checkin)
 ```
-Всего 138, in-memory, без DB-сервера. Стиль `test_acquisition.py`/`test_circ_routes.py`
-(standalone + счётчик). Route-тесты гоняют через `Api.route` с Basic `ServiceLogin`.
+Всего 156, in-memory, без DB-сервера. Стиль `test_acquisition.py`/`test_circ_routes.py`
+(standalone + счётчик). Route-тесты гоняют через `Api.route` с Basic `ServiceLogin`;
+e2e `test_iabis_checkout_e2e` крутит реальный circulation + каталожный 910^A по HTTP.
 
 ## 5. Статус и что дальше
 - Готово: домен `devices`, `locker` (SafeKeeper→holds), compat-шим
   (`/easybookdll/*` + station-facing), **HTTP-врезка в `core.Api`** (POST
-  `/api/devices/*`, Basic-аутентификация), **ABIS-порт реальных сидов** —
-  `readers` (карты) + книговыдача через `_DeviceCircAdapter` (боевой circulation).
-- Дальше: остальные IAbis-операции (прямые checkout/checkin/renew-эндпоинты со
-  стойки), запись карт обратно в прод-RDR (30/24/28), Reader Agent (настольный
-  считыватель: сокет/EAS/кодек тега).
+  `/api/devices/*`, Basic-аутентификация), **ABIS-порт** — `readers` (карты) +
+  **IAbis-книговыдача** (Checkout/Checkin/Renew/GetClientChargedDocs/GetDocState)
+  через `_DeviceCircAdapter` на боевом circulation + каталоге 910^A.
+- Дальше: остаток IAbis (SetBookState/GetUserDebts/GetBookCenz), запись карт
+  обратно в прод-RDR (30/24/28), Reader Agent (настольный считыватель:
+  сокет/EAS/кодек тега).
 - Заблокировано (не код): физический привод ячеек реальных станций — нужен
   station-facing трейс/станционный билд (не перепрошивка), `docs/devices/OPEN_QUESTIONS.md` §1.
 
