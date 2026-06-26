@@ -7,10 +7,12 @@
 
 ## 1. Каталог операций (route → тело запроса → ответ)
 
+> ⚠️ Колонка «тело» = **сигнатура метода клиента**; обычно совпадает с фактически сериализуемым объектом, но есть исключения-баги исходника: `EntranceModify` НЕ шлёт `opID` (create/update различает по `entranceID==null`); `DesktopDeviceConfigGet` шлёт **пустое тело** (параметры теряются). В Biblio не воспроизводить.
+
 | Операция | HTTP route | Тело запроса (параметры) | Ответ |
 |---|---|---|---|
 | `ACSGet` | `/las/ACSGet` | — | `<List<ACS_ACS>>` |
-| `EntranceModify` | `/las/EntranceModify` | int? opID, int? entranceID, string entranceName, Guid? libraryID | `<bool>` |
+| `EntranceModify` | `/las/EntranceModify` | entranceID, entranceName, libraryID  _(opID в сигнатуре, но в тело НЕ идёт)_ | `<bool>` |
 | `ACSEventsGet` | `/las/ACSEventsGet` | int? level, int? levelID, DateTime? startDate, DateTime? endDate, Guid? libraryID | `<List<ACS_Event>>` |
 | `ACSAdvancedEventsGet` | `/las/ACSAdvancedEventsGet` | Guid? libraryID, DateTime? startDate, DateTime? endDate | `<List<ACS_AdvacedEvent>>` |
 | `ACSReaderModify` | `/las/ACSReaderModify` | int? id, string name, string ipAddress, int? port, int? readerTypeID, int? entranceID | `<int>` |
@@ -159,7 +161,7 @@
 | `ExternalLogAdd` | `/las/ExternalLogAdd` | int? logTypeID, string comment | `<bool>` |
 | `ExternalLogGet` | `/las/ExternalLogGet` | — | `<List<LOG_ExternalLog>>` |
 | `ManualGet` | `/web/ManualGet` | — | `<MemoryStream>` |
-| `DesktopDeviceConfigGet` | `/web/DesktopDeviceConfigGet` | Guid? deviceID, string connectionString | `<MemoryStream>` |
+| `DesktopDeviceConfigGet` | `/web/DesktopDeviceConfigGet` | _(тело пустое — deviceID/connectionString в коде НЕ передаются, баг)_ | `<MemoryStream>` (ZIP) |
 
 **Всего операций: 151.**
 

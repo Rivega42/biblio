@@ -126,6 +126,8 @@ UseWebLog=0                            ; слать события чтения 
 
 ## 4. Модель данных RFID‑метки (как закодирована книга)
 
+> 🔬 **Байтовая раскладка подтверждена декомпиляцией ядра** (Ghidra): формат — стандартный **ISO 28560-2**. Точная структура precursor-байта, кодов компакции и EAS/AFI команд — в [TAG_DATA_MODEL.md](TAG_DATA_MODEL.md).
+
 **HF‑метка книги = ISO 15693 + «датская модель данных» (ISO 28560‑2 / Danish Data Model).** Класс `TRFIDDanish`/`IDLogic_Danish` (`str_EasyBook_RFid`). Сериализатор имеет формат `%s=%d;%d;%d;%s;%s;%s,` — код + три целых (счётчики part/of‑parts/блок) + строковые поля (библиотека‑владелец/инфо комплекта/штрихкод). Ошибки декода: «Input data is missing or corrupt».
 
 **Блочные примитивы (ISO15693):** `RfidDM15Init/Read/RawRead/Write/Erase`; native `ISO15693_ReadSingleBlock/WriteSingleBlock/ReadMultipleBlock/WriteMultipleBlocks/LockBlock`. Идентификация: `Inventory`/`GetUID` → `ISO15693_GetSystemInfo` (UID 8 байт hex).

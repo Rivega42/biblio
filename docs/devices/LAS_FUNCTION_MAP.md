@@ -86,7 +86,7 @@
 | **BookKeepingTypes** | Unknown=0, BookCase=1, Station=2, Environment=3 |
 | **BookOps** | Read=1, Search=2 |
 | **OrderStates** (DBClasses) | Created=1, Prepared=2, Staffed=3 (укомплектован), Issued=4, Cancelled=5 |
-| **ExternalLogTypes** | 1..31: EASSystemAdded, OrderAdded/Edited/Canceled, MasterRFIDAdded, BannerAdded, DesktopDeviceAdded, EntranceAdded, **BookCheckOut, BookCheckIn**, ReaderFormRequest, BookInfoRequest, **ReaderFDSearch**, ReaderPhotoAdded, ReaderRFIDAdded, BookCaseAdded, …, UserPasswordChanged=31 |
+| **ExternalLogTypes** | 1..32 (32 члена): EASSystemAdded=1, OrderAdded/Edited/Canceled, MasterRFIDAdded, BannerAdded, DesktopDeviceAdded, EntranceAdded, **BookCheckOut, BookCheckIn**, ReaderFormRequest, BookInfoRequest, **ReaderFDSearch**, ReaderPhotoAdded, ReaderRFIDAdded, BookCaseAdded, …, ProgramSettingsChanged=31, **UserPasswordChanged=32** |
 
 ## 4. Локальные сущности (`DBClasses` / `DBClasses.Prop`)
 

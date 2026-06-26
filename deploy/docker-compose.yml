@@ -79,6 +79,9 @@ services:
       IRBIS_WORKSTATION: ${IRBIS_WORKSTATION:-A}
       IRBIS_DB_DEFAULT: ${IRBIS_DB_DEFAULT:-IBIS}
       IRBIS_PUBLIC_DBS: ${IRBIS_PUBLIC_DBS:-IBIS}
+      # #262: базы, чей поиск идёт из СОБСТВЕННОГО индекса (CatalogStore) в обход
+      # ИРБИС (напр. сломанный K=). Пусто → весь поиск через ИРБИС (как раньше).
+      OWN_SEARCH_DBS: ${OWN_SEARCH_DBS:-}
     volumes:
       - backend-data:/data
     # No host port published — the proxy reaches the backend over the compose
