@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-26**
-- Версия кода (git): **`bcf9c1b`**
-- Файлов: **178** · строк: **56066** · условных страниц: **1020**
-- **SHA-256 всего листинга:** `276741f6de38f5cc221911fc442866b5dd69c11a6b55b1b6b8eca9e48c8126c4`
+- Версия кода (git): **`cd476e4`**
+- Файлов: **178** · строк: **56266** · условных страниц: **1024**
+- **SHA-256 всего листинга:** `ff6c42e7d78a1f6c1cfec1f19e8f194dcce14bce94ff80c04d01d3c15982f74a`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -11,7 +11,7 @@
 | Файл | Строк | SHA-256 |
 |---|---:|---|
 | `irbis-web/backend/server.py` | 114 | `a01cef21d45f79d5051b35c0a7c0a2b22d647c85ebff748be0e37f0d0efdfab8` |
-| `irbis-web/backend/core.py` | 3740 | `407d788799bdc25eab2e89c347edc9d94eecb79dcf5c3c5a57eaa2e450b4f236` |
+| `irbis-web/backend/core.py` | 3776 | `489c95454b93db6e3de2fbeb89c300b3335dc50f74750630f1e0dda8b172ca8f` |
 | `irbis-web/backend/config.py` | 115 | `2aaee5116648201577e42d4669658940fa2e835d149a91a1d52fbbfcdb95e765` |
 | `irbis-web/backend/access/catalog.py` | 1116 | `065108a66a37a2bbc8f68d4c67d641098697917ac1cf6d3fa9d8af5b982d5a31` |
 | `irbis-web/backend/access/circulation.py` | 1411 | `04c43d5f15cae6e92626dbbf43b97b7b196faf1d9e7bb59dbef5a82e1a47d81d` |
@@ -33,7 +33,7 @@
 | `irbis-web/frontend/app/live.jsx` | 488 | `e6083af5fd850ba3f02ed85c7fa2f080a165d8d0427d7543932e87989f8cd119` |
 | `irbis-web/backend/access/__init__.py` | 7 | `61dff764881585173ea7d9521270e865c952b89f9d36a16570cb390a551c02ed` |
 | `irbis-web/backend/access/authz.py` | 36 | `f507286194589eca17f873c647eb3307f144530a7a008d78af49ca3ecaf393e6` |
-| `irbis-web/backend/access/compat_devices.py` | 227 | `209ee8572c998134ca8b68d2f972500d95a50e0a72cb8e69fd219563944834ad` |
+| `irbis-web/backend/access/compat_devices.py` | 298 | `883e777a472f23e13977f8e6e4c825466d4ac8c507cfa664ec4020cc36c4bfdf` |
 | `irbis-web/backend/access/demo_requests.py` | 235 | `c19e6c42d8820bc19fc3f8c0024f8f9f6ddbe333e401618fa2d7e6eddb7c113f` |
 | `irbis-web/backend/access/devices.py` | 459 | `7d84cd15e6cf6699ac0f36988c9ce56b09c3dd7358fa7bf06a288e120b2661a2` |
 | `irbis-web/backend/access/fulltext.py` | 516 | `6c84c873712087205d830950304379bd0138abecd1e5dacc8be5dff77b9a608b` |
@@ -74,10 +74,10 @@
 | `irbis-web/backend/tests/test_circ_resolve.py` | 240 | `f7ff1df94090c7d4471b6f545f97e6be3039a1862b7bbb6ffbf231bb03e7fa1a` |
 | `irbis-web/backend/tests/test_circ_routes.py` | 377 | `5292f5b76a11dff537a0a234742719d96a183662797c7c0a9370f2f4a319b149` |
 | `irbis-web/backend/tests/test_circulation.py` | 444 | `129c3680397bac86063168f6fd2d6371241916a90124371625b53dec64f87769` |
-| `irbis-web/backend/tests/test_compat_devices.py` | 193 | `b815af13bbc5ee39a6f3752b8346fd08442d6def67c6ddcf53d8dd213581ed73` |
+| `irbis-web/backend/tests/test_compat_devices.py` | 256 | `d16b3801bc66a0c38ddea1535ce75514ab55b5b8d695da066a57b36126cca971` |
 | `irbis-web/backend/tests/test_compliance.py` | 441 | `0de2208afa866e8c9a072750b11a5f8d8272e4f9bd5874efb2a014c17e786b0d` |
 | `irbis-web/backend/tests/test_demo_requests.py` | 289 | `398b42b72d25523a6221357fe8258ffcfa5014875873b2e630797e61ae8add73` |
-| `irbis-web/backend/tests/test_device_routes.py` | 111 | `df1e27b0e09a65468382e2df2a164aec97f3c8d06e72988436f8c06dd9ae6c89` |
+| `irbis-web/backend/tests/test_device_routes.py` | 141 | `a7c7bfe004acd91f679c025537474c15d1715c5694461df661340ee7eb77facf` |
 | `irbis-web/backend/tests/test_devices.py` | 162 | `86e9116b89e1b26d8358566c17aae52f02222f7fa2a41df8512836f3128d5c66` |
 | `irbis-web/backend/tests/test_discovery.py` | 363 | `a9d4b06a7457b77be26a0249f80d8882a7e94d47feb9d8c6246d03287646aaa7` |
 | `irbis-web/backend/tests/test_encoding.py` | 57 | `b3aa6e9777a8d584423b76419275ab63e2bd4d049227bfdd5fe7eb10a52b0d58` |
