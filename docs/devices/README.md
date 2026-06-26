@@ -26,7 +26,9 @@
 | [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) | Пробелы и нужный стенд/доступы |
 | [BIBLIO_DEVICE_INTEGRATION_DESIGN.md](BIBLIO_DEVICE_INTEGRATION_DESIGN.md) | **Проект:** как Biblio (два режима: замена JIRBIS / замена ИРБИС) полноформатно работает со всеми устройствами + Android ТСД через ABIS‑порт; замена стека IDlogic |
 | [TZ_PHASE1_abis_device_core.md](TZ_PHASE1_abis_device_core.md) | **ТЗ Фаза 1:** контракт IAbis, нативная БД (режим 2), эндпоинты Device Service, протокол Reader Agent; разделы «бесшовный подхват устройств» и «покрытие интерфейсов сотрудников» |
-| [contracts/](contracts/) | **Контракты для разработки:** [DDL режима 2](contracts/biblio_abis_native_schema.sql) + [OpenAPI Device Service](contracts/device_service_openapi.json) (151 операция + 106 DTO) |
+| [DEVICES_NATIVE_ARCHITECTURE.md](DEVICES_NATIVE_ARCHITECTURE.md) | **Каноничная архитектура** (#272): устройства = нативные домены Biblio + compat-адаптер |
+| [specs/](specs/) | **Спеки реализации (нативные домены):** [домен `devices`](specs/DOMAIN_DEVICES_SPEC.md) (1/3) · [compat-адаптер](specs/COMPAT_ADAPTER_CONTRACT.md) (2/3) · [SafeKeeper→holds #222](specs/SAFEKEEPER_HOLDS_MAPPING.md) (3/3) |
+| [contracts/](contracts/) | **Контракты:** [DDL (поле-маппинг + домен devices)](contracts/biblio_abis_native_schema.sql) + [OpenAPI device-facing](contracts/device_service_openapi.json) + [мок-станция](contracts/mock_station_spec.md) |
 | [REVIEW_NOTES.md](REVIEW_NOTES.md) | Протокол ревью документации против декомпиляции + список исправлений |
 
 ## Ключевые выводы
