@@ -993,13 +993,11 @@ class Api:
     def search(self, session, db, expr, page, page_size):
         self._guard(session, 'search', db, 'read')
         self._public_db_guard(session, db)
-        # #229/#262: базы из OWN_SEARCH_DBS — одиночный префиксный запрос обслуживаем
-        # из НАШЕГО индекса (CatalogStore), в обход ИРБИС (напр. сломанный K=).
-        # Составные выражения (+/*/^, скобки) пока идут в ИРБИС. Флаг по умолчанию
-        # пуст → ветка не срабатывает, поведение прода не меняется.
+        # #229/#262: базы из OWN_SEARCH_DBS — поиск (одиночный И составной: +/*/^,
+        # скобки) обслуживаем из НАШЕГО индекса (CatalogStore), в обход ИРБИС (напр.
+        # сломанный K=). Флаг по умолчанию пуст → ветка не срабатывает, прод не меняется.
         if (self.catalog is not None and db.upper() in self.cfg.own_search_dbs
-                and '=' in (expr or '')
-                and not any(t in expr for t in (' + ', ' * ', ' ^ ', '(', ')'))):
+                and '=' in (expr or '')):
             start = (page - 1) * page_size
             res = self.catalog.search_items(db, expr, page_size, start)
             return 200, ok({'db': db, 'expr': expr, 'total': res['total'], 'page': page,
