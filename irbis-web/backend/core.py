@@ -2190,7 +2190,11 @@ class Api:
                     faculty_id=int(faculty), normalize=normalize)
                 return 200, ok(self._bp_provision_report(
                     raw, scope='faculty', subject=str(faculty)))
-        except _bookprovision.BookProvisionError as e:
+        except (ValueError, _bookprovision.BookProvisionError) as e:
+            # Нечисловой scope (напр. оператор ввёл НАЗВАНИЕ дисциплины в быстром
+            # отчёте ProvisionLookup) → int() бросает ValueError ДО движка. Ловим
+            # вместе с BookProvisionError → мягкая деградация 404 (не 500), как и
+            # обещает docstring «Неизвестный id → 404».
             return 404, err('not_found', str(e))
         return 400, err('bad_request', 'discipline, specialty or faculty required')
 
