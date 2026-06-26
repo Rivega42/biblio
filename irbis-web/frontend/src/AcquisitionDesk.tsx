@@ -66,6 +66,74 @@ function money(n?: number): string {
   if (n == null) return "—";
   return n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₽";
 }
+
+// Бэкенд (access/acquisition.py) отдаёт «сырую» строку acq_order с именами полей
+// sqlite-схемы: copies_ordered / copies_received / status='cancelled'. Фронт-тип
+// AcqOrder ждёт copies / received / canceled. Нормализуем при каждом приёме строки
+// от сервера, чтобы рендер и statusOf работали единообразно (и для созданного
+// заказа, и для обновлённого после поступления). Терпимо к обоим вариантам имён.
+function normOrder(raw: any): AcqOrder {
+  if (!raw || typeof raw !== "object") return raw;
+  const copies = raw.copies != null ? raw.copies : (raw.copies_ordered != null ? raw.copies_ordered : 0);
+  const received = raw.received != null ? raw.received : (raw.copies_received != null ? raw.copies_received : 0);
+  const status = raw.status === "cancelled" ? "canceled" : raw.status;
+  return {
+    id: raw.id,
+    title: raw.title,
+    author: raw.author || undefined,
+    supplier: raw.supplier || undefined,
+    copies,
+    received,
+    price: raw.price != null ? raw.price : undefined,
+    funding_source: raw.funding_source || raw.fundingSource || undefined,
+    status,
+    statusLabel: raw.statusLabel,
+    created: raw.created,
+    ksuNo: raw.ksuNo,
+    canceled: status === "canceled" || raw.canceled === true,
+  };
+}
+
+// Результат POST /api/acq/receive у бэкенда: {receipt, ksu, order, inventory,
+// sum, catalog_mfn, catalog_action, lendable}. Раскладываем в плоскую форму,
+// которую рендерит карточка результата (КСУ-номер, MFN, создана/обновлена).
+function normReceive(d: any): AcqReceiveResult & { inventory?: string[]; lendable?: string[]; order?: AcqOrder } {
+  const ksuRow = d?.ksu || null;
+  const ksuNo = ksuRow?.ksu_no || ksuRow?.no || d?.ksuNo;
+  const mfn = d?.catalog_mfn != null ? d.catalog_mfn : (d?.mfn != null ? d.mfn : undefined);
+  const action = d?.catalog_action || (d?.created ? "created" : undefined);
+  return {
+    ksu: ksuRow ? {
+      no: ksuNo,
+      copies: ksuRow.copies,
+      sum: ksuRow.total_sum != null ? ksuRow.total_sum : ksuRow.sum,
+      actRef: ksuRow.act_ref || ksuRow.actRef,
+    } : undefined,
+    ksuNo,
+    mfn,
+    db: d?.db || "IBIS",
+    created: action === "created",
+    copies: Array.isArray(d?.inventory) ? d.inventory.length : (d?.copies != null ? d.copies : ksuRow?.copies),
+    inventory: Array.isArray(d?.inventory) ? d.inventory : undefined,
+    lendable: Array.isArray(d?.lendable) ? d.lendable : undefined,
+    order: d?.order ? normOrder(d.order) : undefined,
+    message: d?.message,
+  };
+}
+
+// Строка КСУ от GET /api/acq/ksu (access/acquisition.py get_ksu): ksu_no / titles
+// / copies / total_sum / act_ref. Раскладываем в KsuEntry.
+function normKsu(raw: any): KsuEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    no: raw.ksu_no || raw.no,
+    copies: raw.copies,
+    sum: raw.total_sum != null ? raw.total_sum : raw.sum,
+    actRef: raw.act_ref || raw.actRef,
+    supplier: raw.supplier,
+  };
+}
+
 // Метка статуса заказа: машинный код → русская подпись + класс «таблетки».
 function statusOf(o: AcqOrder): { label: string; cls: string } {
   if (o.canceled || o.status === "canceled") return { label: o.statusLabel || "Отменён", cls: "cancel" };
@@ -77,14 +145,19 @@ function statusOf(o: AcqOrder): { label: string; cls: string } {
 
 const FUNDING = ["Бюджет", "Внебюджет", "Грант", "Дар", "Обмен", "Замена утерянных"];
 
+// Список заказов «за эту сессию». У бэкенда НЕТ endpoint'а ленты заказов
+// (GET /api/acq/order требует id; список не отдаётся), поэтому деск держит
+// заказы, созданные/принятые в этой сессии, на клиенте — и доуточняет каждый
+// по GET /api/acq/order?id= после операций. Это не зависит от ИРБИС: вся
+// учётная история — в own-store (AcquisitionStore).
 export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
-  const [orders, setOrders] = React.useState<AcqOrder[] | null>(null);
+  const [orders, setOrders] = React.useState<AcqOrder[]>([]);
   const [unavailable, setUnavailable] = React.useState(false);
   const [selId, setSelId] = React.useState<string | number | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [receiving, setReceiving] = React.useState(false);
   const [busyId, setBusyId] = React.useState<string | number | null>(null);
-  const [lastReceive, setLastReceive] = React.useState<AcqReceiveResult | null>(null);
+  const [lastReceive, setLastReceive] = React.useState<(AcqReceiveResult & { inventory?: string[]; lendable?: string[] }) | null>(null);
 
   // форма заказа
   const [title, setTitle] = React.useState("");
@@ -105,19 +178,28 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
   const [ksuQuery, setKsuQuery] = React.useState("");
   const [ksuResult, setKsuResult] = React.useState<KsuEntry | null | "none">(null);
 
-  const selected = orders?.find((o) => o.id === selId) || null;
+  const selected = orders.find((o) => o.id === selId) || null;
+  // Подсказка № КСУ по умолчанию: «<год>-1» (88^A год+№). Оператор может заменить.
+  const ksuSuggest = String(new Date().getFullYear()) + "-1";
 
-  async function loadOrders() {
-    const r = await api.acqOrders();
-    if (r.status === 404 || r.status === 501) { setUnavailable(true); return; }
-    if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) {
-      setOrders(r.json.data.items); setUnavailable(false);
-    } else if (r.status === 401 || r.status === 403) {
-      // авторизация/грант — список оставляем пустым, форма доступна
-      setOrders([]);
-    } else { setOrders([]); }
+  // Вмержить/обновить заказ в клиентский список (по id). Новый — в начало.
+  function upsertOrder(o: AcqOrder) {
+    setOrders((os) => {
+      const i = os.findIndex((x) => x.id === o.id);
+      if (i < 0) return [o].concat(os);
+      const next = os.slice(); next[i] = o; return next;
+    });
   }
-  React.useEffect(() => { void loadOrders(); }, []);
+
+  // Доуточнить один заказ с сервера (GET /api/acq/order?id=) после операции —
+  // чтобы статус/received соответствовали own-store, а не оптимистичной правке.
+  async function refreshOrder(id: string | number) {
+    const r = await api.acqGetOrder(id);
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      const raw = (r.json.data as any).order || r.json.data;
+      if (raw && raw.id != null) upsertOrder(normOrder(raw));
+    }
+  }
 
   async function createOrder() {
     const t = title.trim(); const c = parseInt(copies, 10);
@@ -131,17 +213,18 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
     });
     setCreating(false);
     if (r.status === 200 && r.json?.ok && r.json.data) {
+      const created = normOrder(r.json.data);
       toast({ variant: "success", title: "Заказ создан", message: t + " · " + c + " экз." });
-      const created = r.json.data;
-      setOrders((os) => [created].concat(os || []));
+      upsertOrder(created);
       setSelId(created.id);
+      setUnavailable(false);
       setTitle(""); setAuthor(""); setSupplier(""); setCopies("1"); setPrice("");
     } else if (r.status === 404 || r.status === 501) {
       setUnavailable(true);
     } else if (r.status === 401 || r.status === 403) {
-      toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант acq.receipt." });
+      toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант acq.receipt (роль администратора)." });
     } else {
-      toast({ variant: "error", title: "Заказ не создан", message: "Повторите попытку." });
+      toast({ variant: "error", title: "Заказ не создан", message: r.json?.error?.message || "Повторите попытку." });
     }
   }
 
@@ -151,13 +234,14 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
     setBusyId(null);
     if (r.status === 200 && r.json?.ok) {
       toast({ variant: "success", title: "Заказ отменён", message: o.title });
-      setOrders((os) => (os || []).map((x) => x.id === o.id ? (r.json!.data || { ...x, canceled: true, status: "canceled" }) : x));
+      const updated = r.json.data ? normOrder(r.json.data) : { ...o, canceled: true, status: "canceled" };
+      upsertOrder(updated);
     } else if (r.status === 404 || r.status === 501) {
       toast({ variant: "info", title: "Отмена недоступна", message: "Модуль комплектования ещё не подключён." });
     } else if (r.status === 401 || r.status === 403) {
-      toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант acq.receipt." });
+      toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант acq.receipt (роль администратора)." });
     } else {
-      toast({ variant: "error", title: "Не отменено", message: "Повторите попытку." });
+      toast({ variant: "error", title: "Не отменено", message: r.json?.error?.message || "Повторите попытку." });
     }
   }
 
@@ -165,28 +249,38 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
     if (!selected) return;
     const c = parseInt(rcvCopies || String(selected.copies), 10);
     if (!c || c < 1) { toast({ variant: "info", title: "Укажите число экземпляров", message: "Сколько экземпляров поступило?" }); return; }
-    setReceiving(true);
+    // Бэкенд требует №КСУ (acq_receive → 400 'ksuNo required', если пусто). В UI
+    // подставляем подсказку (год+«-1») как дефолт, но даём оператору исправить.
+    const ksuNo = rcvKsuNo.trim() || ksuSuggest;
+    if (!ksuNo) { toast({ variant: "info", title: "Укажите № КСУ", message: "Номер записи КСУ обязателен для поступления." }); return; }
     const invNumbers = rcvInv.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
+    if (invNumbers.length && invNumbers.length !== c) {
+      toast({ variant: "info", title: "Проверьте инв. номера", message: "Инв. номеров (" + invNumbers.length + ") должно быть ровно " + c + " — или оставьте поле пустым (авто-нумерация)." });
+      return;
+    }
+    setReceiving(true);
     const r = await api.acqReceive({
-      orderId: selected.id, ksuNo: rcvKsuNo.trim() || undefined, copies: c,
+      orderId: selected.id, ksuNo, copies: c,
       unitPrice: rcvUnit.trim() ? parseFloat(rcvUnit.replace(",", ".")) : undefined,
       invNumbers: invNumbers.length ? invNumbers : undefined,
       actRef: rcvAct.trim() || undefined,
     });
     setReceiving(false);
     if (r.status === 200 && r.json?.ok && r.json.data) {
-      const d = r.json.data;
+      const d = normReceive(r.json.data);
       setLastReceive(d);
       const ksuNo = d.ksu?.no || d.ksuNo;
-      toast({ variant: "success", title: "Поступление оформлено", message: (ksuNo ? "КСУ " + ksuNo : "") + (d.mfn ? " · каталог MFN " + d.mfn : "") });
+      toast({ variant: "success", title: "Поступление оформлено", message: (ksuNo ? "КСУ " + ksuNo : "") + (d.mfn != null ? " · каталог MFN " + d.mfn : "") });
       setRcvKsuNo(""); setRcvCopies(""); setRcvUnit(""); setRcvInv(""); setRcvAct("");
-      await loadOrders();
+      // обновляем строку заказа: предпочитаем order из ответа, иначе доуточняем GET'ом
+      if (d.order && d.order.id != null) upsertOrder(d.order);
+      else await refreshOrder(selected.id);
     } else if (r.status === 404 || r.status === 501) {
       toast({ variant: "info", title: "Поступление недоступно", message: "Модуль комплектования ещё не подключён." });
     } else if (r.status === 401 || r.status === 403) {
-      toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант acq.receipt." });
+      toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант acq.receipt (роль администратора)." });
     } else {
-      toast({ variant: "error", title: "Не оформлено", message: r.json?.data?.message || "Проверьте данные поступления." });
+      toast({ variant: "error", title: "Не оформлено", message: r.json?.error?.message || "Проверьте данные поступления." });
     }
   }
 
@@ -194,11 +288,19 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
     const no = ksuQuery.trim();
     if (!no) return;
     const r = await api.acqKsu(no);
-    if (r.json?.ok && r.json.data) {
-      const e = r.json.data.entry || (r.json.data.items && r.json.data.items[0]);
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      // бэкенд отдаёт строку КСУ прямо в data (get_ksu); терпим и {entry}/{items}.
+      const raw = (r.json.data as any).entry || ((r.json.data as any).items && (r.json.data as any).items[0]) || r.json.data;
+      const e = normKsu(raw);
       setKsuResult(e || "none");
-    } else if (r.status === 404 || r.status === 501) {
+    } else if (r.status === 404) {
+      // 404 здесь — «запись КСУ не найдена» (own-store), это НЕ отсутствие модуля.
+      setKsuResult("none");
+    } else if (r.status === 501) {
       toast({ variant: "info", title: "КСУ недоступна", message: "Книга суммарного учёта подключается модулем комплектования." });
+      setKsuResult("none");
+    } else if (r.status === 401 || r.status === 403) {
+      toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант acq.read (роль администратора)." });
       setKsuResult("none");
     } else { setKsuResult("none"); }
   }
@@ -208,7 +310,7 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
       <div className="stf__h1">
         <h2>Комплектование</h2>
         <span className="stf__pill">Заказ → поступление → каталог</span>
-        {orders && <span className="stf__pill" style={{ background: "var(--status-issued-bg)", color: "var(--status-issued)", borderColor: "transparent" }}>{orders.filter((o) => !o.canceled && o.status !== "canceled").length} заказ(ов)</span>}
+        {orders.length > 0 && <span className="stf__pill" style={{ background: "var(--status-issued-bg)", color: "var(--status-issued)", borderColor: "transparent" }}>{orders.filter((o) => !o.canceled && o.status !== "canceled").length} заказ(ов)</span>}
       </div>
     </div>
   );
@@ -295,9 +397,7 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
             <div className="acq__card-pad" style={{ paddingBottom: 0 }}>
               <span className="acq__cap" style={{ marginBottom: 0 }}>Заказы</span>
             </div>
-            {orders === null ? (
-              <div style={{ padding: "18px 16px", color: "var(--text-subtle)", fontSize: 13 }}>Загрузка заказов…</div>
-            ) : orders.length === 0 ? (
+            {orders.length === 0 ? (
               <div style={{ padding: "8px 4px" }}>
                 <EmptyState icon="archive" title="Заказов пока нет" description="Оформите заказ слева — он появится здесь. По заказу можно оформить поступление: создастся запись КСУ и каталожная запись." />
               </div>
@@ -353,8 +453,9 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
                     onChange={(e) => setRcvCopies(e.target.value)} placeholder={String(selected.copies)} />
                 </div>
                 <div className="acq__fld">
-                  <label className="acq__fld-lab" htmlFor="acq-rcv-ksu">№ КСУ</label>
-                  <input id="acq-rcv-ksu" className="acq__in acq__in--mono" value={rcvKsuNo} onChange={(e) => setRcvKsuNo(e.target.value)} placeholder="авто" autoComplete="off" />
+                  <label className="acq__fld-lab" htmlFor="acq-rcv-ksu">№ КСУ (обязательно)</label>
+                  <input id="acq-rcv-ksu" className="acq__in acq__in--mono" value={rcvKsuNo} onChange={(e) => setRcvKsuNo(e.target.value)} placeholder={ksuSuggest} autoComplete="off"
+                    onKeyDown={(e) => { if (e.key === "Enter") receive(); }} />
                 </div>
               </div>
               <div className="acq__row2">
@@ -389,7 +490,17 @@ export function AcquisitionDesk({ toast }: { toast: ToastFn }) {
                         {lastReceive.db ? " · " + lastReceive.db : ""}
                       </div>
                     ) : (
-                      <div style={{ marginTop: 4, fontSize: 12.5, color: "var(--text-subtle)" }}>Каталожная запись будет создана ToCat после индексации.</div>
+                      <div style={{ marginTop: 4, fontSize: 12.5, color: "var(--text-subtle)" }}>ToCat: каталог не подключён на этом стенде — КСУ и инв. учёт записаны (ИРБИС не требуется).</div>
+                    )}
+                    {lastReceive.inventory && lastReceive.inventory.length > 0 && (
+                      <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-subtle)" }}>
+                        Инв. №: <span style={{ fontFamily: "var(--font-mono)" }}>{lastReceive.inventory.join(", ")}</span>
+                      </div>
+                    )}
+                    {lastReceive.lendable && lastReceive.lendable.length > 0 && (
+                      <div style={{ marginTop: 4, fontSize: 12, color: "var(--status-available,#3C7D3F)" }}>
+                        Доступно к выдаче сразу: {lastReceive.lendable.length} экз.
+                      </div>
                     )}
                   </div>
                 </div>

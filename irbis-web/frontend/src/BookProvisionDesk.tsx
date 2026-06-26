@@ -1,14 +1,32 @@
-// Книгообеспеченность (#186) — рабочий стол. Связка строится сверху вниз:
-//   факультет → специальность → дисциплина. К дисциплине привязывается
-//   литература (осн./доп.), задаётся контингент (число студентов). По дисциплине
-//   и по специальности считается коэффициент книгообеспеченности (Кко) с флагом
-//   недообеспеченности и дефицитом экземпляров; переключатель «нормализация»
-//   меняет режим расчёта (учёт многоразового использования). Карточки тянутся с
-//   /api/bp/discipline и /api/bp/specialty.
+// Книгообеспеченность (#186) — рабочий стол (standalone-деск ККО).
+// Связка строится сверху вниз: факультет → специальность → дисциплина. К
+// дисциплине привязывается литература (осн./доп.), задаётся контингент (число
+// студентов). По дисциплине и по специальности считается коэффициент
+// книгообеспеченности (Кко) с флагом дефицита и недостающими экземплярами;
+// переключатель «нормализация» меняет режим расчёта (учёт многоразового
+// использования — каждый Кко в среднем ограничивается единицей).
+//
+// КОНТРАКТ БЭКА (own BookProvisionStore, ИРБИС не нужен — core.py / bookprovision.py):
+//   POST /api/bp/faculty     {code,name}                      → {id}            (bp.write)
+//   POST /api/bp/specialty   {facultyId,napr,spec,vid,form,name} → {id}         (bp.write)
+//   POST /api/bp/discipline  {specialtyId,discId,name,semester,students} → {id} (bp.write)
+//                            — идемпотентен по (specialtyId,discId,semester):
+//                              повторный POST обновляет name/students (так задаём контингент).
+//   POST /api/bp/bind        {disciplineId,title,kind,copies} → {id}            (bp.write)
+//   GET  /api/bp/provision?discipline=<id>  → отчёт ККО дисциплины               (bp.read)
+//   GET  /api/bp/provision?specialty=<id>   → сводный отчёт ККО специальности    (bp.read)
+//     Отчёт = BpProvisionReport: {coefficient(=average_kko), norm(=kko_norm),
+//       status(ok|deficit), students, copies(=total_exemplars), shortfall,
+//       bindings:[{title,kind,copies(=exemplars),author?,mfn?}], а также сырые поля
+//       движка: under_provisioned, disciplines[...] (для специальности)}.
+// ВАЖНО: POST-эндпойнты возвращают ТОЛЬКО {id} — реквизиты карточки (код/имя)
+//   держим локально из форм. Расчёт ВСЕГДА читаем отчётом bp/provision по id.
+// Гранты: всё под bp.write/bp.read. У демо-роли administrator они есть; у
+//   librarian (reader-service+cataloger) их НЕТ → операции вернут 403 (см. отчёт).
 // Мягкая деградация: нет /api/bp/* (404/501) — информер, приложение не падает.
 import React from "react";
 import { api } from "./api";
-import type { BpFaculty, BpSpecialty, BpDiscipline, BpDisciplineCard, BpSpecialtyCard, BpKko } from "./api";
+import type { BpFaculty, BpSpecialty, BpDiscipline, BpProvisionReport, BpProvisionBinding } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -16,7 +34,15 @@ import { EmptyState } from "../components/feedback/EmptyState.jsx";
 
 type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) => void;
 
-// Пространство имён .bp__* — не пересекается с .stf__ / .cdesk__ / .acq__ / .irb-*.
+// Локальные узлы связки: id с сервера + реквизиты из форм (POST отдаёт только {id}).
+type FacNode = { id: string | number; code: string; name: string };
+type SpecNode = { id: string | number; facultyId: string | number; spec: string; name: string };
+type DiscNode = {
+  id: string | number; specialtyId: string | number;
+  discId: string; name: string; semester: string; students: number;
+};
+
+// Пространство имён .bp__* — не пересекается с .stf__ / .cdesk__ / .acq__ / .irb-* / .kko__.
 const CSS = `
 .bp{font-family:var(--font-ui);}
 .bp__grid{display:grid;grid-template-columns:300px minmax(0,1fr);gap:18px;align-items:start;}
@@ -65,15 +91,39 @@ if (typeof document !== "undefined" && !document.getElementById("bp-css")) {
   const s = document.createElement("style"); s.id = "bp-css"; s.textContent = CSS; document.head.appendChild(s);
 }
 
-// Цвет/класс блока Кко по флагу недообеспеченности.
-function kkoClass(k?: BpKko): string { return k && k.underProvided ? "bad" : "ok"; }
-function fmtKko(v?: number): string { return v == null ? "—" : v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// Дефицит по отчёту: status==='deficit' (или, как запас, under_provisioned флаг движка).
+function isDeficit(r?: BpProvisionReport | null): boolean {
+  if (!r) return false;
+  if (r.status) return r.status === "deficit";
+  const under = (r as any).under_provisioned;
+  if (typeof under === "boolean") return under;
+  if (Array.isArray(under)) return under.length > 0;
+  if (r.coefficient != null && r.norm != null) return r.coefficient < r.norm;
+  return false;
+}
+function kkoClass(r?: BpProvisionReport | null): string { return isDeficit(r) ? "bad" : "ok"; }
+function fmtKko(v?: number | null): string {
+  return v == null ? "—" : v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
-function KkoFlag({ k }: { k?: BpKko }) {
-  if (!k) return null;
-  return k.underProvided
-    ? <span className="bp__flag bp__flag--bad"><Icon name="alert-triangle" size={13} />Недообеспечена{k.shortfall ? " · −" + k.shortfall + " экз." : ""}</span>
+function KkoFlag({ r }: { r?: BpProvisionReport | null }) {
+  if (!r) return null;
+  const bad = isDeficit(r);
+  const sf = r.shortfall;
+  return bad
+    ? <span className="bp__flag bp__flag--bad"><Icon name="alert-triangle" size={13} />Дефицит{sf ? " · −" + sf + " экз." : ""}</span>
     : <span className="bp__flag bp__flag--ok"><Icon name="check-circle" size={13} />Норматив выполнен</span>;
+}
+
+// Сводка специальности перечисляет дисциплины с их Кко: используем сырые
+// disciplines[...] из specialty_provision (поля движка), деградируем к [].
+type SpecDiscRow = { id?: string | number; name?: string; average_kko?: number | null; under_provisioned?: boolean };
+function specDisciplines(r?: BpProvisionReport | null): SpecDiscRow[] {
+  const raw = r && (r as any).disciplines;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((d: any) => ({
+    id: d.discipline_id, name: d.name, average_kko: d.average_kko, under_provisioned: d.under_provisioned,
+  }));
 }
 
 const SPEC_FORMS = ["очная", "очно-заочная", "заочная"];
@@ -82,17 +132,17 @@ export function BookProvisionDesk({ toast }: { toast: ToastFn }) {
   const [unavailable, setUnavailable] = React.useState(false);
   const [normalize, setNormalize] = React.useState(false);
 
-  // связка (локальная — связка строится формами; карточки тянутся с сервера)
-  const [faculties, setFaculties] = React.useState<BpFaculty[]>([]);
-  const [specialties, setSpecialties] = React.useState<BpSpecialty[]>([]);
-  const [disciplines, setDisciplines] = React.useState<BpDiscipline[]>([]);
+  // связка (id+реквизиты держим локально; расчёт читаем отчётом по id)
+  const [faculties, setFaculties] = React.useState<FacNode[]>([]);
+  const [specialties, setSpecialties] = React.useState<SpecNode[]>([]);
+  const [disciplines, setDisciplines] = React.useState<DiscNode[]>([]);
   const [facId, setFacId] = React.useState<string | number | null>(null);
   const [specId, setSpecId] = React.useState<string | number | null>(null);
   const [discId, setDiscId] = React.useState<string | number | null>(null);
 
-  // карточки расчёта
-  const [discCard, setDiscCard] = React.useState<BpDisciplineCard | null>(null);
-  const [specCard, setSpecCard] = React.useState<BpSpecialtyCard | null>(null);
+  // отчёты ККО (от GET /api/bp/provision)
+  const [discReport, setDiscReport] = React.useState<BpProvisionReport | null>(null);
+  const [specReport, setSpecReport] = React.useState<BpProvisionReport | null>(null);
 
   // формы
   const [fCode, setFCode] = React.useState(""); const [fName, setFName] = React.useState("");
@@ -106,31 +156,41 @@ export function BookProvisionDesk({ toast }: { toast: ToastFn }) {
   const facList = faculties;
   const specList = specialties.filter((s) => s.facultyId === facId);
   const discList = disciplines.filter((d) => d.specialtyId === specId);
+  const curDisc = disciplines.find((d) => d.id === discId) || null;
+  const curSpec = specialties.find((s) => s.id === specId) || null;
 
   function down404(r: { status: number }): boolean {
     if (r.status === 404 || r.status === 501) { setUnavailable(true); return true; }
     return false;
   }
 
-  // --- расчётные карточки (после изменения связки/нормализации) -------------
-  async function refreshDiscCard(id: string | number) {
-    const r = await api.bpDisciplineCard(id, normalize);
-    if (r.json?.ok && r.json.data) setDiscCard(r.json.data);
+  // --- отчёты ККО (после изменения связки/контингента/привязки/нормализации) ----
+  async function refreshDiscReport(id: string | number) {
+    const r = await api.bpProvision({ discipline: String(id) });
+    if (r.json?.ok && r.json.data) setDiscReport(r.json.data);
     else if (down404(r)) return;
-    else setDiscCard(null);
+    else setDiscReport(null);
   }
-  async function refreshSpecCard(id: string | number) {
-    const r = await api.bpSpecialtyCard(id, normalize);
-    if (r.json?.ok && r.json.data) setSpecCard(r.json.data);
+  async function refreshSpecReport(id: string | number) {
+    const r = await api.bpProvision({ specialty: String(id) });
+    if (r.json?.ok && r.json.data) setSpecReport(r.json.data);
     else if (down404(r)) return;
-    else setSpecCard(null);
+    else setSpecReport(null);
   }
   // пересчёт при смене нормализации
   React.useEffect(() => {
-    if (discId != null) void refreshDiscCard(discId);
-    if (specId != null) void refreshSpecCard(specId);
+    if (discId != null) void refreshDiscReport(discId);
+    if (specId != null) void refreshSpecReport(specId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalize]);
+
+  function permToast(r: { status: number }): boolean {
+    if (r.status === 401 || r.status === 403) {
+      toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант bp.write (роль «Администратор»)." });
+      return true;
+    }
+    return false;
+  }
 
   // --- создание узлов связки -----------------------------------------------
   async function addFaculty() {
@@ -139,76 +199,88 @@ export function BookProvisionDesk({ toast }: { toast: ToastFn }) {
     const r = await api.bpFaculty({ code, name });
     if (down404(r)) return;
     if (r.json?.ok && r.json.data) {
-      const f = r.json.data;
-      setFaculties((xs) => xs.concat([f])); setFacId(f.id); setSpecId(null); setDiscId(null); setSpecCard(null); setDiscCard(null);
+      const f: FacNode = { id: (r.json.data as BpFaculty).id, code, name };
+      setFaculties((xs) => xs.concat([f])); setFacId(f.id);
+      setSpecId(null); setDiscId(null); setSpecReport(null); setDiscReport(null);
       setFCode(""); setFName("");
       toast({ variant: "success", title: "Факультет добавлен", message: code + " · " + name });
-    } else if (r.status === 401 || r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант на правку справочников." });
+    } else if (permToast(r)) return;
     else toast({ variant: "error", title: "Не добавлено", message: "Повторите попытку." });
   }
   async function addSpecialty() {
     if (facId == null) { toast({ variant: "info", title: "Выберите факультет", message: "Специальность создаётся под факультетом." }); return; }
     const name = sName.trim();
     if (!name) { toast({ variant: "info", title: "Укажите наименование", message: "Наименование специальности обязательно." }); return; }
-    const r = await api.bpSpecialty({ facultyId: facId, napr: sNapr.trim() || undefined, spec: sSpec.trim() || undefined, vid: sVid.trim() || undefined, form: sForm, name });
+    const spec = sSpec.trim();
+    const r = await api.bpSpecialty({ facultyId: facId, napr: sNapr.trim() || undefined, spec: spec || undefined, vid: sVid.trim() || undefined, form: sForm, name });
     if (down404(r)) return;
     if (r.json?.ok && r.json.data) {
-      const s = { ...r.json.data, facultyId: r.json.data.facultyId ?? facId };
-      setSpecialties((xs) => xs.concat([s])); setSpecId(s.id); setDiscId(null); setDiscCard(null);
-      void refreshSpecCard(s.id);
+      const s: SpecNode = { id: (r.json.data as BpSpecialty).id, facultyId: facId, spec, name };
+      setSpecialties((xs) => xs.concat([s])); setSpecId(s.id); setDiscId(null); setDiscReport(null);
+      void refreshSpecReport(s.id);
       setSNapr(""); setSSpec(""); setSVid(""); setSName("");
       toast({ variant: "success", title: "Специальность добавлена", message: name });
-    } else if (r.status === 401 || r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант на правку справочников." });
+    } else if (permToast(r)) return;
     else toast({ variant: "error", title: "Не добавлено", message: "Повторите попытку." });
   }
   async function addDiscipline() {
     if (specId == null) { toast({ variant: "info", title: "Выберите специальность", message: "Дисциплина создаётся под специальностью." }); return; }
     const name = dName.trim();
     if (!name) { toast({ variant: "info", title: "Укажите наименование", message: "Наименование дисциплины обязательно." }); return; }
-    const r = await api.bpDiscipline({ specialtyId: specId, discId: dDiscId.trim() || undefined, name, semester: dSem.trim() ? parseInt(dSem, 10) : undefined, students: dStud.trim() ? parseInt(dStud, 10) : undefined });
+    // Шифр дисциплины (3^0) обязателен на бэке — подставляем устойчивый локальный, если оператор не задал.
+    const discIdVal = dDiscId.trim() || ("D-" + (disciplines.length + 1));
+    const semester = dSem.trim();
+    const students = dStud.trim() ? parseInt(dStud, 10) : 0;
+    const r = await api.bpDiscipline({ specialtyId: specId, discId: discIdVal, name, semester: semester ? parseInt(semester, 10) : undefined, students });
     if (down404(r)) return;
     if (r.json?.ok && r.json.data) {
-      const d = { ...r.json.data, specialtyId: r.json.data.specialtyId ?? specId };
+      const d: DiscNode = { id: (r.json.data as BpDiscipline).id, specialtyId: specId, discId: discIdVal, name, semester, students };
       setDisciplines((xs) => xs.concat([d])); setDiscId(d.id);
-      void refreshDiscCard(d.id); if (specId != null) void refreshSpecCard(specId);
+      void refreshDiscReport(d.id); if (specId != null) void refreshSpecReport(specId);
       setDDiscId(""); setDName(""); setDSem(""); setDStud("");
       toast({ variant: "success", title: "Дисциплина добавлена", message: name });
-    } else if (r.status === 401 || r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант на правку справочников." });
+    } else if (permToast(r)) return;
     else toast({ variant: "error", title: "Не добавлено", message: "Повторите попытку." });
   }
 
-  // --- контингент + привязка литературы ------------------------------------
+  // --- контингент: повторный POST /api/bp/discipline (идемпотентен по
+  //     specialtyId+discId+semester) обновляет students. Так задаём контингент
+  //     БЕЗ /api/bp/contingent (его клиентский метод шлёт несовместимое тело). ----
   async function setContingent() {
-    if (discId == null) return;
+    if (discId == null || curDisc == null) return;
     const n = parseInt(contStud, 10);
-    if (!n || n < 0) { toast({ variant: "info", title: "Проверьте контингент", message: "Число студентов должно быть ≥ 0." }); return; }
-    const r = await api.bpContingent({ discId, students: n });
+    if (isNaN(n) || n < 0) { toast({ variant: "info", title: "Проверьте контингент", message: "Число студентов должно быть ≥ 0." }); return; }
+    const r = await api.bpDiscipline({
+      specialtyId: curDisc.specialtyId, discId: curDisc.discId, name: curDisc.name,
+      semester: curDisc.semester ? parseInt(curDisc.semester, 10) : undefined, students: n,
+    });
     if (down404(r)) return;
     if (r.json?.ok) {
+      setDisciplines((xs) => xs.map((d) => (d.id === discId ? { ...d, students: n } : d)));
       toast({ variant: "success", title: "Контингент обновлён", message: n + " студент(ов) — Кко пересчитан." });
       setContStud("");
-      void refreshDiscCard(discId); if (specId != null) void refreshSpecCard(specId);
-    } else if (r.status === 401 || r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант на правку." });
+      void refreshDiscReport(discId); if (specId != null) void refreshSpecReport(specId);
+    } else if (permToast(r)) return;
     else toast({ variant: "error", title: "Не обновлено", message: "Повторите попытку." });
   }
   async function bindLit() {
     if (discId == null) return;
     const t = litTitle.trim(); const c = parseInt(litCopies, 10);
     if (!t) { toast({ variant: "info", title: "Укажите издание", message: "Заглавие литературы обязательно." }); return; }
-    if (!c || c < 1) { toast({ variant: "info", title: "Проверьте экземпляры", message: "Число экземпляров должно быть ≥ 1." }); return; }
+    if (isNaN(c) || c < 1) { toast({ variant: "info", title: "Проверьте экземпляры", message: "Число экземпляров должно быть ≥ 1." }); return; }
     const r = await api.bpBind({ disciplineId: discId, title: t, kind: litKind, copies: c });
     if (down404(r)) return;
     if (r.json?.ok) {
       toast({ variant: "success", title: "Литература привязана", message: (litKind === "main" ? "Осн." : "Доп.") + " · " + t + " · " + c + " экз." });
       setLitTitle(""); setLitCopies("");
-      void refreshDiscCard(discId); if (specId != null) void refreshSpecCard(specId);
-    } else if (r.status === 401 || r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант на правку." });
+      void refreshDiscReport(discId); if (specId != null) void refreshSpecReport(specId);
+    } else if (permToast(r)) return;
     else toast({ variant: "error", title: "Не привязано", message: "Повторите попытку." });
   }
 
-  function pickFac(id: string | number) { setFacId(id); setSpecId(null); setDiscId(null); setSpecCard(null); setDiscCard(null); }
-  function pickSpec(id: string | number) { setSpecId(id); setDiscId(null); setDiscCard(null); void refreshSpecCard(id); }
-  function pickDisc(id: string | number) { setDiscId(id); void refreshDiscCard(id); }
+  function pickFac(id: string | number) { setFacId(id); setSpecId(null); setDiscId(null); setSpecReport(null); setDiscReport(null); }
+  function pickSpec(id: string | number) { setSpecId(id); setDiscId(null); setDiscReport(null); void refreshSpecReport(id); }
+  function pickDisc(id: string | number) { setDiscId(id); void refreshDiscReport(id); }
 
   const head = (
     <div className="stf__pagehead">
@@ -233,9 +305,9 @@ export function BookProvisionDesk({ toast }: { toast: ToastFn }) {
     </div>
   );
 
-  const dk = discCard?.kko;
-  const sk = specCard?.kko;
-  const curDisc = disciplines.find((d) => d.id === discId);
+  const dr = discReport;
+  const sr = specReport;
+  const bindings: BpProvisionBinding[] = (dr?.bindings as BpProvisionBinding[]) || [];
 
   return (
     <div className="bp">
@@ -318,19 +390,19 @@ export function BookProvisionDesk({ toast }: { toast: ToastFn }) {
             <>
               {/* Кко по дисциплине */}
               <div className="bp__card bp__pad">
-                <span className="bp__cap">Кко дисциплины · {curDisc?.name || discCard?.discipline.name || "—"}</span>
-                <div className={"bp__kko bp__kko--" + kkoClass(dk)}>
+                <span className="bp__cap">Кко дисциплины · {curDisc?.name || "—"}</span>
+                <div className={"bp__kko bp__kko--" + kkoClass(dr)}>
                   <div>
-                    <div className="bp__kko-val">{fmtKko(dk?.value)}</div>
+                    <div className="bp__kko-val">{fmtKko(dr?.coefficient)}</div>
                     <div className="bp__kko-lab">экз. / студента</div>
                   </div>
                   <div style={{ minWidth: 0 }}>
-                    <KkoFlag k={dk} />
+                    <KkoFlag r={dr} />
                     <div className="bp__kko-sub">
-                      {dk?.copies != null ? dk.copies + " экз. фонда" : "фонд не привязан"}
-                      {dk?.students != null ? " · " + dk.students + " студ." : ""}
-                      {dk?.norm != null ? " · норматив " + fmtKko(dk.norm) : ""}
-                      {dk?.normalized ? " · нормализовано" : ""}
+                      {dr?.copies != null ? dr.copies + " экз. фонда" : "фонд не привязан"}
+                      {dr?.students != null ? " · " + dr.students + " студ." : ""}
+                      {dr?.norm != null ? " · норматив " + fmtKko(dr.norm) : ""}
+                      {normalize ? " · нормализовано" : ""}
                     </div>
                   </div>
                 </div>
@@ -339,7 +411,7 @@ export function BookProvisionDesk({ toast }: { toast: ToastFn }) {
                 <div className="bp__row2" style={{ alignItems: "end", marginBottom: 12 }}>
                   <div className="bp__fld" style={{ marginBottom: 0 }}>
                     <label className="bp__fld-lab">Изменить контингент</label>
-                    <input className="bp__in" type="number" min={0} value={contStud} onChange={(e) => setContStud(e.target.value)} placeholder={dk?.students != null ? String(dk.students) : "студентов"} />
+                    <input className="bp__in" type="number" min={0} value={contStud} onChange={(e) => setContStud(e.target.value)} placeholder={dr?.students != null ? String(dr.students) : "студентов"} />
                   </div>
                   <Button variant="secondary" iconLeft="users" onClick={setContingent}>Задать</Button>
                 </div>
@@ -357,17 +429,22 @@ export function BookProvisionDesk({ toast }: { toast: ToastFn }) {
                   <Button iconLeft="plus" onClick={bindLit}>Привязать</Button>
                 </div>
 
-                {/* привязанная литература */}
-                {discCard?.bindings && discCard.bindings.length > 0 && (
+                {/* привязанная литература (из отчёта дисциплины) */}
+                {bindings.length > 0 && (
                   <div style={{ marginTop: 14 }}>
-                    {discCard.bindings.map((b, i) => (
-                      <div className="bp__lit" key={(b.id ?? i) + ":" + b.title}>
-                        <span className={"bp__lit-kind bp__lit-kind--" + b.kind}>{b.kind === "main" ? "ОСН" : "ДОП"}</span>
-                        <span className="bp__lit-title" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{b.title}{b.author ? <span style={{ fontWeight: 400, color: "var(--text-subtle)" }}> · {b.author}</span> : null}</span>
-                        <span className="bp__lit-copies">{b.copies} экз.</span>
-                        {b.mfn != null ? <span className="bp__pick-code">MFN {b.mfn}</span> : <span />}
-                      </div>
-                    ))}
+                    {bindings.map((b, i) => {
+                      // Отчёт движка кладёт число экземпляров в `exemplars`; легковесный
+                      // контракт информера — в `copies`. Берём что есть (exemplars ⊃ copies).
+                      const ex = b.copies != null ? b.copies : (b as any).exemplars;
+                      return (
+                        <div className="bp__lit" key={i + ":" + b.title}>
+                          <span className={"bp__lit-kind bp__lit-kind--" + (b.kind === "extra" ? "extra" : "main")}>{b.kind === "extra" ? "ДОП" : "ОСН"}</span>
+                          <span className="bp__lit-title" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{b.title}{b.author ? <span style={{ fontWeight: 400, color: "var(--text-subtle)" }}> · {b.author}</span> : null}</span>
+                          <span className="bp__lit-copies">{ex != null ? ex + " экз." : "—"}</span>
+                          {b.mfn != null ? <span className="bp__pick-code">MFN {b.mfn}</span> : <span />}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -379,27 +456,32 @@ export function BookProvisionDesk({ toast }: { toast: ToastFn }) {
           )}
 
           {/* сводный Кко по специальности */}
-          {specId != null && specCard && (
+          {specId != null && sr && (
             <div className="bp__card">
               <div className="bp__pad" style={{ paddingBottom: 8 }}>
-                <span className="bp__cap" style={{ marginBottom: 8 }}>Кко специальности · {specCard.specialty.name}</span>
-                <div className={"bp__kko bp__kko--" + kkoClass(sk)} style={{ marginBottom: 0 }}>
+                <span className="bp__cap" style={{ marginBottom: 8 }}>Кко специальности · {curSpec?.name || "—"}</span>
+                <div className={"bp__kko bp__kko--" + kkoClass(sr)} style={{ marginBottom: 0 }}>
                   <div>
-                    <div className="bp__kko-val">{fmtKko(sk?.value)}</div>
+                    <div className="bp__kko-val">{fmtKko(sr?.coefficient)}</div>
                     <div className="bp__kko-lab">сводный Кко</div>
                   </div>
-                  <KkoFlag k={sk} />
+                  <KkoFlag r={sr} />
                 </div>
               </div>
-              {specCard.disciplines && specCard.disciplines.length > 0 && (
+              {specDisciplines(sr).length > 0 && (
                 <div>
-                  {specCard.disciplines.map((dc, i) => (
-                    <div className="bp__disc" key={(dc.discipline.id ?? i) + ":" + dc.discipline.name}>
-                      <span style={{ fontWeight: 600, fontSize: 13, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{dc.discipline.name}</span>
-                      <KkoFlag k={dc.kko} />
-                      <span className="bp__disc-kko" style={{ color: dc.kko?.underProvided ? "var(--status-issued,#B0791C)" : "var(--status-available,#3C7D3F)" }}>{fmtKko(dc.kko?.value)}</span>
-                    </div>
-                  ))}
+                  {specDisciplines(sr).map((dc, i) => {
+                    const bad = !!dc.under_provisioned;
+                    return (
+                      <div className="bp__disc" key={(dc.id ?? i) + ":" + (dc.name || "")}>
+                        <span style={{ fontWeight: 600, fontSize: 13, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{dc.name}</span>
+                        {bad
+                          ? <span className="bp__flag bp__flag--bad"><Icon name="alert-triangle" size={13} />Дефицит</span>
+                          : <span className="bp__flag bp__flag--ok"><Icon name="check-circle" size={13} />Норматив выполнен</span>}
+                        <span className="bp__disc-kko" style={{ color: bad ? "var(--status-issued,#B0791C)" : "var(--status-available,#3C7D3F)" }}>{fmtKko(dc.average_kko)}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
