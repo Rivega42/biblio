@@ -37,6 +37,10 @@ from access.shelves import ShelfService
 from access.social import SocialService
 from access import acquisition as _acquisition
 from access import bookprovision as _bookprovision
+from access import devices as _devices
+from access import locker as _locker
+from access import readers as _readers
+from access import compat_devices as _compat_devices
 from access import demo_requests as _demo_requests
 from access.catalog import CatalogStore
 from access import oidc as _oidc
@@ -79,6 +83,24 @@ def ok(data):
 
 def err(code, message):
     return {'ok': False, 'error': {'code': code, 'message': message}}
+
+
+class _DeviceCircAdapter:
+    """Адаптер реальной книговыдачи под device-сид ``circulation`` (#272).
+
+    locker/compat зовут ``checkout(ticket, code)``; реальный движок —
+    ``checkout(reader_id, item, today, …)`` и отдаёт Decision. Здесь склейка:
+    ленивая регистрация читателя по билету (``_circ_reader``) + текущий clock
+    (``_circ_today``). Возврат — Decision (locker читает ``.ok``/``.reasons``)."""
+
+    def __init__(self, api):
+        self.api = api
+
+    def checkout(self, ticket, code):
+        if self.api.circulation is None:
+            return False
+        reader_id = self.api._circ_reader(ticket)
+        return self.api.circulation.checkout(reader_id, code, self.api._circ_today())
 
 
 # Поля RDR, где может храниться пароль читателя для входа на портал:
@@ -551,6 +573,38 @@ class Api:
                 bp_db, catalog=self.catalog)
         except Exception:
             self.bookprovision = None
+
+        # ---- Внешние устройства (#272): реестр devices + locker-заказы + шим ----
+        # Нативные домены поверх готовых own-store/circulation/holds. compat-шим
+        # принимает device-facing вызовы IDlogic (POST /api/devices/<endpoint>) и
+        # переводит их в эти сервисы. Реальная выдача из ячейки/со стойки — через
+        # _DeviceCircAdapter (тот же engine, что АРМ выдачи). Карты RFID↔билет — в
+        # своём реестре (readers), живой ИРБИС не пишем (#222). Best-effort.
+        try:
+            dev_db = os.environ.get('DEVICES_DB', os.path.join(here, 'devices.db'))
+            self.devices = _devices.DeviceService(_devices.DeviceStore(dev_db))
+        except Exception:
+            self.devices = None
+        try:
+            rdr_db = os.environ.get('READERS_DB', os.path.join(here, 'readers.db'))
+            self.readers = _readers.ReaderService(_readers.ReaderStore(rdr_db))
+        except Exception:
+            self.readers = None
+        _circ_adapter = _DeviceCircAdapter(self) if self.circulation is not None else None
+        try:
+            locker_db = os.environ.get('LOCKER_DB', os.path.join(here, 'locker.db'))
+            self.locker = _locker.LockerService(
+                _locker.LockerStore(locker_db),
+                circulation=_circ_adapter, devices=self.devices)
+        except Exception:
+            self.locker = None
+        try:
+            self.compat_devices = _compat_devices.CompatDevicesService(
+                devices=self.devices, readers=self.readers, holds=self.holds,
+                circulation=_circ_adapter, locker=self.locker,
+                legacy_pass=os.environ.get('EASYBOOK_LEGACY_PASS'))
+        except Exception:
+            self.compat_devices = None
 
         # ---- Полный текст + права + личный кабинет ПТ (кластер 7) ----
         # Три связанных движка обслуживают эндпойнт /api/fulltext (ребра 7.1/7.2/
@@ -3287,6 +3341,23 @@ class Api:
                     self._err_count += 1
         return status, payload
 
+    def _device_compat(self, path, body, headers):
+        """device-facing compat-шим IDlogic: POST /api/devices/<endpoint> (#272).
+
+        Аутентификация — унаследованный Basic ``ServiceLogin`` (compat-режим, env
+        EASYBOOK_LEGACY_PASS); без него подсистема закрыта (401), как и положено
+        для бесшовного подхвата существующих устройств. Тело — JSON DTO IDlogic,
+        ответ — нативный результат через ``CompatDevicesService.handle``."""
+        if self.compat_devices is None:
+            return 503, err('unavailable', 'devices subsystem not configured')
+        if not self.compat_devices.authorize(headers.get('authorization')):
+            return 401, err('unauthorized', 'device authorization required')
+        endpoint = path[len('/api/devices/'):].strip('/')
+        try:
+            return 200, ok(self.compat_devices.handle(endpoint, body))
+        except _compat_devices.CompatError as e:
+            return 400, err('unsupported', str(e))
+
     def _dispatch_route(self, method, path, query, body, headers):
         """Return (status, payload) where payload is dict | Raw | None."""
         path = path.rstrip('/') or '/'
@@ -3317,6 +3388,9 @@ class Api:
             # ---- Публичная заявка на демодоступ (#226) — БЕЗ логина ----
             if method == 'POST' and path == '/api/demo-request':
                 return self.demo_request(body or {})
+            # ---- Внешние устройства IDlogic (compat-шим, #272) — Basic ServiceLogin ----
+            if method == 'POST' and path.startswith('/api/devices/'):
+                return self._device_compat(path, body or {}, headers)
             parts = path.strip('/').split('/')
             if method == 'GET' and path == '/api/search':
                 db = query.get('db', [self.cfg.db_default])[0]

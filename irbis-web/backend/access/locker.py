@@ -194,17 +194,25 @@ class LockerService:
         if self.circulation is not None:
             for it in self.store.list_items(order_id):
                 code = it['book_code']
+                reasons = ''
                 try:
                     res = self.circulation.checkout(o['reader_ticket'], code)
-                    ok = getattr(res, 'allow', None)
-                    ok = bool(res) if ok is None else ok
+                    # Реальная circulation отдаёт Decision (.ok/.reasons); фейк/иной
+                    # сид — bool или .allow. Распознаём по очереди.
+                    ok = getattr(res, 'ok', None)
+                    if ok is None:
+                        ok = getattr(res, 'allow', None)
+                    if ok is None:
+                        ok = bool(res)
+                    reasons = ','.join(getattr(res, 'reasons', None) or [])
                 except Exception as e:  # pragma: no cover - seam guard
                     ok = False
                     err = str(e)
                 if ok:
                     self.store.set_item_processed(order_id, code)
                 else:
-                    err = err or ('checkout denied: %s' % code)
+                    err = err or ('checkout denied: %s%s' % (
+                        code, (' (%s)' % reasons) if reasons else ''))
         new_state = ISSUED if err is None else ISSUED_ERROR
         o = self.store.update_order(order_id, state=new_state, abis_error=err)
         self._event(o, 'order_issued' if err is None else 'order_issued_error', err)
