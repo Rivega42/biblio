@@ -23,6 +23,8 @@
 | [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) | Пробелы и нужный стенд/доступы |
 | [BIBLIO_DEVICE_INTEGRATION_DESIGN.md](BIBLIO_DEVICE_INTEGRATION_DESIGN.md) | **Проект:** как Biblio (два режима: замена JIRBIS / замена ИРБИС) полноформатно работает со всеми устройствами + Android ТСД через ABIS‑порт; замена стека IDlogic |
 | [TZ_PHASE1_abis_device_core.md](TZ_PHASE1_abis_device_core.md) | **ТЗ Фаза 1:** контракт IAbis, нативная БД (режим 2), эндпоинты Device Service, протокол Reader Agent; разделы «бесшовный подхват устройств» и «покрытие интерфейсов сотрудников» |
+| [contracts/](contracts/) | **Контракты для разработки:** [DDL режима 2](contracts/biblio_abis_native_schema.sql) + [OpenAPI Device Service](contracts/device_service_openapi.json) (151 операция + 106 DTO) |
+| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Протокол ревью документации против декомпиляции + список исправлений |
 
 ## Ключевые выводы
 - **Архитектура:** три центра — ИРБИС64 (`:6666`, читатели/выдача), центральный сервис IDlogic (`api.svc :8005`, парк устройств), локальные шины (COM/USB/PCSC/Dahua).
