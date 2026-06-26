@@ -1,5 +1,7 @@
 # ТЗ Фаза 1 — ABIS-порт + Device Service + Reader Agent (ядро Biblio)
 
+> ⚠️ **АРХИТЕКТУРА УТОЧНЕНА** (владелец, [#272](https://github.com/Rivega42/biblio/issues/272)) — каноничный документ: **[DEVICES_NATIVE_ARCHITECTURE.md](DEVICES_NATIVE_ARCHITECTURE.md)**. Здесь «Device Service» = **нативный домен `devices` + device-facing compat-шим** (не клон `api.svc`); «ABIS-порт `IAbis`» = backend-абстракция **существующего движка circulation** (режимы: нативная АБИС / клиент ИРБИС), а не отдельная надстройка; нативная схема (§3) = **поле-маппинг на существующие домены** own-store/catalog/circulation/holds, новое — только таблицы домена `devices`.
+
 > **Цель:** реализовать ядро, дающее полноценную книговыдачу/возврат/продление/регистрацию и работу с настольным RFID‑считывателем — **в обоих режимах** (замена JIRBIS и замена ИРБИС) и с **бесшовным подхватом** существующих устройств.
 > **Опора:** [BIBLIO_DEVICE_INTEGRATION_DESIGN.md](BIBLIO_DEVICE_INTEGRATION_DESIGN.md), [EASYBOOKABIS_IRBIS_MAP.md](EASYBOOKABIS_IRBIS_MAP.md), [CENTRAL_SERVICE_API.md](CENTRAL_SERVICE_API.md), [TAGSERVICE_FUNCTION_MAP.md](TAGSERVICE_FUNCTION_MAP.md).
 > **Ответы на вопросы заказчика — §6 (бесшовный подхват) и §7 (интерфейсы сотрудников).**
