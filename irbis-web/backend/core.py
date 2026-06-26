@@ -40,6 +40,8 @@ from access import bookprovision as _bookprovision
 from access import devices as _devices
 from access import locker as _locker
 from access import readers as _readers
+from access import tag_codec as _tag_codec
+from access import reader_agent as _reader_agent
 from access import compat_devices as _compat_devices
 from access import demo_requests as _demo_requests
 from access.catalog import CatalogStore
@@ -637,10 +639,17 @@ class Api:
                 circulation=_circ_adapter, devices=self.devices)
         except Exception:
             self.locker = None
+        # Настольный считыватель (станция/стойка): hardware-транспорт живёт на
+        # клиенте устройства, на сервере transport=None — модуль доступен для
+        # станционных клиентов и серверных tag-хелперов, кодек — общий tag_codec.
+        try:
+            self.reader_agent = _reader_agent.ReaderAgentService(codec=_tag_codec)
+        except Exception:
+            self.reader_agent = None
         try:
             self.compat_devices = _compat_devices.CompatDevicesService(
                 devices=self.devices, readers=self.readers, holds=self.holds,
-                circulation=_circ_adapter, locker=self.locker,
+                circulation=_circ_adapter, locker=self.locker, codec=_tag_codec,
                 legacy_pass=os.environ.get('EASYBOOK_LEGACY_PASS'))
         except Exception:
             self.compat_devices = None

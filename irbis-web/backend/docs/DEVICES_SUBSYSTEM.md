@@ -69,6 +69,23 @@
 - Источник истины карт в ИРБИС — RDR 30/24/28; здесь СВОЙ реестр привязок (живой
   ИРБИС не пишем, #222). Запись обратно в прод-RDR — отдельная интеграция позже.
 
+### `tag_codec.py` — кодек метки RFID (ISO 28560-2)
+- Чистый stdlib-кодек данных тега (из рекона, `docs/devices/TAG_DATA_MODEL.md`):
+  `encode_element`/`decode_element` (precursor-байт: bit7 offset, биты6-4 compaction,
+  биты3-0 relative-OID), `encode_block`/`decode_block` (round-trip набора элементов),
+  `security_state(afi)` (AFI/EAS). Компакции 1 int / 2 hex / 3-5 5/6/7-bit / 6 octet /
+  7 int-string. `OID_PRIMARY_ITEM_ID=1` (штрихкод). `TagCodecError` на битый блок.
+
+### `reader_agent.py` — настольный считыватель (оркестрация через сиды)
+- `ReaderAgentService(transport=None, codec=None)` — тонкая обвязка железа за
+  ИНЪЕКТИРУЕМЫМИ сидами (без импортов, без сокетов, без БД): `transport`
+  (`read_uid`/`read_block`/`write_block`/`set_eas`), `codec` (= `tag_codec`).
+- `read_tag()`→`{uid,itemId,data}`; `program_tag(item_id)`→кодирует и пишет блок;
+  `set_security(on)` (EAS); `issue_prepare`/`return_prepare` — **выдача→EAS off,
+  возврат→EAS on** (метка снимается с охраны, когда книга уходит на руки; ворота
+  ловят EAS-on вне зоны). На сервере transport=None (железо — на клиенте станции);
+  кодек подключён общий `tag_codec`.
+
 ### `compat_devices.py` — device-facing compat-адаптер (тонкий шим)
 - `CompatDevicesService.handle(endpoint, payload)` — переводит вызов устройства в
   нативный сервис. Своей БД нет; сиды: `devices` (обязат.), `readers` (own-store/RDR),
@@ -80,6 +97,8 @@
   `Checkout`/`Checkin`/`Renew` (билет — явный `abisCode` ИЛИ резолв RFID-карты через
   `readers`), `GetClientChargedDocs` (выданные экземпляры = карточки поля 40),
   `GetDocState` (910^A экземпляра). Результат Decision сводится к `{Success, Reasons, Due}`.
+- **Кодек тега** через `codec`-сид: `TagDecode` (hex-блок → `{ItemId, Data}`),
+  `TagEncode` (`itemId` → hex-блок). Битый блок → `ItemId: null`.
 - station-facing: `MastersRFIDGet`/`SafeKeeperMasterRFIDModify` → `devices`;
   `OrdersGet`/`SafeKeeperInfoGet2`(CellsState наружу)/`OrderBookProcessedSet`/
   `OrderModify`(opID/stateID→create/staff/issue/cancel) → `locker`.
@@ -119,10 +138,13 @@
 py -3.12 tests/test_devices.py         # 36 — домен devices
 py -3.12 tests/test_locker.py          # 33 — locker-заказы/ячейки
 py -3.12 tests/test_readers.py         # 15 — реестр карт RFID↔билет
-py -3.12 tests/test_compat_devices.py  # 55 — шим (станц. + IAbis книговыдача)
-py -3.12 tests/test_device_routes.py   # 17 — HTTP /api/devices/* (вкл. реальный e2e Checkout→Checkin)
+py -3.12 tests/test_tag_codec.py       # 24 — кодек тега ISO 28560-2
+py -3.12 tests/test_reader_agent.py    # 26 — настольный считыватель (сиды)
+py -3.12 tests/test_tag_integration.py #  8 — reader_agent ↔ tag_codec (реальные модули)
+py -3.12 tests/test_compat_devices.py  # 61 — шим (станц. + IAbis + tag-кодек)
+py -3.12 tests/test_device_routes.py   # 19 — HTTP /api/devices/* (e2e Checkout→Checkin, Tag round-trip)
 ```
-Всего 156, in-memory, без DB-сервера. Стиль `test_acquisition.py`/`test_circ_routes.py`
+Всего 222, in-memory, без DB-сервера. Стиль `test_acquisition.py`/`test_circ_routes.py`
 (standalone + счётчик). Route-тесты гоняют через `Api.route` с Basic `ServiceLogin`;
 e2e `test_iabis_checkout_e2e` крутит реальный circulation + каталожный 910^A по HTTP.
 
@@ -131,10 +153,11 @@ e2e `test_iabis_checkout_e2e` крутит реальный circulation + кат
   (`/easybookdll/*` + station-facing), **HTTP-врезка в `core.Api`** (POST
   `/api/devices/*`, Basic-аутентификация), **ABIS-порт** — `readers` (карты) +
   **IAbis-книговыдача** (Checkout/Checkin/Renew/GetClientChargedDocs/GetDocState)
-  через `_DeviceCircAdapter` на боевом circulation + каталоге 910^A.
+  через `_DeviceCircAdapter` на боевом circulation + каталоге 910^A; **кодек тега**
+  ISO 28560-2 (`tag_codec`) + **настольный считыватель** (`reader_agent`) + tag-эндпоинты.
 - Дальше: остаток IAbis (SetBookState/GetUserDebts/GetBookCenz), запись карт
-  обратно в прод-RDR (30/24/28), Reader Agent (настольный считыватель:
-  сокет/EAS/кодек тега).
+  обратно в прод-RDR (30/24/28), реальный транспорт считывателя (сокет к железу
+  на клиенте станции), Фаза 2 (ворота/ТСД/камеры).
 - Заблокировано (не код): физический привод ячеек реальных станций — нужен
   station-facing трейс/станционный билд (не перепрошивка), `docs/devices/OPEN_QUESTIONS.md` §1.
 
