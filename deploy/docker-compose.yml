@@ -89,6 +89,8 @@ services:
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
       OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
       OIDC_DB: ${OIDC_DB:-/data/oidc.db}
+      # узел 3 MVP-3: стор связи сотрудник↔билет (единая идентичность).
+      IDENTITY_DB: ${IDENTITY_DB:-/data/identity.db}
     volumes:
       - backend-data:/data
     # No host port published — the proxy reaches the backend over the compose
