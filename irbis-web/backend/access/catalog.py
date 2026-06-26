@@ -25,7 +25,7 @@ prefixes confirmed against ``docs/recon/deep/reference/format/FIELD_DICTIONARY``
   * ``TS=``  заглавие серии        <- 225^a
   * ``A=``   автор (физ. лицо)     <- 700^a / 701^a / 702^a
   * ``M=``   коллектив/мероприятие <- 710^a / 711^a
-  * ``K=``   ключевые слова        <- 610 (целое поле)
+  * ``K=``   ключевые слова        <- 610 (ПОСЛОВНО: каждое слово 610 — термин)
   * ``S=``   предметная рубрика    <- 606^a / 605^a
   * ``GEO=`` географ. рубрика      <- 607^a
   * ``U=``   индекс УДК/ББК        <- 675 / 621 (целое поле)
@@ -152,7 +152,8 @@ CREATE INDEX IF NOT EXISTS record_index_record_idx ON record_index(record_id);
 #   TS=  заглавие серии        <- 225^a
 #   A=   автор (физ. лицо)     <- 700^a / 701^a / 702^a (710 kept for back-compat)
 #   M=   коллектив/мероприятие <- 710^a / 711^a
-#   K=   ключевые слова        <- 610  (whole field; ИРБИС unstructured keywords)
+#   K=   ключевые слова        <- 610  (ПОСЛОВНО: значение 610 токенизируется на
+#        слова, каждое слово — отдельный термин K=, как у ИРБИС; #270)
 #   S=   предметная рубрика    <- 606^a / 605^a
 #   GEO= географ. рубрика      <- 607^a
 #   U=   индекс УДК/ББК        <- 675 / 621 (whole field)
@@ -173,7 +174,7 @@ INDEX_SPEC = [
     ('A', '701', 'a'),
     ('A', '702', 'a'),
     ('A', '710', 'a'),       # back-compat: 710 stayed under A= in the first slice
-    ('K', '610', None),
+    ('K', '610', None),      # пословно (KEYWORD_PREFIXES): каждое слово 610 — термин K=
     ('IN', '910', 'b'),
     # --- заглавие серии ---
     ('TS', '225', 'a'),
@@ -235,6 +236,15 @@ SEARCH_PREFIXES = ('T', 'A', 'K', 'IN',
 # (``linked_records``): HOST= — ключ-идентичность хозяина, LINK= — ключ-отсылка
 # зависимой записи. Зеркальная пара сматчивается по нормализованному значению.
 LINK_PREFIXES = ('HOST', 'LINK')
+
+# Пословные (keyword) префиксы — индексируются НЕ целым полем, а каждым словом
+# отдельной строкой словаря (как у ИРБИС: значение поля 610 «театральное
+# искусство; театр» даёт термины «театральное», «искусство», «театр»). Точный
+# поиск ``K=театр`` находит запись, где «театр» — одно из ключевых слов, а
+# усечение ``K=театр$`` (prefix-match по term_norm) и составные выражения
+# продолжают работать без изменений (#270). Прочие префиксы (T=/A=/S=/U=/I=…)
+# остаются ЦЕЛО-ПОЛЕВЫМИ — поведение не меняется.
+KEYWORD_PREFIXES = ('K',)
 
 # Default brief / full display formats (PFT). Overridable per save db or per call.
 # Brief: "Author. Title / responsibility . — Lang" with graceful omission of
@@ -326,6 +336,33 @@ def _norm(term):
     """Normalize a term for matching (casefold + trim). ИРБИS inverted terms are
     matched case-insensitively; we keep the original ``term`` for display."""
     return (term or '').strip().casefold()
+
+
+def _keyword_words(value):
+    """Разбить значение keyword-поля (610) на отдельные слова для пословного K=.
+
+    ИРБИС индексирует ключевые слова ПОСЛОВНО: значение «театральное искусство;
+    театр» порождает термины «театральное», «искусство», «театр» — каждый под
+    ``K=``. Разделители — любая не-словарная пунктуация/пробелы (``;``, ``,``,
+    ``.``, тире и т.п.); слово — максимальная последовательность буквенно-цифровых
+    символов (с учётом Unicode-кириллицы) плюс внутренние дефис/апостроф (чтобы
+    «научно-популярный» / «d'art» не дробились). Каждое слово отдаётся в исходном
+    регистре (нормализация под ``term_norm`` — отдельно, как у целых терминов);
+    дубликаты в пределах одного значения отсеиваются вызывающим (``index_terms``)
+    по ключу (prefix, _norm). Возвращает список слов в порядке появления."""
+    if not value:
+        return []
+    words, buf = [], []
+    for ch in str(value):
+        if ch.isalnum() or (ch in "-'" and buf):
+            buf.append(ch)
+        else:
+            if buf:
+                words.append(''.join(buf).strip("-'"))
+                buf = []
+    if buf:
+        words.append(''.join(buf).strip("-'"))
+    return [w for w in words if w]
 
 
 # --------------------------------------------------------------------------- #
@@ -485,16 +522,28 @@ class CatalogStore:
         """Extract ``[(prefix, term), ...]`` from a record per ``INDEX_SPEC``.
 
         Public so a caller (or a reindex job) can preview what a record will be
-        findable by. Duplicate (prefix, normalized-term) pairs are collapsed."""
+        findable by. Duplicate (prefix, normalized-term) pairs are collapsed.
+
+        Пословный K= (#270): keyword-префиксы (``KEYWORD_PREFIXES``, напр. ``K=``
+        над полем 610) индексируются НЕ целым значением поля, а каждым словом
+        отдельным термином (``_keyword_words``) — как у ИРБИС. Точное ``K=театр``
+        тогда находит запись, где «театр» — одно из ключевых слов; усечение
+        ``K=театр$`` и составные выражения работают как раньше. Прочие префиксы
+        кладутся целым полем (без изменений)."""
         seen = set()
         out = []
         for prefix, field, subfield in INDEX_SPEC:
-            for term in _field_values(record, field, subfield):
-                key = (prefix, _norm(term))
-                if key in seen or not _norm(term):
-                    continue
-                seen.add(key)
-                out.append((prefix, term))
+            for value in _field_values(record, field, subfield):
+                # keyword-поле → пословно; остальные — целым значением (как было).
+                terms = (_keyword_words(value) if prefix in KEYWORD_PREFIXES
+                         else [value])
+                for term in terms:
+                    norm = _norm(term)
+                    key = (prefix, norm)
+                    if key in seen or not norm:
+                        continue
+                    seen.add(key)
+                    out.append((prefix, term))
         return out
 
     def _reindex(self, conn, record_id, record):
