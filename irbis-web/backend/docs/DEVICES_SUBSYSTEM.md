@@ -4,7 +4,8 @@
 > (RFID-считыватели, противокражные ворота, постаматы/SafeKeeper, умные полки,
 > СКУД, камеры). Обновляется при каждом изменении кода.
 > Архитектурное решение и рекон-первоисточник — `docs/devices/` (PR #265),
-> план — issue #272, код — ветка `feat/devices-domain` / PR #277.
+> план — issue #272. Код: слайсы 1–3 + шим — PR #277 (в `main`); HTTP-врезка +
+> ABIS-порт сидов — ветка `feat/devices-abis-port`.
 
 ## 1. Принцип (узел #272)
 
@@ -60,6 +61,14 @@
 - Сиды (опц., как `catalog=` в acquisition): `circulation` (выдача), `devices`
   (мастер-ключ + события), `holds` (зеркало брони #222).
 
+### `readers.py` — реестр карт читателей (ABIS-порт RFID↔билет)
+- `ReaderStore` + `ReaderService`. Таблица `reader_card` (rfid_code PK → abis_code/serial/kind).
+- `find_by_card(rfid)` → `{abis_code, rfid_code}` (own-реестр; опц. фолбэк в живой
+  RDR через сид `rdr_lookup(code)->билет`); `bind_card(abis_code, rfid_code, serial, kind)`
+  — идемпотентный upsert (ReaderModify с устройства). Kind↔поле RDR: main→30/extra→24/ekp→28.
+- Источник истины карт в ИРБИС — RDR 30/24/28; здесь СВОЙ реестр привязок (живой
+  ИРБИС не пишем, #222). Запись обратно в прод-RDR — отдельная интеграция позже.
+
 ### `compat_devices.py` — device-facing compat-адаптер (тонкий шим)
 - `CompatDevicesService.handle(endpoint, payload)` — переводит вызов устройства в
   нативный сервис. Своей БД нет; сиды: `devices` (обязат.), `readers` (own-store/RDR),
@@ -84,22 +93,40 @@
    │     └─ issue           ──▶ circulation.checkout    (loan + 910^A)
    └─ Masters*              ──▶ devices (мастер-ключи)
 ```
-HTTP-врезка шима в `core.Api.route` (как у других доменов) — отдельный тонкий
-слой (TODO след. шага); сейчас транслятор покрыт юнит-тестами напрямую.
+### HTTP-врезка в `core.Api` (готово)
+Шим подключён к боевому диспетчеру `core.Api`:
+- **Маршрут:** `POST /api/devices/<endpoint>` → `Api._device_compat` → `CompatDevicesService.handle`.
+- **Аутентификация:** унаследованный Basic `ServiceLogin` (env `EASYBOOK_LEGACY_PASS`,
+  compat-режим); без него подсистема закрыта (401). Это и есть бесшовный подхват
+  существующих устройств IDlogic; в проде — TLS+токены поверх.
+- **Подключение движков** (`Api.__init__`, best-effort, env-DB-пути): `self.devices`
+  (DEVICES_DB), `self.readers` (READERS_DB), `self.locker` (LOCKER_DB),
+  `self.compat_devices`.
+- **Реальная книговыдача:** `_DeviceCircAdapter(api)` — склейка device-сида
+  `checkout(ticket, code)` с боевым `CirculationEngine.checkout(reader_id, item, today)`
+  (ленивая регистрация читателя `_circ_reader` + clock `_circ_today`); locker читает
+  `Decision.ok/.reasons`. Тот же engine, что АРМ выдачи — никакой второй книговыдачи.
 
 ## 4. Тесты
 
 ```
 py -3.12 tests/test_devices.py         # 36 — домен devices
 py -3.12 tests/test_locker.py          # 33 — locker-заказы/ячейки
+py -3.12 tests/test_readers.py         # 15 — реестр карт RFID↔билет
 py -3.12 tests/test_compat_devices.py  # 43 — шим (включая station-facing)
+py -3.12 tests/test_device_routes.py   # 11 — HTTP-маршруты POST /api/devices/* (через Api.route)
 ```
-Всего 112, in-memory, без DB-сервера. Стиль `test_acquisition.py` (standalone + счётчик).
+Всего 138, in-memory, без DB-сервера. Стиль `test_acquisition.py`/`test_circ_routes.py`
+(standalone + счётчик). Route-тесты гоняют через `Api.route` с Basic `ServiceLogin`.
 
 ## 5. Статус и что дальше
-- Готово: домен `devices`, `locker` (SafeKeeper→holds), compat-шим (`/easybookdll/*` + station-facing).
-- Дальше: HTTP-врезка шима в `core.Api.route`; ABIS-порт `IAbis` (книговыдача/
-  регистрация — `circulation`/own-store backend); Reader Agent (настольный считыватель).
+- Готово: домен `devices`, `locker` (SafeKeeper→holds), compat-шим
+  (`/easybookdll/*` + station-facing), **HTTP-врезка в `core.Api`** (POST
+  `/api/devices/*`, Basic-аутентификация), **ABIS-порт реальных сидов** —
+  `readers` (карты) + книговыдача через `_DeviceCircAdapter` (боевой circulation).
+- Дальше: остальные IAbis-операции (прямые checkout/checkin/renew-эндпоинты со
+  стойки), запись карт обратно в прод-RDR (30/24/28), Reader Agent (настольный
+  считыватель: сокет/EAS/кодек тега).
 - Заблокировано (не код): физический привод ячеек реальных станций — нужен
   station-facing трейс/станционный билд (не перепрошивка), `docs/devices/OPEN_QUESTIONS.md` §1.
 
