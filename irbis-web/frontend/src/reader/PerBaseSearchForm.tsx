@@ -14,7 +14,7 @@ const CSS = `
 .irb-pbf__title{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-semibold,600);
   font-size:var(--text-base,1rem);color:var(--text-strong);margin:0;}
 .irb-pbf__sub{font-size:var(--text-xs);color:var(--text-subtle);}
-.irb-pbf__grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px 16px;}
+.irb-pbf__grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px 16px;}
 .irb-pbf__field{display:flex;flex-direction:column;gap:5px;min-width:0;}
 .irb-pbf__label{font-size:var(--text-xs);font-weight:var(--weight-semibold,600);color:var(--text-body);}
 .irb-pbf__in{width:100%;box-sizing:border-box;padding:8px 11px;border-radius:var(--radius-md,8px);
@@ -34,6 +34,14 @@ const CSS = `
 .irb-pbf__soon{display:inline-flex;align-items:center;font-size:var(--text-2xs,11px);font-weight:600;color:var(--text-subtle);
   background:var(--surface-sunken);border-radius:999px;padding:1px 8px;}
 .irb-pbf__actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;}
+/* Адаптив (#238): на узком экране — гарантированно один столбец, уже паддинги. */
+@media (max-width:560px){
+  .irb-pbf{padding:14px 13px;}
+  .irb-pbf__grid{grid-template-columns:1fr;}
+  .irb-pbf__groupgrid{grid-template-columns:1fr;}
+  .irb-pbf__actions{justify-content:stretch;}
+  .irb-pbf__actions > *{flex:1;}
+}
 `;
 
 if (typeof document !== "undefined" && !document.getElementById("irb-pbf-css")) {

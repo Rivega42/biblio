@@ -72,6 +72,52 @@ const sf = (f: FieldVal | undefined, c: string) =>
 interface Toast { id: number; variant: ToastVariant; title: string; message?: string; }
 interface ActiveFacet { field: string; prefix: string; groupLabel: string; value: string; valueLabel: string; }
 
+// Адаптив шапки и ряда контролов выдачи (#238). Инлайновые стили в App.tsx нельзя
+// снабдить media-query, поэтому критичные для мобилы узлы получают классы, а
+// отзывчивые правила живут здесь, в инжектируемом <style>. Логика не меняется —
+// только раскладка/размеры на узком экране (≤560px, и более жёстко ≤400px).
+const APP_RESPONSIVE_CSS = `
+/* Шапка: на мобиле — перенос в два ряда, бренд слева, контролы справа переносятся. */
+@media (max-width: 560px){
+  .irb-appheader{flex-wrap:wrap;gap:8px !important;padding:10px 12px !important;}
+  /* Длинную «надстрочную» строку названия прячем, оставляем главное имя. */
+  .irb-brand__over{display:none !important;}
+  .irb-brand__main{font-size:var(--text-sm,14px) !important;white-space:normal !important;}
+  .irb-brand__logo{height:36px !important;padding:4px 9px !important;}
+  .irb-brand__logo img{height:26px !important;}
+  /* Группа контролов уходит на свою строку и занимает всю ширину, перенос внутри. */
+  .irb-headctl{margin-left:0 !important;width:100%;flex-wrap:wrap;justify-content:flex-start;row-gap:6px;}
+  /* Пилюля базы не должна толкать раскладку. */
+  .irb-dbpill{max-width:60vw;overflow:hidden;text-overflow:ellipsis;}
+}
+@media (max-width: 400px){
+  /* На самом узком экране ещё немного ужимаем название бренда, чтобы контролы
+     гарантированно помещались во вторую строку без переполнения. */
+  .irb-brand__main{font-size:var(--text-xs,13px) !important;}
+}
+/* Ряд контролов над выдачей (база/режимы/корзина) — на мобиле перенос без переполнения. */
+@media (max-width: 560px){
+  .irb-resultctl{gap:8px !important;}
+  .irb-resultctl > *{min-width:0;}
+  .irb-resultctl select{max-width:100% !important;}
+  /* Сегмент режимов поиска может прокручиваться по горизонтали, не ломая строку. */
+  .irb-modeseg{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;}
+  .irb-modeseg button{white-space:nowrap;}
+  /* Простой поиск: селектор области над строкой (в столбик). */
+  .irb-simplerow{flex-direction:column;}
+  .irb-simplerow > select{max-width:100% !important;width:100%;}
+  /* Выдача: карточки в один столбец, фасетный рельс уходит ВНИЗ и на всю ширину. */
+  .irb-resultmain{order:1 !important;flex-basis:100% !important;min-width:0 !important;}
+  .irb-facet-rail{order:2 !important;flex-basis:100% !important;max-width:100% !important;
+    border-top:1px solid var(--border-subtle);padding-top:14px;margin-top:6px;}
+}
+/* Гарантия: нигде нет горизонтального скролла страницы. */
+html, body { overflow-x: hidden; }
+`;
+if (typeof document !== "undefined" && !document.getElementById("irb-app-responsive-css")) {
+  const s = document.createElement("style"); s.id = "irb-app-responsive-css"; s.textContent = APP_RESPONSIVE_CSS; document.head.appendChild(s);
+}
+
 // Compose a base query expr with the active facet refinements using the IRBIS
 // AND operator '*': (<base>) * "V=05" * "J=RUS". Mirrors the backend refinement.
 function composeExpr(base: string, active: ActiveFacet[]): string {
@@ -478,25 +524,25 @@ export function App() {
 
   return (
     <div data-theme={rootTheme} data-mode={rootMode} style={{ minHeight: "100vh", background: "var(--bg-page)", color: "var(--text-body)", display: "flex", flexDirection: "column" }}>
-      <header style={{ background: "var(--accent)", color: "var(--text-on-accent, #fff)", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+      <header className="irb-appheader" style={{ background: "var(--accent)", color: "var(--text-on-accent, #fff)", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
         <button onClick={goHome} title="На главную" aria-label="На главную"
           style={{ display: "inline-flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
           {/* #255 п.1: официальный логотип СПб ГТБ (лира) на белой подложке + название текстом. */}
-          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", height: 42, padding: "5px 12px", borderRadius: 12, background: "#fff", boxShadow: "var(--shadow-sm)" }}>
+          <span className="irb-brand__logo" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", height: 42, padding: "5px 12px", borderRadius: 12, background: "#fff", boxShadow: "var(--shadow-sm)" }}>
             <img src={sptlLogo} alt="Санкт-Петербургская государственная театральная библиотека" style={{ height: 30, width: "auto", display: "block" }} />
           </span>
           <span style={{ display: "flex", flexDirection: "column", lineHeight: 1.13, textAlign: "left", whiteSpace: "nowrap" }}>
-            <span style={{ fontSize: "var(--text-2xs, 11px)", opacity: .9, letterSpacing: ".01em" }}>Санкт-Петербургская государственная</span>
-            <b style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-base, 15px)", letterSpacing: "-.01em" }}>Театральная библиотека</b>
+            <span className="irb-brand__over" style={{ fontSize: "var(--text-2xs, 11px)", opacity: .9, letterSpacing: ".01em" }}>Санкт-Петербургская государственная</span>
+            <b className="irb-brand__main" style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-base, 15px)", letterSpacing: "-.01em" }}>Театральная библиотека</b>
           </span>
         </button>
         {/* Пилюля текущей базы (G18) — контекст «где я ищу». */}
         {context === "reader" && !home && (
-          <span title={"Текущая база поиска: " + dbName} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.34)", borderRadius: 999, padding: "3px 11px", fontSize: "var(--text-xs)", fontWeight: 600 }}>
+          <span className="irb-dbpill" title={"Текущая база поиска: " + dbName} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.34)", borderRadius: 999, padding: "3px 11px", fontSize: "var(--text-xs)", fontWeight: 600, whiteSpace: "nowrap" }}>
             <Icon name="layers" size={13} /> {dbName}
           </span>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+        <div className="irb-headctl" style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
           <div style={{ display: "flex", gap: 4, marginRight: 6, padding: 2, background: "rgba(255,255,255,.12)", borderRadius: 10 }}>
             <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>Читатель</button>
             <button onClick={() => switchContext("staff")} style={hbtn(context === "staff")}>Сотрудник</button>
@@ -536,7 +582,7 @@ export function App() {
         <>
         {!rec && (
           <>
-            <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div className="irb-resultctl" style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
               {databases.filter((d) => d.public).length > 1 && (
                 <select value={allDbs ? ALL_DBS : db}
                   onChange={(e) => applyBaseChange(e.target.value)} title="База поиска" style={selStyle}>
@@ -545,7 +591,7 @@ export function App() {
                   {databases.filter((d) => d.public).map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
                 </select>
               )}
-              <div role="tablist" aria-label="Режим поиска" style={{ display: "flex", gap: 4, padding: 2, background: "var(--surface-sunken,#eee)", borderRadius: 10 }}>
+              <div className="irb-modeseg" role="tablist" aria-label="Режим поиска" style={{ display: "flex", gap: 4, padding: 2, background: "var(--surface-sunken,#eee)", borderRadius: 10 }}>
                 <button role="tab" aria-selected={mode === "simple"} onClick={() => setMode("simple")} style={modeBtn(mode === "simple")}>Простой</button>
                 <button role="tab" aria-selected={mode === "advanced"} onClick={() => setMode("advanced")} style={modeBtn(mode === "advanced")}>Расширенный</button>
                 <button role="tab" aria-selected={mode === "expert"} onClick={() => setMode("expert")} style={modeBtn(mode === "expert")}>Экспертный</button>
@@ -568,11 +614,11 @@ export function App() {
               </div>
             </div>
             {mode === "simple" ? (
-              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <div className="irb-simplerow" style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                 <select value={prefix} onChange={(e) => setPrefix(e.target.value)} style={selStyle}>
                   {PREFIXES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
                 </select>
-                <div style={{ flex: 1, minWidth: 240 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <SearchBar value={q} onChange={onQuery} onSearch={(v: string) => runSearch(allDbs ? ALL_DBS : db, prefix, v, 1)} suggestions={sug}
                     onPickSuggestion={(s: any) => { const term = typeof s === "string" ? s : s.term; setQ(term); runSearch(allDbs ? ALL_DBS : db, prefix, term, 1); }}
                     placeholder="Поиск по каталогу" buttonLabel="Найти" />
@@ -639,7 +685,7 @@ export function App() {
                   <div style={{ flex: "1 1 200px", minWidth: 180, maxWidth: 260, order: 1 }} className="irb-facet-rail">
                     <FacetRail facets={facets} active={activeFacets} onToggle={toggleFacet} />
                   </div>
-                  <div style={{ flex: "100 1 380px", minWidth: 280, order: 2 }}>
+                  <div className="irb-resultmain" style={{ flex: "100 1 380px", minWidth: 280, order: 2 }}>
                     {activeFacets.length > 0 && (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "0 0 12px" }}>
                         <span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>Фильтры:</span>
@@ -870,6 +916,15 @@ const CAB_CSS = `
 @media (max-width: 860px){
   .irb-cab-grid{grid-template-columns:1fr !important;}
   .irb-cab-2col,.irb-cab-3col{grid-template-columns:1fr !important;}
+}
+/* #238: вкладки кабинета прокручиваются по горизонтали, не ломая строку. */
+@media (max-width: 560px){
+  .irb-cab-tabs{flex-wrap:nowrap !important;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .irb-cab-tabs > button{white-space:nowrap;flex:none;}
+  /* Карточка формуляра: статус/«Продлить» переносятся под описание, не сжимая текст. */
+  .irb-loan-card{flex-wrap:wrap;gap:10px !important;}
+  .irb-loan-aside{flex-direction:row !important;align-items:center !important;
+    width:100%;justify-content:space-between;}
 }`;
 if (typeof document !== "undefined" && !document.getElementById("irb-cab-css")) {
   const s = document.createElement("style"); s.id = "irb-cab-css"; s.textContent = CAB_CSS; document.head.appendChild(s);
@@ -1028,7 +1083,7 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSe
         <main style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
 
           {/* Вкладки кабинета: Формуляр / Заказы (G12) / История (#134) / Запросы (#133) */}
-          <div role="tablist" aria-label="Разделы кабинета" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", flexWrap: "wrap" }}>
+          <div className="irb-cab-tabs" role="tablist" aria-label="Разделы кабинета" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", flexWrap: "wrap" }}>
             {([["formular", "Формуляр"], ["orders", "Заказы"], ["history", "История"], ["saved", "Запросы"]] as const).map(([key, label]) => {
               const on = cabTab === key;
               return (
@@ -1071,7 +1126,7 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSe
             {onHand.length ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {onHand.map((l, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: "14px 16px" }}>
+                  <div key={i} className="irb-loan-card" style={{ display: "flex", alignItems: "center", gap: 16, ...cardSx, borderRadius: "var(--radius-lg,13px)", padding: "14px 16px" }}>
                     <div aria-hidden="true" style={{ width: 40, height: 56, flex: "none", borderRadius: 6, background: "linear-gradient(150deg," + COVER_TINTS[i % COVER_TINTS.length] + ",rgba(0,0,0,.35))", boxShadow: "var(--shadow-md)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 4 }}>
                       <Icon name="book" size={13} style={{ color: "rgba(255,255,255,.85)" }} />
                     </div>
@@ -1083,7 +1138,7 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSe
                         {l.renewals > 0 && <span>продлений: {l.renewals}</span>}
                       </div>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 7, flex: "none" }}>
+                    <div className="irb-loan-aside" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 7, flex: "none" }}>
                       <span style={toneChip(l.tone)}><span style={toneDot(l.tone)} aria-hidden="true" />{l.dueLabel || "срок не указан"}</span>
                       <RenewButton />
                     </div>
@@ -1247,8 +1302,8 @@ function RecordCard({ rec, db, tab, setTab, shareOpen, setShareOpen, permalink, 
         )}
       </div>
       <div style={{ display: "flex", gap: 24, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-        {rec.hasCover && <img alt="обложка" src={api.coverUrl(db, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
-        <div style={{ flex: 1, minWidth: 300 }}>
+        {rec.hasCover && <img alt="обложка" src={api.coverUrl(db, rec.mfn)} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} style={{ width: 180, maxWidth: "100%", borderRadius: 10, border: "1px solid var(--border-subtle)", boxShadow: "var(--shadow-sm)" }} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
           <h2 style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-2xl, 1.5rem)", lineHeight: 1.3, margin: "2px 0 12px" }}>{v.brief}</h2>
 
           {/* Действия: заказ, бронь, список, корзина, поделиться, экспорт */}
