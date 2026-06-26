@@ -62,7 +62,7 @@ class CompatDevicesService:
     """Транслятор device-facing вызовов IDlogic в нативные сервисы Biblio."""
 
     def __init__(self, devices, readers=None, holds=None, circulation=None,
-                 locker=None, codec=None, inventory=None, vision=None,
+                 locker=None, codec=None, inventory=None, vision=None, sip2=None,
                  legacy_pass=None, legacy_login=LEGACY_LOGIN):
         self.devices = devices
         self.readers = readers
@@ -72,6 +72,7 @@ class CompatDevicesService:
         self.codec = codec    # access.tag_codec (ISO 28560-2 кодек тега)
         self.inventory = inventory  # access.inventory.InventoryService (ТСД-инвентаризация)
         self.vision = vision        # access.vision.VisionService (камеры/FaceID)
+        self.sip2 = sip2            # access.sip2.Sip2Service (SIP2-киоски)
         self.legacy_login = legacy_login
         self.legacy_pass = legacy_pass
 
@@ -95,8 +96,11 @@ class CompatDevicesService:
         'DeviceIsLicenseValid', 'DeviceDataAdd', 'BooksCacheAddUpdate',
         # IAbis (роль A) — реальная книговыдача через circulation-сид:
         'Checkout', 'Checkin', 'Renew', 'GetClientChargedDocs', 'GetDocState',
+        'GetUserDebts', 'GetDocInfo', 'SetBookState',
         # Кодек тега ISO 28560-2 (декод/энкод блока) через codec-сид:
         'TagDecode', 'TagEncode',
+        # SIP2-кадр (сторонние киоски) через sip2-сид:
+        'Sip2',
     }
     _STATION = {'MastersRFIDGet', 'SafeKeeperMasterRFIDModify', 'OrdersGet',
                 'SafeKeeperInfoGet2', 'OrderBookProcessedSet', 'OrderModify',
@@ -233,6 +237,41 @@ class CompatDevicesService:
         code = self._book_code(p)
         st = self.circulation.doc_state(code) if code else None
         return [{'BookCode': code, 'State': st}] if st is not None else []
+
+    def _eb_GetUserDebts(self, p):
+        if self.circulation is None:
+            return {}
+        ticket = self._resolve_ticket(p)
+        if not ticket:
+            return {}
+        d = self.circulation.debts(ticket) or {}
+        return {'OnHand': d.get('on_hand'), 'Outstanding': d.get('outstanding'),
+                'Level': d.get('debt_level')}
+
+    def _eb_GetDocInfo(self, p):
+        if self.circulation is None:
+            return []
+        code = self._book_code(p)
+        info = self.circulation.doc_info(code) if code else None
+        return [{'BookCode': code, 'Mfn': info.get('mfn'),
+                 'Title': info.get('title')}] if info else []
+
+    def _eb_SetBookState(self, p):
+        if self.circulation is None:
+            return False
+        code = self._book_code(p)
+        state = p.get('state') if p.get('state') is not None else p.get('bookState')
+        return bool(code and self.circulation.set_doc_state(code, state))
+
+    def _eb_Sip2(self, p):
+        """Обработать один SIP2-кадр (строку) и вернуть ответный кадр."""
+        if self.sip2 is None:
+            return {'Response': None, 'Reasons': ['no_sip2']}
+        line = p.get('line') or p.get('frame') or ''
+        try:
+            return {'Response': self.sip2.handle(line)}
+        except Exception:
+            return {'Response': None, 'Reasons': ['sip2_error']}
 
     # -- кодек тега ISO 28560-2 (codec-сид) ---------------------------------- #
     def _primary_oid(self):

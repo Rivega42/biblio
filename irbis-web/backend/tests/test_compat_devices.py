@@ -208,6 +208,12 @@ class FakeAbis:
         return [{'loanId': 1, 'item': 'INV-1', 'title': 'Кнут', 'due': 1700086400}]
     def doc_state(self, code):
         return '1' if code == 'INV-1' else None
+    def debts(self, ticket):
+        return {'on_hand': 2, 'outstanding': 50, 'debt_level': 'soft'}
+    def doc_info(self, code):
+        return {'mfn': 5, 'title': 'Кнут'} if code == 'INV-1' else None
+    def set_doc_state(self, code, state):
+        return True
 
 
 def test_iabis_circulation():
@@ -303,11 +309,31 @@ def test_phase2_vision():
     check('vision event recorded', len(vis.events(device_id=cam['id'])) == 1)
 
 
+def test_iabis_rest_and_sip2():
+    abis = FakeAbis()
+    class FakeSip2:
+        def handle(self, line):
+            return '941YNN' + line[-4:]  # имитация ответного кадра
+    c = CompatDevicesService(DeviceService(DeviceStore(':memory:')),
+                             circulation=abis, sip2=FakeSip2())
+    d = c.handle('easybookdll/GetUserDebts', {'abisCode': 'T-1'})
+    check('GetUserDebts shape', d['Outstanding'] == 50 and d['Level'] == 'soft')
+    info = c.handle('easybookdll/GetDocInfo', {'bookCode': 'INV-1'})
+    check('GetDocInfo title', len(info) == 1 and info[0]['Title'] == 'Кнут')
+    check('GetDocInfo unknown -> []', c.handle('easybookdll/GetDocInfo', {'bookCode': 'NOPE'}) == [])
+    check('SetBookState True', c.handle('easybookdll/SetBookState', {'bookCode': 'INV-1', 'state': '9'}) is True)
+    check('SetBookState no code -> False', c.handle('easybookdll/SetBookState', {'state': '9'}) is False)
+    r = c.handle('easybookdll/Sip2', {'line': '9300CNuser|CObarcode|'})
+    check('Sip2 response frame', isinstance(r['Response'], str) and r['Response'].startswith('94'))
+    c0 = CompatDevicesService(DeviceService(DeviceStore(':memory:')))
+    check('Sip2 no seam graceful', c0.handle('easybookdll/Sip2', {'line': '93'})['Response'] is None)
+
+
 def main():
     for t in (test_auth, test_easybook_health_license, test_reader_seam,
-              test_station_orders, test_iabis_circulation, test_tag_endpoints,
-              test_phase2_perimeter, test_phase2_inventory, test_phase2_vision,
-              test_station_masters, test_unknown):
+              test_station_orders, test_iabis_circulation, test_iabis_rest_and_sip2,
+              test_tag_endpoints, test_phase2_perimeter, test_phase2_inventory,
+              test_phase2_vision, test_station_masters, test_unknown):
         print('==', t.__name__)
         t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))

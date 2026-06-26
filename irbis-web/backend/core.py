@@ -44,6 +44,7 @@ from access import tag_codec as _tag_codec
 from access import reader_agent as _reader_agent
 from access import inventory as _inventory
 from access import vision as _vision
+from access import sip2 as _sip2
 from access import compat_devices as _compat_devices
 from access import demo_requests as _demo_requests
 from access.catalog import CatalogStore
@@ -142,6 +143,39 @@ class _DeviceCircAdapter:
         if self.api.catalog is None:
             return None
         return self.api.catalog.exemplar_status(self.api.cfg.db_default, code)
+
+    def debts(self, ticket):
+        """Долги/задолженность читателя (IAbis GetUserDebts)."""
+        if self.api.circulation is None:
+            return {}
+        reader_id = self.api._circ_reader(ticket)
+        return self.api.circulation.reader_debt(reader_id, self.api._circ_today())
+
+    def doc_info(self, code):
+        """Библио-инфо экземпляра (IAbis GetDocInfo): mfn + заглавие по штрихкоду."""
+        if self.api.catalog is None:
+            return None
+        found = self.api.catalog.find_exemplar(self.api.cfg.db_default, code)
+        if not found:
+            return None
+        mfn = found[0]
+        title = ''
+        try:
+            brief = self.api._hold_brief(self.api.cfg.db_default, int(mfn))
+            title = (brief or {}).get('title') or ''
+        except Exception:
+            title = ''
+        return {'mfn': mfn, 'title': title}
+
+    def set_doc_state(self, code, state):
+        """Выставить 910^A экземпляра (IAbis SetBookState)."""
+        if self.api.catalog is None or state is None:
+            return False
+        try:
+            self.api.catalog.set_exemplar_status(self.api.cfg.db_default, code, str(state))
+            return True
+        except Exception:
+            return False
 
 
 # Поля RDR, где может храниться пароль читателя для входа на портал:
@@ -662,11 +696,19 @@ class Api:
             self.vision = _vision.VisionService(_vision.VisionStore(vis_db))
         except Exception:
             self.vision = None
+        # SIP2-ACS для сторонних киосков самообслуживания: на той же боевой
+        # книговыдаче (circ-адаптер) и реестре карт (readers). Транспорт SIP2 —
+        # TCP на деплое; здесь сервис обрабатывает кадр-строку (HTTP-пробрасывает шим).
+        try:
+            self.sip2 = _sip2.Sip2Service(circulation=_circ_adapter,
+                                          readers=self.readers, devices=self.devices)
+        except Exception:
+            self.sip2 = None
         try:
             self.compat_devices = _compat_devices.CompatDevicesService(
                 devices=self.devices, readers=self.readers, holds=self.holds,
                 circulation=_circ_adapter, locker=self.locker, codec=_tag_codec,
-                inventory=self.inventory, vision=self.vision,
+                inventory=self.inventory, vision=self.vision, sip2=self.sip2,
                 legacy_pass=os.environ.get('EASYBOOK_LEGACY_PASS'))
         except Exception:
             self.compat_devices = None
