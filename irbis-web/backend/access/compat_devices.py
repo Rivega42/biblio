@@ -62,12 +62,13 @@ class CompatDevicesService:
     """Транслятор device-facing вызовов IDlogic в нативные сервисы Biblio."""
 
     def __init__(self, devices, readers=None, holds=None, circulation=None,
-                 locker=None, legacy_pass=None, legacy_login=LEGACY_LOGIN):
+                 locker=None, codec=None, legacy_pass=None, legacy_login=LEGACY_LOGIN):
         self.devices = devices
         self.readers = readers
         self.holds = holds
         self.circulation = circulation
         self.locker = locker  # access.locker.LockerService (station-facing заказы/ячейки)
+        self.codec = codec    # access.tag_codec (ISO 28560-2 кодек тега)
         self.legacy_login = legacy_login
         self.legacy_pass = legacy_pass
 
@@ -91,6 +92,8 @@ class CompatDevicesService:
         'DeviceIsLicenseValid', 'DeviceDataAdd', 'BooksCacheAddUpdate',
         # IAbis (роль A) — реальная книговыдача через circulation-сид:
         'Checkout', 'Checkin', 'Renew', 'GetClientChargedDocs', 'GetDocState',
+        # Кодек тега ISO 28560-2 (декод/энкод блока) через codec-сид:
+        'TagDecode', 'TagEncode',
     }
     _STATION = {'MastersRFIDGet', 'SafeKeeperMasterRFIDModify', 'OrdersGet',
                 'SafeKeeperInfoGet2', 'OrderBookProcessedSet', 'OrderModify'}
@@ -220,6 +223,39 @@ class CompatDevicesService:
         code = self._book_code(p)
         st = self.circulation.doc_state(code) if code else None
         return [{'BookCode': code, 'State': st}] if st is not None else []
+
+    # -- кодек тега ISO 28560-2 (codec-сид) ---------------------------------- #
+    def _primary_oid(self):
+        return getattr(self.codec, 'OID_PRIMARY_ITEM_ID', 1)
+
+    def _eb_TagDecode(self, p):
+        """Декодировать hex-блок тега → {ItemId, Data}. Битый блок → ItemId None."""
+        if self.codec is None:
+            return {'ItemId': None, 'Reasons': ['no_codec']}
+        hexs = (p.get('block') or p.get('hex') or '').strip()
+        try:
+            data = self.codec.decode_block(bytes.fromhex(hexs))
+        except Exception:
+            return {'ItemId': None, 'Reasons': ['bad_block']}
+        oid = self._primary_oid()
+        item = data.get(oid)
+        if item is None:
+            item = data.get(str(oid))
+        return {'ItemId': (str(item) if item is not None else None),
+                'Data': {str(k): v for k, v in data.items()}}
+
+    def _eb_TagEncode(self, p):
+        """Закодировать ItemId (OID 1) в hex-блок тега → {Block, ItemId}."""
+        if self.codec is None:
+            return {'Block': None, 'Reasons': ['no_codec']}
+        item = p.get('itemId') or self._book_code(p)
+        if not item:
+            return {'Block': None, 'Reasons': ['bad_request']}
+        try:
+            blk = self.codec.encode_block({self._primary_oid(): str(item)})
+        except Exception:
+            return {'Block': None, 'Reasons': ['encode_error']}
+        return {'Block': blk.hex(), 'ItemId': str(item)}
 
     # -- station-facing (мастер-ключи; заказы/ячейки — слайс 3/3) ----------- #
     def _st_MastersRFIDGet(self, p):

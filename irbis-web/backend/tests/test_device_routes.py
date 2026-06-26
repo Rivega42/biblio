@@ -129,9 +129,20 @@ def test_iabis_checkout_e2e():
     check('910^A back to free', st == 200 and p['data'][0]['State'] == EXEMPLAR_FREE)
 
 
+def test_tag_roundtrip_route():
+    """Кодек тега через HTTP: TagEncode → TagDecode восстанавливает itemId."""
+    api, _ = _api()
+    H = _basic()
+    st, p = _post(api, 'TagEncode', {'itemId': '2001001'}, H)
+    check('TagEncode -> 200 hex', st == 200 and p['data']['Block'])
+    st, p = _post(api, 'TagDecode', {'block': p['data']['Block']}, H)
+    check('TagDecode -> itemId', st == 200 and p['data']['ItemId'] == '2001001')
+
+
 def main():
     for t in (test_auth_gate, test_heartbeat_and_unknown, test_reader_bind_then_info,
-              test_locker_order_via_http, test_iabis_checkout_e2e):
+              test_locker_order_via_http, test_iabis_checkout_e2e,
+              test_tag_roundtrip_route):
         print('==', t.__name__); t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0

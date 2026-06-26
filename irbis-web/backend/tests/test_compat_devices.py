@@ -242,9 +242,24 @@ def test_iabis_circulation():
     check('GetClientChargedDocs no seam -> []', c0.handle('easybookdll/GetClientChargedDocs', {'abisCode': 'T'}) == [])
 
 
+def test_tag_endpoints():
+    from access import tag_codec as tc
+    c = CompatDevicesService(DeviceService(DeviceStore(':memory:')), codec=tc)
+    enc = c.handle('easybookdll/TagEncode', {'itemId': '2001001'})
+    check('TagEncode returns hex block', isinstance(enc['Block'], str) and enc['Block'])
+    dec = c.handle('easybookdll/TagDecode', {'block': enc['Block']})
+    check('TagDecode round-trips itemId', dec['ItemId'] == '2001001')
+    check('TagDecode exposes data', '1' in dec['Data'])
+    bad = c.handle('easybookdll/TagDecode', {'block': 'zz-not-hex'})
+    check('TagDecode bad block -> ItemId None', bad['ItemId'] is None and 'bad_block' in bad['Reasons'])
+    check('TagEncode bad_request', c.handle('easybookdll/TagEncode', {})['Block'] is None)
+    c0 = CompatDevicesService(DeviceService(DeviceStore(':memory:')))  # no codec
+    check('TagDecode no codec graceful', c0.handle('easybookdll/TagDecode', {'block': '01'})['ItemId'] is None)
+
+
 def main():
     for t in (test_auth, test_easybook_health_license, test_reader_seam,
-              test_station_orders, test_iabis_circulation,
+              test_station_orders, test_iabis_circulation, test_tag_endpoints,
               test_station_masters, test_unknown):
         print('==', t.__name__)
         t()
