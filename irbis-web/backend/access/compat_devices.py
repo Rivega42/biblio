@@ -62,11 +62,12 @@ class CompatDevicesService:
     """Транслятор device-facing вызовов IDlogic в нативные сервисы Biblio."""
 
     def __init__(self, devices, readers=None, holds=None, circulation=None,
-                 legacy_pass=None, legacy_login=LEGACY_LOGIN):
+                 locker=None, legacy_pass=None, legacy_login=LEGACY_LOGIN):
         self.devices = devices
         self.readers = readers
         self.holds = holds
         self.circulation = circulation
+        self.locker = locker  # access.locker.LockerService (station-facing заказы/ячейки)
         self.legacy_login = legacy_login
         self.legacy_pass = legacy_pass
 
@@ -89,7 +90,8 @@ class CompatDevicesService:
         'IsServerAlive', 'LibraryInfoGet', 'ReaderInfoGet', 'ReaderModify',
         'DeviceIsLicenseValid', 'DeviceDataAdd', 'BooksCacheAddUpdate',
     }
-    _STATION = {'MastersRFIDGet', 'SafeKeeperMasterRFIDModify'}
+    _STATION = {'MastersRFIDGet', 'SafeKeeperMasterRFIDModify', 'OrdersGet',
+                'SafeKeeperInfoGet2', 'OrderBookProcessedSet', 'OrderModify'}
 
     def handle(self, endpoint, payload=None):
         """Маршрутизировать device-facing вызов. ``endpoint`` — с/без префикса,
@@ -163,3 +165,63 @@ class CompatDevicesService:
         self.devices.master_modify(p.get('rfidCode') or p.get('rfid'),
                                    fio=p.get('fio'), device_id=dev['id'])
         return True
+
+    # -- station-facing заказы/ячейки → LockerService (slice 3/3) [I] -------- #
+    def _sk_device_id(self, p):
+        dev = self.devices.get(p.get('safeKeeperID') or p.get('safekeeperID')
+                               or p.get('deviceID'))
+        return dev['id'] if dev else None
+
+    @staticmethod
+    def _order_dto(o):
+        cell = o.get('cell_no')
+        return {'Id': o['id'], 'StateId': o['state'],
+                'ReaderRFID': o['reader_ticket'], 'ReaderFIO': o.get('reader_fio'),
+                'CellNumber': cell, 'SafeKeeperId': o['safekeeper'],
+                'CellNumberShifted': (cell - o.get('cell_shift', 0)) if cell is not None else None}
+
+    def _st_OrdersGet(self, p):
+        if self.locker is None:
+            return []
+        sk = self._sk_device_id(p)
+        orders = self.locker.list_for_safekeeper(sk) if sk is not None else []
+        return [self._order_dto(o) for o in orders]
+
+    def _st_SafeKeeperInfoGet2(self, p):
+        """Карта ячеек: CellsState (битмаска) + занятые ячейки (наружу для legacy)."""
+        if self.locker is None:
+            return []
+        sk = self._sk_device_id(p)
+        if sk is None:
+            return []
+        busy = sorted(self.locker.busy_cells(sk))
+        return [{'CellsState': self.locker.cells_state(sk), 'BusyCells': busy,
+                 'BusyCellsCount': len(busy)}]
+
+    def _st_OrderBookProcessedSet(self, p):
+        if self.locker is None:
+            return False
+        self.locker.store.set_item_processed(p.get('orderID'), p.get('bookCode'))
+        return True
+
+    def _st_OrderModify(self, p):
+        """opID/stateID → операции LockerService. Возврат — Id заказа (как IDlogic)."""
+        if self.locker is None:
+            return 0
+        op, state, oid = p.get('opID'), p.get('stateID'), p.get('id')
+        try:
+            if op == 1:                       # создать
+                sk = self._sk_device_id(p)
+                o = self.locker.create(p.get('readerRFID'), sk,
+                                       reader_fio=p.get('readerFIO'))
+                return o['id']
+            if op == 0:                       # отмена/удаление
+                self.locker.cancel(oid)
+                return oid or 0
+            if state == 3:                    # укомплектован
+                self.locker.staff(oid, p.get('cellNumber'))
+            elif state == 4:                  # выдан
+                self.locker.issue(oid)
+            return oid or 0
+        except Exception:
+            return 0

@@ -131,6 +131,45 @@ def test_station_masters():
           c.handle('/las/SafeKeeperMasterRFIDModify', {'safekeeperID': 'no', 'rfidCode': 'X'}) is False)
 
 
+def test_station_orders():
+    from access.locker import LockerService, LockerStore, STAFFED, ISSUED, CANCELLED
+    svc = DeviceService(DeviceStore(':memory:'))
+    sk = svc.register('sk-ord', KIND_SAFEKEEPER, name='SK-ORD')
+    lk = LockerService(LockerStore(':memory:'))
+    c = CompatDevicesService(svc, locker=lk)
+    # create order (opID=1) -> id
+    oid = c.handle('/las/OrderModify', {'opID': 1, 'safeKeeperID': 'sk-ord',
+                                        'readerRFID': 'T-1', 'readerFIO': 'Иванов'})
+    check('OrderModify create returns id', isinstance(oid, int) and oid > 0)
+    lk.add_book(oid, 'BK-1')
+    # staff (stateID=3, cellNumber)
+    c.handle('/las/OrderModify', {'opID': 2, 'id': oid, 'stateID': 3, 'cellNumber': 2})
+    check('staffed via compat', lk.store.get_order(oid)['state'] == STAFFED)
+    # OrdersGet maps
+    orders = c.handle('/las/OrdersGet', {'safeKeeperID': 'sk-ord'})
+    check('OrdersGet one', len(orders) == 1 and orders[0]['StateId'] == STAFFED)
+    check('OrdersGet cell', orders[0]['CellNumber'] == 2 and orders[0]['ReaderRFID'] == 'T-1')
+    # SafeKeeperInfoGet2 cells
+    info = c.handle('/las/SafeKeeperInfoGet2', {'safeKeeperID': 'sk-ord'})
+    check('cells_state bit for cell2', info and info[0]['CellsState'] == 0b10)
+    check('busy cells', info[0]['BusyCells'] == [2])
+    # OrderBookProcessedSet
+    check('book processed set', c.handle('/las/OrderBookProcessedSet', {'orderID': oid, 'bookCode': 'BK-1'}) is True)
+    check('item processed', lk.store.list_items(oid)[0]['processed'] == 1)
+    # issue (stateID=4)
+    c.handle('/las/OrderModify', {'opID': 2, 'id': oid, 'stateID': 4})
+    check('issued via compat', lk.store.get_order(oid)['state'] == ISSUED)
+    check('cell freed after issue', lk.busy_cells(sk['id']) == set())
+    # cancel another
+    oid2 = c.handle('/las/OrderModify', {'opID': 1, 'safeKeeperID': 'sk-ord', 'readerRFID': 'T-2'})
+    c.handle('/las/OrderModify', {'opID': 0, 'id': oid2})
+    check('cancelled via compat', lk.store.get_order(oid2)['state'] == CANCELLED)
+    # no locker seam -> graceful
+    _, c2 = make()
+    check('OrdersGet no locker -> []', c2.handle('/las/OrdersGet', {'safeKeeperID': 'x'}) == [])
+    check('OrderModify no locker -> 0', c2.handle('/las/OrderModify', {'opID': 1}) == 0)
+
+
 def test_unknown():
     _, c = make()
     try:
@@ -142,6 +181,7 @@ def test_unknown():
 
 def main():
     for t in (test_auth, test_easybook_health_license, test_reader_seam,
+              test_station_orders,
               test_station_masters, test_unknown):
         print('==', t.__name__)
         t()
