@@ -222,6 +222,10 @@ export function App() {
   const [savedRefresh, setSavedRefresh] = React.useState(0);
   const tRef = React.useRef<any>(null);
   const toast = (t: Omit<Toast, "id">) => { const id = Math.random(); setToasts((x) => [...x, { ...t, id }]); setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), 4000); };
+  // OIDC-вход (узел 3 MVP-2c): handoff от unbound-callback → привязать после входа
+  // билетом; провайдер — для подсказки в форме входа.
+  const [oidcHandoff, setOidcHandoff] = React.useState<string | null>(null);
+  const [oidcBindProvider, setOidcBindProvider] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     (async () => {
@@ -230,6 +234,26 @@ export function App() {
       const startDb = h.json?.data?.db || "IBIS"; setDb(startDb);
       const d = await api.databases(); if (d.json?.ok && d.json.data) setDatabases(d.json.data.items);
       setReady(true);
+      // OIDC-callback (узел 3 MVP-2c): провайдер вернул ?code&state на наш
+      // redirect_uri (= URL портала). Сверяем state с сохранённым (CSRF) → завершаем.
+      try {
+        const cp = new URLSearchParams(window.location.search);
+        const code = cp.get("code"); const state = cp.get("state");
+        const saved = (() => { try { return sessionStorage.getItem("oidc_state"); } catch { return null; } })();
+        if (code && state && saved && state === saved) {
+          try { sessionStorage.removeItem("oidc_state"); } catch { /* ignore */ }
+          const cr = await api.oidcCallback(code, state);
+          try { const u = new URL(window.location.href); u.searchParams.delete("code"); u.searchParams.delete("state"); window.history.replaceState(null, "", u.pathname + (u.search ? u.search : "")); } catch { /* ignore */ }
+          const cd = cr.json?.data;
+          if (cr.status === 200 && cr.json?.ok && cd?.bound && cd.token) {
+            setAccount({ loggedIn: true, ticket: cd.ticket || "" }); setLoginOpen(false); loadCabinet();
+            toast({ variant: "success", title: "Вы вошли", message: "Через " + (cd.provider || "провайдера") });
+          } else if (cr.status === 200 && cd && cd.bound === false && cd.handoff) {
+            setOidcHandoff(cd.handoff); setOidcBindProvider(cd.provider || null); setLoginOpen(true);
+            toast({ variant: "info", title: "Почти готово", message: "Войдите по билету, чтобы привязать вход." });
+          }
+        }
+      } catch { /* ignore */ }
       // Постоянная ссылка: если в URL есть ?db=&mfn=, автоматически открыть запись.
       try {
         const p = new URLSearchParams(window.location.search);
@@ -492,7 +516,7 @@ export function App() {
   }
   async function doLogin(ticket: string, password: string) {
     const r = await api.loginReader(ticket, password);
-    if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); loadCabinet(); }
+    if (r.status === 200) { setAccount({ loggedIn: true, ticket }); setLoginOpen(false); toast({ variant: "success", title: "Вы вошли", message: "Билет № " + ticket }); loadCabinet(); if (oidcHandoff) { api.oidcBind(oidcHandoff).then(() => toast({ variant: "success", title: "Вход привязан", message: oidcBindProvider || "" })).catch(() => { /* ignore */ }); setOidcHandoff(null); setOidcBindProvider(null); } }
     else toast({ variant: "warning", title: "Вход не выполнен", message: "Проверьте номер билета и пароль." });
   }
   function switchContext(c: "reader" | "staff") { if (c === "staff" && !staff) { setStaffLoginOpen(true); return; } setContext(c); setRec(null); }
@@ -777,7 +801,7 @@ export function App() {
         <span>Читательский портал поверх ИРБИС64 (база {DB}). Работает в защищённом контуре.</span>
       </footer>
 
-      {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} />}
+      {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} bindProvider={oidcBindProvider} />}
       {staffLoginOpen && <StaffLoginOverlay onClose={() => setStaffLoginOpen(false)} onSubmit={doStaffLogin} />}
       {basketOpen && <BasketPanel items={basket} onClose={() => setBasketOpen(false)} onRemove={removeFromBasket} onClear={() => setBasket([])} toast={toast} />}
       {docView && <DocViewer pages={docView.pages} startIndex={docView.idx} title={docView.title} onClose={() => setDocView(null)} />}
@@ -1191,17 +1215,30 @@ function RenewButton() {
   );
 }
 
-function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (ticket: string, password: string) => void }) {
+function LoginOverlay({ onClose, onSubmit, bindProvider }: { onClose: () => void; onSubmit: (ticket: string, password: string) => void; bindProvider?: string | null }) {
   const [t, setT] = React.useState("");
   // Пароль читателя (#2): передаётся вместе с билетом. «Как в читательском билете».
   const [pwd, setPwd] = React.useState("");
+  // OIDC-провайдеры (узел 3 MVP-2c): кнопки «Войти через …» показываются ТОЛЬКО
+  // когда провайдер настроен на сервере (OIDC_PROVIDER). Иначе блок скрыт.
+  const [oidcList, setOidcList] = React.useState<{ provider: string; label: string }[]>([]);
+  React.useEffect(() => { (async () => { try { const r = await api.oidcProviders(); if (r.json?.ok && r.json.data) setOidcList(r.json.data.providers || []); } catch { /* ignore */ } })(); }, []);
   const submit = () => onSubmit(t, pwd);
+  async function oidcLogin() {
+    const r = await api.oidcStart("login");
+    if (r.json?.ok && r.json.data?.url) {
+      try { sessionStorage.setItem("oidc_state", r.json.data.state); } catch { /* ignore */ }
+      window.location.href = r.json.data.url;   // редирект на провайдера (code-flow)
+    }
+  }
   const inputSx: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border-strong, #cdd3da)", marginBottom: 6 };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface-card, #fff)", color: "var(--text-body)", borderRadius: 16, padding: 22, width: 320, boxShadow: "var(--shadow-lg, 0 20px 50px rgba(0,0,0,.25))" }}>
         <div style={{ fontWeight: 600, fontSize: "var(--text-lg)", marginBottom: 8 }}>Вход в личный кабинет</div>
-        <p style={{ margin: "0 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Войдите по номеру читательского билета и паролю.</p>
+        {bindProvider
+          ? <p style={{ margin: "0 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Войдите по билету и паролю — и вход через «{bindProvider}» будет привязан к вашему билету.</p>
+          : <p style={{ margin: "0 0 12px", color: "var(--text-subtle)", fontSize: "var(--text-sm)" }}>Войдите по номеру читательского билета и паролю.</p>}
         <label htmlFor="reader-ticket" style={{ display: "block", fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginBottom: 4 }}>Номер билета</label>
         <input id="reader-ticket" value={t} onChange={(e) => setT(e.target.value)} placeholder="Номер билета" autoFocus
           onKeyDown={(e) => { if (e.key === "Enter") submit(); }} style={inputSx} />
@@ -1213,6 +1250,14 @@ function LoginOverlay({ onClose, onSubmit }: { onClose: () => void; onSubmit: (t
           <Button variant="ghost" onClick={onClose}>Отмена</Button>
           <Button onClick={submit}>Войти</Button>
         </div>
+        {oidcList.length > 0 && !bindProvider && (
+          <div style={{ marginTop: 14, borderTop: "1px solid var(--border-subtle, #eee)", paddingTop: 12 }}>
+            <p style={{ margin: "0 0 8px", color: "var(--text-subtle)", fontSize: "var(--text-2xs,11px)", textAlign: "center" }}>или войдите через</p>
+            {oidcList.map((p) => (
+              <Button key={p.provider} variant="ghost" style={{ width: "100%", marginBottom: 6 }} onClick={oidcLogin}>{p.label}</Button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
