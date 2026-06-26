@@ -109,3 +109,5 @@ class Config:
         self.oidc_token_url = os.environ.get('OIDC_TOKEN_URL', '')
         self.oidc_userinfo_url = os.environ.get('OIDC_USERINFO_URL', '')
         self.oidc_claim = os.environ.get('OIDC_CLAIM', '').strip()
+        # Стор привязок OIDC-личность↔билет (отдельный sqlite, как NOTIFY_DB и др.).
+        self.oidc_db = os.environ.get('OIDC_DB', os.path.join(here, 'oidc.db'))

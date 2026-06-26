@@ -39,6 +39,8 @@ from access import acquisition as _acquisition
 from access import bookprovision as _bookprovision
 from access import demo_requests as _demo_requests
 from access.catalog import CatalogStore
+from access import oidc as _oidc
+from access.oidc_store import OidcStore
 from access import fulltext as _fulltext
 from access import rights as _rights
 from access import lich as _lich
@@ -505,6 +507,17 @@ class Api:
         self.holds = HoldService(self.access, catalog=None,
                                  brief_read=self._hold_brief)
         self.shelves = ShelfService(self.access, brief_read=self._hold_brief)
+        # Привязки внешней OIDC-личности к билету (узел 3 MVP-2b): отдельный
+        # sqlite-стор + резолв конфига провайдера. OFF, если провайдер не задан
+        # (cfg.oidc_provider пуст) — _oidc_enabled() это проверяет. Best-effort.
+        try:
+            self.oidc_store = OidcStore(self.cfg.oidc_db)
+        except Exception:
+            self.oidc_store = None
+        self._oidc_pcfg = _oidc.provider_config(self.cfg.oidc_provider, {
+            'authorize': self.cfg.oidc_authorize_url, 'token': self.cfg.oidc_token_url,
+            'userinfo': self.cfg.oidc_userinfo_url, 'claim': self.cfg.oidc_claim,
+        }) if self.cfg.oidc_provider else {}
         # Reader-portal v2 social layer (#134 reviews/ratings + #133 recommendations,
         # reading history, saved searches). Reader-scoped by ticket in OUR access
         # store; the recommendation seams READ the live OPAC (606/700/610 + index
@@ -932,6 +945,131 @@ class Api:
                                      tenant=tenant, rdr_mfn=mfns[0])
         store.audit('RI=%s' % ticket, 'auth.reader', 'RDR', mfns[0], outcome)
         return 200, ok({'token': token, 'kind': 'reader', 'name': name, 'mfn': mfns[0]})
+
+    # --- Плагины авторизации: вход через внешний OIDC (узел 3, MVP-2b) --------
+    # Явная привязка: внешняя личность (provider, subject) ↔ читательский билет.
+    # Привязку создаёт сам читатель (вошёл билет+пароль → подтвердил), поэтому
+    # OIDC-вход НИКОГДА не обходит пароль для непривязанной личности — первый раз
+    # отдаёт handoff, по которому привязка возможна только из читательской сессии.
+    def _oidc_enabled(self):
+        return bool(self.cfg.oidc_provider and self._oidc_pcfg.get('authorize')
+                    and self.cfg.oidc_client_id and self.oidc_store is not None)
+
+    def _oidc_lookup_mfn(self, ticket):
+        """RDR-mfn по билету для контекста сессии. 0, если ИРБИС off / нет записи."""
+        try:
+            _c, mfns = self.irbis.search('RDR', '"RI=%s"' % ticket)
+            return mfns[0] if mfns else 0
+        except Exception:
+            return 0
+
+    def auth_oidc_providers(self):
+        """GET /api/auth/oidc/providers — настроенный провайдер для кнопки входа
+        (пусто, если OIDC выключен). Публичный."""
+        if not self._oidc_enabled():
+            return 200, ok({'providers': []})
+        return 200, ok({'providers': [{
+            'provider': self.cfg.oidc_provider,
+            'label': self._oidc_pcfg.get('label', self.cfg.oidc_provider)}]})
+
+    def auth_oidc_start(self, session, query):
+        """GET /api/auth/oidc/start?intent=login|bind — authorize-URL + подписанный
+        state. intent=bind ТРЕБУЕТ читательскую сессию (билет вшивается в state,
+        подписанный нами → callback ему доверяет)."""
+        if not self._oidc_enabled():
+            return 404, err('unavailable', 'oidc disabled')
+        intent = (query.get('intent', ['login'])[0] or 'login')
+        if intent not in ('login', 'bind'):
+            return 400, err('bad_request', 'bad intent')
+        st = {'oidc': 'state', 'intent': intent, 'nonce': _oidc.new_state()}
+        if intent == 'bind':
+            if not session or session.get('kind') != 'reader':
+                return 401, err('auth_required', 'reader session required to bind')
+            st['ticket'] = (session.get('sub') or '')[3:]   # 'RI=<ticket>' → ticket
+        state = _jwt.encode(st, self.jwt_secret, ttl_seconds=600)
+        url = _oidc.build_authorize_url(self._oidc_pcfg, self.cfg.oidc_client_id,
+                                        self.cfg.oidc_redirect_uri, state)
+        return 200, ok({'url': url, 'state': state, 'provider': self.cfg.oidc_provider})
+
+    def auth_oidc_callback(self, body):
+        """POST /api/auth/oidc/callback {code, state} — завершить OIDC-поток (SPA
+        зовёт после редиректа провайдера). Проверяет подпись+exp state, обменивает
+        код, тянет userinfo, берёт claim (subject). intent=login: привязано →
+        читательская сессия; не привязано → handoff для шага привязки. intent=bind:
+        создаёт привязку (provider, subject)↔ticket из подписанного state."""
+        if not self._oidc_enabled():
+            return 404, err('unavailable', 'oidc disabled')
+        code = (body.get('code') or '').strip()
+        state = (body.get('state') or '').strip()
+        if not code or not state:
+            return 400, err('bad_request', 'code and state required')
+        try:
+            st = _jwt.decode(state, self.jwt_secret)
+        except _jwt.JwtError:
+            return 400, err('bad_state', 'invalid or expired state')
+        if st.get('oidc') != 'state':
+            return 400, err('bad_state', 'bad state')
+        try:
+            tok = _oidc.exchange_code(self._oidc_pcfg, self.cfg.oidc_client_id,
+                                      self.cfg.oidc_client_secret, code,
+                                      self.cfg.oidc_redirect_uri)
+            userinfo = _oidc.fetch_userinfo(self._oidc_pcfg, tok.get('access_token') or '')
+        except Exception:
+            return 502, err('oidc_provider', 'provider exchange failed')
+        subject = _oidc.claim_value(self._oidc_pcfg, userinfo)
+        if not subject:
+            return 502, err('oidc_provider', 'no subject claim in userinfo')
+        provider = self.cfg.oidc_provider
+        store = self._store_for(DEFAULT_TENANT)
+        if st.get('intent') == 'bind':
+            ticket = st.get('ticket') or ''
+            if not ticket:
+                return 400, err('bad_state', 'no ticket in bind state')
+            self.oidc_store.link(provider, subject, ticket)
+            store.audit('RI=%s' % ticket, 'auth.oidc.bind', None, None, 'ok',
+                        {'provider': provider})
+            return 200, ok({'bound': True, 'linked': True, 'provider': provider})
+        # intent == login
+        ticket = self.oidc_store.ticket_for(provider, subject)
+        if not ticket:
+            handoff = _jwt.encode({'oidc': 'handoff', 'provider': provider,
+                                   'subject': subject}, self.jwt_secret, ttl_seconds=600)
+            store.audit('oidc:%s' % provider, 'auth.oidc.login', None, None, 'unbound')
+            return 200, ok({'bound': False, 'handoff': handoff, 'provider': provider})
+        mfn = self._oidc_lookup_mfn(ticket)
+        token, _ = self._new_session('reader', 'RI=%s' % ticket, READER_GRANTS,
+                                     tenant=DEFAULT_TENANT, rdr_mfn=mfn)
+        store.audit('RI=%s' % ticket, 'auth.oidc.login', None, mfn or None, 'ok',
+                    {'provider': provider})
+        return 200, ok({'bound': True, 'token': token, 'kind': 'reader',
+                        'mfn': mfn, 'via': provider})
+
+    def auth_oidc_bind(self, session, body):
+        """POST /api/auth/oidc/bind {handoff} — привязать ранее НЕпривязанную
+        OIDC-личность (из handoff'а unbound-входа) к билету ТЕКУЩЕГО читателя.
+        Требует читательскую сессию (он вошёл билет+пароль) → доказана и внешняя
+        личность (handoff подписан нами после реального OIDC-callback), и владение
+        билетом (парольная сессия). Без обоих — привязки нет."""
+        if not session or session.get('kind') != 'reader':
+            return 401, err('auth_required', 'reader session required')
+        handoff = (body.get('handoff') or '').strip()
+        if not handoff:
+            return 400, err('bad_request', 'handoff required')
+        try:
+            h = _jwt.decode(handoff, self.jwt_secret)
+        except _jwt.JwtError:
+            return 400, err('bad_handoff', 'invalid or expired handoff')
+        if h.get('oidc') != 'handoff':
+            return 400, err('bad_handoff', 'bad handoff')
+        ticket = (session.get('sub') or '')[3:]
+        provider, subject = h.get('provider'), h.get('subject')
+        if not (provider and subject and ticket):
+            return 400, err('bad_request', 'incomplete bind')
+        self.oidc_store.link(provider, subject, ticket)
+        self._store_for(DEFAULT_TENANT).audit(
+            'RI=%s' % ticket, 'auth.oidc.bind', None, None, 'ok',
+            {'provider': provider, 'via': 'handoff'})
+        return 200, ok({'linked': True, 'provider': provider})
 
     def _brief_item(self, db, mfn):
         """Structured result item (title/author/year/docType/availability) for cards."""
@@ -3164,6 +3302,14 @@ class Api:
                 return self.auth_staff(body or {})
             if method == 'POST' and path == '/api/auth/reader':
                 return self.auth_reader(body or {})
+            if method == 'GET' and path == '/api/auth/oidc/providers':
+                return self.auth_oidc_providers()
+            if method == 'GET' and path == '/api/auth/oidc/start':
+                return self.auth_oidc_start(session, query)
+            if method == 'POST' and path == '/api/auth/oidc/callback':
+                return self.auth_oidc_callback(body or {})
+            if method == 'POST' and path == '/api/auth/oidc/bind':
+                return self.auth_oidc_bind(session, body or {})
             if method == 'GET' and path == '/api/health':
                 return 200, self.health()
             if method == 'GET' and path == '/api/metrics':
