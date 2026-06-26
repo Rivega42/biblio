@@ -99,9 +99,39 @@ def test_locker_order_via_http():
           st == 200 and len(p['data']) == 1 and p['data'][0]['CellNumber'] == 1)
 
 
+def _book_with_copy(inv, status):
+    return {'920': 'PAZK', '200': [{'a': 'Алгоритмы и структуры данных', 'f': 'Кнут Д.'}],
+            '700': [{'a': 'Кнут', 'g': 'Дональд'}], '101': 'rus',
+            '910': [{'a': status, 'b': inv}], '907': [{'a': 'Каталогизатор'}]}
+
+
+def test_iabis_checkout_e2e():
+    """Реальная книговыдача через HTTP: Checkout→loans→GetDocState→Checkin
+    бьёт в боевой CirculationEngine + каталожный 910^A (тот же, что АРМ выдачи)."""
+    from access.catalog import EXEMPLAR_FREE
+    api, _ = _api()
+    db = api.cfg.db_default
+    api.catalog.save(db, _book_with_copy('INV-1', EXEMPLAR_FREE))
+    H = _basic()
+    st, p = _post(api, 'Checkout', {'abisCode': 'R-1', 'bookCode': 'INV-1'}, H)
+    check('Checkout e2e -> Success', st == 200 and p['data']['Success'] is True)
+    st, p = _post(api, 'GetClientChargedDocs', {'abisCode': 'R-1'}, H)
+    check('loan visible after checkout',
+          st == 200 and len(p['data']) == 1 and str(p['data'][0]['item']) == 'INV-1')
+    st, p = _post(api, 'GetDocState', {'bookCode': 'INV-1'}, H)
+    check('910^A flipped to issued',
+          st == 200 and p['data'] and p['data'][0]['State'] != EXEMPLAR_FREE)
+    st, p = _post(api, 'Checkin', {'abisCode': 'R-1', 'bookCode': 'INV-1'}, H)
+    check('Checkin e2e -> Success', st == 200 and p['data']['Success'] is True)
+    st, p = _post(api, 'GetClientChargedDocs', {'abisCode': 'R-1'}, H)
+    check('no loans after checkin', st == 200 and len(p['data']) == 0)
+    st, p = _post(api, 'GetDocState', {'bookCode': 'INV-1'}, H)
+    check('910^A back to free', st == 200 and p['data'][0]['State'] == EXEMPLAR_FREE)
+
+
 def main():
     for t in (test_auth_gate, test_heartbeat_and_unknown, test_reader_bind_then_info,
-              test_locker_order_via_http):
+              test_locker_order_via_http, test_iabis_checkout_e2e):
         print('==', t.__name__); t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0

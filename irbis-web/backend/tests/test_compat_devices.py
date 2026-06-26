@@ -179,9 +179,72 @@ def test_unknown():
         check('unknown raises', True)
 
 
+class _Dec:
+    """Имитация circulation.Decision (.ok/.reasons/.computed)."""
+    def __init__(self, ok, reasons=None, computed=None):
+        self.ok = ok
+        self.reasons = reasons or []
+        self.computed = computed or {}
+
+
+class FakeAbis:
+    """circulation-сид IAbis: checkout/checkin/renew/loans/doc_state."""
+    def __init__(self, deny=(), no_loan=()):
+        self.deny = set(deny)
+        self.no_loan = set(no_loan)
+        self.calls = []
+    def checkout(self, ticket, code):
+        self.calls.append(('checkout', ticket, code))
+        if code in self.deny:
+            return _Dec(False, reasons=['reader_has_debt'])
+        return _Dec(True, computed={'due': 1700000000})
+    def checkin(self, ticket, code):
+        self.calls.append(('checkin', ticket, code))
+        return None if code in self.no_loan else _Dec(True)
+    def renew(self, ticket, code):
+        self.calls.append(('renew', ticket, code))
+        return None if code in self.no_loan else _Dec(True, computed={'due': 1700086400})
+    def loans(self, ticket):
+        return [{'loanId': 1, 'item': 'INV-1', 'title': 'Кнут', 'due': 1700086400}]
+    def doc_state(self, code):
+        return '1' if code == 'INV-1' else None
+
+
+def test_iabis_circulation():
+    abis = FakeAbis(deny=['BAD'], no_loan=['FREE'])
+    c = CompatDevicesService(DeviceService(DeviceStore(':memory:')),
+                             readers=FakeReaders(), circulation=abis)
+    # checkout success / deny
+    r = c.handle('easybookdll/Checkout', {'abisCode': 'T-1', 'bookCode': 'INV-1'})
+    check('Checkout success', r['Success'] is True and r['Due'] == 1700000000)
+    r = c.handle('easybookdll/Checkout', {'abisCode': 'T-1', 'bookCode': 'BAD'})
+    check('Checkout deny + reasons', r['Success'] is False and 'reader_has_debt' in r['Reasons'])
+    # резолв билета по RFID-карте через readers (RFID-1 → T-100)
+    c.handle('easybookdll/Checkout', {'readerRFID': 'RFID-1', 'bookCode': 'INV-9'})
+    check('Checkout resolves ticket via card', ('checkout', 'T-100', 'INV-9') in abis.calls)
+    # bad request (нет билета/кода)
+    check('Checkout bad_request', c.handle('easybookdll/Checkout', {'bookCode': 'X'})['Success'] is False)
+    # checkin: успех и «нет выданного экземпляра»
+    check('Checkin success', c.handle('easybookdll/Checkin', {'abisCode': 'T-1', 'bookCode': 'INV-1'})['Success'] is True)
+    rn = c.handle('easybookdll/Checkin', {'abisCode': 'T-1', 'bookCode': 'FREE'})
+    check('Checkin no loan -> not_found', rn['Success'] is False and 'not_found' in rn['Reasons'])
+    # renew
+    check('Renew success', c.handle('easybookdll/Renew', {'abisCode': 'T-1', 'bookCode': 'INV-1'})['Success'] is True)
+    # loans + doc state
+    loans = c.handle('easybookdll/GetClientChargedDocs', {'abisCode': 'T-1'})
+    check('GetClientChargedDocs lists loan', len(loans) == 1 and loans[0]['item'] == 'INV-1')
+    ds = c.handle('easybookdll/GetDocState', {'bookCode': 'INV-1'})
+    check('GetDocState returns 910^A', ds == [{'BookCode': 'INV-1', 'State': '1'}])
+    check('GetDocState unknown -> []', c.handle('easybookdll/GetDocState', {'bookCode': 'NOPE'}) == [])
+    # graceful без circulation-сида
+    c0 = CompatDevicesService(DeviceService(DeviceStore(':memory:')))
+    check('Checkout no seam -> Success False', c0.handle('easybookdll/Checkout', {'abisCode': 'T', 'bookCode': 'I'})['Success'] is False)
+    check('GetClientChargedDocs no seam -> []', c0.handle('easybookdll/GetClientChargedDocs', {'abisCode': 'T'}) == [])
+
+
 def main():
     for t in (test_auth, test_easybook_health_license, test_reader_seam,
-              test_station_orders,
+              test_station_orders, test_iabis_circulation,
               test_station_masters, test_unknown):
         print('==', t.__name__)
         t()

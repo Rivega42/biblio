@@ -89,6 +89,8 @@ class CompatDevicesService:
     _EASYBOOK = {
         'IsServerAlive', 'LibraryInfoGet', 'ReaderInfoGet', 'ReaderModify',
         'DeviceIsLicenseValid', 'DeviceDataAdd', 'BooksCacheAddUpdate',
+        # IAbis (роль A) — реальная книговыдача через circulation-сид:
+        'Checkout', 'Checkin', 'Renew', 'GetClientChargedDocs', 'GetDocState',
     }
     _STATION = {'MastersRFIDGet', 'SafeKeeperMasterRFIDModify', 'OrdersGet',
                 'SafeKeeperInfoGet2', 'OrderBookProcessedSet', 'OrderModify'}
@@ -149,6 +151,75 @@ class CompatDevicesService:
         # Кэш прочитанных кодов — идемпотентный no-op в этом слайсе (лог на слое
         # маршрутов). Нативный кэш каталога заведём отдельно при необходимости.
         return True
+
+    # -- IAbis (роль A): книговыдача через circulation-сид -------------------- #
+    def _resolve_ticket(self, p):
+        """Билет читателя: явный abisCode/readerCard ИЛИ резолв RFID-карты через readers."""
+        t = p.get('abisCode') or p.get('readerCard')
+        if t:
+            return t
+        card = p.get('readerRFID') or p.get('rfidCode')
+        if card and self.readers is not None:
+            r = self.readers.find_by_card(card)
+            if r:
+                return r.get('abis_code')
+        return None
+
+    @staticmethod
+    def _decision(res):
+        """Свести результат circulation (Decision | bool | None) к device-ответу."""
+        if res is None:
+            return {'Success': False, 'Reasons': ['not_found']}
+        ok = getattr(res, 'ok', None)
+        if ok is None:
+            ok = getattr(res, 'allow', None)
+        if ok is None:
+            ok = bool(res)
+        out = {'Success': bool(ok), 'Reasons': list(getattr(res, 'reasons', None) or [])}
+        computed = getattr(res, 'computed', None) or {}
+        if 'due' in computed:
+            out['Due'] = computed['due']
+        return out
+
+    def _book_code(self, p):
+        return p.get('bookCode') or p.get('bookRFID') or p.get('docCode')
+
+    def _eb_Checkout(self, p):
+        if self.circulation is None:
+            return {'Success': False, 'Reasons': ['no_circulation']}
+        ticket, code = self._resolve_ticket(p), self._book_code(p)
+        if not ticket or not code:
+            return {'Success': False, 'Reasons': ['bad_request']}
+        return self._decision(self.circulation.checkout(ticket, code))
+
+    def _eb_Checkin(self, p):
+        if self.circulation is None:
+            return {'Success': False, 'Reasons': ['no_circulation']}
+        ticket, code = self._resolve_ticket(p), self._book_code(p)
+        if not ticket or not code:
+            return {'Success': False, 'Reasons': ['bad_request']}
+        return self._decision(self.circulation.checkin(ticket, code))
+
+    def _eb_Renew(self, p):
+        if self.circulation is None:
+            return {'Success': False, 'Reasons': ['no_circulation']}
+        ticket, code = self._resolve_ticket(p), self._book_code(p)
+        if not ticket or not code:
+            return {'Success': False, 'Reasons': ['bad_request']}
+        return self._decision(self.circulation.renew(ticket, code))
+
+    def _eb_GetClientChargedDocs(self, p):
+        if self.circulation is None:
+            return []
+        ticket = self._resolve_ticket(p)
+        return self.circulation.loans(ticket) if ticket else []
+
+    def _eb_GetDocState(self, p):
+        if self.circulation is None:
+            return []
+        code = self._book_code(p)
+        st = self.circulation.doc_state(code) if code else None
+        return [{'BookCode': code, 'State': st}] if st is not None else []
 
     # -- station-facing (мастер-ключи; заказы/ячейки — слайс 3/3) ----------- #
     def _st_MastersRFIDGet(self, p):
