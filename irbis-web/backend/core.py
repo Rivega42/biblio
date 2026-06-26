@@ -2616,11 +2616,15 @@ class Api:
         plan = _billing.get_tenant_plan(tenant)
         store = self._store_for(tenant)
         usage = _billing.tenant_usage(store, tenant)
+        mods = entitlements.enabled_modules(tenant)
         return 200, ok({
             'tenant': tenant, 'plan': plan,
             'limits': _billing.plan_limits(plan),
             'usage': usage,
-            'modules': entitlements.enabled_modules(tenant),
+            'modules': mods,
+            # Режим (узел 3) = производное от набора модулей (demo/webportal/full
+            # или 'custom', если оператор включил нестандартный набор вручную).
+            'mode': entitlements.derive_mode(mods),
             'plans': _billing.plans_catalog(),
         })
 
@@ -2672,6 +2676,36 @@ class Api:
             {'op': 'module', 'tenant': tenant, 'module': module, 'enabled': enabled})
         return 200, ok({'tenant': tenant, 'module': module,
                         'enabled': enabled, 'applied': applied,
+                        'modules': entitlements.enabled_modules(tenant)})
+
+    def admin_set_mode(self, session, body):
+        """POST /api/admin/billing/mode {tenant,mode} — переключить РЕЖИМ тенанта.
+
+        Режим (demo/webportal/full) — именованный пресет набора модулей поверх
+        entitlements (``entitlements.MODE_PRESETS``): применяет пресет через
+        ``set_mode`` (enable модули режима, disable прочие). Это «крупный» брат
+        ``admin_set_module`` (тот тумблит один модуль). Best-effort на public/dev
+        (fail-open — нечего персистить). Audited."""
+        self._require_super_admin(session)
+        tenant = (body.get('tenant') or '').strip()
+        if not tenant:
+            return 400, err('bad_request', 'tenant required')
+        mode = (body.get('mode') or '').strip()
+        if mode not in entitlements.MODE_PRESETS:
+            return 400, err('bad_request', 'unknown mode: %s (ожидается %s)'
+                            % (mode, ', '.join(entitlements.MODES)))
+        applied = True
+        if entitlements._is_public(tenant):
+            applied = False                  # dev/public: fail-open, нечего персистить
+        else:
+            try:
+                entitlements.set_mode(tenant, mode)
+            except Exception as e:
+                return 400, err('bad_request', str(e))
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            session['actor'], 'admin.db', None, None, 'ok',
+            {'op': 'mode', 'tenant': tenant, 'mode': mode})
+        return 200, ok({'tenant': tenant, 'mode': mode, 'applied': applied,
                         'modules': entitlements.enabled_modules(tenant)})
 
     # ---- Публичная страница продукта: заявка на демодоступ (#226) ----
@@ -3309,6 +3343,8 @@ class Api:
                 return self.admin_set_plan(session, body or {})
             if method == 'POST' and path == '/api/admin/billing/module':
                 return self.admin_set_module(session, body or {})
+            if method == 'POST' and path == '/api/admin/billing/mode':
+                return self.admin_set_mode(session, body or {})
             # ---- Заявки на демодоступ (публичная страница продукта, super-admin, #226) ----
             if method == 'GET' and path == '/api/admin/demo-requests':
                 limit = min(1000, max(1, int(query.get('limit', ['100'])[0])))

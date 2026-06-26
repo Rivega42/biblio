@@ -345,6 +345,20 @@ def billing_route_checks():
     st, _ = api.route('POST', '/api/admin/billing/module', {}, {'tenant': 'public'}, H)
     check('module route missing module -> 400', st == 400)
 
+    # Режим (узел 3): пресет над модулями. Public/dev fail-open (applied False),
+    # но маршрут отрабатывает и эхает режим + список модулей.
+    st, p = api.route('POST', '/api/admin/billing/mode', {},
+                      {'tenant': 'public', 'mode': 'webportal'}, H)
+    check('POST /api/admin/billing/mode -> 200', st == 200)
+    check('mode route echoes the mode', p['data']['mode'] == 'webportal')
+    check('mode route returns the enabled-module list', isinstance(p['data']['modules'], list))
+    # unknown mode -> 400.
+    st, _ = api.route('POST', '/api/admin/billing/mode', {}, {'tenant': 'public', 'mode': 'nope'}, H)
+    check('mode route unknown mode -> 400', st == 400)
+    # GET billing exposes the derived mode field (demo/webportal/full/custom).
+    st, d2 = api.route('GET', '/api/admin/billing', {}, None, H)
+    check('billing GET exposes derived mode', st == 200 and 'mode' in d2['data'])
+
 
 class _FakeUpdateResult:
     def __init__(self, mfn):
@@ -388,6 +402,7 @@ PLATFORM_ROUTES = [
     ('GET', '/api/admin/billing', None),
     ('POST', '/api/admin/billing/plan', {'tenant': 'public', 'plan': 'pro'}),
     ('POST', '/api/admin/billing/module', {'tenant': 'public', 'module': 'opac', 'enabled': True}),
+    ('POST', '/api/admin/billing/mode', {'tenant': 'public', 'mode': 'full'}),
 ]
 
 
