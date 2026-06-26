@@ -177,6 +177,49 @@ class _DeviceCircAdapter:
         except Exception:
             return False
 
+    def doc_cenz(self, code):
+        """Возрастная цензура экземпляра (IAbis GetBookCenz): 900^Z без '+', иначе 18.
+
+        Рекон: @cenz PFT экземпляра → число; иначе 900^Z (убрать '+'); иначе 18.
+        Возвращает минимальный возраст (int) или None, если книга не найдена."""
+        if self.api.catalog is None:
+            return None
+        db = self.api.cfg.db_default
+        found = self.api.catalog.find_exemplar(db, code)
+        if not found:
+            return None
+        rec = self.api.catalog.get(db, found[0]) or {}
+        insts = rec.get('900') or []
+        if not isinstance(insts, list):
+            insts = [insts]
+        for inst in insts:
+            if isinstance(inst, dict):
+                z = inst.get('z') or inst.get('Z')
+                if z:
+                    try:
+                        return int(str(z).lstrip('+').strip())
+                    except ValueError:
+                        pass
+        return 18
+
+
+class _InventoryCatalogAdapter:
+    """Сид сверки ТСД-инвентаризации с каталогом: ожидаемые экземпляры места
+    (910^D==location) + известность кода. Реальный «место→экземпляры» индекс."""
+
+    def __init__(self, api):
+        self.api = api
+
+    def expected_items(self, db, location):
+        if self.api.catalog is None:
+            return []
+        return self.api.catalog.exemplars_at(db, location)
+
+    def item_known(self, db, item_code):
+        if self.api.catalog is None:
+            return False
+        return self.api.catalog.find_exemplar(db, item_code) is not None
+
 
 # Поля RDR, где может храниться пароль читателя для входа на портал:
 #   130 — «Пароль» (ИРБИС64+, основной рабочий лист читателя);
@@ -688,7 +731,9 @@ class Api:
         # (нужен индекс «место→экземпляры»), пока catalog-сид не подключён. Best-effort.
         try:
             inv_db = os.environ.get('INVENTORY_DB', os.path.join(here, 'inventory.db'))
-            self.inventory = _inventory.InventoryService(_inventory.InventoryStore(inv_db))
+            self.inventory = _inventory.InventoryService(
+                _inventory.InventoryStore(inv_db),
+                catalog=_InventoryCatalogAdapter(self))
         except Exception:
             self.inventory = None
         try:

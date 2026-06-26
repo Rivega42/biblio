@@ -815,6 +815,29 @@ class CatalogStore:
                     return (r['mfn'], i, inst)
         return None
 
+    def exemplars_at(self, db, location):
+        """Inventory numbers (``910^b``) of active copies whose ``910^D`` (место
+        хранения) == ``location``. Used by the ТСД-инвентаризация reconcile seam
+        to know which copies are EXPECTED on a shelf/location."""
+        target = str(location)
+        out = []
+        for r in self._conn().execute(
+                "SELECT data_json FROM record WHERE db=? AND status='active'",
+                (db,)).fetchall():
+            insts = json.loads(r['data_json']).get('910')
+            if insts is None:
+                continue
+            if not isinstance(insts, list):
+                insts = [insts]
+            for inst in insts:
+                if not isinstance(inst, dict):
+                    continue
+                loc = inst.get('d') or inst.get('D')
+                key = self._exemplar_key(inst)
+                if key is not None and loc is not None and str(loc) == target:
+                    out.append(str(key))
+        return out
+
     def exemplar_status(self, db, item):
         """Read ``910^A`` for the copy keyed by inventory ``item`` (None if absent)."""
         found = self.find_exemplar(db, item)

@@ -96,7 +96,7 @@ class CompatDevicesService:
         'DeviceIsLicenseValid', 'DeviceDataAdd', 'BooksCacheAddUpdate',
         # IAbis (роль A) — реальная книговыдача через circulation-сид:
         'Checkout', 'Checkin', 'Renew', 'GetClientChargedDocs', 'GetDocState',
-        'GetUserDebts', 'GetDocInfo', 'SetBookState',
+        'GetUserDebts', 'GetDocInfo', 'SetBookState', 'GetBookCenz',
         # Кодек тега ISO 28560-2 (декод/энкод блока) через codec-сид:
         'TagDecode', 'TagEncode',
         # SIP2-кадр (сторонние киоски) через sip2-сид:
@@ -262,6 +262,14 @@ class CompatDevicesService:
         code = self._book_code(p)
         state = p.get('state') if p.get('state') is not None else p.get('bookState')
         return bool(code and self.circulation.set_doc_state(code, state))
+
+    def _eb_GetBookCenz(self, p):
+        """Возрастная цензура книги (мин. возраст). Нет книги → пусто."""
+        if self.circulation is None:
+            return {}
+        code = self._book_code(p)
+        age = self.circulation.doc_cenz(code) if code else None
+        return {'BookCode': code, 'MinAge': age} if age is not None else {}
 
     def _eb_Sip2(self, p):
         """Обработать один SIP2-кадр (строку) и вернуть ответный кадр."""

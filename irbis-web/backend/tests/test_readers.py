@@ -78,9 +78,21 @@ def test_rdr_lookup_fallback():
     check('own-store hit does not call rdr_lookup', 'LOCAL' not in calls)
 
 
+def test_rdr_sync_plan():
+    s = svc()
+    s.bind_card('T-1', 'RF-MAIN', kind=KIND_MAIN)
+    s.bind_card('T-1', 'RF-EKP', kind=KIND_EKP)
+    plan = s.rdr_sync_plan('T-1')
+    fields = {p['field']: p['value'] for p in plan}
+    check('plan field 30 = main card', fields.get('30') == 'RF-MAIN')
+    check('plan field 28 = ekp card', fields.get('28') == 'RF-EKP')
+    check('plan op set', all(p['op'] == 'set' for p in plan))
+    check('empty reader -> empty plan', s.rdr_sync_plan('NOBODY') == [])
+
+
 def main():
     for t in (test_bind_find, test_bind_guards, test_upsert_idempotent_and_kind,
-              test_cards_for, test_rdr_lookup_fallback):
+              test_cards_for, test_rdr_lookup_fallback, test_rdr_sync_plan):
         print('==', t.__name__); t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0

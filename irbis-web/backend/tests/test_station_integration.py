@@ -43,6 +43,45 @@ def _book(inv, status):
             '910': [{'a': status, 'b': inv}], '907': [{'a': 'Кат'}]}
 
 
+def _book_at(inv, location):
+    """Экземпляр на конкретном месте хранения (910^D=location)."""
+    from access.catalog import EXEMPLAR_FREE
+    r = _book(inv, EXEMPLAR_FREE)
+    r['910'] = [{'a': EXEMPLAR_FREE, 'b': inv, 'd': location}]
+    return r
+
+
+def test_inventory_reconcile():
+    api = _api()
+    db = api.cfg.db_default
+    api.catalog.save(db, _book_at('INV-A', 'A1'))
+    api.catalog.save(db, _book_at('INV-B', 'A1'))
+    api.catalog.save(db, _book_at('INV-C', 'A2'))
+    inv = api.inventory
+    s = inv.open(db, 'A1', operator='lib')
+    inv.scan(s['id'], 'INV-A')    # present (ожидается на A1, отсканирован)
+    inv.scan(s['id'], 'INV-C')    # foreign (числится на A2)
+    inv.scan(s['id'], 'INV-UNK')  # unknown (нет в каталоге)
+    rep = inv.report(s['id'])
+    check('reconcile present', rep['present'] == ['INV-A'])
+    check('reconcile missing (INV-B не отсканирован)', rep['missing'] == ['INV-B'])
+    check('reconcile foreign (INV-C с A2)', 'INV-C' in rep['foreign'])
+    check('reconcile unknown (INV-UNK)', 'INV-UNK' in rep['unknown'])
+
+
+def test_book_cenz_route():
+    from access.catalog import EXEMPLAR_FREE
+    api = _api()
+    db = api.cfg.db_default
+    rec = _book('INV-Z', EXEMPLAR_FREE); rec['900'] = [{'z': '+16'}]
+    api.catalog.save(db, rec)
+    api.catalog.save(db, _book('INV-NOZ', EXEMPLAR_FREE))  # без 900 → дефолт 18
+    r = api.compat_devices.handle('GetBookCenz', {'bookCode': 'INV-Z'})
+    check('GetBookCenz 900^Z=16', r.get('MinAge') == 16)
+    r2 = api.compat_devices.handle('GetBookCenz', {'bookCode': 'INV-NOZ'})
+    check('GetBookCenz default 18', r2.get('MinAge') == 18)
+
+
 def test_self_service_e2e():
     from access.catalog import EXEMPLAR_FREE
     api = _api()
@@ -76,7 +115,8 @@ def test_sip2_through_api():
 
 
 def main():
-    for t in (test_self_service_e2e, test_sip2_through_api):
+    for t in (test_self_service_e2e, test_sip2_through_api,
+              test_inventory_reconcile, test_book_cenz_route):
         print('==', t.__name__); t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0
