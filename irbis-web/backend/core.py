@@ -45,6 +45,7 @@ from access import demo_requests as _demo_requests
 from access.catalog import CatalogStore
 from access import oidc as _oidc
 from access.oidc_store import OidcStore
+from access.identity_store import IdentityStore
 from access import fulltext as _fulltext
 from access import rights as _rights
 from access import lich as _lich
@@ -536,6 +537,8 @@ class Api:
             self.oidc_store = OidcStore(self.cfg.oidc_db)
         except Exception:
             self.oidc_store = None
+        # узел 3 MVP-3: связь сотрудник↔читательский билет (единая идентичность).
+        self.identity_store = IdentityStore(self.cfg.identity_db)
         self._oidc_pcfg = _oidc.provider_config(self.cfg.oidc_provider, {
             'authorize': self.cfg.oidc_authorize_url, 'token': self.cfg.oidc_token_url,
             'userinfo': self.cfg.oidc_userinfo_url, 'claim': self.cfg.oidc_claim,
@@ -935,7 +938,56 @@ class Api:
                                      tenant=tenant, account_id=acc['id'])
         store.audit(acc['login'], 'auth.staff', None, None, 'ok')
         return 200, ok({'token': token, 'kind': 'staff', 'tenant': tenant,
-                        'login': acc['login'], 'name': acc['full_name'], 'grants': grants})
+                        'login': acc['login'], 'name': acc['full_name'], 'grants': grants,
+                        # узел 3 MVP-3: привязанный читательский билет (если этот
+                        # сотрудник — ещё и читатель) → UI покажет «смотреть как читатель».
+                        'readerTicket': self.identity_store.reader_for_staff(acc['login'])})
+
+    # --- Единая идентичность читатель↔сотрудник (узел 3 MVP-3) --------------
+    def staff_link_reader(self, session, body):
+        """POST /api/staff/link-reader {ticket, password} — сотрудник привязывает
+        свой ЧИТАТЕЛЬСКИЙ билет, доказав владение (билет+пароль штатным reader-
+        входом — логику RDR не дублируем). Один человек = и сотрудник, и читатель."""
+        if not session or session.get('kind') != 'staff':
+            return 401, err('auth_required', 'staff session required')
+        ticket = (body.get('ticket') or '').strip()
+        password = body.get('password') or ''
+        if not ticket:
+            return 400, err('bad_request', 'ticket required')
+        st, _r = self.auth_reader({'ticket': ticket, 'password': password,
+                                   'tenant': session.get('tenant', DEFAULT_TENANT)})
+        if st != 200:
+            return 401, err('auth_failed', 'invalid reader ticket or password')
+        login = session.get('sub') or session.get('actor') or ''
+        self.identity_store.link(login, ticket)
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            login, 'identity.link', None, None, 'ok', {'ticket': ticket})
+        return 200, ok({'linked': True, 'staffLogin': login, 'ticket': ticket})
+
+    def staff_unlink_reader(self, session):
+        """POST /api/staff/unlink-reader — снять привязку билета у сотрудника."""
+        if not session or session.get('kind') != 'staff':
+            return 401, err('auth_required', 'staff session required')
+        login = session.get('sub') or session.get('actor') or ''
+        n = self.identity_store.unlink(login)
+        return 200, ok({'unlinked': bool(n)})
+
+    def view_as_reader(self, session):
+        """POST /api/staff/view-as-reader — сотрудник с привязанным билетом получает
+        ЧИТАТЕЛЬСКУЮ сессию своего билета (QA «смотреть как читатель»). Нет привязки
+        → 404. Билет уже доказан паролем на этапе привязки, поэтому здесь без пароля."""
+        if not session or session.get('kind') != 'staff':
+            return 401, err('auth_required', 'staff session required')
+        login = session.get('sub') or session.get('actor') or ''
+        ticket = self.identity_store.reader_for_staff(login)
+        if not ticket:
+            return 404, err('not_found', 'no reader ticket linked')
+        mfn = self._oidc_lookup_mfn(ticket)
+        token, _ = self._new_session('reader', 'RI=%s' % ticket, READER_GRANTS,
+                                     tenant=session.get('tenant', DEFAULT_TENANT), rdr_mfn=mfn)
+        self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
+            login, 'identity.view_as_reader', None, mfn or None, 'ok', {'ticket': ticket})
+        return 200, ok({'token': token, 'kind': 'reader', 'ticket': ticket, 'mfn': mfn})
 
     def auth_reader(self, body):
         """Аутентификация читателя: билет + пароль (как в jirbis).
@@ -3381,6 +3433,12 @@ class Api:
                 return self.auth_oidc_callback(body or {})
             if method == 'POST' and path == '/api/auth/oidc/bind':
                 return self.auth_oidc_bind(session, body or {})
+            if method == 'POST' and path == '/api/staff/link-reader':
+                return self.staff_link_reader(session, body or {})
+            if method == 'POST' and path == '/api/staff/unlink-reader':
+                return self.staff_unlink_reader(session)
+            if method == 'POST' and path == '/api/staff/view-as-reader':
+                return self.view_as_reader(session)
             if method == 'GET' and path == '/api/health':
                 return 200, self.health()
             if method == 'GET' and path == '/api/metrics':

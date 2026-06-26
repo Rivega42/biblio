@@ -111,3 +111,5 @@ class Config:
         self.oidc_claim = os.environ.get('OIDC_CLAIM', '').strip()
         # Стор привязок OIDC-личность↔билет (отдельный sqlite, как NOTIFY_DB и др.).
         self.oidc_db = os.environ.get('OIDC_DB', os.path.join(here, 'oidc.db'))
+        # узел 3 MVP-3: стор связи сотрудник↔читательский билет (единая идентичность).
+        self.identity_db = os.environ.get('IDENTITY_DB', os.path.join(here, 'identity.db'))
