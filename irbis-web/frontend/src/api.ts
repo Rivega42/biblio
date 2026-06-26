@@ -425,6 +425,22 @@ export const api = {
     if (r.status === 200 && r.json?.ok && r.json.data) token = r.json.data.token;
     return r;
   },
+  // --- Плагины авторизации: OIDC (узел 3 MVP-2c) ---------------------------
+  // Настроенные провайдеры (пусто, если OIDC выключен) — для кнопок входа.
+  oidcProviders: () => jget<{ providers: { provider: string; label: string }[] }>("/api/auth/oidc/providers"),
+  // Начать OIDC-поток: authorize-URL + подписанный state. intent='bind' — привязка
+  // к ТЕКУЩЕМУ читателю (нужна его сессия).
+  oidcStart: (intent: "login" | "bind" = "login") =>
+    jget<{ url: string; state: string; provider: string }>("/api/auth/oidc/start?" + qs({ intent })),
+  // Завершить поток после редиректа провайдера. bound → сессия (token в память,
+  // как loginReader); unbound → handoff для привязки после входа билетом.
+  async oidcCallback(code: string, state: string) {
+    const r = await jpost<{ bound: boolean; token?: string; handoff?: string; provider?: string; kind?: string; ticket?: string; mfn?: number }>("/api/auth/oidc/callback", { code, state });
+    if (r.status === 200 && r.json?.ok && r.json.data?.bound && r.json.data.token) token = r.json.data.token;
+    return r;
+  },
+  // Привязать unbound OIDC-личность (по handoff) к билету ТЕКУЩЕГО читателя.
+  oidcBind: (handoff: string) => jpost<{ linked: boolean; provider: string }>("/api/auth/oidc/bind", { handoff }),
   // --- Связанные записи: иерархия издания -----------------------------------
   // Связанные записи по направлению kind. children — что входит в издание
   // (статьи/номера/тома); host — издание-хозяин аналитики. 404/501 → блок скрыт.
