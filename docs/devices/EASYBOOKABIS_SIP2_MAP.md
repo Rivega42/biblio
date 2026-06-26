@@ -8,7 +8,7 @@
 
 `EasyBookAbis.SIP2.SIP` (`SIP.cs`) — **SIP2-клиент self-check**, реализует тот же интерфейс `IDataBase`, что и `Irbis`. Надстройка выступает терминалом (SC), сервер АБИС — ACS. Фасад `AbisWorker` выбирает `SIP` вместо `Irbis` при `UseSIP2`.
 
-**Что НЕ поддержано по SIP2** (возвращают `false`/no-op, `SIP.cs:255-313`): `GetReaders`, `AddEkp`, `AddReader`, `AddReaderByCard`, `AddExtraCard` → регистрация читателей и привязка ЕКП/карт работают **только в режиме прямого ИРБИС**. `SetBookState` → `true` (заглушка). `GetClientChargedDocsFullInfo` — собирается из `GetClientChargedDocs`+`GetDocInfo`.
+**Что НЕ поддержано по SIP2** (возвращают `false`/no-op, `SIP.cs:255-314`): `GetReaders`, `AddEkp`, `AddReader`, `AddReaderByCard`, `AddExtraCard` → регистрация читателей и привязка ЕКП/карт работают **только в режиме прямого ИРБИС**. `SetBookState` → `true` (заглушка). `GetClientChargedDocsFullInfo` — собирается из `GetClientChargedDocs`+`GetDocInfo`.
 
 Подключение (`SIP.cs:232-253`): `Disconnect` → `Client.Connect` (TCP) → если `IsNeedAuth` шлёт `Login`(93) → `IsDbOk` (`ScStatus` 99). Параметры из `SIP2settings.xml`: `DbIP/DbPort`, `Login/Password`, `InstitutionID`(→AO), `LocationCode`(→CP/AP), `IsNeedAuth`, `AllowedPlaces`.
 
@@ -65,7 +65,7 @@
 запрос : 17 {now} AO{inst} |AB{bookId} |AC |AY
 ответ  : 18
 ```
-Разбор `18`: `Substring(2,2)`=**статус циркуляции** (`CirculationStatus` 00..13), `Substring(4,2)=="01"`→**нужно снять EAS** (`NeedUnsetEas`), `AJ`=название, `BG`=владелец (Owner), `CH`=свойства (split по `":: "` → `Shifr` / `InvNumber` / `BookType`), `AQ`=место (BookPlace), `AH`=срок (`dd.MM.yyyy`/`yyyyMMdd`). Маппинг `CirculationStatus`→`BookState` — `SIP.cs:111-136` (Available→Available, Charged→OnHands, Lost/Missing→Lost, OnOrder/WaitingOnHoldShelf/WaitingToBeReshelved→BookedForOrder, InProcess→Processing, InTransit→InTransit). `AllowedPlaces`: если задан и место не в списке — статус принудительно `Unknown`.
+Разбор `18`: `Substring(2,2)`=**статус циркуляции** (`CirculationStatus` 00..13), `Substring(4,2)=="01"`→**нужно снять EAS** (`NeedUnsetEas`), `AJ`=название, `BG`=владелец (Owner), `CH`=свойства (split по `":: "` → `Shifr` / `InvNumber` / `BookType`), `AQ`=место (BookPlace), `AH`=срок (`dd.MM.yyyy`/`yyyyMMdd`). Маппинг `CirculationStatus`→`BookState` — `SIP.cs:112-136` (Available→Available, Charged→OnHands, Lost/Missing→Lost, OnOrder/WaitingOnHoldShelf/WaitingToBeReshelved→BookedForOrder, InProcess→Processing, InTransit→InTransit). `AllowedPlaces`: если задан и место не в списке — статус принудительно `Unknown`.
 
 ### 2.5 Checkout `11 → 12` (CheckOut.cs)
 ```

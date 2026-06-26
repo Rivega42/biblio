@@ -65,9 +65,12 @@ V30:'{билет}' and V910^H <> ''        (str_EasyBookAbis:18935)
 | **50** | категория | `UserCategory/get_Category` |
 | **40** | выданные экземпляры (строки выдачи) | `GetClientChargedDocs/OnHands/Charged` |
 | (контакты) | email/телефон | `EMail/phone` |
-| (RFID/ЕКП) | привязанная карта | спец‑подполе IDlogic — **тег не литерал, UNKNOWN** |
+| **28** | код ЕКП | `AddEkp`/`AddReader` |
+| **30** | билет/карта (основная) | `AddReaderByCard` |
+| **24** | доп. карта | `AddExtraCard` |
+| **103** | PIN | проверка в `GetClientName` |
 
-**Привязка RFID‑карты / ЕКП (Единая Карта Петербуржца):** карта несёт тройку `rfidCode` (UID), `abisCode` (= билет, поле 30), `serialNumber`. Методы `AddReaderByCard`, `AddEkp`, `AddExtraCard`; чтение ЕКП — внешний `EkpMed.dll`/`EKPMedWorker2` при `UseEKP=true`. Защита: `CardInUseError`/`HasAnotherCardError`/`HasTheSameCardError` (одна карта — один читатель). Где именно в RDR хранится код карты — собирается в рантайме, **тег подполя не виден в строках** (реплицировать как выделенное подполе + зеркало в локальной БД IDlogic). Регистрация по ЕКП пишет в ИРБИС паспортные поля («Кем выдан паспорт», «Адрес прописки», `manual.txt:515`).
+**Привязка RFID‑карты / ЕКП (Единая Карта Петербуржца):** карта несёт тройку `rfidCode` (UID), `abisCode` (= билет, поле 30), `serialNumber`. Методы `AddReaderByCard` (пишет билет/карту в **поле 30**), `AddEkp` (ЕКП в **поле 28**), `AddExtraCard` (доп. карта в **поле 24**); чтение ЕКП — внешний `EkpMed.dll`/`EKPMedWorker2` при `UseEKP=true`. Защита: `CardInUseError`/`HasAnotherCardError`/`HasTheSameCardError` (одна карта — один читатель). Точные теги подтверждены декомпиляцией — [EASYBOOKABIS_IRBIS_MAP.md](EASYBOOKABIS_IRBIS_MAP.md) §3. Регистрация по ЕКП пишет в ИРБИС полный набор полей RDR (10/11/12/21/23/28/101="ЕКП РФ"/51^C=место/31/3054), `manual.txt:515`.
 
 > **FaceDetect** в `EasyBookAbis` отсутствует — там читатель ищется только по билету или RFID/ЕКП‑карте. Поиск «по лицу» реализован в `LibraryAdminServer.exe` через Dahua NetSDK (см. [DEVICE_CONTROL_MAP.md](DEVICE_CONTROL_MAP.md) §6), он лишь резолвит читателя в билет.
 
@@ -162,8 +165,8 @@ SafeKeeper‑заказы пишутся в БД **RQST** (заказы/треб
 ---
 
 ## 7. Открытые места интеграции
-- Точный тег подполя RDR для RFID/ЕКП‑карты — собирается в рантайме, не литерал → нужно подтвердить на боевой RDR или декомпиляцией.
-- Семантика подполей 691 (`^F^C^V^A^O`) и раскладка RQST — **(инференс)** по конвенции.
+- ✅ Теги полей карт ЕКП/RFID — **подтверждены** декомпиляцией (28/30/24/103), см. [EASYBOOKABIS_IRBIS_MAP.md](EASYBOOKABIS_IRBIS_MAP.md).
+- Семантика подполей 691 (`^F^C^V^A^O`) и полная раскладка RQST — **(инференс)** по конвенции (частично, [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) §6).
 - Номера SIP2 checkout/checkin/renew (11/09/29) — по именам методов; литералом видны только 93/99/63.
 - Разбор `KNIGA%SERV21%` (`%…%`) — **(инференс)**: имя БД + профиль/сервер.
 Подробнее — [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
