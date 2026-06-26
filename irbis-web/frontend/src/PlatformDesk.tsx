@@ -90,6 +90,14 @@ const MODULE_RU: Record<string, string> = {
   analytics: "Аналитика и отчёты",
 };
 const moduleLabel = (code: string) => MODULE_RU[code] || code;
+// Режимы продукта (узел 3): именованные пресеты модулей. Совпадают с backend
+// entitlements.MODE_PRESETS. webportal — portal-only (first-class). 'custom' —
+// нестандартный набор, собранный вручную через тумблеры модулей.
+const MODE_LIST = ["demo", "webportal", "full"] as const;
+const MODE_RU: Record<string, string> = {
+  demo: "Демо", webportal: "Веб-портал", full: "Полная", custom: "Свой набор",
+};
+const modeLabel = (code?: string) => (code ? MODE_RU[code] || code : "—");
 // Человекочитаемые подписи лимит-ресурсов (backend snake_case ключи).
 const LIMIT_META: { key: keyof PlanLimits; name: string; icon: IconName; unit?: string }[] = [
   { key: "max_records", name: "Записи", icon: "file-text" },
@@ -251,6 +259,7 @@ function BillingTab({ toast, selected, onSelect }: {
   const [loading, setLoading] = React.useState(false);
   const [busyPlan, setBusyPlan] = React.useState<string | null>(null);
   const [busyModule, setBusyModule] = React.useState<string | null>(null);
+  const [busyMode, setBusyMode] = React.useState<string | null>(null);
 
   // справочник арендаторов для выпадающего выбора
   React.useEffect(() => { (async () => {
@@ -286,6 +295,22 @@ function BillingTab({ toast, selected, onSelect }: {
       setBilling({ ...billing, plan: d.plan, modules: d.modules, limits: d.limits });
       setTenants((ts) => (ts || []).map((t) => t.slug === selected ? { ...t, plan: d.plan } : t));
       toast({ variant: "success", title: "Тариф изменён", message: selected + " → " + d.plan });
+      void loadBilling(selected);
+    } else if (r.status === 404 || r.status === 501) toast({ variant: "info", title: "Недоступно", message: "Эндпойнт платформы не развёрнут." });
+    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
+    else toast({ variant: "error", title: "Не изменено", message: "Повторите попытку." });
+  }
+
+  async function changeMode(mode: string) {
+    if (!selected || !billing || mode === billing.mode) return;
+    setBusyMode(mode);
+    const r = await api.adminSetMode(selected, mode);
+    setBusyMode(null);
+    if (r.status === 200 && r.json?.ok && r.json.data) {
+      // Ответ /mode несёт {mode,modules,applied}; обновляем оптимистично и
+      // перечитываем биллинг (модули/потребление могли смениться).
+      setBilling({ ...billing, mode: r.json.data.mode, modules: r.json.data.modules });
+      toast({ variant: "success", title: "Режим переключён", message: selected + " → " + modeLabel(mode) });
       void loadBilling(selected);
     } else if (r.status === 404 || r.status === 501) toast({ variant: "info", title: "Недоступно", message: "Эндпойнт платформы не развёрнут." });
     else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
@@ -346,6 +371,25 @@ function BillingTab({ toast, selected, onSelect }: {
     const moduleCodes = allModules.length ? allModules : Array.from(enabledSet).sort();
     content = (
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
+        {/* Режим продукта (узел 3): именованный пресет модулей. webportal =
+            portal-only (first-class). Переключение применяет пресет на бэке. */}
+        <div>
+          <span className="irb-plat__cap">Режим</span>
+          <div className="irb-plat__pick" style={{ marginTop: 9 }}>
+            {MODE_LIST.map((mo) => (
+              <button key={mo} type="button"
+                className={"irb-plat__pickbtn" + (billing.mode === mo ? " irb-plat__pickbtn--on" : "")}
+                disabled={busyMode !== null} onClick={() => changeMode(mo)}>{MODE_RU[mo]}</button>
+            ))}
+            {billing.mode === "custom" && (
+              <span className="irb-plat__pickbtn irb-plat__pickbtn--on" style={{ pointerEvents: "none" }} title="Нестандартный набор модулей">Свой набор</span>
+            )}
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text-subtle)", marginTop: 6 }}>
+            Демо / Веб-портал / Полная — пресет функциональных модулей ниже. «Веб-портал» = только читательский контур (без staff-АРМов).
+          </div>
+        </div>
+
         {/* Тариф + переключатель */}
         <div>
           <span className="irb-plat__cap">Тариф</span>

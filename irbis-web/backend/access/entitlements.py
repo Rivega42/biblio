@@ -164,3 +164,51 @@ def is_module_enabled(tenant, module, dsn=None):
 def _is_public(tenant):
     """The non-tenant/single-tenant dev path: no control plane, never gated."""
     return not tenant or tenant == 'public'
+
+
+# --- Режимы продукта (узел 3): «режим» = ПРЕСЕТ включённых модулей ----------
+# «Режим» тенанта — это НЕ параллельная сущность, а именованный пресет поверх
+# существующего tenant_module-механизма. portal-only — first-class режим.
+#   full      — вся АБИС (все модули): Biblio как полная система.
+#   webportal — только читательский портал (OPAC + кабинет + статистика), БЕЗ
+#               staff-АРМов (каталогизация/выдача/комплектование/ККО/админ).
+#   demo      — тот же портальный набор, но витринный; «витринное» поведение
+#               (read-mostly, сэмпл-данные) включается отдельно APP_ENV/overlay
+#               (см. docker-compose.demo.yml) — режим лишь сужает модули.
+MODE_PRESETS = {
+    'full':      tuple(DEFAULT_MODULES),
+    'webportal': ('opac', 'reader', 'analytics'),
+    'demo':      ('opac', 'reader'),
+}
+MODES = tuple(MODE_PRESETS)
+
+
+def set_mode(tenant, mode, dsn=None):
+    """Применить режим к тенанту: включить модули его пресета, выключить прочие.
+
+    Режим — пресет над tenant_module: enable модули из ``MODE_PRESETS[mode]``,
+    disable все остальные из ``DEFAULT_MODULES``. Возвращает отсортированный
+    список включённых модулей. Неизвестный режим → ``ValueError``. На public/dev
+    (без control-plane) запись модулей — no-op в ``set_module`` (fail-open).
+    """
+    if mode not in MODE_PRESETS:
+        raise ValueError('unknown mode %r (expected one of %s)'
+                         % (mode, ', '.join(MODES)))
+    preset = set(MODE_PRESETS[mode])
+    for m in DEFAULT_MODULES:
+        set_module(tenant, m, m in preset, dsn=dsn)
+    return sorted(preset)
+
+
+def derive_mode(modules):
+    """Определить режим по набору включённых модулей (для отображения в админке).
+
+    Точное совпадение с пресетом → его имя; иначе ``'custom'`` (оператор собрал
+    нестандартный набор вручную через per-module тумблеры). Чистая функция —
+    не ходит в БД (зовущий передаёт ``enabled_modules(tenant)``).
+    """
+    s = set(modules or ())
+    for name, preset in MODE_PRESETS.items():
+        if s == set(preset):
+            return name
+    return 'custom'

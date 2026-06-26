@@ -237,6 +237,9 @@ export interface BillingInfo {
   limits: PlanLimits;
   usage: PlanUsage;
   modules: string[];
+  // Режим продукта (узел 3): demo/webportal/full или 'custom' (нестандартный
+  // набор модулей вручную). Производное от modules — сервер считает derive_mode.
+  mode?: string;
   plans?: PlanCatalogItem[];
 }
 
@@ -591,6 +594,11 @@ export const api = {
   adminSetModule: (tenant: string, module: string, enabled: boolean) =>
     jpost<{ tenant: string; module: string; enabled: boolean; applied: boolean; modules: string[] }>(
       "/api/admin/billing/module", { tenant, module, enabled }),
+  // Переключить РЕЖИМ арендатора (demo/webportal/full) — именованный пресет над
+  // модулями (узел 3). Сервер применяет пресет и возвращает обновлённый список.
+  adminSetMode: (tenant: string, mode: string) =>
+    jpost<{ tenant: string; mode: string; applied: boolean; modules: string[] }>(
+      "/api/admin/billing/mode", { tenant, mode }),
 
   // --- Соответствие 152-ФЗ (#199; MVP фаза 3) ------------------------------
   // Текущее согласие читателя на обработку ПДн. 404/501 → согласие не запрашиваем.
