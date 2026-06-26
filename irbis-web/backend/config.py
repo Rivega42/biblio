@@ -96,3 +96,16 @@ class Config:
         self.app_host = os.environ.get('APP_HOST', '127.0.0.1')
         self.app_port = int(os.environ.get('APP_PORT', '8080'))
         self.app_env = os.environ.get('APP_ENV', 'dev')
+        # --- Плагины авторизации (узел 3): внешний OIDC-провайдер ------------
+        # Яндекс / Сбер ID / ЕСИА / generic. ОТКЛЮЧЕНО по умолчанию
+        # (oidc_provider=''). Боевые client_id/secret — только из окружения, в
+        # код/репозиторий не попадают. URL'ы — из пресета access/oidc.PROVIDERS;
+        # для generic-провайдера переопределяются OIDC_*_URL ниже.
+        self.oidc_provider = os.environ.get('OIDC_PROVIDER', '').strip().lower()
+        self.oidc_client_id = os.environ.get('OIDC_CLIENT_ID', '')
+        self.oidc_client_secret = os.environ.get('OIDC_CLIENT_SECRET', '')
+        self.oidc_redirect_uri = os.environ.get('OIDC_REDIRECT_URI', '')
+        self.oidc_authorize_url = os.environ.get('OIDC_AUTHORIZE_URL', '')
+        self.oidc_token_url = os.environ.get('OIDC_TOKEN_URL', '')
+        self.oidc_userinfo_url = os.environ.get('OIDC_USERINFO_URL', '')
+        self.oidc_claim = os.environ.get('OIDC_CLAIM', '').strip()
