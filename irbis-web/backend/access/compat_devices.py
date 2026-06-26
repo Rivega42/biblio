@@ -62,13 +62,16 @@ class CompatDevicesService:
     """Транслятор device-facing вызовов IDlogic в нативные сервисы Biblio."""
 
     def __init__(self, devices, readers=None, holds=None, circulation=None,
-                 locker=None, codec=None, legacy_pass=None, legacy_login=LEGACY_LOGIN):
+                 locker=None, codec=None, inventory=None, vision=None,
+                 legacy_pass=None, legacy_login=LEGACY_LOGIN):
         self.devices = devices
         self.readers = readers
         self.holds = holds
         self.circulation = circulation
         self.locker = locker  # access.locker.LockerService (station-facing заказы/ячейки)
         self.codec = codec    # access.tag_codec (ISO 28560-2 кодек тега)
+        self.inventory = inventory  # access.inventory.InventoryService (ТСД-инвентаризация)
+        self.vision = vision        # access.vision.VisionService (камеры/FaceID)
         self.legacy_login = legacy_login
         self.legacy_pass = legacy_pass
 
@@ -96,7 +99,14 @@ class CompatDevicesService:
         'TagDecode', 'TagEncode',
     }
     _STATION = {'MastersRFIDGet', 'SafeKeeperMasterRFIDModify', 'OrdersGet',
-                'SafeKeeperInfoGet2', 'OrderBookProcessedSet', 'OrderModify'}
+                'SafeKeeperInfoGet2', 'OrderBookProcessedSet', 'OrderModify',
+                # Фаза 2 — периметр (ворота/счётчик/полки/СКУД) → devices-сид:
+                'GateEventAdd', 'VisitorCountAdd', 'SmartShelfSync', 'AcsPassAdd',
+                'BooksOnShelfGet',
+                # ТСД-инвентаризация → inventory-сид:
+                'InventoryOpen', 'InventoryScan', 'InventoryClose', 'InventoryReport',
+                # Камеры/FaceID → vision-сид:
+                'FaceEnroll', 'FaceIdentify', 'FaceEventAdd'}
 
     def handle(self, endpoint, payload=None):
         """Маршрутизировать device-facing вызов. ``endpoint`` — с/без префикса,
@@ -332,3 +342,106 @@ class CompatDevicesService:
             return oid or 0
         except Exception:
             return 0
+
+    # -- Фаза 2: периметр (ворота/счётчик/полки/СКУД) → devices-сид ---------- #
+    def _st_GateEventAdd(self, p):
+        did = self._sk_device_id(p)
+        if did is None:
+            return False
+        self.devices.gate_alarm(did, uid=p.get('uid'), book_code=p.get('bookCode'),
+                                book_name=p.get('bookName'), is_book=p.get('isBook', 1))
+        return True
+
+    def _st_VisitorCountAdd(self, p):
+        did = self._sk_device_id(p)
+        if did is None:
+            return False
+        self.devices.visitor(did, value_in=p.get('valueIn', 0),
+                             value_out=p.get('valueOut', 0))
+        return True
+
+    def _st_SmartShelfSync(self, p):
+        did = self._sk_device_id(p)
+        if did is None:
+            return False
+        items = [{'book_code': it.get('BookCode') or it.get('book_code'),
+                  'book_name': it.get('BookName') or it.get('book_name'),
+                  'count_takes': it.get('CountTakes') or it.get('count_takes', 0)}
+                 for it in (p.get('items') or [])]
+        self.devices.shelf_sync(did, items)
+        return True
+
+    def _st_BooksOnShelfGet(self, p):
+        did = self._sk_device_id(p)
+        if did is None:
+            return []
+        return [{'BookCode': r['book_code'], 'BookName': r.get('book_name'),
+                 'CountTakes': r.get('count_takes')}
+                for r in self.devices.store.list_shelf(did)]
+
+    def _st_AcsPassAdd(self, p):
+        did = self._sk_device_id(p)
+        if did is None:
+            return False
+        kw = {}
+        if p.get('direction') is not None:
+            kw['direction'] = p['direction']
+        self.devices.acs_pass(did, p.get('rfidCode'), client_name=p.get('clientName'),
+                              zone=p.get('zone'), **kw)
+        return True
+
+    # -- ТСД-инвентаризация → InventoryService ------------------------------ #
+    def _st_InventoryOpen(self, p):
+        if self.inventory is None:
+            return None
+        s = self.inventory.open(p.get('db'), p.get('location'), operator=p.get('operator'))
+        return {'SessionId': s['id'], 'Status': s['status']}
+
+    def _st_InventoryScan(self, p):
+        if self.inventory is None:
+            return False
+        try:
+            self.inventory.scan(p.get('sessionId'), p.get('itemCode'), rfid=p.get('rfid'))
+            return True
+        except Exception:
+            return False
+
+    def _st_InventoryClose(self, p):
+        if self.inventory is None:
+            return False
+        try:
+            self.inventory.close(p.get('sessionId'))
+            return True
+        except Exception:
+            return False
+
+    def _st_InventoryReport(self, p):
+        if self.inventory is None:
+            return {}
+        try:
+            return self.inventory.report(p.get('sessionId'))
+        except Exception:
+            return {}
+
+    # -- Камеры / FaceID → VisionService ------------------------------------ #
+    def _st_FaceEnroll(self, p):
+        if self.vision is None:
+            return False
+        try:
+            self.vision.enroll(p.get('ticket'), p.get('faceToken'), label=p.get('label'))
+            return True
+        except Exception:
+            return False
+
+    def _st_FaceIdentify(self, p):
+        if self.vision is None:
+            return {'Ticket': None, 'Matched': False}
+        r = self.vision.identify(p.get('faceToken'))
+        return {'Ticket': r.get('ticket'), 'Matched': r.get('matched', False)}
+
+    def _st_FaceEventAdd(self, p):
+        if self.vision is None:
+            return False
+        self.vision.record_event(self._sk_device_id(p), p.get('faceToken'),
+                                 score=p.get('score'), ticket=p.get('ticket'))
+        return True

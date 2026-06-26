@@ -139,10 +139,30 @@ def test_tag_roundtrip_route():
     check('TagDecode -> itemId', st == 200 and p['data']['ItemId'] == '2001001')
 
 
+def test_phase2_routes():
+    """Фаза 2 через HTTP: счётчик/ворота (devices), инвентаризация (ТСД), FaceID."""
+    api, _ = _api()
+    from access.devices import KIND_DESKTOP
+    api.devices.register('cam-9', KIND_DESKTOP, name='Cam')
+    H = _basic()
+    check('VisitorCountAdd route', _post(api, 'VisitorCountAdd', {'deviceID': 'cam-9', 'valueIn': 2}, H)[1]['data'] is True)
+    # инвентаризация: open→scan→report
+    st, p = _post(api, 'InventoryOpen', {'db': 'IBIS', 'location': 'A1'}, H)
+    sid = p['data']['SessionId']
+    check('InventoryOpen route', st == 200 and isinstance(sid, int))
+    _post(api, 'InventoryScan', {'sessionId': sid, 'itemCode': 'INV-1'}, H)
+    st, p = _post(api, 'InventoryReport', {'sessionId': sid}, H)
+    check('InventoryReport route', st == 200 and len(p['data']['scanned']) == 1)
+    # FaceID: enroll→identify
+    _post(api, 'FaceEnroll', {'ticket': 'T-9', 'faceToken': 'FT-9'}, H)
+    st, p = _post(api, 'FaceIdentify', {'faceToken': 'FT-9'}, H)
+    check('FaceIdentify route', st == 200 and p['data']['Ticket'] == 'T-9')
+
+
 def main():
     for t in (test_auth_gate, test_heartbeat_and_unknown, test_reader_bind_then_info,
               test_locker_order_via_http, test_iabis_checkout_e2e,
-              test_tag_roundtrip_route):
+              test_tag_roundtrip_route, test_phase2_routes):
         print('==', t.__name__); t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0

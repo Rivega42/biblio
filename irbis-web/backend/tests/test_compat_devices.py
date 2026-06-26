@@ -257,9 +257,56 @@ def test_tag_endpoints():
     check('TagDecode no codec graceful', c0.handle('easybookdll/TagDecode', {'block': '01'})['ItemId'] is None)
 
 
+def test_phase2_perimeter():
+    svc = DeviceService(DeviceStore(':memory:'))
+    g = svc.register('gate-1', KIND_DESKTOP, name='G')
+    c = CompatDevicesService(svc)
+    did = g['id']
+    check('GateEventAdd True', c.handle('/las/GateEventAdd', {'deviceID': 'gate-1', 'uid': 'U1', 'bookCode': 'B1', 'isBook': 1}) is True)
+    check('gate event recorded', any(e['event_name'] == 'gate_eas' for e in svc.events(did)))
+    check('VisitorCountAdd True', c.handle('/las/VisitorCountAdd', {'deviceID': 'gate-1', 'valueIn': 5, 'valueOut': 3}) is True)
+    check('SmartShelfSync True', c.handle('/las/SmartShelfSync', {'deviceID': 'gate-1', 'items': [{'BookCode': 'B1', 'BookName': 'Кнут'}]}) is True)
+    shelf = c.handle('/las/BooksOnShelfGet', {'deviceID': 'gate-1'})
+    check('BooksOnShelfGet maps DTO', len(shelf) == 1 and shelf[0]['BookCode'] == 'B1')
+    check('AcsPassAdd True', c.handle('/las/AcsPassAdd', {'deviceID': 'gate-1', 'rfidCode': 'C1', 'clientName': 'Иван'}) is True)
+    check('perimeter unknown device -> False', c.handle('/las/VisitorCountAdd', {'deviceID': 'nope'}) is False)
+
+
+def test_phase2_inventory():
+    from access.inventory import InventoryService, InventoryStore
+    inv = InventoryService(InventoryStore(':memory:'))
+    c = CompatDevicesService(DeviceService(DeviceStore(':memory:')), inventory=inv)
+    o = c.handle('/las/InventoryOpen', {'db': 'IBIS', 'location': 'A1', 'operator': 'lib1'})
+    sid = o['SessionId']
+    check('InventoryOpen returns session', isinstance(sid, int) and o['Status'] == 'open')
+    check('InventoryScan True', c.handle('/las/InventoryScan', {'sessionId': sid, 'itemCode': 'INV-1'}) is True)
+    c.handle('/las/InventoryScan', {'sessionId': sid, 'itemCode': 'INV-2'})
+    check('InventoryClose True', c.handle('/las/InventoryClose', {'sessionId': sid}) is True)
+    rep = c.handle('/las/InventoryReport', {'sessionId': sid})
+    check('InventoryReport lists scans', len(rep['scanned']) == 2)
+    check('scan on closed -> False', c.handle('/las/InventoryScan', {'sessionId': sid, 'itemCode': 'X'}) is False)
+    check('inventory no seam graceful', CompatDevicesService(DeviceService(DeviceStore(':memory:'))).handle('/las/InventoryOpen', {'db': 'x', 'location': 'y'}) is None)
+
+
+def test_phase2_vision():
+    from access.vision import VisionService, VisionStore
+    vis = VisionService(VisionStore(':memory:'))
+    svc = DeviceService(DeviceStore(':memory:'))
+    cam = svc.register('cam-1', KIND_DESKTOP, name='Camera')
+    c = CompatDevicesService(svc, vision=vis)
+    check('FaceEnroll True', c.handle('/las/FaceEnroll', {'ticket': 'T-1', 'faceToken': 'FT-1'}) is True)
+    idr = c.handle('/las/FaceIdentify', {'faceToken': 'FT-1'})
+    check('FaceIdentify hit', idr['Matched'] is True and idr['Ticket'] == 'T-1')
+    miss = c.handle('/las/FaceIdentify', {'faceToken': 'FT-NONE'})
+    check('FaceIdentify miss', miss['Matched'] is False and miss['Ticket'] is None)
+    check('FaceEventAdd True', c.handle('/las/FaceEventAdd', {'deviceID': 'cam-1', 'faceToken': 'FT-1', 'score': 0.97}) is True)
+    check('vision event recorded', len(vis.events(device_id=cam['id'])) == 1)
+
+
 def main():
     for t in (test_auth, test_easybook_health_license, test_reader_seam,
               test_station_orders, test_iabis_circulation, test_tag_endpoints,
+              test_phase2_perimeter, test_phase2_inventory, test_phase2_vision,
               test_station_masters, test_unknown):
         print('==', t.__name__)
         t()
