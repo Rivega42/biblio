@@ -1042,7 +1042,7 @@ class Api:
         store.audit('RI=%s' % ticket, 'auth.oidc.login', None, mfn or None, 'ok',
                     {'provider': provider})
         return 200, ok({'bound': True, 'token': token, 'kind': 'reader',
-                        'mfn': mfn, 'via': provider})
+                        'ticket': ticket, 'mfn': mfn, 'via': provider})
 
     def auth_oidc_bind(self, session, body):
         """POST /api/auth/oidc/bind {handoff} — привязать ранее НЕпривязанную
