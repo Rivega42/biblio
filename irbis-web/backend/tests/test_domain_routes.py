@@ -29,6 +29,10 @@ from access.sdi import SdiService, SdiStore
 from access.union import UnionCatalog, UnionStore
 from access.reader_registry import ReaderRegistry, ReaderStore
 from access.notify_dispatch import DispatchWorker
+from access.vkr import VkrService, VkrStore
+from access.ksu_auto import KsuAutoService, KsuAutoStore
+from access.serials import SerialsService, SerialsStore
+from access.dam import DamRegistry, DamStore
 
 PASS = [0]
 FAIL = [0]
@@ -67,6 +71,10 @@ def _api():
         api.circulation.reader_registry = api.reader_registry
     api.notifications = _nt.NotificationQueue(':memory:')
     api.dispatch_worker = DispatchWorker(api.notifications)
+    api.vkr = VkrService(VkrStore(':memory:'))
+    api.ksu_auto = KsuAutoService(KsuAutoStore(':memory:'))
+    api.serials = SerialsService(SerialsStore(':memory:'))
+    api.dam = DamRegistry(DamStore(':memory:'))
     return api
 
 
@@ -215,11 +223,97 @@ def reader_record_checks():
     check('fallback к базовой строке reader', base is not None and base.get('id') == '222')
 
 
+# --------------------------------------------------------------------------- #
+# Батч-2 разводка: ВКР / КСУ-авто / периодика / DAM через route().
+# --------------------------------------------------------------------------- #
+def vkr_route_checks():
+    print('-- 7.6/8.3 ВКР: submit (reader) + review (staff)')
+    api = _api()
+    R = _reader(api)
+    st, p = api.route('POST', '/api/vkr', {},
+                      {'title': 'Театр XX века', 'author': 'Студент', 'faculty': 'ФКН'}, R)
+    check('POST /api/vkr -> 200', st == 200)
+    vid = p['data']['vkr']['id']
+    check('ВКР создан (submitted)', p['data']['vkr']['status'] == 'submitted')
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    api.vkr.set_antiplagiat(vid, 85)
+    st, p = api.route('POST', '/api/vkr/review', {}, {'id': vid, 'approve': True}, S)
+    check('review approve -> approved',
+          st == 200 and p['data']['ok'] is True
+          and p['data']['vkr']['status'] == 'approved')
+    st, p = api.route('GET', '/api/vkr', {'status': ['approved']}, None, S)
+    check('GET /api/vkr (staff) -> 1', st == 200 and len(p['data']['items']) == 1)
+    st, p = api.route('POST', '/api/vkr/review', {}, {'id': vid}, R)
+    check('reader review -> 403', st == 403)
+
+
+def ksu_route_checks():
+    print('-- 5.3 КСУ авто-распределение (staff)')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    items = [{'section': 'A', 'doc_type': 'book', 'language': 'rus', 'printed': True, 'copies': 3},
+             {'section': 'B', 'doc_type': 'book', 'language': 'eng', 'printed': True, 'copies': 2}]
+    st, p = api.route('POST', '/api/ksu/distribute', {}, {'items': items}, S)
+    check('distribute -> 200', st == 200)
+    check('titles == 2', p['data']['titles'] == 2)
+    check('copies == 5', p['data']['copies'] == 5)
+    st, p = api.route('POST', '/api/ksu/distribute', {}, {'ksuNo': 'K-1', 'items': items}, S)
+    check('compute_and_store сохранил', st == 200 and api.ksu_auto.get('K-1') is not None)
+    R = _reader(api)
+    st, p = api.route('POST', '/api/ksu/distribute', {}, {'items': items}, R)
+    check('reader distribute -> 403', st == 403)
+
+
+def serials_route_checks():
+    print('-- 9.2/9.3 Периодика (register/issue/search)')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    st, p = api.route('POST', '/api/serials', {},
+                      {'kind': 'journal', 'title': 'Театральный журнал', 'issn': '1234-5678'}, S)
+    check('register journal -> 200', st == 200)
+    sid = p['data']['serial']['id']
+    st, p = api.route('POST', '/api/serials/issue', {},
+                      {'serialId': sid, 'number': 1, 'year': 2023}, S)
+    check('add_issue -> 200', st == 200)
+    st, p = api.route('GET', '/api/serials/search', {'q': ['Театральный']}, None, S)
+    check('search -> 1', st == 200 and len(p['data']['items']) == 1)
+    st, p = api.route('POST', '/api/serials', {}, {'kind': 'bogus', 'title': 'X'}, S)
+    check('неизвестный kind -> 400', st == 400)
+    R = _reader(api)
+    st, p = api.route('POST', '/api/serials', {}, {'kind': 'journal', 'title': 'Y'}, R)
+    check('reader register -> 403', st == 403)
+    st, p = api.route('GET', '/api/serials/search', {'q': ['Театральный']}, None, R)
+    check('reader search -> 200', st == 200)
+
+
+def dam_route_checks():
+    print('-- 7.1 DAM/файлы (attach/assets)')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    st, p = api.route('POST', '/api/dam/attach', {},
+                      {'db': 'IBIS', 'mfn': 10, 'kind': '951', 'ref': 'http://x/f.pdf'}, S)
+    check('attach 951 -> 200', st == 200)
+    st, p = api.route('POST', '/api/dam/attach', {},
+                      {'db': 'IBIS', 'mfn': 10, 'kind': '955', 'ref': 'f.pdf',
+                       'pages': 120, 'rightsTemplate': 'R1'}, S)
+    check('attach 955 -> 200', st == 200)
+    R = _reader(api)
+    st, p = api.route('GET', '/api/dam', {'db': ['IBIS'], 'mfn': ['10']}, None, R)
+    check('GET /api/dam -> 2 ассета', st == 200 and len(p['data']['items']) == 2)
+    st, p = api.route('POST', '/api/dam/attach', {},
+                      {'db': 'IBIS', 'mfn': 10, 'kind': '951', 'ref': 'x'}, R)
+    check('reader attach -> 403', st == 403)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
     dispatch_route_checks()
     reader_record_checks()
+    vkr_route_checks()
+    ksu_route_checks()
+    serials_route_checks()
+    dam_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
