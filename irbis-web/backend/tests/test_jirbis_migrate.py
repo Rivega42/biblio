@@ -117,6 +117,47 @@ def plan_checks():
     check('пустой план не падает', jm.plan({})['summary']['accounts'] == 0)
 
 
+# Синтетический mysqldump (utf8, без списка колонок в INSERT — дефолт mysqldump).
+DUMP = (
+    "CREATE TABLE `jos_users` (\n"
+    "  `id` int(11) NOT NULL AUTO_INCREMENT,\n"
+    "  `name` varchar(255) NOT NULL DEFAULT '',\n"
+    "  `username` varchar(150) NOT NULL DEFAULT '',\n"
+    "  `email` varchar(100) NOT NULL DEFAULT '',\n"
+    "  `password` varchar(100) NOT NULL DEFAULT '',\n"
+    "  `block` tinyint(4) NOT NULL DEFAULT '0',\n"
+    "  PRIMARY KEY (`id`)\n"
+    ") ENGINE=MyISAM DEFAULT CHARSET=utf8;\n"
+    "INSERT INTO `jos_users` VALUES "
+    "(1,'Иван Петров','ivan','ivan@x.ru','" + PHPASS + "',0),"
+    "(2,'Админ','admin','a@x.ru','pbkdf2$1$a$b',1);\n"
+    "CREATE TABLE `jos_content_rating` (\n"
+    "  `content_id` int(11) NOT NULL,\n"
+    "  `rating_sum` int(11) NOT NULL,\n"
+    "  `rating_count` int(11) NOT NULL\n"
+    ") ENGINE=MyISAM DEFAULT CHARSET=utf8;\n"
+    "INSERT INTO `jos_content_rating` VALUES (10,18,4);\n"
+)
+
+
+def parse_checks():
+    print('-- parse_table / parse_dump (mysqldump -> строки) + e2e plan')
+    rows = jm.parse_table(DUMP, 'jos_users')
+    check('parse 2 учётки', len(rows) == 2)
+    check('колонки из CREATE (username/email)',
+          rows[0]['username'] == 'ivan' and rows[0]['email'] == 'ivan@x.ru')
+    check('кириллица в ФИО', rows[0]['name'] == 'Иван Петров')
+    check('phpass в password', rows[0]['password'] == PHPASS)
+    check('block=1 у второго', rows[1]['block'] == '1')
+    d = jm.parse_dump(DUMP)
+    check('parse_dump видит обе таблицы', set(d) >= {'jos_users', 'jos_content_rating'})
+    p = jm.plan(d)
+    check('e2e: 2 учётки', p['summary']['accounts'] == 2)
+    check('e2e: 1 phpass + 1 native',
+          p['auth_breakdown']['phpass'] == 1 and p['auth_breakdown']['native'] == 1)
+    check('e2e: рейтинг avg 4.5', p['ratings'][0]['avg'] == 4.5)
+
+
 def main():
     classify_password_checks()
     classify_table_checks()
@@ -124,6 +165,7 @@ def main():
     map_rating_checks()
     map_reservation_chat_checks()
     plan_checks()
+    parse_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
