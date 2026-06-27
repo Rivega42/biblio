@@ -605,7 +605,8 @@ class CirculationEngine:
     def __init__(self, store=None, policy=None, notifier=None, tenant='public',
                  catalog=None, catalog_db='IBIS', notifications=None,
                  staff_recipient='staff', acquisition=None,
-                 archive_on_return=False, devices=None, pay=None):
+                 archive_on_return=False, devices=None, pay=None,
+                 reader_registry=None):
         self.store = store or CirculationStore(':memory:')
         self.policy = policy or default_policy(tenant)
         # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
@@ -658,6 +659,12 @@ class CirculationEngine:
         # ``pay_fine``. Best-effort, optional — with no handle circulation stays
         # standalone (back-compat).
         self.pay = pay
+        # Optional Reader-registry seam (INTEGRATION_MAP ребро 3.1): own-store
+        # профиль читателя RDR. When wired, circulation резолвит читателя как
+        # полную ЗАПИСЬ (ФИО/категория/статус/контакты) через duck-typed
+        # ``reader_registry.resolve(reader_id)``, а не держит строку-id. Best-effort/
+        # опционально — без хендла поведение прежнее (back-compat).
+        self.reader_registry = reader_registry
 
     # ---- acquisition-driven seams (поступление → выдача · выдача → КСУ) ---- #
     def register_acquired_item(self, item, catalog_db=None):
@@ -1619,6 +1626,26 @@ class CirculationEngine:
             return record(loan['item'], act, reason='lost', ref=str(loan['id']))
         except Exception:
             return None  # acquisition write is best-effort; the loss still stands
+
+    # ---- reader as a RECORD (ребро 3.1) ----------------------------------- #
+    def reader_record(self, reader_id):
+        """Полная запись-профиль читателя (ребро 3.1), а не строка-id.
+
+        Если подключён ``reader_registry`` — вернуть его профиль (билет/ФИО/
+        категория/статус/контакты) через duck-typed ``resolve``. Иначе (или если
+        в реестре такого читателя нет) — деградирует к базовой строке
+        ``reader(id,category,blocked)`` собственного стора. Best-effort: никогда
+        не бросает (недоступность реестра не роняет книговыдачу)."""
+        if self.reader_registry is not None:
+            resolve = getattr(self.reader_registry, 'resolve', None)
+            if resolve is not None:
+                try:
+                    prof = resolve(reader_id)
+                    if prof is not None:
+                        return prof
+                except Exception:
+                    pass
+        return self.store.get_reader(reader_id)
 
     # ---- debt summary (GET /api/circ/reader/{id}/debt) -------------------- #
     def reader_debt(self, reader_id, today):

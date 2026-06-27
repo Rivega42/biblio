@@ -658,6 +658,17 @@ class Api:
             self.catalog = CatalogStore(cat_db, access_store=self.access)
         except Exception:
             self.catalog = None
+        # Own-store реестр читателя RDR (ребро 3.1) — профиль вместо строки-id;
+        # передаётся в circulation хендлом reader_registry= (резолв читателя как
+        # полной записи). Best-effort. Строится ДО circulation.
+        try:
+            from access import reader_registry as _reader_registry
+            rr_db = os.environ.get('READER_REGISTRY_DB',
+                                   os.path.join(here, 'reader_registry.db'))
+            self.reader_registry = _reader_registry.ReaderRegistry(
+                _reader_registry.ReaderStore(rr_db))
+        except Exception:
+            self.reader_registry = None
         # Circulation engine wired to that queue (notifications=) so its _emit
         # dispatches reader-addressable notices, AND to the catalog handle (catalog=)
         # so checkout/return flip the linked exemplar's 910^A (0↔1, edges 2.1/2.2)
@@ -668,7 +679,8 @@ class Api:
             self.circulation = _circulation.CirculationEngine(
                 store=_circulation.CirculationStore(circ_db),
                 notifications=self.notifications,
-                catalog=self.catalog, catalog_db=self.cfg.db_default)
+                catalog=self.catalog, catalog_db=self.cfg.db_default,
+                reader_registry=self.reader_registry)
         except Exception:
             self.circulation = None
         # Hold + shelf services over OUR access store, reader-scoped by ticket. The
@@ -678,6 +690,30 @@ class Api:
         self.holds = HoldService(self.access, catalog=None,
                                  brief_read=self._hold_brief)
         self.shelves = ShelfService(self.access, brief_read=self._hold_brief)
+        # Own-store домен-слайсы, разведённые в роуты ниже: ИРИ/SDI (ребро 10.1),
+        # Сводный каталог SK (8.1/8.2), воркер-диспетч уведомлений (11.3).
+        # Best-effort: сбой сборки не должен ломать API.
+        try:
+            from access import sdi as _sdi
+            self.sdi = _sdi.SdiService(
+                _sdi.SdiStore(os.environ.get('SDI_DB', os.path.join(here, 'sdi.db'))),
+                catalog=self.catalog)
+        except Exception:
+            self.sdi = None
+        try:
+            from access import union as _union
+            self.union = _union.UnionCatalog(
+                _union.UnionStore(os.environ.get('UNION_DB',
+                                                 os.path.join(here, 'union.db'))))
+        except Exception:
+            self.union = None
+        try:
+            from access import notify_dispatch as _notify_dispatch
+            self.dispatch_worker = (
+                _notify_dispatch.DispatchWorker(self.notifications)
+                if self.notifications is not None else None)
+        except Exception:
+            self.dispatch_worker = None
         # Привязки внешней OIDC-личности к билету (узел 3 MVP-2b): отдельный
         # sqlite-стор + резолв конфига провайдера. OFF, если провайдер не задан
         # (cfg.oidc_provider пуст) — _oidc_enabled() это проверяет. Best-effort.
@@ -2298,6 +2334,101 @@ class Api:
                           'mfn': it.get('mfn') if isinstance(it, dict) else None})
         res = self.holds.place_many(ticket, items, default_db=self.cfg.db_default)
         return 200, ok(res)
+
+    # ---- ИРИ/SDI (ребро 10.1) — reader-scoped ----------------------------- #
+    def sdi_add(self, session, body):
+        """POST /api/sdi/profile — завести постоянный запрос (RDR.140) читателя."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        if self.sdi is None:
+            return 200, ok({'profile': None})
+        query = (body.get('query') or '').strip()
+        if not query:
+            return 400, err('bad_request', 'query required')
+        db = (body.get('db') or self.cfg.db_default)
+        self._public_db_guard(session, db)
+        prof = self.sdi.add_profile(ticket, (body.get('name') or '').strip(),
+                                    db, query)
+        return 200, ok({'profile': prof})
+
+    def sdi_list(self, session):
+        """GET /api/sdi/profiles — постоянные запросы читателя."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        if self.sdi is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.sdi.list_profiles(ticket)})
+
+    def sdi_remove(self, session, body):
+        """POST /api/sdi/profile/remove — удалить свой профиль."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        if self.sdi is None:
+            return 200, ok({'removed': False})
+        try:
+            pid = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        if pid not in {p['id'] for p in self.sdi.list_profiles(ticket)}:
+            return 404, err('not_found', 'profile not found')
+        return 200, ok({'removed': self.sdi.remove_profile(pid)})
+
+    def sdi_run(self, session, body):
+        """POST /api/sdi/run — переиграть профиль(и) и вернуть НОВЫЕ попадания."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        if self.sdi is None:
+            return 200, ok({'profiles': 0, 'new_total': 0, 'results': []})
+        pid = body.get('id')
+        if pid is not None:
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                return 400, err('bad_request', 'id')
+            if pid not in {p['id'] for p in self.sdi.list_profiles(ticket)}:
+                return 404, err('not_found', 'profile not found')
+            return 200, ok(self.sdi.run_profile(pid))
+        return 200, ok(self.sdi.run_all(ticket))
+
+    def sdi_new(self, session):
+        """GET /api/sdi/new — накопленные новые попадания читателя."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'cabinet', '*', 'read')
+        if self.sdi is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.sdi.new_for_reader(ticket)})
+
+    # ---- Сводный каталог SK (рёбра 8.1/8.2) ------------------------------- #
+    def union_search(self, session, query, year):
+        """GET /api/union/search — федеративный поиск по сводному каталогу."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        if self.union is None:
+            return 200, ok({'items': [], 'total': 0})
+        items = self.union.search(query=query or None, year=year or None)
+        return 200, ok({'items': items, 'total': len(items)})
+
+    def union_ingest(self, session, body):
+        """POST /api/union/ingest — свести запись участницы (сигла 902^s). Staff."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.union is None:
+            return 200, ok({'union_id': None})
+        sigla = (body.get('sigla') or '').strip()
+        if not sigla:
+            return 400, err('bad_request', 'sigla required')
+        res = self.union.ingest(body.get('record') or {}, sigla,
+                                source_db=body.get('db'),
+                                source_mfn=body.get('mfn'))
+        return 200, ok(res)
+
+    # ---- Диспетч внешней доставки уведомлений (ребро 11.3) — admin -------- #
+    def notifications_dispatch(self, session, body):
+        """POST /api/admin/notifications/dispatch — прогнать очередь уведомлений
+        в каналы (InApp всегда; внешние email/SMS — только по конфигу тенанта, по
+        умолчанию OFF). Admin-grant."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.dispatch_worker is None:
+            return 200, ok({'processed': 0, 'sent': 0, 'failed': 0, 'retried': 0})
+        return 200, ok(self.dispatch_worker.run_once())
 
     def notifications_inbox(self, session, unread_only):
         """GET /api/notifications — the reader's dispatched notices + unread count."""
@@ -3983,6 +4114,27 @@ class Api:
                 return self.shelf_add_item(session, body or {})
             if method == 'POST' and path == '/api/shelves/item/remove':
                 return self.shelf_remove_item(session, body or {})
+            # ---- ИРИ/SDI (ребро 10.1) ----
+            if method == 'POST' and path == '/api/sdi/profile':
+                return self.sdi_add(session, body or {})
+            if method == 'GET' and path == '/api/sdi/profiles':
+                return self.sdi_list(session)
+            if method == 'POST' and path == '/api/sdi/profile/remove':
+                return self.sdi_remove(session, body or {})
+            if method == 'POST' and path == '/api/sdi/run':
+                return self.sdi_run(session, body or {})
+            if method == 'GET' and path == '/api/sdi/new':
+                return self.sdi_new(session)
+            # ---- Сводный каталог SK (рёбра 8.1/8.2) ----
+            if method == 'GET' and path == '/api/union/search':
+                return self.union_search(
+                    session, (query.get('q', [''])[0] or '').strip(),
+                    (query.get('year', [''])[0] or '').strip())
+            if method == 'POST' and path == '/api/union/ingest':
+                return self.union_ingest(session, body or {})
+            # ---- Диспетч уведомлений (ребро 11.3) ----
+            if method == 'POST' and path == '/api/admin/notifications/dispatch':
+                return self.notifications_dispatch(session, body or {})
             # ---- reader-portal v2 social: reviews/ratings (#134) ----
             if method == 'POST' and path == '/api/review/delete':
                 return self.delete_review(session, body or {})
