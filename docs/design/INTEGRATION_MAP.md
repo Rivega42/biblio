@@ -119,7 +119,7 @@ flowchart TB
 | 3.2 | RDR поле **40^F** «долг» (`******`) → лимиты выдачи | Задолженность = `40^F:'******'` (FST `DOLG=`); блок выдачи при `MaxBooks`/`MaxDolgBooks` | ws3 §4 (AC4), §6.6 SPEC_business_circulation | ✅ реализовано: `debt_level()`, `count_on_hand()`, лимиты per-category | ✅ | Логика долга/лимитов разведена — **внутри** circulation. |
 | 3.3 | RDR поле **40^U** утеря / цена → PAY (штраф) | Утеря `40^U=1`; долговая форма с ценой `910^E` из ЭК; штрафы в БД **PAY** (ключ `RI=`) | ws3 §5 (AC2/AC3), recon #CIRC-05 | 🟡 `mark_lost` считает replacement, но `item_price` приходит **аргументом**, не читается из каталога 910^E; PAY-интеграция = событие-намерение | ❌ | Цена замены не берётся из 910^E ЭК; нет проводки в PAY. |
 | 3.4 | RDR категория **50** → политика лимитов/штрафов | Категория (В01–В05/Д01–Д03/STD/GUEST из `50.mnu`) определяет лимиты | ws3 §2 (AC2), SPEC_business_circulation §5.3 | ✅ `_LIMIT_MATRIX` по категориям из 50.mnu; `default_policy` | ✅ | Категории зашиты; источник = seed_vocab (50.mnu). |
-| 3.5 | RDR поле 40^E/срок → уведомления (due_soon/overdue) | Приближение/просрочка срока → событие читателю | ws3 §8, SPEC_engine_notifications | 🟡 circulation `_emit` + EventCatalog есть `due_soon/overdue`; но scan по срокам не связан с реальным RDR.40 | 🟡 | События есть, планировщик/связь с loan.due есть в коде, с RDR — нет. |
+| 3.5 | RDR поле 40^E/срок → уведомления (due_soon/overdue) | Приближение/просрочка срока → событие читателю | ws3 §8, SPEC_engine_notifications | ✅ `circulation.scan_due(today)` сканирует выдачи на руках по `loan.due` (40^E), эмитит `overdue`(`days_overdue`)/`due_soon`(`days_left`) через `_emit`→A6; окно из политики `reminder.due_soon_days`; dedup дневным бакетом; тесты `tests/test_circ_seams.py` | ✅ | Скан по срокам замкнут на `loan.due`→A6; идемпотентно посуточно (повтор в день не задваивает, новый день — снова). |
 
 ---
 
@@ -221,10 +221,12 @@ flowchart TB
 
 | Статус | Рёбра 1–11 | +Device (12) | Всего |
 |---|---|---|---|
-| ✅ разведено (код+тесты) | ~29 | ~6 | **~35 (~55%)** |
-| 🟡 спроектировано-не-разведено | ~11 | ~2 | ~13 |
+| ✅ разведено (код+тесты) | ~30 | ~8 | **~38 (~60%)** |
+| 🟡 спроектировано-не-разведено | ~10 | 0 | ~10 |
 | ❌ отсутствует | ~15 | 0 | ~15 |
 | **Итого рёбер** | 55 | 8 | **~63** |
+
+> Δ2026-06-27 (ветка `feat/circ-device-due-seams`): замкнуты **12.6/12.7** (device_event↔loan/holds через `circulation.devices=`-хэндл) и **3.5** (срок→уведомления, `circulation.scan_due`) → ✅ 35→38 (~57%→~60%), 🟡 13→10. Все смежные circ/device-сьюты зелёные + новый `tests/test_circ_seams.py` 54/0.
 
 ### Кластер 12. Устройства (chip #277) — НОВЫЕ рёбра (не было в карте)
 | # | Источник → цель | Статус | Доказательство |
@@ -234,11 +236,11 @@ flowchart TB
 | 12.3 | compat → catalog (910^A doc-state) | ✅ | compat_devices.py:200-235 → circulation._flip_catalog_status |
 | 12.4 | compat станц. → devices (ворота/счётчик/полка/СКУД) | ✅ | compat_devices.py:347-382; test_phase2_perimeter |
 | 12.5 | tag-кодек ISO 28560-2 ↔ ItemId | ✅ | compat_devices.py:237-268; test_tag_endpoints |
-| 12.6 | **device_event.loan_ref → circulation.loan** | 🟡 **ДЫРА** | devices.py:108/243 (схема+метод есть), circulation.checkout НЕ зовёт record_event |
-| 12.7 | **device_event.hold_ref → holds** | 🟡 **ДЫРА** | то же: holds не зовёт record_event |
+| 12.6 | **device_event.loan_ref → circulation.loan** | ✅ | circulation `devices=`-хэндл + `device_id=`: checkout/return/renew зовут `devices.record_event(loan_ref=…)`; tests/test_circ_seams.py |
+| 12.7 | **device_event.hold_ref → holds** | ✅ | то же: place_hold/cancel_hold → `record_event(hold_ref=…)`; tests/test_circ_seams.py |
 
 ### Настоящие незамкнутые рёбра (приоритет)
-**Разводимы сейчас (без новых модулей):** 12.6/12.7 (врезать `record_event` в circulation.checkout/holds.place_hold) · 11.3 нотиф-dispatch · 3.3 утеря→PAY (цена из 910^E + проводка) · 11.4 seed_vocab→circulation (вместо хардкода `_LIMIT_MATRIX`). ~~11.2 gbl-исполнение~~ — ✅ замкнуто (`POST /api/cataloging/gbl`, `core.py:1973`).
+**Разводимы сейчас (без новых модулей):** 11.3 нотиф-dispatch (внешняя email/SMS) · 3.3 утеря→PAY (цена из 910^E + проводка) · 11.4 seed_vocab→circulation (вместо хардкода `_LIMIT_MATRIX`). ~~12.6/12.7 device_event↔circ/holds~~ — ✅ замкнуто (`circulation.devices=`-хэндл + `device_id=`). ~~3.5 срок→уведомления~~ — ✅ замкнуто (`circulation.scan_due`). ~~11.2 gbl-исполнение~~ — ✅ замкнуто (`POST /api/cataloging/gbl`, `core.py:1973`).
 **Требуют непостроенных модулей:** Сводный каталог SK (8.1–8.3) · ИРИ/SDI (10.1) · студент↔дисциплина (4.2/4.3/10.3) · дозаказ/обратный поток КО (4.6/4.7) · ВКР-поток (7.6) · POST-подписка (8.4) · 999-счётчики (2.7) · акт передачи (5.4).
 
 ---

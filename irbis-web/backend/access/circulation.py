@@ -204,6 +204,10 @@ def default_policy(tenant_id='public'):
             'hold_shelf_days': 3,             # = pickup_ttl in a locker (§6.4)
             'return_to_reservable': True,
         },
+        # §8 reminders (ребро 3.5: срок 40^E → due_soon / overdue уведомления).
+        'reminder': {
+            'due_soon_days': 3,               # окно «скоро срок»: дней до due
+        },
     }
 
 
@@ -418,6 +422,16 @@ class CirculationStore:
             'SELECT * FROM loan WHERE returned=0 AND lost_status!=? AND due<? '
             'ORDER BY id', ('lost', cutoff)).fetchall()]
 
+    def due_soon_loans(self, today_epoch, window_end_epoch):
+        """On-hand loans whose планируемый возврат (40^E ``due``) попадает в окно
+        ``[today, window_end]`` и ещё НЕ просрочен — основа ``due_soon`` напоминаний
+        (ребро 3.5). Просроченные (``due < today``) сюда не попадают: их отдаёт
+        :meth:`open_overdue_loans` (комплементарные множества, без пересечения)."""
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM loan WHERE returned=0 AND lost_status!=? AND due>=? '
+            'AND due<=? ORDER BY id',
+            ('lost', today_epoch, window_end_epoch)).fetchall()]
+
     def mark_returned(self, loan_id, returned_at):
         c = self._conn()
         c.execute('UPDATE loan SET returned=1, returned_at=? WHERE id=?',
@@ -591,7 +605,7 @@ class CirculationEngine:
     def __init__(self, store=None, policy=None, notifier=None, tenant='public',
                  catalog=None, catalog_db='IBIS', notifications=None,
                  staff_recipient='staff', acquisition=None,
-                 archive_on_return=False):
+                 archive_on_return=False, devices=None):
         self.store = store or CirculationStore(':memory:')
         self.policy = policy or default_policy(tenant)
         # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
@@ -628,6 +642,15 @@ class CirculationEngine:
         # умолчанию (False) поведение прежнее: только флаг ``returned=1`` в той
         # же таблице, без архива (back-compat).
         self.archive_on_return = archive_on_return
+        # Optional Devices seam (INTEGRATION_MAP рёбра 12.6/12.7:
+        # ``device_event.loan_ref → loan`` / ``hold_ref → hold``). When a
+        # ``devices`` (:class:`access.devices.DeviceService`) handle is wired AND an
+        # operation carries a ``device_id`` (станция самообслуживания инициировала
+        # выдачу/возврат/бронь), the op also writes a ``device_event`` linking the
+        # device journal to the new loan/hold. Best-effort, optional — with no
+        # handle / no device_id circulation stays fully standalone (back-compat,
+        # mirrors the ``catalog=`` seam).
+        self.devices = devices
 
     # ---- acquisition-driven seams (поступление → выдача · выдача → КСУ) ---- #
     def register_acquired_item(self, item, catalog_db=None):
@@ -746,6 +769,36 @@ class CirculationEngine:
             # circulation operation. The intent is still returned for the caller.
             pass
         return intent
+
+    # ---- device journal seam (рёбра 12.6/12.7) ---------------------------- #
+    def _record_device_event(self, device_id, event_name, user_code=None,
+                             loan_ref=None, hold_ref=None, message=None):
+        """Связать доменное событие книговыдачи с журналом устройства (devices).
+
+        Рёбра INTEGRATION_MAP 12.6 (``device_event.loan_ref → loan``) и 12.7
+        (``device_event.hold_ref → hold``): когда операция инициирована станцией/
+        устройством самообслуживания (передан ``device_id``) И подключён
+        ``devices``-хэндл (:class:`access.devices.DeviceService`), после успешной
+        операции пишем строку ``device_event`` со ссылкой на выдачу/бронь. Это и
+        есть закрытие шва «устройство ↔ книговыдача»: журнал устройства теперь
+        ссылается на конкретный ``loan``/``hold`` (а не висит сиротой), а
+        circulation остаётся источником истины по выдаче.
+
+        Best-effort и полностью изолирован (как ``catalog=`` / ``notifications=``):
+        без ``devices``-хэндла или без ``device_id`` — no-op (back-compat); любая
+        ошибка домена устройств НЕ роняет операцию книговыдачи. Возвращает id
+        строки ``device_event`` либо ``None``.
+        """
+        if self.devices is None or device_id is None:
+            return None
+        record = getattr(self.devices, 'record_event', None)
+        if record is None:
+            return None
+        try:
+            return record(device_id, event_name=event_name, message=message,
+                          user_code=user_code, loan_ref=loan_ref, hold_ref=hold_ref)
+        except Exception:
+            return None  # device journal is best-effort; the circ op still stands
 
     # ---- catalog 910^A write-back (edges 2.1/2.2) ------------------------- #
     def _flip_catalog_status(self, item, status):
@@ -969,7 +1022,7 @@ class CirculationEngine:
 
     # ---- checkout (§2 debtor gate + §5 limits) ---------------------------- #
     def checkout(self, reader_id, item, today, item_kind=None, item_price=None,
-                 staff_override=False, override_grant=False):
+                 staff_override=False, override_grant=False, device_id=None):
         """Lend ``item`` to ``reader_id``. Enforces limits + the debtor gate.
 
         ``staff_override`` lets a librarian lend over a deny — but only when the
@@ -1023,13 +1076,20 @@ class CirculationEngine:
         if cat_mfn is not None:
             computed['catalog_mfn'] = cat_mfn
             computed['exemplar_status'] = '1'
+        # Ребро 12.6: связать журнал устройства с новой выдачей (loan_ref).
+        dev_ev = self._record_device_event(device_id, 'loan_checkout',
+                                           user_code=reader_id, loan_ref=loan['id'])
+        if dev_ev is not None:
+            computed['device_event'] = dev_ev
         return Decision(ALLOW, [], computed)
 
     # ---- renew (§1 holds-block-renewal + cap) ----------------------------- #
-    def renew(self, loan_id, today, staff_override=False, override_grant=False):
+    def renew(self, loan_id, today, staff_override=False, override_grant=False,
+              device_id=None):
         """Renew a loan. Blocks on an active hold (holds-block-renewal) and on the
         renewal cap; ``staff_override`` (right ``circ.renew.override_hold``) lets a
-        librarian renew past a hold but never past the cap.
+        librarian renew past a hold but never past the cap. When a ``devices`` handle
+        + ``device_id`` are wired, also journals a ``device_event`` (ребро 12.6).
         """
         loan = self.store.get_loan(loan_id)
         if loan is None:
@@ -1090,13 +1150,20 @@ class CirculationEngine:
         updated = self.store.get_loan(loan_id)
         ev = self._emit('renewal_confirmed', loan['reader'],
                         {'ref': loan_id, 'item': loan['item'], 'due': new_due})
-        return Decision(ALLOW, [], {'loan': updated, 'due': new_due}, [ev])
+        dev_ev = self._record_device_event(device_id, 'loan_renew',
+                                           user_code=loan['reader'], loan_ref=loan_id)
+        computed = {'loan': updated, 'due': new_due}
+        if dev_ev is not None:
+            computed['device_event'] = dev_ev
+        return Decision(ALLOW, [], computed, [ev])
 
     # ---- return (§3.5 clear marker + §6 trigger next hold) ---------------- #
-    def return_item(self, loan_id, today):
+    def return_item(self, loan_id, today, device_id=None):
         """Return a loan. Marks it returned, fixes any accrued fine (assessment →
         charged), and — if a queue exists on the item — hands it to the head
-        (``hold_ready`` + shelf TTL), holds-aware (§6.5).
+        (``hold_ready`` + shelf TTL), holds-aware (§6.5). When a ``devices`` handle
+        + ``device_id`` are wired (станция возврата), also journals a
+        ``device_event`` linked to the loan (ребро 12.6).
 
         Returns a :class:`Decision` (always ALLOW for an open loan) whose
         ``computed`` reports ``fine_charged`` and ``hold_ready`` and whose
@@ -1154,14 +1221,22 @@ class CirculationEngine:
                               {'ref': head['id'], 'item': loan['item'],
                                'hold_until': shelf_until}))
 
+        # Ребро 12.6: связать журнал устройства с возвратом (loan_ref).
+        dev_ev = self._record_device_event(device_id, 'loan_return',
+                                           user_code=loan['reader'], loan_ref=loan_id)
+        if dev_ev is not None:
+            computed['device_event'] = dev_ev
+
         return Decision(ALLOW, [], computed, events)
 
     # ---- place_hold (§6 FIFO queue position) ------------------------------ #
-    def place_hold(self, reader_id, item, today):
+    def place_hold(self, reader_id, item, today, device_id=None):
         """Place a hold; returns ALLOW with ``computed['position']`` (1-based FIFO).
 
         If the item is free (no on-hand loan, no queue) the hold is created and
-        immediately ``ready`` at position 1.
+        immediately ``ready`` at position 1. When a ``devices`` handle + ``device_id``
+        are wired (станция/умная полка), also journals a ``device_event`` linked to
+        the hold (ребро 12.7).
         """
         reader = self.store.get_reader(reader_id)
         if reader is None:
@@ -1195,7 +1270,13 @@ class CirculationEngine:
             events.append(self._emit('hold_ready', reader_id,
                           {'ref': hold['id'], 'item': item, 'hold_until': shelf_until}))
         hold = self.store.get_hold(hold['id'])
-        return Decision(ALLOW, [], {'hold': hold, 'position': position}, events)
+        # Ребро 12.7: связать журнал устройства с новой бронью (hold_ref).
+        dev_ev = self._record_device_event(device_id, 'hold_placed',
+                                           user_code=reader_id, hold_ref=hold['id'])
+        computed = {'hold': hold, 'position': position}
+        if dev_ev is not None:
+            computed['device_event'] = dev_ev
+        return Decision(ALLOW, [], computed, events)
 
     def queue_position(self, item, reader_id):
         """1-based FIFO position of ``reader_id`` in ``item``'s queue (0 = absent).
@@ -1208,10 +1289,13 @@ class CirculationEngine:
                 return idx + 1
         return 0
 
-    def cancel_hold(self, hold_id, today, reason='отменена читателем'):
+    def cancel_hold(self, hold_id, today, reason='отменена читателем',
+                    device_id=None):
         """Reader cancels a hold; frees the item to the next in queue (§6.5).
 
-        Emits ``hold_cancelled`` (A6) to the reader whose hold was dropped.
+        Emits ``hold_cancelled`` (A6) to the reader whose hold was dropped. When a
+        ``devices`` handle + ``device_id`` are wired (станция самообслуживания),
+        also journals a ``device_event`` linked to the hold (ребро 12.7).
         """
         hold = self.store.get_hold(hold_id)
         if hold is None:
@@ -1219,7 +1303,74 @@ class CirculationEngine:
         self.store.set_hold_status(hold_id, 'cancelled')
         ev = self._emit('hold_cancelled', hold['reader'],
                         {'ref': hold_id, 'item': hold['item'], 'reason': reason})
-        return Decision(ALLOW, [], {'cancelled': hold_id}, [ev])
+        dev_ev = self._record_device_event(device_id, 'hold_cancelled',
+                                           user_code=hold['reader'], hold_ref=hold_id)
+        computed = {'cancelled': hold_id}
+        if dev_ev is not None:
+            computed['device_event'] = dev_ev
+        return Decision(ALLOW, [], computed, [ev])
+
+    # ---- scan_due (ребро 3.5: срок 40^E → due_soon / overdue) ------------- #
+    def scan_due(self, today, due_soon_days=None, reader_id=None):
+        """Просканировать сроки возврата и разослать напоминания (ребро 3.5).
+
+        Шов «RDR.40 (40^E срок) → A6 уведомления»: по выдачам «на руках» движок
+        эмитит через :meth:`_emit` (и, если подключён A6, ставит в очередь) два
+        события:
+
+          * ``overdue``  — выдача просрочена (``due < today``); payload несёт
+            ``days_overdue`` (целые дни просрочки, ≥1);
+          * ``due_soon`` — срок близок (``today ≤ due ≤ today + окно``); payload
+            несёт ``days_left`` (целые дни до срока, ≥0).
+
+        ``due_soon_days`` — ширина окна «скоро» в днях (по умолчанию из политики
+        ``reminder.due_soon_days``); ``reader_id`` ограничивает скан одним
+        читателем (точечное напоминание из ЛК/формуляра).
+
+        Идемпотентность напоминаний — через A6 dedup-ключ с **дневным бакетом**
+        ``<event>|<loan>|<YYYY-MM-DD>``: в пределах одних суток повторный скан НЕ
+        задваивает уведомление (тот же ключ → dedup), но на следующий день
+        читатель получит напоминание снова (новый ключ) — ровно semantics
+        «ежедневное напоминание о сроке». Без A6-хэндла движок остаётся
+        автономным: события только возвращаются интентами (back-compat).
+
+        Возвращает :class:`Decision` (всегда ALLOW): ``computed`` =
+        ``{'due_soon': [loan_id, …], 'overdue': [loan_id, …]}``, ``events`` —
+        список интентов.
+        """
+        window = (self.policy.get('reminder', {}).get('due_soon_days', 3)
+                  if due_soon_days is None else due_soon_days)
+        window_end = today + max(0, int(window)) * SECONDS_PER_DAY
+        events = []
+        due_soon_ids = []
+        overdue_ids = []
+
+        # overdue — просроченные на руках (due < today).
+        for ln in self.store.open_overdue_loans(today, grace_days=0):
+            if reader_id is not None and ln['reader'] != reader_id:
+                continue
+            days_overdue = max(1, int((today - ln['due']) // SECONDS_PER_DAY))
+            overdue_ids.append(ln['id'])
+            events.append(self._emit('overdue', ln['reader'], {
+                'ref': ln['id'], 'item': ln['item'], 'due': ln['due'],
+                'days_overdue': days_overdue,
+                'dedup_key': 'overdue|%s|%s' % (ln['id'], self._fmt_date(today)),
+            }))
+
+        # due_soon — срок в окне [today, today+window], ещё не просрочен.
+        for ln in self.store.due_soon_loans(today, window_end):
+            if reader_id is not None and ln['reader'] != reader_id:
+                continue
+            days_left = max(0, int((ln['due'] - today) // SECONDS_PER_DAY))
+            due_soon_ids.append(ln['id'])
+            events.append(self._emit('due_soon', ln['reader'], {
+                'ref': ln['id'], 'item': ln['item'], 'due': ln['due'],
+                'days_left': days_left,
+                'dedup_key': 'due_soon|%s|%s' % (ln['id'], self._fmt_date(today)),
+            }))
+
+        return Decision(ALLOW, [],
+                        {'due_soon': due_soon_ids, 'overdue': overdue_ids}, events)
 
     # ---- accrue_fines (§3.2 formula) -------------------------------------- #
     def accrue_fines(self, today, reader_id=None):
