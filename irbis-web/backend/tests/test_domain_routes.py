@@ -631,21 +631,21 @@ def backlog_bp_route_checks():
     api = _api()
     S = _sess(api, 'staff', 'bp', STAFF_CIRC_G)
 
-    st, p = api.route('POST', '/api/bp/discipline', {},
+    st, p = api.route('POST', '/api/bp/rpd/discipline', {},
                       {'code': 'D1', 'name': 'Матанализ',
                        'department': 'Кафедра ВМ', 'contingent': 50}, S)
-    check('POST /api/bp/discipline -> 200', st == 200
+    check('POST /api/bp/rpd/discipline -> 200', st == 200
           and p['data']['discipline']['code'] == 'D1')
-    st, p = api.route('POST', '/api/bp/discipline/norm', {},
+    st, p = api.route('POST', '/api/bp/rpd/norm', {},
                       {'disciplineCode': 'D1', 'editionRef': 'BK-100',
                        'normPerStudent': 0.5}, S)
-    check('POST /api/bp/discipline/norm -> 200', st == 200 and p['data']['norm'])
-    st, p = api.route('GET', '/api/bp/discipline/required', {'code': ['D1']}, None, S)
+    check('POST /api/bp/rpd/norm -> 200', st == 200 and p['data']['norm'])
+    st, p = api.route('GET', '/api/bp/rpd/required', {'code': ['D1']}, None, S)
     check('required = ceil(50*0.5)=25', st == 200
           and p['data']['items'][0]['required'] == 25 and p['data']['total'] == 25)
-    st, p = api.route('GET', '/api/bp/disciplines', {}, None, S)
+    st, p = api.route('GET', '/api/bp/rpd/disciplines', {}, None, S)
     check('disciplines -> 1', st == 200 and len(p['data']['items']) == 1)
-    st, p = api.route('POST', '/api/bp/discipline/norm', {},
+    st, p = api.route('POST', '/api/bp/rpd/norm', {},
                       {'disciplineCode': 'НЕТ', 'editionRef': 'X',
                        'normPerStudent': 1.0}, S)
     check('норматив неизвестной дисциплине -> 400', st == 400)
@@ -663,9 +663,9 @@ def backlog_bp_route_checks():
     check('kko snapshot save -> 200', st == 200 and p['data']['snapshot'])
 
     # bp.write только staff: гость -> 401/403
-    st, p = api.route('POST', '/api/bp/discipline', {},
+    st, p = api.route('POST', '/api/bp/rpd/discipline', {},
                       {'code': 'Z', 'name': 'Z'}, {})
-    check('гость на bp/discipline -> 401/403', st in (401, 403))
+    check('гость на bp/rpd/discipline -> 401/403', st in (401, 403))
 
 
 # --------------------------------------------------------------------------- #

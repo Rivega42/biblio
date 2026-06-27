@@ -3202,7 +3202,7 @@ class Api:
 
     # ---- Книгообеспеченность: нормы РПД (PR #320) ------------------------- #
     def discipline_add(self, session, body):
-        """POST /api/bp/discipline — завести дисциплину с контингентом (staff)."""
+        """POST /api/bp/rpd/discipline — завести дисциплину РПД с контингентом (staff)."""
         self._guard(session, 'bp.write', '*', 'write')
         if self.discipline_norms is None:
             return 200, ok({'discipline': None})
@@ -3216,14 +3216,14 @@ class Api:
         return 200, ok({'discipline': rec})
 
     def disciplines_list(self, session, query):
-        """GET /api/bp/disciplines — список дисциплин (staff)."""
+        """GET /api/bp/rpd/disciplines — список дисциплин РПД (staff)."""
         self._guard(session, 'bp.read', '*', 'read')
         if self.discipline_norms is None:
             return 200, ok({'items': []})
         return 200, ok({'items': self.discipline_norms.store.list_disciplines()})
 
     def discipline_norm_set(self, session, body):
-        """POST /api/bp/discipline/norm — привязать норматив издания к дисциплине (staff)."""
+        """POST /api/bp/rpd/norm — привязать норматив издания к дисциплине (staff)."""
         self._guard(session, 'bp.write', '*', 'write')
         if self.discipline_norms is None:
             return 200, ok({'norm': None})
@@ -3242,7 +3242,7 @@ class Api:
         return 200, ok({'norm': rec})
 
     def discipline_required(self, session, query):
-        """GET /api/bp/discipline/required?code= — требуемые экземпляры по нормам (staff)."""
+        """GET /api/bp/rpd/required?code= — требуемые экземпляры по нормам РПД (staff)."""
         self._guard(session, 'bp.read', '*', 'read')
         if self.discipline_norms is None:
             return 200, ok({'items': [], 'total': 0})
@@ -5093,13 +5093,16 @@ class Api:
             if method == 'POST' and path == '/api/circ/block/evaluate':
                 return self.block_evaluate(session, body or {})
             # ---- Книгообеспеченность: нормы РПД + ККО-аналитика (PR #320) ----
-            if method == 'POST' and path == '/api/bp/discipline':
+            # NB: /api/bp/rpd/* — отдельный namespace от существующих
+            # bookprovision-роутов /api/bp/discipline (факультет/специальность/
+            # контингент/привязка), чтобы не шадоить их в диспетче.
+            if method == 'POST' and path == '/api/bp/rpd/discipline':
                 return self.discipline_add(session, body or {})
-            if method == 'GET' and path == '/api/bp/disciplines':
+            if method == 'GET' and path == '/api/bp/rpd/disciplines':
                 return self.disciplines_list(session, query)
-            if method == 'POST' and path == '/api/bp/discipline/norm':
+            if method == 'POST' and path == '/api/bp/rpd/norm':
                 return self.discipline_norm_set(session, body or {})
-            if method == 'GET' and path == '/api/bp/discipline/required':
+            if method == 'GET' and path == '/api/bp/rpd/required':
                 return self.discipline_required(session, query)
             if method == 'POST' and path == '/api/bp/kko/report':
                 return self.kko_report(session, body or {})
