@@ -136,6 +136,50 @@ class HoldService:
         return {'holdId': hold['id'], 'status': hold['status'],
                 'position': self._position(ticket, db, mfn)}
 
+    def place_many(self, ticket, items, default_db=None):
+        """Оформить корзину читателя как заказы-брони (ребро INTEGRATION_MAP 10.2).
+
+        Принимает список позиций корзины ``[{db?, mfn}, …]`` и ставит бронь на
+        каждую через :meth:`place` — так корзина читательского портала
+        **персистится как заказы** (own-store аналог RQST: «один движок, два
+        клиента»). Идемпотентно поэлементно (повторная позиция возвращает
+        существующую бронь, не задваивает). У позиции без ``db`` берётся
+        ``default_db``. Кривая позиция (нет/нечисловой ``mfn``, нет ``db`` и нет
+        дефолта) помечается ``error`` и НЕ роняет батч — остальные оформляются.
+
+        Возвращает сводку::
+
+            {'items': [{db, mfn, status|error, holdId?, position?}, …],
+             'placed': N,        # успешно оформлено позиций (вкл. идемпотентные)
+             'failed': N,        # позиций с ошибкой
+             'ready': N, 'queued': N}   # из числа оформленных
+        """
+        results = []
+        placed = failed = ready = queued = 0
+        for it in (items or []):
+            raw_db = (it.get('db') if isinstance(it, dict) else None) or default_db
+            raw_mfn = it.get('mfn') if isinstance(it, dict) else None
+            try:
+                mfn = int(raw_mfn)
+            except (TypeError, ValueError):
+                failed += 1
+                results.append({'db': raw_db, 'mfn': raw_mfn, 'error': 'bad_mfn'})
+                continue
+            if not raw_db:
+                failed += 1
+                results.append({'db': None, 'mfn': mfn, 'error': 'no_db'})
+                continue
+            res = self.place(ticket, raw_db, mfn)
+            placed += 1
+            if res.get('status') == READY:
+                ready += 1
+            elif res.get('status') == QUEUED:
+                queued += 1
+            results.append({'db': raw_db, 'mfn': mfn, 'status': res['status'],
+                            'holdId': res['holdId'], 'position': res['position']})
+        return {'items': results, 'placed': placed, 'failed': failed,
+                'ready': ready, 'queued': queued}
+
     def list_for(self, ticket):
         """All of a reader's live holds as portal cards (with live positions)."""
         out = []
