@@ -742,6 +742,61 @@ class Api:
                 _dam.DamStore(os.environ.get('DAM_DB', os.path.join(here, 'dam.db'))))
         except Exception:
             self.dam = None
+        # Бэклог own-store модулей (#316/#317/#318), разведённый в роуты ниже:
+        # поставщики/счета + подписка-периодика (Комплектование), версии записи +
+        # редактор словарей .mnu/.tre (Каталогизатор), роли RBAC + аудит-трейл +
+        # конфиг-параметры (Администратор). MARC/MARCXML/дедуп/печать/db_utils —
+        # чисто-функциональные, импортируются в хендлерах. Best-effort: сбой
+        # сборки -> сервис None (роут вернёт пустой ответ, не 500).
+        try:
+            from access import suppliers as _suppliers
+            self.suppliers = _suppliers.SupplierService(
+                _suppliers.SupplierStore(os.environ.get(
+                    'SUPPLIERS_DB', os.path.join(here, 'suppliers.db'))))
+        except Exception:
+            self.suppliers = None
+        try:
+            from access import subscription as _subscription
+            self.subscription = _subscription.SubscriptionService(
+                _subscription.SubscriptionStore(os.environ.get(
+                    'SUBSCRIPTION_DB', os.path.join(here, 'subscription.db'))))
+        except Exception:
+            self.subscription = None
+        try:
+            from access import catalog_versions as _catalog_versions
+            self.catalog_versions = _catalog_versions.VersionService(
+                _catalog_versions.VersionStore(os.environ.get(
+                    'VERSIONS_DB', os.path.join(here, 'versions.db'))))
+        except Exception:
+            self.catalog_versions = None
+        try:
+            from access import vocab_editor as _vocab_editor
+            self.vocab_editor = _vocab_editor.VocabEditor(
+                _vocab_editor.VocabStore(os.environ.get(
+                    'VOCAB_EDITOR_DB', os.path.join(here, 'vocab_editor.db'))))
+        except Exception:
+            self.vocab_editor = None
+        try:
+            from access import roles as _roles
+            self.roles = _roles.RoleService(
+                _roles.RoleStore(os.environ.get(
+                    'ROLES_DB', os.path.join(here, 'roles.db'))))
+        except Exception:
+            self.roles = None
+        try:
+            from access import audit_trail as _audit_trail
+            self.audit_trail = _audit_trail.AuditService(
+                _audit_trail.AuditStore(os.environ.get(
+                    'AUDIT_TRAIL_DB', os.path.join(here, 'audit_trail.db'))))
+        except Exception:
+            self.audit_trail = None
+        try:
+            from access import config_store as _config_store
+            self.config = _config_store.ConfigService(
+                _config_store.ConfigStore(os.environ.get(
+                    'CONFIG_DB', os.path.join(here, 'config.db'))))
+        except Exception:
+            self.config = None
         # Привязки внешней OIDC-личности к билету (узел 3 MVP-2b): отдельный
         # sqlite-стор + резолв конфига провайдера. OFF, если провайдер не задан
         # (cfg.oidc_provider пуст) — _oidc_enabled() это проверяет. Best-effort.
@@ -2583,6 +2638,431 @@ class Api:
             return 400, err('bad_request', 'mfn required')
         return 200, ok({'items': self.dam.assets_for(db, mfn)})
 
+    # ===================================================================== #
+    # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
+    # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
+    # MARC ISO2709/MARCXML обмен, дедуп, печать ГОСТ, версии, редактор       #
+    # словарей .mnu/.tre. Администратор: редактируемые роли (RBAC), аудит-   #
+    # трейл, конфиг-параметры. Утилиты: стат/экспорт/дубли/ФЛК-lite над       #
+    # выборкой. Всё own-store, без записи в живой ИРБИС (#222); если сервис   #
+    # не собрался — пустой ответ, не 500.                                    #
+    # ===================================================================== #
+
+    # ---- Комплектование: поставщики/счета (PR #316) ---------------------- #
+    def suppliers_add(self, session, body):
+        """POST /api/acq/supplier — завести поставщика (staff)."""
+        self._guard(session, 'acq.receipt', '*', 'write')
+        if self.suppliers is None:
+            return 200, ok({'supplier': None})
+        name = (body.get('name') or '').strip()
+        if not name:
+            return 400, err('bad_request', 'name required')
+        try:
+            rec = self.suppliers.add_supplier(
+                name, inn=body.get('inn'), contact=body.get('contact'),
+                email=body.get('email'), phone=body.get('phone'),
+                address=body.get('address'))
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'supplier': rec})
+
+    def suppliers_list(self, session, query):
+        """GET /api/acq/suppliers — поставщики + сводка (staff)."""
+        self._guard(session, 'acq.read', '*', 'read')
+        if self.suppliers is None:
+            return 200, ok({'items': [], 'stats': {}})
+        active = query.get('active', ['0'])[0] in ('1', 'true', 'yes')
+        return 200, ok({'items': self.suppliers.list(active_only=active),
+                        'stats': self.suppliers.stats()})
+
+    def supplier_invoice(self, session, body):
+        """POST /api/acq/supplier/invoice — счёт-акт поставщика (staff)."""
+        self._guard(session, 'acq.receipt', '*', 'write')
+        if self.suppliers is None:
+            return 200, ok({'invoice': None})
+        try:
+            sid = int(body.get('supplierId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'supplierId required')
+        number = (body.get('number') or '').strip()
+        if not number:
+            return 400, err('bad_request', 'number required')
+        try:
+            rec = self.suppliers.add_invoice(
+                sid, number, body.get('amount'), date=body.get('date'),
+                ksu_no=body.get('ksuNo'), order_ref=body.get('orderRef'))
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'invoice': rec})
+
+    # ---- Комплектование: подписка/периодика (PR #316) -------------------- #
+    def subscription_add(self, session, body):
+        """POST /api/acq/subscription — оформить подписку (staff)."""
+        self._guard(session, 'acq.receipt', '*', 'write')
+        if self.subscription is None:
+            return 200, ok({'subscription': None})
+        title = (body.get('title') or '').strip()
+        if not title:
+            return 400, err('bad_request', 'title required')
+        rec = self.subscription.subscribe(
+            title, issn=body.get('issn'), supplier_id=body.get('supplierId'),
+            period_from=body.get('periodFrom'), period_to=body.get('periodTo'),
+            copies=int(body.get('copies') or 1))
+        return 200, ok({'subscription': rec})
+
+    def subscriptions_list(self, session, query):
+        """GET /api/acq/subscriptions — подписки + сводка (staff)."""
+        self._guard(session, 'acq.read', '*', 'read')
+        if self.subscription is None:
+            return 200, ok({'items': [], 'stats': {}})
+        return 200, ok({'items': self.subscription.list_subscriptions(),
+                        'stats': self.subscription.stats()})
+
+    def subscription_receive(self, session, body):
+        """POST /api/acq/subscription/receive — отметить поступление номера (staff)."""
+        self._guard(session, 'acq.receipt', '*', 'write')
+        if self.subscription is None:
+            return 200, ok({'issue': None})
+        try:
+            sid = int(body.get('subscriptionId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'subscriptionId required')
+        rec = self.subscription.receive_issue(
+            sid, body.get('number'), body.get('year'))
+        if rec is None:
+            return 404, err('not_found', 'issue not found')
+        return 200, ok({'issue': rec})
+
+    # ---- Каталогизатор: MARC ISO2709 / MARCXML обмен (PR #316/#317) ------- #
+    def marc_export(self, session, body):
+        """POST /api/cataloging/marc/export — записи -> ISO 2709 (base64, staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        import base64
+        from access import marc as _marc
+        records = body.get('records') or []
+        try:
+            blob = _marc.export_batch(records)
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'iso2709_b64': base64.b64encode(blob).decode('ascii'),
+                        'count': len(records)})
+
+    def marc_import(self, session, body):
+        """POST /api/cataloging/marc/import — ISO 2709 (base64) -> записи (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        import base64
+        from access import marc as _marc
+        b64 = body.get('iso2709_b64') or ''
+        try:
+            data = base64.b64decode(b64) if b64 else b''
+            records = _marc.import_batch(data)
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'records': records, 'count': len(records)})
+
+    def marcxml_export(self, session, body):
+        """POST /api/cataloging/marcxml/export — записи -> MARCXML (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import marcxml as _mx
+        records = body.get('records') or []
+        try:
+            xml = _mx.to_marcxml_collection(records)
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'marcxml': xml, 'count': len(records)})
+
+    def marcxml_import(self, session, body):
+        """POST /api/cataloging/marcxml/import — MARCXML -> записи (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        from access import marcxml as _mx
+        xml = body.get('marcxml') or ''
+        try:
+            records = _mx.from_marcxml_collection(xml)
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'records': records, 'count': len(records)})
+
+    # ---- Каталогизатор: дедуп / copy-cataloging (PR #317) ---------------- #
+    def dedup_scan(self, session, body):
+        """POST /api/cataloging/dedup — кластеры дублей + сводка (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import dedup as _dd
+        records = body.get('records') or []
+        return 200, ok({'clusters': _dd.find_duplicates(records),
+                        'stats': _dd.dedup_stats(records)})
+
+    def dedup_check(self, session, body):
+        """POST /api/cataloging/dedup/check — дубль ли запись в наборе (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import dedup as _dd
+        idx = _dd.is_duplicate(body.get('record') or {},
+                               body.get('existing') or [])
+        return 200, ok({'duplicate': idx is not None, 'index': idx})
+
+    # ---- Каталогизатор: печать ГОСТ (PR #317) ---------------------------- #
+    def catalog_print_route(self, session, body):
+        """POST /api/cataloging/print — карточки/списки/индексы ГОСТ (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import catalog_print as _cp
+        records = body.get('records') or []
+        form = (body.get('form') or 'card').strip()
+        kw = {}
+        if form == 'index':
+            if body.get('by'):
+                kw['by'] = body.get('by')
+            if body.get('code'):
+                kw['code'] = body.get('code')
+        try:
+            text = _cp.to_text(records, form=form, **kw)
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'text': text, 'form': form, 'count': len(records)})
+
+    # ---- Каталогизатор: версии записи (PR #316) -------------------------- #
+    def versions_history(self, session, query):
+        """GET /api/cataloging/versions?db=&mfn= — история версий (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.catalog_versions is None:
+            return 200, ok({'items': []})
+        db = (query.get('db', [self.cfg.db_default])[0])
+        try:
+            mfn = int(query.get('mfn', ['0'])[0])
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        return 200, ok({'items': self.catalog_versions.history(db, mfn)})
+
+    def versions_snapshot(self, session, body):
+        """POST /api/cataloging/versions/snapshot — зафиксировать версию (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.catalog_versions is None:
+            return 200, ok({'version': None})
+        db = (body.get('db') or self.cfg.db_default)
+        try:
+            mfn = int(body.get('mfn'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        actor = (session or {}).get('actor')
+        ver = self.catalog_versions.snapshot(db, mfn, body.get('record') or {},
+                                             actor=actor)
+        return 200, ok({'version': ver})
+
+    def versions_revert(self, session, body):
+        """POST /api/cataloging/versions/revert — record указанной версии (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.catalog_versions is None:
+            return 200, ok({'record': None})
+        db = (body.get('db') or self.cfg.db_default)
+        try:
+            mfn = int(body.get('mfn'))
+            ver = int(body.get('version'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn/version required')
+        rec = self.catalog_versions.revert(db, mfn, ver)
+        if rec is None:
+            return 404, err('not_found', 'version not found')
+        return 200, ok({'record': rec})
+
+    # ---- Каталогизатор: редактор словарей .mnu / деревьев .tre (PR #317) -- #
+    def vocab_values(self, session, query):
+        """GET /api/cataloging/vocab?vocab= — значения словаря (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.vocab_editor is None:
+            return 200, ok({'items': []})
+        vocab = (query.get('vocab', [''])[0] or '').strip()
+        if not vocab:
+            return 400, err('bad_request', 'vocab required')
+        active = query.get('activeOnly', ['0'])[0] in ('1', 'true', 'yes')
+        return 200, ok({'items': self.vocab_editor.values(vocab, active_only=active)})
+
+    def vocab_add_value(self, session, body):
+        """POST /api/cataloging/vocab/value — добавить/переименовать значение (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.vocab_editor is None:
+            return 200, ok({'value': None})
+        vocab = (body.get('vocab') or '').strip()
+        code = (body.get('code') or '').strip()
+        if not vocab or not code:
+            return 400, err('bad_request', 'vocab/code required')
+        rec = self.vocab_editor.add_value(vocab, code, (body.get('label') or ''),
+                                          sort=body.get('sort'))
+        return 200, ok({'value': rec})
+
+    def tree_children(self, session, query):
+        """GET /api/cataloging/tree?tree=&parent= — узлы дерева (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.vocab_editor is None:
+            return 200, ok({'items': []})
+        tree = (query.get('tree', [''])[0] or '').strip()
+        if not tree:
+            return 400, err('bad_request', 'tree required')
+        parent = (query.get('parent', [None])[0])
+        return 200, ok({'items': self.vocab_editor.children(tree, parent_code=parent)})
+
+    def tree_add_node(self, session, body):
+        """POST /api/cataloging/tree/node — добавить узел дерева (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.vocab_editor is None:
+            return 200, ok({'node': None})
+        tree = (body.get('tree') or '').strip()
+        code = (body.get('code') or '').strip()
+        if not tree or not code:
+            return 400, err('bad_request', 'tree/code required')
+        try:
+            rec = self.vocab_editor.add_node(tree, code, (body.get('label') or ''),
+                                             parent_code=body.get('parentCode'),
+                                             sort=body.get('sort'))
+        except KeyError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'node': rec})
+
+    # ---- Администратор: редактируемые роли RBAC (PR #318) ---------------- #
+    def rbac_roles(self, session, query):
+        """GET /api/admin/rbac/roles — список ролей (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.roles is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.roles.list_roles()})
+
+    def rbac_create_role(self, session, body):
+        """POST /api/admin/rbac/role — создать роль (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.roles is None:
+            return 200, ok({'role': None})
+        name = (body.get('name') or '').strip()
+        if not name:
+            return 400, err('bad_request', 'name required')
+        try:
+            rec = self.roles.create_role(name, description=(body.get('description') or ''),
+                                         parent=body.get('parent'))
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'role': rec})
+
+    def rbac_add_grant(self, session, body):
+        """POST /api/admin/rbac/grant — добавить грант роли (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.roles is None:
+            return 200, ok({'grant': None})
+        role = body.get('role')
+        function = (body.get('function') or '').strip()
+        if role is None or not function:
+            return 400, err('bad_request', 'role/function required')
+        try:
+            rec = self.roles.add_grant(role, function, db=(body.get('db') or '*'),
+                                       level=(body.get('level') or 'read'))
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'grant': rec})
+
+    def rbac_assign(self, session, body):
+        """POST /api/admin/rbac/assign — назначить роль учётке (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.roles is None:
+            return 200, ok({'assigned': False})
+        account = (body.get('account') or '').strip()
+        role = body.get('role')
+        if not account or role is None:
+            return 400, err('bad_request', 'account/role required')
+        try:
+            self.roles.assign(account, role)
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'assigned': True})
+
+    def rbac_effective(self, session, query):
+        """GET /api/admin/rbac/effective?account= — эффективные гранты (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.roles is None:
+            return 200, ok({'grants': []})
+        account = (query.get('account', [''])[0] or '').strip()
+        if not account:
+            return 400, err('bad_request', 'account required')
+        return 200, ok({'grants': self.roles.effective_grants(account)})
+
+    # ---- Администратор: аудит-трейл (PR #318) ---------------------------- #
+    def audit_trail_query(self, session, query):
+        """GET /api/admin/audit-trail — запросный аудит-журнал + сводка (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.audit_trail is None:
+            return 200, ok({'items': [], 'summary': {}})
+        kw = {}
+        for k in ('actor', 'action', 'status'):
+            v = (query.get(k, [None])[0])
+            if v:
+                kw[k] = v
+        try:
+            limit = min(500, max(1, int(query.get('limit', ['100'])[0])))
+        except (TypeError, ValueError):
+            limit = 100
+        return 200, ok({'items': self.audit_trail.entries(limit=limit, **kw),
+                        'summary': self.audit_trail.summary()})
+
+    # ---- Администратор: конфиг-параметры (PR #318) ----------------------- #
+    def config_list(self, session, query):
+        """GET /api/admin/config — параметры тенанта (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.config is None:
+            return 200, ok({'items': []})
+        tenant = (query.get('tenant', ['default'])[0])
+        prefix = (query.get('prefix', [None])[0])
+        return 200, ok({'items': self.config.store.list(tenant=tenant, prefix=prefix)})
+
+    def config_set(self, session, body):
+        """POST /api/admin/config — задать параметр (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.config is None:
+            return 200, ok({'param': None})
+        key = (body.get('key') or '').strip()
+        if not key:
+            return 400, err('bad_request', 'key required')
+        try:
+            rec = self.config.store.set(
+                key, body.get('value'), type=body.get('type'),
+                tenant=(body.get('tenant') or 'default'),
+                description=body.get('description'))
+        except (ValueError, TypeError) as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'param': rec})
+
+    # ---- Утилиты: стат/экспорт/дубли/ФЛК-lite над выборкой (PR #318) ------ #
+    def utils_stats(self, session, body):
+        """POST /api/utils/stats — статистика по набору записей (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import db_utils as _du
+        records = body.get('records') or []
+        return 200, ok({'stats': _du.stats(records),
+                        'fund': _du.fund_summary(records)})
+
+    def utils_export(self, session, body):
+        """POST /api/utils/export — экспорт выборки в json/csv (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import db_utils as _du
+        records = body.get('records') or []
+        fmt = (body.get('format') or 'json').strip()
+        if fmt == 'csv':
+            fields = body.get('fields') or []
+            return 200, ok({'format': 'csv', 'data': _du.export_csv(records, fields)})
+        return 200, ok({'format': 'json', 'data': _du.export_json(records)})
+
+    def utils_duplicates(self, session, body):
+        """POST /api/utils/duplicates — потенциальные дубли по тег-спеке (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import db_utils as _du
+        records = body.get('records') or []
+        spec = (body.get('tag') or '').strip()
+        if not spec:
+            return 400, err('bad_request', 'tag required')
+        return 200, ok({'duplicates': _du.duplicate_keys(records, spec)})
+
+    def utils_validate(self, session, body):
+        """POST /api/utils/validate — предимпортный ФЛК-lite по обязат. тегам (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import db_utils as _du
+        records = body.get('records') or []
+        required = body.get('required') or []
+        bad = _du.validate_batch(records, required)
+        return 200, ok({'invalid': bad, 'ok': len(bad) == 0})
+
     def notifications_inbox(self, session, unread_only):
         """GET /api/notifications — the reader's dispatched notices + unread count."""
         ticket = self._reader_ticket(session)
@@ -4310,6 +4790,78 @@ class Api:
                 return self.dam_attach(session, body or {})
             if method == 'GET' and path == '/api/dam':
                 return self.dam_assets(session, query)
+            # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
+            if method == 'POST' and path == '/api/acq/supplier':
+                return self.suppliers_add(session, body or {})
+            if method == 'GET' and path == '/api/acq/suppliers':
+                return self.suppliers_list(session, query)
+            if method == 'POST' and path == '/api/acq/supplier/invoice':
+                return self.supplier_invoice(session, body or {})
+            if method == 'POST' and path == '/api/acq/subscription':
+                return self.subscription_add(session, body or {})
+            if method == 'GET' and path == '/api/acq/subscriptions':
+                return self.subscriptions_list(session, query)
+            if method == 'POST' and path == '/api/acq/subscription/receive':
+                return self.subscription_receive(session, body or {})
+            # ---- Каталогизатор: MARC/MARCXML обмен (PR #316/#317) ----
+            if method == 'POST' and path == '/api/cataloging/marc/export':
+                return self.marc_export(session, body or {})
+            if method == 'POST' and path == '/api/cataloging/marc/import':
+                return self.marc_import(session, body or {})
+            if method == 'POST' and path == '/api/cataloging/marcxml/export':
+                return self.marcxml_export(session, body or {})
+            if method == 'POST' and path == '/api/cataloging/marcxml/import':
+                return self.marcxml_import(session, body or {})
+            # ---- Каталогизатор: дедуп / печать ГОСТ (PR #317) ----
+            if method == 'POST' and path == '/api/cataloging/dedup':
+                return self.dedup_scan(session, body or {})
+            if method == 'POST' and path == '/api/cataloging/dedup/check':
+                return self.dedup_check(session, body or {})
+            if method == 'POST' and path == '/api/cataloging/print':
+                return self.catalog_print_route(session, body or {})
+            # ---- Каталогизатор: версии записи (PR #316) ----
+            if method == 'GET' and path == '/api/cataloging/versions':
+                return self.versions_history(session, query)
+            if method == 'POST' and path == '/api/cataloging/versions/snapshot':
+                return self.versions_snapshot(session, body or {})
+            if method == 'POST' and path == '/api/cataloging/versions/revert':
+                return self.versions_revert(session, body or {})
+            # ---- Каталогизатор: редактор словарей .mnu/.tre (PR #317) ----
+            if method == 'GET' and path == '/api/cataloging/vocab':
+                return self.vocab_values(session, query)
+            if method == 'POST' and path == '/api/cataloging/vocab/value':
+                return self.vocab_add_value(session, body or {})
+            if method == 'GET' and path == '/api/cataloging/tree':
+                return self.tree_children(session, query)
+            if method == 'POST' and path == '/api/cataloging/tree/node':
+                return self.tree_add_node(session, body or {})
+            # ---- Администратор: роли RBAC (PR #318) ----
+            if method == 'GET' and path == '/api/admin/rbac/roles':
+                return self.rbac_roles(session, query)
+            if method == 'POST' and path == '/api/admin/rbac/role':
+                return self.rbac_create_role(session, body or {})
+            if method == 'POST' and path == '/api/admin/rbac/grant':
+                return self.rbac_add_grant(session, body or {})
+            if method == 'POST' and path == '/api/admin/rbac/assign':
+                return self.rbac_assign(session, body or {})
+            if method == 'GET' and path == '/api/admin/rbac/effective':
+                return self.rbac_effective(session, query)
+            # ---- Администратор: аудит-трейл + конфиг (PR #318) ----
+            if method == 'GET' and path == '/api/admin/audit-trail':
+                return self.audit_trail_query(session, query)
+            if method == 'GET' and path == '/api/admin/config':
+                return self.config_list(session, query)
+            if method == 'POST' and path == '/api/admin/config':
+                return self.config_set(session, body or {})
+            # ---- Утилиты: стат/экспорт/дубли/ФЛК-lite (PR #318) ----
+            if method == 'POST' and path == '/api/utils/stats':
+                return self.utils_stats(session, body or {})
+            if method == 'POST' and path == '/api/utils/export':
+                return self.utils_export(session, body or {})
+            if method == 'POST' and path == '/api/utils/duplicates':
+                return self.utils_duplicates(session, body or {})
+            if method == 'POST' and path == '/api/utils/validate':
+                return self.utils_validate(session, body or {})
             # ---- reader-portal v2 social: reviews/ratings (#134) ----
             if method == 'POST' and path == '/api/review/delete':
                 return self.delete_review(session, body or {})

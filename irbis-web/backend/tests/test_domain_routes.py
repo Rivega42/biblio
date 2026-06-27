@@ -33,6 +33,13 @@ from access.vkr import VkrService, VkrStore
 from access.ksu_auto import KsuAutoService, KsuAutoStore
 from access.serials import SerialsService, SerialsStore
 from access.dam import DamRegistry, DamStore
+from access.suppliers import SupplierService, SupplierStore
+from access.subscription import SubscriptionService, SubscriptionStore
+from access.catalog_versions import VersionService, VersionStore
+from access.vocab_editor import VocabEditor, VocabStore
+from access.roles import RoleService, RoleStore
+from access.audit_trail import AuditService, AuditStore
+from access.config_store import ConfigService, ConfigStore
 
 PASS = [0]
 FAIL = [0]
@@ -52,6 +59,12 @@ READER_G = [{'function': 'cabinet', 'db': '*', 'level': 'read'},
 STAFF_G = [{'function': 'cataloging', 'db': '*', 'level': 'write'},
            {'function': 'search', 'db': '*', 'level': 'read'}]
 ADMIN_G = [{'function': 'admin', 'db': '*', 'level': 'admin'}]
+# Расширенный staff-набор для разводки бэклога (#316/#317/#318): каталогизация +
+# поступление/чтение комплектования (поставщики/подписка гвардятся acq-токенами).
+STAFF_BL_G = [{'function': 'cataloging', 'db': '*', 'level': 'write'},
+              {'function': 'acq.read', 'db': '*', 'level': 'read'},
+              {'function': 'acq.receipt', 'db': '*', 'level': 'write'},
+              {'function': 'search', 'db': '*', 'level': 'read'}]
 
 
 def _api():
@@ -75,6 +88,14 @@ def _api():
     api.ksu_auto = KsuAutoService(KsuAutoStore(':memory:'))
     api.serials = SerialsService(SerialsStore(':memory:'))
     api.dam = DamRegistry(DamStore(':memory:'))
+    # Разводка бэклога (#316/#317/#318) — свежие in-memory сторы.
+    api.suppliers = SupplierService(SupplierStore(':memory:'))
+    api.subscription = SubscriptionService(SubscriptionStore(':memory:'))
+    api.catalog_versions = VersionService(VersionStore(':memory:'))
+    api.vocab_editor = VocabEditor(VocabStore(':memory:'))
+    api.roles = RoleService(RoleStore(':memory:'))
+    api.audit_trail = AuditService(AuditStore(':memory:'))
+    api.config = ConfigService(ConfigStore(':memory:'))
     return api
 
 
@@ -305,6 +326,236 @@ def dam_route_checks():
     check('reader attach -> 403', st == 403)
 
 
+# --------------------------------------------------------------------------- #
+# Разводка бэклога #316 — Комплектование: поставщики/счета + подписка.
+# --------------------------------------------------------------------------- #
+def backlog_acq_route_checks():
+    print('-- #316 Комплектование: поставщики/счета + подписка через route()')
+    api = _api()
+    S = _sess(api, 'staff', 'lib', STAFF_BL_G)
+
+    st, p = api.route('POST', '/api/acq/supplier', {},
+                      {'name': 'Лань', 'inn': '7700'}, S)
+    check('POST /api/acq/supplier -> 200', st == 200)
+    sid = p['data']['supplier']['id']
+    check('поставщик с id', isinstance(sid, int))
+
+    st, p = api.route('GET', '/api/acq/suppliers', {}, None, S)
+    check('GET /api/acq/suppliers -> 1 + stats', st == 200
+          and len(p['data']['items']) == 1 and 'stats' in p['data'])
+
+    st, p = api.route('POST', '/api/acq/supplier/invoice', {},
+                      {'supplierId': sid, 'number': 'INV-1', 'amount': 100,
+                       'ksuNo': 'КСУ-7'}, S)
+    check('POST supplier/invoice -> 200', st == 200 and p['data']['invoice'])
+
+    st, p = api.route('POST', '/api/acq/supplier/invoice', {},
+                      {'supplierId': 999999, 'number': 'X', 'amount': 1}, S)
+    check('счёт неизвестному поставщику -> 400', st == 400)
+
+    st, p = api.route('POST', '/api/acq/subscription', {},
+                      {'title': 'Вестник', 'issn': '1234-5678', 'copies': 2}, S)
+    check('POST /api/acq/subscription -> 200', st == 200)
+    subid = p['data']['subscription']['id']
+    check('подписка с id', isinstance(subid, int))
+
+    st, p = api.route('GET', '/api/acq/subscriptions', {}, None, S)
+    check('GET /api/acq/subscriptions -> 1', st == 200
+          and len(p['data']['items']) == 1)
+
+    # write только staff: гость -> 401/403
+    st, p = api.route('POST', '/api/acq/supplier', {}, {'name': 'X'}, {})
+    check('гость на supplier -> 401/403', st in (401, 403))
+
+
+# --------------------------------------------------------------------------- #
+# Разводка бэклога #316/#317 — Каталогизатор: MARC/MARCXML/дедуп/печать/версии/
+# редактор словарей.
+# --------------------------------------------------------------------------- #
+def backlog_cataloging_route_checks():
+    print('-- #316/#317 Каталогизатор: обмен/дедуп/печать/версии/словари')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_BL_G)
+    rec = _rec('Театр и время', **{'10': [{'a': '978-5-0001'}]})
+    # ISO2709-чистая запись (только именованные подполя) — _rec кладёт 610 с
+    # ПУСТЫМ кодом подполя {'': …}, что валидно для MARCXML, но ISO2709 так не
+    # кодирует (пустой код ломает round-trip; через роут это вернуло бы 400).
+    mrec = {'920': 'PAZK', '200': [{'a': 'Театр и время'}],
+            '700': [{'a': 'Автор'}], '101': 'rus', '10': [{'a': '978-5-0001'}]}
+
+    # MARC ISO2709 round-trip (base64)
+    st, p = api.route('POST', '/api/cataloging/marc/export', {},
+                      {'records': [mrec]}, S)
+    check('marc/export -> base64', st == 200 and p['data']['iso2709_b64'])
+    b64 = p['data']['iso2709_b64']
+    st, p = api.route('POST', '/api/cataloging/marc/import', {},
+                      {'iso2709_b64': b64}, S)
+    check('marc/import round-trip 1 запись', st == 200 and p['data']['count'] == 1)
+
+    # MARCXML round-trip
+    st, p = api.route('POST', '/api/cataloging/marcxml/export', {},
+                      {'records': [rec]}, S)
+    check('marcxml/export -> XML', st == 200 and '<' in p['data']['marcxml'])
+    xml = p['data']['marcxml']
+    st, p = api.route('POST', '/api/cataloging/marcxml/import', {},
+                      {'marcxml': xml}, S)
+    check('marcxml/import round-trip', st == 200 and p['data']['count'] == 1)
+
+    # дедуп
+    st, p = api.route('POST', '/api/cataloging/dedup', {},
+                      {'records': [rec, rec]}, S)
+    check('dedup -> кластер дублей', st == 200 and len(p['data']['clusters']) >= 1)
+    st, p = api.route('POST', '/api/cataloging/dedup/check', {},
+                      {'record': rec, 'existing': [rec]}, S)
+    check('dedup/check -> дубль', st == 200 and p['data']['duplicate'] is True)
+
+    # печать ГОСТ
+    st, p = api.route('POST', '/api/cataloging/print', {},
+                      {'records': [rec], 'form': 'card'}, S)
+    check('print card -> текст', st == 200 and len(p['data']['text']) > 0)
+
+    # версии записи
+    st, p = api.route('POST', '/api/cataloging/versions/snapshot', {},
+                      {'db': 'IBIS', 'mfn': 5, 'record': rec}, S)
+    check('versions/snapshot -> v1', st == 200 and p['data']['version'] == 1)
+    st, p = api.route('POST', '/api/cataloging/versions/snapshot', {},
+                      {'db': 'IBIS', 'mfn': 5, 'record': rec}, S)
+    check('versions/snapshot -> v2', st == 200 and p['data']['version'] == 2)
+    st, p = api.route('GET', '/api/cataloging/versions',
+                      {'db': ['IBIS'], 'mfn': ['5']}, None, S)
+    check('versions history -> 2', st == 200 and len(p['data']['items']) == 2)
+    st, p = api.route('POST', '/api/cataloging/versions/revert', {},
+                      {'db': 'IBIS', 'mfn': 5, 'version': 1}, S)
+    check('versions/revert -> record', st == 200 and p['data']['record'])
+    st, p = api.route('POST', '/api/cataloging/versions/revert', {},
+                      {'db': 'IBIS', 'mfn': 5, 'version': 99}, S)
+    check('revert несуществующей -> 404', st == 404)
+
+    # редактор словарей .mnu / деревьев .tre
+    st, p = api.route('POST', '/api/cataloging/vocab/value', {},
+                      {'vocab': 'v900', 'code': 'a', 'label': 'Книга'}, S)
+    check('vocab/value add -> 200', st == 200 and p['data']['value'])
+    st, p = api.route('GET', '/api/cataloging/vocab', {'vocab': ['v900']}, None, S)
+    check('vocab values -> 1', st == 200 and len(p['data']['items']) == 1)
+    st, p = api.route('POST', '/api/cataloging/tree/node', {},
+                      {'tree': 'rubr', 'code': 'r', 'label': 'Корень'}, S)
+    check('tree/node add корень -> 200', st == 200 and p['data']['node'])
+    st, p = api.route('POST', '/api/cataloging/tree/node', {},
+                      {'tree': 'rubr', 'code': 'c1', 'label': 'Раздел',
+                       'parentCode': 'r'}, S)
+    check('tree/node add потомок -> 200', st == 200)
+    st, p = api.route('GET', '/api/cataloging/tree',
+                      {'tree': ['rubr'], 'parent': ['r']}, None, S)
+    check('tree children(r) -> 1', st == 200 and len(p['data']['items']) == 1)
+    st, p = api.route('POST', '/api/cataloging/tree/node', {},
+                      {'tree': 'rubr', 'code': 'x', 'label': 'Y',
+                       'parentCode': 'НЕТ'}, S)
+    check('tree/node с несуществ. родителем -> 400', st == 400)
+
+
+# --------------------------------------------------------------------------- #
+# Разводка бэклога #318 — Администратор: роли RBAC + аудит-трейл + конфиг.
+# --------------------------------------------------------------------------- #
+def backlog_admin_route_checks():
+    print('-- #318 Администратор: RBAC + аудит-трейл + конфиг через route()')
+    api = _api()
+    A = _sess(api, 'staff', 'adm', ADMIN_G)
+    S = _sess(api, 'staff', 'lib', STAFF_BL_G)
+
+    st, p = api.route('POST', '/api/admin/rbac/role', {},
+                      {'name': 'editor', 'description': 'каталогизатор'}, A)
+    check('rbac/role create -> 200', st == 200)
+    rid = p['data']['role']['id']
+    st, p = api.route('POST', '/api/admin/rbac/grant', {},
+                      {'role': rid, 'function': 'record.write', 'level': 'write'}, A)
+    check('rbac/grant -> 200', st == 200 and p['data']['grant'])
+    st, p = api.route('POST', '/api/admin/rbac/assign', {},
+                      {'account': 'u1', 'role': rid}, A)
+    check('rbac/assign -> 200', st == 200 and p['data']['assigned'])
+    st, p = api.route('GET', '/api/admin/rbac/effective',
+                      {'account': ['u1']}, None, A)
+    check('rbac/effective -> 1 грант', st == 200 and len(p['data']['grants']) == 1)
+    st, p = api.route('GET', '/api/admin/rbac/roles', {}, None, A)
+    check('rbac/roles -> 1', st == 200 and len(p['data']['items']) == 1)
+
+    # аудит-трейл (наполняем через сервис, читаем через роут)
+    api.audit_trail.record('adm', 'config.set', 'config', 'opac.title',
+                           status='ok')
+    api.audit_trail.record('lib', 'record.write', 'record', '42', status='denied')
+    st, p = api.route('GET', '/api/admin/audit-trail', {}, None, A)
+    check('audit-trail entries -> 2 + summary', st == 200
+          and len(p['data']['items']) == 2 and 'summary' in p['data'])
+    st, p = api.route('GET', '/api/admin/audit-trail',
+                      {'status': ['denied']}, None, A)
+    check('audit-trail фильтр status=denied -> 1', st == 200
+          and len(p['data']['items']) == 1)
+
+    # конфиг-параметры
+    st, p = api.route('POST', '/api/admin/config', {},
+                      {'key': 'opac.title', 'value': 'СПб ГТБ'}, A)
+    check('config set -> 200', st == 200 and p['data']['param']['value'] == 'СПб ГТБ')
+    st, p = api.route('POST', '/api/admin/config', {},
+                      {'key': 'opac.perPage', 'value': 20, 'type': 'int'}, A)
+    check('config set typed int -> 200', st == 200
+          and p['data']['param']['value'] == 20)
+    st, p = api.route('GET', '/api/admin/config', {}, None, A)
+    check('config list -> 2', st == 200 and len(p['data']['items']) == 2)
+    st, p = api.route('POST', '/api/admin/config', {},
+                      {'key': 'x', 'value': 'нечисло', 'type': 'int'}, A)
+    check('config неверный тип -> 400', st == 400)
+
+    # admin-гейт: staff без admin-гранта -> 401/403
+    st, p = api.route('GET', '/api/admin/rbac/roles', {}, None, S)
+    check('staff на rbac/roles -> 401/403', st in (401, 403))
+    st, p = api.route('POST', '/api/admin/config', {}, {'key': 'k', 'value': 'v'}, S)
+    check('staff на config set -> 401/403', st in (401, 403))
+
+
+# --------------------------------------------------------------------------- #
+# Разводка бэклога #318 — Утилиты: стат/экспорт/дубли/ФЛК-lite над выборкой.
+# db_utils работает над моделью записи {'mfn','fields':[{'tag','value'|'subfields'}]}.
+# --------------------------------------------------------------------------- #
+def backlog_utils_route_checks():
+    print('-- #318 Утилиты: стат/экспорт/дубли/валидация через route()')
+    api = _api()
+    S = _sess(api, 'staff', 'util', STAFF_BL_G)
+
+    def urec(mfn, isbn):
+        return {'mfn': mfn, 'fields': [
+            {'tag': '920', 'value': 'PAZK'},
+            {'tag': '101', 'subfields': [{'code': 'a', 'value': 'rus'}]},
+            {'tag': '210', 'subfields': [{'code': 'd', 'value': '2021'}]},
+            {'tag': '10', 'subfields': [{'code': 'a', 'value': isbn}]},
+            {'tag': '910', 'subfields': [{'code': 'a', 'value': '0'},
+                                         {'code': 'd', 'value': 'ХР'}]}]}
+    recs = [urec(1, '978-5-1'), urec(2, '978-5-1'), urec(3, '978-5-2')]
+
+    st, p = api.route('POST', '/api/utils/stats', {}, {'records': recs}, S)
+    check('utils/stats -> count 3', st == 200 and p['data']['stats']['count'] == 3)
+    check('utils/stats fund экземпляры', 'total_exemplars' in p['data']['fund'])
+
+    st, p = api.route('POST', '/api/utils/export', {},
+                      {'records': recs, 'format': 'json'}, S)
+    check('utils/export json', st == 200 and p['data']['format'] == 'json')
+    st, p = api.route('POST', '/api/utils/export', {},
+                      {'records': recs, 'format': 'csv', 'fields': ['10^a', '920']}, S)
+    check('utils/export csv c заголовком', st == 200
+          and p['data']['format'] == 'csv' and '10^a' in p['data']['data'])
+
+    st, p = api.route('POST', '/api/utils/duplicates', {},
+                      {'records': recs, 'tag': '10^a'}, S)
+    check('utils/duplicates по ISBN -> 1 дубль-ключ', st == 200
+          and len(p['data']['duplicates']) == 1)
+
+    st, p = api.route('POST', '/api/utils/validate', {},
+                      {'records': recs, 'required': ['200']}, S)
+    check('utils/validate флагует отсутствие 200', st == 200
+          and p['data']['ok'] is False and len(p['data']['invalid']) == 3)
+    st, p = api.route('POST', '/api/utils/validate', {},
+                      {'records': recs, 'required': ['920']}, S)
+    check('utils/validate проходит при 920', st == 200 and p['data']['ok'] is True)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -314,6 +565,10 @@ def main():
     ksu_route_checks()
     serials_route_checks()
     dam_route_checks()
+    backlog_acq_route_checks()
+    backlog_cataloging_route_checks()
+    backlog_admin_route_checks()
+    backlog_utils_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
