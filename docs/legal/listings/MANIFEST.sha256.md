@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-27**
-- Версия кода (git): **`34b6d62`**
-- Файлов: **220** · строк: **66536** · условных страниц: **1210**
-- **SHA-256 всего листинга:** `7248c1b4fdebe0f6ff317c9f14c9a602b05dc7562475c49b5ee0c3a6819afbed`
+- Версия кода (git): **`431e714`**
+- Файлов: **220** · строк: **66705** · условных страниц: **1213**
+- **SHA-256 всего листинга:** `66de66411d80294b334854a70fb409ea7a6392ff925b9c48eb632b75cb9c77ee`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -40,7 +40,7 @@
 | `irbis-web/backend/access/fulltext.py` | 516 | `6c84c873712087205d830950304379bd0138abecd1e5dacc8be5dff77b9a608b` |
 | `irbis-web/backend/access/identity_store.py` | 67 | `efc100009e66b8866a8b4793b8e435847f545afaf4599446cbf3c577f1b20c74` |
 | `irbis-web/backend/access/inventory.py` | 267 | `789ddc64dfd60b5b6e95722f7f14cdfdb3bbdbb64f4c4d037b4b512d5dee0853` |
-| `irbis-web/backend/access/jirbis_migrate.py` | 222 | `0d5e5f7b4dadd429535c26a1193af9bb7ccb0521e7aaa88ccdd229c203c0d359` |
+| `irbis-web/backend/access/jirbis_migrate.py` | 349 | `b50aed63996aab39c68f14e228a8f013711c4ab74233c1db03c108a935c5f837` |
 | `irbis-web/backend/access/ksu_auto.py` | 235 | `d369265b26df66144b5154161b975f8f1d2b3426d011acde6c90a23bd397d36e` |
 | `irbis-web/backend/access/lich.py` | 401 | `dff9c64036d594c746da6a1496e33c8180a0ebe515843422272a9d3482f139e3` |
 | `irbis-web/backend/access/locker.py` | 300 | `1e3bf508cc5a653311bd6fe2c4b9dc7c5cd28e281ee472fcab654e603c2ff239` |
@@ -114,7 +114,7 @@
 | `irbis-web/backend/tests/test_integration.py` | 625 | `55fc8050db79ae59c07a8e910e44c353bbe5dc3be4b5812de3c7734f51f31dad` |
 | `irbis-web/backend/tests/test_inventory.py` | 186 | `3d74e27ca560076cecd4594e4957142038b8e135415802b146ac0680693a9140` |
 | `irbis-web/backend/tests/test_irbis_mst.py` | 314 | `b6a084833024cf2c532ffb0fa7686154ecb80e4094025776c8952d40acccf6cb` |
-| `irbis-web/backend/tests/test_jirbis_migrate.py` | 132 | `74a8f43afe7de12c4e5b70ca4c34bed84e7775c2bf87b568e0a047d5ffd6649a` |
+| `irbis-web/backend/tests/test_jirbis_migrate.py` | 174 | `8dac4418ba14efdd3b5e77b4a044cd03f6e6be6d0cd2f335b2398cb6f175c4cc` |
 | `irbis-web/backend/tests/test_ko.py` | 539 | `b3b081e883a82419352a968a20acf7ec52ba1c2086e7be261d9a8d60b751dd70` |
 | `irbis-web/backend/tests/test_ksu_auto.py` | 184 | `8f3d0ee290586f9ac1e25b9c4b284178be30aa46602620a98adec87c819f02d6` |
 | `irbis-web/backend/tests/test_ksu_exemplars.py` | 393 | `0fc3610ea5300c0e3341b54ad78a92f5ec28bedde465a55de849b053a3a6a1ae` |
