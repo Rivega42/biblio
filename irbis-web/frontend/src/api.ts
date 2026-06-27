@@ -642,6 +642,32 @@ export const api = {
   // Статус фоновой задачи миграции по её jobId (если run вернул jobId).
   migrateStatus: (jobId: string) =>
     jget<MigrateStatus>("/api/admin/migrate/status?" + qs({ jobId })),
+
+  // --- Каталогизатор · инструменты (PR #319) -------------------------------
+  // Обмен MARC: экспорт записей в ISO2709 (base64) / MARCXML и обратный импорт.
+  // records — массив записей в tag-keyed форме (напр. {"920":"PAZK","101":"rus"}).
+  // dedup — поиск дублей (кластеры key/members + сводка); print — печать ГОСТ
+  // (card/list/index); vocab — словари значений; versions — история версий записи.
+  // 404/501 → деск мягко деградирует (информер во вкладке).
+  marcExport: (records: unknown[]) => jpost<{ iso2709_b64: string; count: number }>("/api/cataloging/marc/export", { records }),
+  marcImport: (iso2709_b64: string) => jpost<{ records: unknown[]; count: number }>("/api/cataloging/marc/import", { iso2709_b64 }),
+  marcxmlExport: (records: unknown[]) => jpost<{ marcxml: string; count: number }>("/api/cataloging/marcxml/export", { records }),
+  marcxmlImport: (marcxml: string) => jpost<{ records: unknown[]; count: number }>("/api/cataloging/marcxml/import", { marcxml }),
+  dedupScan: (records: unknown[]) => jpost<{ clusters: { key: string; members: number[] }[]; stats: Record<string, unknown> }>("/api/cataloging/dedup", { records }),
+  catalogPrint: (records: unknown[], form: string) => jpost<{ text: string; form: string; count: number }>("/api/cataloging/print", { records, form }),
+  vocabValues: (vocab: string) => jget<{ items: Array<Record<string, unknown>> }>("/api/cataloging/vocab?" + qs({ vocab })),
+  vocabAddValue: (vocab: string, code: string, label: string) => jpost<{ value: Record<string, unknown> }>("/api/cataloging/vocab/value", { vocab, code, label }),
+  recVersions: (db: string, mfn: number) => jget<{ items: Array<{ version: number; actor?: string; created_at?: string }> }>("/api/cataloging/versions?" + qs({ db, mfn })),
+
+  // --- Утилиты (PR #319) ---------------------------------------------------
+  // Пакетные операции над массивом записей в форме {mfn, fields:[{tag,value}|
+  // {tag,subfields:[{code,value}]}]}: статистика фонда, экспорт (json/csv),
+  // поиск дублей по тег-спеке (напр. 10^a) и валидация обязательных тегов.
+  // 404/501 → деск мягко деградирует (информер во вкладке).
+  utilsStats: (records: unknown[]) => jpost<{ stats: Record<string, unknown>; fund: Record<string, unknown> }>("/api/utils/stats", { records }),
+  utilsExport: (records: unknown[], format: string, fields: string[]) => jpost<{ format: string; data: string }>("/api/utils/export", { records, format, fields }),
+  utilsDuplicates: (records: unknown[], tag: string) => jpost<{ duplicates: Record<string, number[]> }>("/api/utils/duplicates", { records, tag }),
+  utilsValidate: (records: unknown[], required: string[]) => jpost<{ invalid: Array<{ mfn: number; missing: string[] }>; ok: boolean }>("/api/utils/validate", { records, required }),
 };
 
 export const LANG: Record<string, string> = {
