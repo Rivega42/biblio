@@ -605,7 +605,7 @@ class CirculationEngine:
     def __init__(self, store=None, policy=None, notifier=None, tenant='public',
                  catalog=None, catalog_db='IBIS', notifications=None,
                  staff_recipient='staff', acquisition=None,
-                 archive_on_return=False, devices=None):
+                 archive_on_return=False, devices=None, pay=None):
         self.store = store or CirculationStore(':memory:')
         self.policy = policy or default_policy(tenant)
         # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
@@ -651,6 +651,13 @@ class CirculationEngine:
         # handle / no device_id circulation stays fully standalone (back-compat,
         # mirrors the ``catalog=`` seam).
         self.devices = devices
+        # Optional PAY seam (INTEGRATION_MAP ребро 3.3: утеря/штраф → касса PAY).
+        # ``pay`` (:class:`access.pay.PayLedger`) — финансовый леджер читателя
+        # (``RI=``). When wired, circulation posts a charge on a confirmed loss
+        # (возмещение 910^E) и на начисленный при возврате штраф, и a payment on
+        # ``pay_fine``. Best-effort, optional — with no handle circulation stays
+        # standalone (back-compat).
+        self.pay = pay
 
     # ---- acquisition-driven seams (поступление → выдача · выдача → КСУ) ---- #
     def register_acquired_item(self, item, catalog_db=None):
@@ -799,6 +806,58 @@ class CirculationEngine:
                           user_code=user_code, loan_ref=loan_ref, hold_ref=hold_ref)
         except Exception:
             return None  # device journal is best-effort; the circ op still stands
+
+    # ---- PAY ledger seam (ребро 3.3) -------------------------------------- #
+    def _post_pay_charge(self, reader, amount, kind, ref=None):
+        """Проводка НАЧИСЛЕНИЯ (штраф/возмещение) в PAY-леджер (ребро 3.3).
+
+        Best-effort и изолирован (как ``catalog=``/``notifications=``/``devices=``):
+        без ``pay``-хендла или при нулевой сумме — no-op (back-compat); ошибка
+        леджера НЕ роняет операцию книговыдачи. Возвращает строку проводки/None."""
+        if self.pay is None or not amount or amount <= 0:
+            return None
+        post = getattr(self.pay, 'post_charge', None)
+        if post is None:
+            return None
+        try:
+            return post(reader, amount, kind, ref=ref,
+                        currency=self.policy['fine']['currency'])
+        except Exception:
+            return None  # PAY is best-effort; the circ op still stands
+
+    def _post_pay_payment(self, reader, amount, ref=None):
+        """Проводка ПЛАТЕЖА в PAY-леджер (ребро 3.3). Best-effort/опционально."""
+        if self.pay is None or not amount or amount <= 0:
+            return None
+        post = getattr(self.pay, 'post_payment', None)
+        if post is None:
+            return None
+        try:
+            return post(reader, amount, ref=ref,
+                        currency=self.policy['fine']['currency'])
+        except Exception:
+            return None
+
+    def _catalog_price(self, item):
+        """Цена замены экземпляра из каталога **910^E** (ребро 3.3).
+
+        Резолвит экземпляр ``item`` (910^b) в каталоге и читает подполе ``^E``
+        (цена). ``None``, если каталог не подключён / экземпляр не найден / цена
+        пуста-нечисловая. Чисто читающая, best-effort (никогда не бросает)."""
+        if self.catalog is None:
+            return None
+        try:
+            found = self.catalog.find_exemplar(self.catalog_db, item)
+            if found is None:
+                return None
+            inst = found[2]
+            if isinstance(inst, dict):
+                raw = inst.get('e') or inst.get('E')
+                if raw:
+                    return float(str(raw).replace(',', '.'))
+        except Exception:
+            return None
+        return None
 
     # ---- catalog 910^A write-back (edges 2.1/2.2) ------------------------- #
     def _flip_catalog_status(self, item, status):
@@ -1187,6 +1246,8 @@ class CirculationEngine:
             events.append(self._emit('fine_charged', loan['reader'],
                           {'ref': loan_id, 'amount': fine['amount'],
                            'currency': self.policy['fine']['currency']}))
+            # Ребро 3.3: проводка штрафа в кассу PAY при фиксации на возврате.
+            self._post_pay_charge(loan['reader'], fine['amount'], 'fine_overdue', loan_id)
 
         # ws3 op: clear 40^F (the return gesture closes the loan).
         self.store.mark_returned(loan_id, today)
@@ -1433,6 +1494,8 @@ class CirculationEngine:
         if fine is None:
             return Decision(DENY, ['no_fine'])
         self.store.set_fine_status(fine['id'], 'paid')
+        # Ребро 3.3: проводка платежа в кассу PAY.
+        self._post_pay_payment(fine['reader'], fine['amount'], loan_id)
         ev = self._emit('fine_paid', fine['reader'],
                         {'ref': loan_id, 'amount': fine['amount']})
         return Decision(ALLOW, [], {'paid': loan_id}, [ev])
@@ -1495,8 +1558,12 @@ class CirculationEngine:
         if not override_grant:
             return Decision(DENY, ['lost_confirm_unauthorised'])
 
-        # §4.2 replacement value.
+        # §4.2 replacement value. Ребро 3.3: если на выдаче ``item_price`` пуст —
+        # берём цену замены из каталога **910^E** (а не только из аргумента);
+        # затем — дефолт политики как последний fallback.
         price = loan['item_price']
+        if not price or price <= 0:
+            price = self._catalog_price(loan['item'])
         if not price or price <= 0:
             price = self.policy['lost']['default_replacement_value']
         replacement = (price * self.policy['lost']['multiplier']
@@ -1512,6 +1579,9 @@ class CirculationEngine:
 
         self.store.upsert_fine(loan['reader'], loan_id, replacement,
                                kind='lost_replacement', status='charged')
+
+        # Ребро 3.3: проводка возмещения в кассу PAY (reader-keyed, ``RI=``).
+        self._post_pay_charge(loan['reader'], replacement, 'lost_replacement', loan_id)
 
         # Книговыдача→Комплектование (ребро 5.2): write the lost copy off into the
         # acquisition КСУ выбытия (910^V/^X, статус «списан»). Best-effort.
