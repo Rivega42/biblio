@@ -714,6 +714,34 @@ class Api:
                 if self.notifications is not None else None)
         except Exception:
             self.dispatch_worker = None
+        # Батч-2 фич-модули, разведённые в роуты ниже: ВКР (7.6/8.3), КСУ-авто
+        # (5.3), периодика (9.x), DAM/файлы (7.1). Best-effort.
+        try:
+            from access import vkr as _vkr
+            self.vkr = _vkr.VkrService(
+                _vkr.VkrStore(os.environ.get('VKR_DB', os.path.join(here, 'vkr.db'))))
+        except Exception:
+            self.vkr = None
+        try:
+            from access import ksu_auto as _ksu_auto
+            self.ksu_auto = _ksu_auto.KsuAutoService(
+                _ksu_auto.KsuAutoStore(os.environ.get('KSU_AUTO_DB',
+                                                      os.path.join(here, 'ksu_auto.db'))))
+        except Exception:
+            self.ksu_auto = None
+        try:
+            from access import serials as _serials
+            self.serials = _serials.SerialsService(
+                _serials.SerialsStore(os.environ.get('SERIALS_DB',
+                                                     os.path.join(here, 'serials.db'))))
+        except Exception:
+            self.serials = None
+        try:
+            from access import dam as _dam
+            self.dam = _dam.DamRegistry(
+                _dam.DamStore(os.environ.get('DAM_DB', os.path.join(here, 'dam.db'))))
+        except Exception:
+            self.dam = None
         # Привязки внешней OIDC-личности к билету (узел 3 MVP-2b): отдельный
         # sqlite-стор + резолв конфига провайдера. OFF, если провайдер не задан
         # (cfg.oidc_provider пуст) — _oidc_enabled() это проверяет. Best-effort.
@@ -2430,6 +2458,131 @@ class Api:
             return 200, ok({'processed': 0, 'sent': 0, 'failed': 0, 'retried': 0})
         return 200, ok(self.dispatch_worker.run_once())
 
+    # ---- ВКР (рёбра 7.6/8.3) ---------------------------------------------- #
+    def vkr_submit(self, session, body):
+        """POST /api/vkr — студент подаёт ВКР (любая авториз. читат. сессия)."""
+        self._reader_ticket(session)
+        if self.vkr is None:
+            return 200, ok({'vkr': None})
+        title = (body.get('title') or '').strip()
+        if not title:
+            return 400, err('bad_request', 'title required')
+        rec = self.vkr.submit(title, (body.get('author') or '').strip(),
+                              year=body.get('year'), faculty=body.get('faculty'),
+                              speciality=body.get('speciality'),
+                              file_ref=body.get('fileRef'))
+        return 200, ok({'vkr': rec})
+
+    def vkr_list(self, session, query):
+        """GET /api/vkr — список ВКР (staff)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.vkr is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.vkr.list(
+            faculty=(query.get('faculty', [None])[0]),
+            status=(query.get('status', [None])[0]))})
+
+    def vkr_review(self, session, body):
+        """POST /api/vkr/review — утвердить/отклонить ВКР (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.vkr is None:
+            return 200, ok({'vkr': None})
+        try:
+            vid = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        res = self.vkr.review(vid, approve=bool(body.get('approve', True)))
+        if res is None:
+            return 404, err('not_found', 'vkr not found')
+        return 200, ok(res)
+
+    # ---- КСУ авто-распределение (ребро 5.3) ------------------------------- #
+    def ksu_distribute(self, session, body):
+        """POST /api/ksu/distribute — авто-распределение партии (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.ksu_auto is None:
+            return 200, ok({'titles': 0, 'copies': 0})
+        items = body.get('items') or []
+        ksu_no = body.get('ksuNo')
+        if ksu_no:
+            return 200, ok(self.ksu_auto.compute_and_store(ksu_no, items))
+        return 200, ok(self.ksu_auto.compute(items))
+
+    # ---- Периодика (рёбра 9.2/9.3) ---------------------------------------- #
+    def serials_register(self, session, body):
+        """POST /api/serials — завести журнал/многотомник (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.serials is None:
+            return 200, ok({'serial': None})
+        title = (body.get('title') or '').strip()
+        if not title:
+            return 400, err('bad_request', 'title required')
+        try:
+            rec = self.serials.register((body.get('kind') or '').strip(), title,
+                                        issn=body.get('issn'),
+                                        shifr=body.get('shifr'),
+                                        source_mfn=body.get('mfn'))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'serial': rec})
+
+    def serials_add_issue(self, session, body):
+        """POST /api/serials/issue — добавить номер/том (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.serials is None:
+            return 200, ok({'issue': None})
+        try:
+            sid = int(body.get('serialId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'serialId required')
+        rec = self.serials.add_issue(sid, number=body.get('number'),
+                                     year=body.get('year'),
+                                     volume=body.get('volume'),
+                                     source_mfn=body.get('mfn'))
+        if rec is None:
+            return 404, err('not_found', 'serial not found')
+        return 200, ok({'issue': rec})
+
+    def serials_search(self, session, query):
+        """GET /api/serials/search — поиск сериалов (public-read)."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        if self.serials is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.serials.find(
+            (query.get('q', [''])[0] or '').strip())})
+
+    # ---- DAM / файлы (ребро 7.1) ------------------------------------------ #
+    def dam_attach(self, session, body):
+        """POST /api/dam/attach — привязать бинарь 951/953/955 к записи (staff)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.dam is None:
+            return 200, ok({'asset': None})
+        try:
+            mfn = int(body.get('mfn'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        db = (body.get('db') or self.cfg.db_default)
+        kind = (body.get('kind') or '').strip()
+        ref = (body.get('ref') or '').strip()
+        if not kind or not ref:
+            return 400, err('bad_request', 'kind/ref required')
+        rec = self.dam.attach(db, mfn, kind, ref, pages=body.get('pages'),
+                              mime=body.get('mime'),
+                              rights_template=body.get('rightsTemplate'))
+        return 200, ok({'asset': rec})
+
+    def dam_assets(self, session, query):
+        """GET /api/dam?db=&mfn= — бинари записи (public-read, закрытие 7.1)."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        if self.dam is None:
+            return 200, ok({'items': []})
+        db = (query.get('db', [self.cfg.db_default])[0])
+        try:
+            mfn = int(query.get('mfn', ['0'])[0])
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        return 200, ok({'items': self.dam.assets_for(db, mfn)})
+
     def notifications_inbox(self, session, unread_only):
         """GET /api/notifications — the reader's dispatched notices + unread count."""
         ticket = self._reader_ticket(session)
@@ -4135,6 +4288,28 @@ class Api:
             # ---- Диспетч уведомлений (ребро 11.3) ----
             if method == 'POST' and path == '/api/admin/notifications/dispatch':
                 return self.notifications_dispatch(session, body or {})
+            # ---- ВКР (рёбра 7.6/8.3) ----
+            if method == 'POST' and path == '/api/vkr':
+                return self.vkr_submit(session, body or {})
+            if method == 'GET' and path == '/api/vkr':
+                return self.vkr_list(session, query)
+            if method == 'POST' and path == '/api/vkr/review':
+                return self.vkr_review(session, body or {})
+            # ---- КСУ авто-распределение (ребро 5.3) ----
+            if method == 'POST' and path == '/api/ksu/distribute':
+                return self.ksu_distribute(session, body or {})
+            # ---- Периодика (рёбра 9.2/9.3) ----
+            if method == 'POST' and path == '/api/serials':
+                return self.serials_register(session, body or {})
+            if method == 'POST' and path == '/api/serials/issue':
+                return self.serials_add_issue(session, body or {})
+            if method == 'GET' and path == '/api/serials/search':
+                return self.serials_search(session, query)
+            # ---- DAM / файлы (ребро 7.1) ----
+            if method == 'POST' and path == '/api/dam/attach':
+                return self.dam_attach(session, body or {})
+            if method == 'GET' and path == '/api/dam':
+                return self.dam_assets(session, query)
             # ---- reader-portal v2 social: reviews/ratings (#134) ----
             if method == 'POST' and path == '/api/review/delete':
                 return self.delete_review(session, body or {})
