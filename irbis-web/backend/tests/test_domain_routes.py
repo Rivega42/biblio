@@ -40,6 +40,11 @@ from access.vocab_editor import VocabEditor, VocabStore
 from access.roles import RoleService, RoleStore
 from access.audit_trail import AuditService, AuditStore
 from access.config_store import ConfigService, ConfigStore
+from access.loan_policy import LoanPolicyService, LoanPolicyStore
+from access.debtors import DebtorsService, DebtStore
+from access.discipline_norms import DisciplineNormService, DisciplineStore
+from access.kko_reports import KkoSnapshotStore
+from access import circulation as _circ
 
 PASS = [0]
 FAIL = [0]
@@ -65,6 +70,11 @@ STAFF_BL_G = [{'function': 'cataloging', 'db': '*', 'level': 'write'},
               {'function': 'acq.read', 'db': '*', 'level': 'read'},
               {'function': 'acq.receipt', 'db': '*', 'level': 'write'},
               {'function': 'search', 'db': '*', 'level': 'read'}]
+# Книговыдача (circ.issue) + Книгообеспеченность (bp.read/bp.write) для PR #320-разводки.
+STAFF_CIRC_G = [{'function': 'circ.issue', 'db': '*', 'level': 'write'},
+                {'function': 'bp.read', 'db': '*', 'level': 'read'},
+                {'function': 'bp.write', 'db': '*', 'level': 'write'},
+                {'function': 'search', 'db': '*', 'level': 'read'}]
 
 
 def _api():
@@ -96,6 +106,11 @@ def _api():
     api.roles = RoleService(RoleStore(':memory:'))
     api.audit_trail = AuditService(AuditStore(':memory:'))
     api.config = ConfigService(ConfigStore(':memory:'))
+    # PR #320-разводка: Книговыдача (политики/должники) + Книгообеспеченность.
+    api.loan_policy = LoanPolicyService(LoanPolicyStore(':memory:'))
+    api.debtors = DebtorsService(DebtStore(':memory:'))
+    api.discipline_norms = DisciplineNormService(DisciplineStore(':memory:'))
+    api.kko_snapshots = KkoSnapshotStore(':memory:')
     return api
 
 
@@ -556,6 +571,136 @@ def backlog_utils_route_checks():
     check('utils/validate проходит при 920', st == 200 and p['data']['ok'] is True)
 
 
+# --------------------------------------------------------------------------- #
+# Разводка #320 — Книговыдача: политики выдачи + должники/санкции.
+# --------------------------------------------------------------------------- #
+def backlog_circ_route_checks():
+    print('-- #320 Книговыдача: политики выдачи + должники через route()')
+    api = _api()
+    S = _sess(api, 'staff', 'circ', STAFF_CIRC_G)
+
+    st, p = api.route('POST', '/api/circ/policy', {},
+                      {'readerCategory': 'STD', 'docType': '*',
+                       'loanDays': 10, 'maxItems': 1, 'finePerDay': 500}, S)
+    check('POST /api/circ/policy -> 200', st == 200 and p['data']['policy'])
+    st, p = api.route('GET', '/api/circ/policies', {}, None, S)
+    check('GET /api/circ/policies -> 1', st == 200 and len(p['data']['items']) == 1)
+    st, p = api.route('GET', '/api/circ/policy/resolve',
+                      {'category': ['STD'], 'docType': ['BK']}, None, S)
+    check('resolve -> max_items 1 (matched category)', st == 200
+          and p['data']['policy']['max_items'] == 1)
+
+    st, p = api.route('POST', '/api/circ/debt', {},
+                      {'reader': 'RDR1', 'item': 'BK-1', 'kind': 'overdue',
+                       'dueDate': '2026-06-01', 'asOf': '2026-06-15',
+                       'finePerDay': 500}, S)
+    check('debt overdue -> amount 7000 (14дн*500)', st == 200
+          and p['data']['debt']['amount_kopecks'] == 7000)
+    st, p = api.route('POST', '/api/circ/debt', {},
+                      {'reader': 'RDR1', 'item': 'BK-2', 'kind': 'lost',
+                       'amount': 30000}, S)
+    check('debt lost -> 200', st == 200 and p['data']['debt']['kind'] == 'lost')
+    st, p = api.route('GET', '/api/circ/debts', {'reader': ['RDR1']}, None, S)
+    check('reader debts total 37000', st == 200
+          and p['data']['debts']['total'] == 37000)
+    st, p = api.route('POST', '/api/circ/block/evaluate', {},
+                      {'reader': 'RDR1', 'thresholdKopecks': 10000}, S)
+    check('block/evaluate -> block', st == 200
+          and p['data']['state']['level'] == 'block')
+    st, p = api.route('GET', '/api/circ/blocks', {}, None, S)
+    check('blocks -> 1', st == 200 and len(p['data']['items']) == 1)
+    st, p = api.route('GET', '/api/circ/debts', {}, None, S)
+    check('debtors report readers_with_debt 1', st == 200
+          and p['data']['report']['readers_with_debt'] == 1)
+    did = api.debtors.reader_debts('RDR1')['items'][0]['id']
+    st, p = api.route('POST', '/api/circ/debt/settle', {}, {'debtId': did}, S)
+    check('debt settle -> True', st == 200 and p['data']['settled'] is True)
+
+    # write только staff: гость -> 401/403
+    st, p = api.route('POST', '/api/circ/policy', {},
+                      {'readerCategory': 'X', 'docType': '*',
+                       'loanDays': 1, 'maxItems': 1}, {})
+    check('гость на policy set -> 401/403', st in (401, 403))
+
+
+# --------------------------------------------------------------------------- #
+# Разводка #320 — Книгообеспеченность: нормы РПД + ККО-аналитика.
+# --------------------------------------------------------------------------- #
+def backlog_bp_route_checks():
+    print('-- #320 Книгообеспеченность: нормы РПД + ККО через route()')
+    api = _api()
+    S = _sess(api, 'staff', 'bp', STAFF_CIRC_G)
+
+    st, p = api.route('POST', '/api/bp/rpd/discipline', {},
+                      {'code': 'D1', 'name': 'Матанализ',
+                       'department': 'Кафедра ВМ', 'contingent': 50}, S)
+    check('POST /api/bp/rpd/discipline -> 200', st == 200
+          and p['data']['discipline']['code'] == 'D1')
+    st, p = api.route('POST', '/api/bp/rpd/norm', {},
+                      {'disciplineCode': 'D1', 'editionRef': 'BK-100',
+                       'normPerStudent': 0.5}, S)
+    check('POST /api/bp/rpd/norm -> 200', st == 200 and p['data']['norm'])
+    st, p = api.route('GET', '/api/bp/rpd/required', {'code': ['D1']}, None, S)
+    check('required = ceil(50*0.5)=25', st == 200
+          and p['data']['items'][0]['required'] == 25 and p['data']['total'] == 25)
+    st, p = api.route('GET', '/api/bp/rpd/disciplines', {}, None, S)
+    check('disciplines -> 1', st == 200 and len(p['data']['items']) == 1)
+    st, p = api.route('POST', '/api/bp/rpd/norm', {},
+                      {'disciplineCode': 'НЕТ', 'editionRef': 'X',
+                       'normPerStudent': 1.0}, S)
+    check('норматив неизвестной дисциплине -> 400', st == 400)
+
+    disc = [{'discipline': 'Матанализ', 'department': 'ВМ', 'students': 50,
+             'exemplars': 10, 'norm_per_student': 0.5},
+            {'discipline': 'Физика', 'department': 'Физ', 'students': 40,
+             'exemplars': 0, 'norm_per_student': 0.5}]
+    st, p = api.route('POST', '/api/bp/kko/report', {}, {'disciplines': disc}, S)
+    check('kko report summary 2 + by_department + worst', st == 200
+          and p['data']['summary']['disciplines'] == 2
+          and 'by_department' in p['data'] and 'worst' in p['data'])
+    st, p = api.route('POST', '/api/bp/kko/snapshot', {},
+                      {'period': '2026-H1', 'disciplines': disc}, S)
+    check('kko snapshot save -> 200', st == 200 and p['data']['snapshot'])
+
+    # bp.write только staff: гость -> 401/403
+    st, p = api.route('POST', '/api/bp/rpd/discipline', {},
+                      {'code': 'Z', 'name': 'Z'}, {})
+    check('гость на bp/rpd/discipline -> 401/403', st in (401, 403))
+
+
+# --------------------------------------------------------------------------- #
+# Ребро 11.4 — внешняя loan_policy + debtors ПЕРЕОПРЕДЕЛЯЮТ лимиты circulation.
+# --------------------------------------------------------------------------- #
+def edge_11_4_checks():
+    print('-- 11.4: loan_policy/debtors -> CirculationEngine.checkout')
+    lp = LoanPolicyService(LoanPolicyStore(':memory:'))
+    lp.set_policy('STD', '*', loan_days=10, max_items=1)   # понижает STD 15 -> 1
+    dbt = DebtorsService(DebtStore(':memory:'))
+    eng = _circ.CirculationEngine(store=_circ.CirculationStore(':memory:'),
+                                  loan_policy=lp, debtors=dbt)
+    eng.store.add_reader('R9', category='STD')
+    T = 1000000
+    check('1-я выдача ALLOW', eng.checkout('R9', 'A', T).decision == _circ.ALLOW)
+    d2 = eng.checkout('R9', 'B', T)
+    check('2-я выдача упёрлась в ВНЕШНИЙ лимит max_items=1 (не встроенные 15)',
+          d2.decision in (_circ.REQUIRE_OVERRIDE, _circ.DENY)
+          and 'limit_exceeded' in d2.reasons)
+
+    # back-compat: без loan_policy STD=15 -> 2-я выдача проходит
+    eng2 = _circ.CirculationEngine(store=_circ.CirculationStore(':memory:'))
+    eng2.store.add_reader('R8', category='STD')
+    eng2.checkout('R8', 'X1', T)
+    check('back-compat: без политики 2-я выдача ALLOW (встроенный STD=15)',
+          eng2.checkout('R8', 'X2', T).decision == _circ.ALLOW)
+
+    # должник-блок -> жёсткий DENY (не override-абельный)
+    dbt.register_lost('R9', 'L', 50000)
+    dbt.evaluate_block('R9', threshold_kopecks=10000)
+    d3 = eng.checkout('R9', 'C', T)
+    check('должник-блок -> DENY reader_blocked_debt',
+          d3.decision == _circ.DENY and 'reader_blocked_debt' in d3.reasons)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -569,6 +714,9 @@ def main():
     backlog_cataloging_route_checks()
     backlog_admin_route_checks()
     backlog_utils_route_checks()
+    backlog_circ_route_checks()
+    backlog_bp_route_checks()
+    edge_11_4_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 

@@ -669,18 +669,38 @@ class Api:
                 _reader_registry.ReaderStore(rr_db))
         except Exception:
             self.reader_registry = None
+        # Own-store слои Книговыдачи, разведённые в роуты ниже И подключаемые в
+        # circulation как хендлы (ребро 11.4): политики выдачи (внешние
+        # редактируемые лимиты) + реестр должников (санкции/блок). Строятся ДО
+        # circulation, чтобы передать их в движок. Best-effort.
+        try:
+            from access import loan_policy as _loan_policy
+            self.loan_policy = _loan_policy.LoanPolicyService(
+                _loan_policy.LoanPolicyStore(os.environ.get(
+                    'LOAN_POLICY_DB', os.path.join(here, 'loan_policy.db'))))
+        except Exception:
+            self.loan_policy = None
+        try:
+            from access import debtors as _debtors
+            self.debtors = _debtors.DebtorsService(
+                _debtors.DebtStore(os.environ.get(
+                    'DEBTORS_DB', os.path.join(here, 'debtors.db'))))
+        except Exception:
+            self.debtors = None
         # Circulation engine wired to that queue (notifications=) so its _emit
         # dispatches reader-addressable notices, AND to the catalog handle (catalog=)
         # so checkout/return flip the linked exemplar's 910^A (0↔1, edges 2.1/2.2)
-        # in the shared ЭК. Own sqlite store (env CIRC_DB), standalone from the live
-        # ИРБИС server (#222: never write the live server).
+        # in the shared ЭК, AND to loan_policy=/debtors= (ребро 11.4: внешние
+        # лимиты + блок должников на выдаче). Own sqlite store (env CIRC_DB),
+        # standalone from the live ИРБИС server (#222: never write the live server).
         try:
             circ_db = os.environ.get('CIRC_DB', os.path.join(here, 'circ.db'))
             self.circulation = _circulation.CirculationEngine(
                 store=_circulation.CirculationStore(circ_db),
                 notifications=self.notifications,
                 catalog=self.catalog, catalog_db=self.cfg.db_default,
-                reader_registry=self.reader_registry)
+                reader_registry=self.reader_registry,
+                loan_policy=self.loan_policy, debtors=self.debtors)
         except Exception:
             self.circulation = None
         # Hold + shelf services over OUR access store, reader-scoped by ticket. The
@@ -797,6 +817,22 @@ class Api:
                     'CONFIG_DB', os.path.join(here, 'config.db'))))
         except Exception:
             self.config = None
+        # Книгообеспеченность (PR #320), разведена в роуты ниже: модель РПД
+        # «дисциплина↔издание↔норматив↔контингент» + снапшот-стор ККО-аналитики
+        # (сами расчёты Кко — чисто-функциональны, импорт в хендлерах). Best-effort.
+        try:
+            from access import discipline_norms as _discipline_norms
+            self.discipline_norms = _discipline_norms.DisciplineNormService(
+                _discipline_norms.DisciplineStore(os.environ.get(
+                    'DISCIPLINE_NORMS_DB', os.path.join(here, 'discipline_norms.db'))))
+        except Exception:
+            self.discipline_norms = None
+        try:
+            from access import kko_reports as _kko_reports
+            self.kko_snapshots = _kko_reports.KkoSnapshotStore(os.environ.get(
+                'KKO_DB', os.path.join(here, 'kko.db')))
+        except Exception:
+            self.kko_snapshots = None
         # Привязки внешней OIDC-личности к билету (узел 3 MVP-2b): отдельный
         # sqlite-стор + резолв конфига провайдера. OFF, если провайдер не задан
         # (cfg.oidc_provider пуст) — _oidc_enabled() это проверяет. Best-effort.
@@ -3063,6 +3099,182 @@ class Api:
         bad = _du.validate_batch(records, required)
         return 200, ok({'invalid': bad, 'ok': len(bad) == 0})
 
+    # ---- Книговыдача: политики выдачи (PR #320, ребро 11.4) --------------- #
+    def loan_policies_list(self, session, query):
+        """GET /api/circ/policies — список политик выдачи (staff)."""
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'read')
+        if self.loan_policy is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.loan_policy.store.list_policies()})
+
+    def loan_policy_set(self, session, body):
+        """POST /api/circ/policy — задать политику (категория×вид издания) (staff)."""
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'write')
+        if self.loan_policy is None:
+            return 200, ok({'policy': None})
+        cat = (body.get('readerCategory') or '*').strip() or '*'
+        dt = (body.get('docType') or '*').strip() or '*'
+        try:
+            rec = self.loan_policy.set_policy(
+                cat, dt, int(body.get('loanDays')), int(body.get('maxItems')),
+                renewals=int(body.get('renewals') or 1),
+                deposit=int(body.get('deposit') or 0),
+                fine_per_day=int(body.get('finePerDay') or 0))
+        except (TypeError, ValueError) as e:
+            return 400, err('bad_request', 'loanDays/maxItems int required: %s' % e)
+        return 200, ok({'policy': rec})
+
+    def loan_policy_resolve(self, session, query):
+        """GET /api/circ/policy/resolve?category=&docType= — применимая политика (staff)."""
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'read')
+        if self.loan_policy is None:
+            return 200, ok({'policy': None})
+        cat = (query.get('category', ['*'])[0] or '*')
+        dt = (query.get('docType', ['*'])[0] or '*')
+        return 200, ok({'policy': self.loan_policy.resolve(cat, dt)})
+
+    # ---- Книговыдача: должники/санкции (PR #320) -------------------------- #
+    def debts_list(self, session, query):
+        """GET /api/circ/debts?reader= — долги читателя или сводный отчёт (staff)."""
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'read')
+        if self.debtors is None:
+            return 200, ok({'report': {}, 'reader': None})
+        reader = (query.get('reader', [''])[0] or '').strip()
+        if reader:
+            return 200, ok({'reader': reader,
+                            'debts': self.debtors.reader_debts(reader),
+                            'blocked': self.debtors.is_blocked(reader)})
+        return 200, ok({'report': self.debtors.debtors_report()})
+
+    def debt_register(self, session, body):
+        """POST /api/circ/debt — зарегистрировать долг (просрочка/утеря) (staff)."""
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'write')
+        if self.debtors is None:
+            return 200, ok({'debt': None})
+        reader = (body.get('reader') or '').strip()
+        item = (body.get('item') or '').strip()
+        if not reader or not item:
+            return 400, err('bad_request', 'reader/item required')
+        kind = (body.get('kind') or 'overdue').strip()
+        db = (body.get('db') or '*')
+        try:
+            if kind == 'lost':
+                rec = self.debtors.register_lost(
+                    reader, item, int(body.get('amount') or 0), db=db)
+            else:
+                rec = self.debtors.register_overdue(
+                    reader, item, body.get('dueDate'), body.get('asOf'),
+                    int(body.get('finePerDay') or 0), db=db)
+        except Exception as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'debt': rec})
+
+    def debt_settle(self, session, body):
+        """POST /api/circ/debt/settle — погасить долг (staff)."""
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'write')
+        if self.debtors is None:
+            return 200, ok({'settled': False})
+        try:
+            did = int(body.get('debtId'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'debtId required')
+        return 200, ok({'settled': bool(self.debtors.settle(did))})
+
+    def blocks_list(self, session, query):
+        """GET /api/circ/blocks — заблокированные читатели (staff)."""
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'read')
+        if self.debtors is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.debtors.store.blocked_readers()})
+
+    def block_evaluate(self, session, body):
+        """POST /api/circ/block/evaluate — пересчитать блокировку читателя (staff)."""
+        self._guard(session, 'circ.issue', self.cfg.db_default, 'write')
+        if self.debtors is None:
+            return 200, ok({'state': None})
+        reader = (body.get('reader') or '').strip()
+        if not reader:
+            return 400, err('bad_request', 'reader required')
+        state = self.debtors.evaluate_block(
+            reader, threshold_kopecks=int(body.get('thresholdKopecks') or 0),
+            threshold_count=int(body.get('thresholdCount') or 3))
+        return 200, ok({'state': state})
+
+    # ---- Книгообеспеченность: нормы РПД (PR #320) ------------------------- #
+    def discipline_add(self, session, body):
+        """POST /api/bp/rpd/discipline — завести дисциплину РПД с контингентом (staff)."""
+        self._guard(session, 'bp.write', '*', 'write')
+        if self.discipline_norms is None:
+            return 200, ok({'discipline': None})
+        code = (body.get('code') or '').strip()
+        name = (body.get('name') or '').strip()
+        if not code or not name:
+            return 400, err('bad_request', 'code/name required')
+        rec = self.discipline_norms.add_discipline(
+            code, name, department=(body.get('department') or ''),
+            contingent=int(body.get('contingent') or 0))
+        return 200, ok({'discipline': rec})
+
+    def disciplines_list(self, session, query):
+        """GET /api/bp/rpd/disciplines — список дисциплин РПД (staff)."""
+        self._guard(session, 'bp.read', '*', 'read')
+        if self.discipline_norms is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.discipline_norms.store.list_disciplines()})
+
+    def discipline_norm_set(self, session, body):
+        """POST /api/bp/rpd/norm — привязать норматив издания к дисциплине (staff)."""
+        self._guard(session, 'bp.write', '*', 'write')
+        if self.discipline_norms is None:
+            return 200, ok({'norm': None})
+        code = (body.get('disciplineCode') or '').strip()
+        ref = (body.get('editionRef') or '').strip()
+        if not code or not ref:
+            return 400, err('bad_request', 'disciplineCode/editionRef required')
+        try:
+            rec = self.discipline_norms.set_norm(
+                code, ref, float(body.get('normPerStudent')),
+                kind=(body.get('kind') or 'main'))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        except TypeError:
+            return 400, err('bad_request', 'normPerStudent required')
+        return 200, ok({'norm': rec})
+
+    def discipline_required(self, session, query):
+        """GET /api/bp/rpd/required?code= — требуемые экземпляры по нормам РПД (staff)."""
+        self._guard(session, 'bp.read', '*', 'read')
+        if self.discipline_norms is None:
+            return 200, ok({'items': [], 'total': 0})
+        code = (query.get('code', [''])[0] or '').strip()
+        if not code:
+            return 400, err('bad_request', 'code required')
+        return 200, ok({'items': self.discipline_norms.required_copies(code),
+                        'total': self.discipline_norms.total_required(code)})
+
+    # ---- Книгообеспеченность: ККО-аналитика (PR #320) -------------------- #
+    def kko_report(self, session, body):
+        """POST /api/bp/kko/report — отчёт книгообеспеченности по дисциплинам (staff)."""
+        self._guard(session, 'bp.read', '*', 'read')
+        from access import kko_reports as _kko
+        disciplines = body.get('disciplines') or []
+        rep = _kko.report(disciplines)
+        rep['by_department'] = _kko.by_department(disciplines)
+        rep['worst'] = _kko.worst(disciplines, int(body.get('worst') or 5))
+        return 200, ok(rep)
+
+    def kko_snapshot_save(self, session, body):
+        """POST /api/bp/kko/snapshot — сохранить срез отчёта на период (staff)."""
+        self._guard(session, 'bp.write', '*', 'write')
+        if self.kko_snapshots is None:
+            return 200, ok({'snapshot': None})
+        from access import kko_reports as _kko
+        period = (body.get('period') or '').strip()
+        if not period:
+            return 400, err('bad_request', 'period required')
+        rec = self.kko_snapshots.save(period, _kko.report(body.get('disciplines') or []))
+        return 200, ok({'snapshot': rec})
+
     def notifications_inbox(self, session, unread_only):
         """GET /api/notifications — the reader's dispatched notices + unread count."""
         ticket = self._reader_ticket(session)
@@ -4862,6 +5074,40 @@ class Api:
                 return self.utils_duplicates(session, body or {})
             if method == 'POST' and path == '/api/utils/validate':
                 return self.utils_validate(session, body or {})
+            # ---- Книговыдача: политики выдачи (PR #320, ребро 11.4) ----
+            if method == 'GET' and path == '/api/circ/policies':
+                return self.loan_policies_list(session, query)
+            if method == 'POST' and path == '/api/circ/policy':
+                return self.loan_policy_set(session, body or {})
+            if method == 'GET' and path == '/api/circ/policy/resolve':
+                return self.loan_policy_resolve(session, query)
+            # ---- Книговыдача: должники/санкции (PR #320) ----
+            if method == 'GET' and path == '/api/circ/debts':
+                return self.debts_list(session, query)
+            if method == 'POST' and path == '/api/circ/debt':
+                return self.debt_register(session, body or {})
+            if method == 'POST' and path == '/api/circ/debt/settle':
+                return self.debt_settle(session, body or {})
+            if method == 'GET' and path == '/api/circ/blocks':
+                return self.blocks_list(session, query)
+            if method == 'POST' and path == '/api/circ/block/evaluate':
+                return self.block_evaluate(session, body or {})
+            # ---- Книгообеспеченность: нормы РПД + ККО-аналитика (PR #320) ----
+            # NB: /api/bp/rpd/* — отдельный namespace от существующих
+            # bookprovision-роутов /api/bp/discipline (факультет/специальность/
+            # контингент/привязка), чтобы не шадоить их в диспетче.
+            if method == 'POST' and path == '/api/bp/rpd/discipline':
+                return self.discipline_add(session, body or {})
+            if method == 'GET' and path == '/api/bp/rpd/disciplines':
+                return self.disciplines_list(session, query)
+            if method == 'POST' and path == '/api/bp/rpd/norm':
+                return self.discipline_norm_set(session, body or {})
+            if method == 'GET' and path == '/api/bp/rpd/required':
+                return self.discipline_required(session, query)
+            if method == 'POST' and path == '/api/bp/kko/report':
+                return self.kko_report(session, body or {})
+            if method == 'POST' and path == '/api/bp/kko/snapshot':
+                return self.kko_snapshot_save(session, body or {})
             # ---- reader-portal v2 social: reviews/ratings (#134) ----
             if method == 'POST' and path == '/api/review/delete':
                 return self.delete_review(session, body or {})
