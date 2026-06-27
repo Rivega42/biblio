@@ -161,6 +161,15 @@ CREATE TABLE IF NOT EXISTS bp_binding (
   created REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS bp_binding_disc_idx ON bp_binding(discipline_id);
+CREATE TABLE IF NOT EXISTS bp_enrollment (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  student TEXT NOT NULL,                 -- RDR билет (RI=), поле 90 контингент
+  discipline_id INTEGER NOT NULL REFERENCES bp_discipline(id) ON DELETE CASCADE,
+  created REAL NOT NULL,                 -- запись на дисциплину (поле 69)
+  UNIQUE(student, discipline_id)
+);
+CREATE INDEX IF NOT EXISTS bp_enrollment_student_idx ON bp_enrollment(student);
+CREATE INDEX IF NOT EXISTS bp_enrollment_disc_idx ON bp_enrollment(discipline_id);
 """
 
 
@@ -389,6 +398,67 @@ class BookProvisionEngine:
             'UPDATE bp_discipline SET students=?, students_source=? WHERE id=?',
             (max(0, int(students or 0)), source, discipline_id))
         conn.commit()
+
+    # ------------------------------------------------------------------- #
+    # Студент ↔ дисциплина (per-student enrollment, RDR 90/69) — рёбра 4.2/4.3/10.3.
+    # ------------------------------------------------------------------- #
+    def enroll(self, student, discipline_id):
+        """Записать студента (RDR билет, поле 90 контингент) на дисциплину (69).
+
+        Ребро 4.2: per-student связь студент↔дисциплина (а не только агрегатный
+        счётчик контингента). Идемпотентно по (student, discipline_id). Возвращает
+        id записи."""
+        if not self._discipline_exists(discipline_id):
+            raise BookProvisionError('unknown discipline_id %r' % (discipline_id,))
+        if not student:
+            raise BookProvisionError('student (RDR ticket) is required')
+        conn = self._conn()
+        row = conn.execute(
+            'SELECT id FROM bp_enrollment WHERE student=? AND discipline_id=?',
+            (str(student), discipline_id)).fetchone()
+        if row is not None:
+            return row['id']
+        cur = conn.execute(
+            'INSERT INTO bp_enrollment(student,discipline_id,created) VALUES(?,?,?)',
+            (str(student), discipline_id, time.time()))
+        conn.commit()
+        return cur.lastrowid
+
+    def unenroll(self, student, discipline_id):
+        """Снять студента с дисциплины. Возвращает True, если запись была."""
+        conn = self._conn()
+        cur = conn.execute(
+            'DELETE FROM bp_enrollment WHERE student=? AND discipline_id=?',
+            (str(student), discipline_id))
+        conn.commit()
+        return cur.rowcount > 0
+
+    def student_disciplines(self, student):
+        """Дисциплины студента (ребро 10.3: студент видит свои дисциплины в ЛК).
+
+        Список строк ``bp_discipline``, на которые записан студент (поле 69
+        «изучаемые дисциплины» по билету 90)."""
+        rows = self._conn().execute(
+            '''SELECT d.* FROM bp_discipline d
+               JOIN bp_enrollment e ON e.discipline_id = d.id
+               WHERE e.student=? ORDER BY d.id''', (str(student),)).fetchall()
+        return [dict(r) for r in rows]
+
+    def enrolled_count(self, discipline_id):
+        """Число студентов, записанных на дисциплину (per-student контингент)."""
+        return self._conn().execute(
+            'SELECT COUNT(*) AS n FROM bp_enrollment WHERE discipline_id=?',
+            (discipline_id,)).fetchone()['n']
+
+    def sync_contingent_from_enrollments(self, discipline_id):
+        """Пересчитать контингент дисциплины ИЗ фактических записей (рёбра 4.2/4.3):
+        ``bp_discipline.students = COUNT(bp_enrollment)``, ``source='rdr'``.
+
+        Закрывает шов «VUZ контингент ← реальные студенты 90/69» вместо ручного
+        68^Z-счётчика. Возвращает новый контингент."""
+        n = self.enrolled_count(discipline_id)
+        self.set_contingent(discipline_id, n, source='rdr')
+        return n
 
     # ------------------------------------------------------------------- #
     # Bind recommended literature to a discipline (field 691, kind 691^G).
