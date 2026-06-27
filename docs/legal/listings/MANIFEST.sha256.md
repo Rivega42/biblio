@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
-- Дата сборки: **2026-06-26**
-- Версия кода (git): **`fba1a08`**
-- Файлов: **194** · строк: **60672** · условных страниц: **1104**
-- **SHA-256 всего листинга:** `46c823f071e3a46e28ff1b87b302da3ee2f62cbd52f043cbb32f3081f82c7388`
+- Дата сборки: **2026-06-27**
+- Версия кода (git): **`2983d2c`**
+- Файлов: **196** · строк: **61120** · условных страниц: **1112**
+- **SHA-256 всего листинга:** `2bd7031f126bbc27e2469ce1a93f18bff33d4bf2348301d5f4b376ced3fe2309`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -11,7 +11,7 @@
 | Файл | Строк | SHA-256 |
 |---|---:|---|
 | `irbis-web/backend/server.py` | 114 | `a01cef21d45f79d5051b35c0a7c0a2b22d647c85ebff748be0e37f0d0efdfab8` |
-| `irbis-web/backend/core.py` | 4180 | `268cd9cb6dc04da60e5b53a174f3e9c61f9b1149efde00819f8f06087a8dcd8a` |
+| `irbis-web/backend/core.py` | 4191 | `6c68502fd78e543858f8ecaf2dfba1ce870ae1c76ce30af463dd0611152b4a53` |
 | `irbis-web/backend/config.py` | 115 | `2aaee5116648201577e42d4669658940fa2e835d149a91a1d52fbbfcdb95e765` |
 | `irbis-web/backend/access/catalog.py` | 1188 | `af898c9d65180b08eebd03097d2d9471424034701191637a0c968fc157e214f3` |
 | `irbis-web/backend/access/circulation.py` | 1411 | `04c43d5f15cae6e92626dbbf43b97b7b196faf1d9e7bb59dbef5a82e1a47d81d` |
@@ -45,6 +45,7 @@
 | `irbis-web/backend/access/mock_station.py` | 137 | `680bc94852690e7be5ffe440ab7f905ff7a7211f5ab3449f266ebd086cf6103e` |
 | `irbis-web/backend/access/oidc.py` | 126 | `434eeeaafa3b94e985c8da21a8e056b3a8b611d43294db27870e8f866a2d78e9` |
 | `irbis-web/backend/access/oidc_store.py` | 72 | `a842ececb78598ede22b2dd45aa44927611dc875c6ab7249c754c45161a7374e` |
+| `irbis-web/backend/access/phpass.py` | 223 | `f604c39e5dba353828fec59dfca46dcc302889f9302ef0f2ae6aaa50dff80d1b` |
 | `irbis-web/backend/access/reader_agent.py` | 147 | `bb183eae4010d064ed9562157866bb503421e95facc8e93d90fa7dd801d0c628` |
 | `irbis-web/backend/access/readers.py` | 135 | `70c36e2467ca665d613a2cfa385d9a86fa9cd1963ea186822ff975bc53d3d425` |
 | `irbis-web/backend/access/rights.py` | 491 | `e7a92e97b3ed65d68e83616ef2759f0c1afbd2947a9f5248b7df7599217cc676` |
@@ -67,7 +68,7 @@
 | `irbis-web/backend/smoke.py` | 50 | `4d5d9031222e71a38b0825eb79ad68077c27ea4fee6587017a39e44555bd0682` |
 | `irbis-web/backend/static_files.py` | 55 | `45dfdccfdd9487b28e20faa8649f92e1ee5ed023c1c8b32c04dbcffdb6bf2eb3` |
 | `irbis-web/backend/tests/e2e.py` | 92 | `b33ed4bd0d64b2c43498643ec3196c1cbd1236e3aaceb2bfc316679b3d74b3bb` |
-| `irbis-web/backend/tests/test_access.py` | 258 | `17997f2e9e88539d92a5862b0694ad0d25bfd61c83d1870f5578d945733666ff` |
+| `irbis-web/backend/tests/test_access.py` | 259 | `b07abeacad6ae0ed384bba56a2a58a0c88a3011fe01df17ff70daaacc9a05031` |
 | `irbis-web/backend/tests/test_acq_bp_routes.py` | 317 | `f79b93760e8326bc0cd25548dbae3cb4c96028b8b795edfac331ba4b8395af37` |
 | `irbis-web/backend/tests/test_acquisition.py` | 358 | `c58dea6fc85ac17ed35bfdb617b279229d5c194d0676188dd75043ac13ab0bfe` |
 | `irbis-web/backend/tests/test_admin_routes.py` | 390 | `14a47704e586ac3876907ce9760fbe7d370d78e232fe6bb67ff7eb660c134d8c` |
@@ -111,6 +112,7 @@
 | `irbis-web/backend/tests/test_own_search.py` | 170 | `8dfb0cc03ffbfe40f4ba832683f95de6d85d4bc89656888d457c01e70149e2d4` |
 | `irbis-web/backend/tests/test_own_search_keyword.py` | 147 | `c49031b9c085eff0a787a0c0c688b8ee2d0f58129aed6d982114f370d04577cb` |
 | `irbis-web/backend/tests/test_pft.py` | 412 | `ec5a2291b73bbbac31dd2f1c91f7b16c1b234e24e7dc7e0bff2b8b85b209f49a` |
+| `irbis-web/backend/tests/test_phpass.py` | 213 | `8d02213747c8ea199d52099464328edbbbe9824d015d051ab87d88242231930a` |
 | `irbis-web/backend/tests/test_platform.py` | 543 | `8ff70e5ff654ec00457002151b2fe0ed9bb9c54f8b700f0ce15a1d07b9e067d5` |
 | `irbis-web/backend/tests/test_portal222.py` | 390 | `58cc8cdb35369ce2df4d279c3737fd5e3f43dffdcb65a278649ffc450252f477` |
 | `irbis-web/backend/tests/test_rdr40.py` | 408 | `8b70c0d1eee7ac247a50d949753aa3980703af776e27c58a515be1c24cf2d6a2` |
