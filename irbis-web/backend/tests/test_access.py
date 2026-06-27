@@ -246,6 +246,7 @@ def main():
                'test_marc', 'test_catalog_versions', 'test_suppliers',
                'test_subscription', 'test_marcxml', 'test_dedup',
                'test_vocab_editor', 'test_catalog_print',
+               'test_roles', 'test_audit_trail', 'test_config_store', 'test_db_utils',
                'test_discovery', 'test_integration', 'test_resilience',
                'test_portal222', 'test_acquisition', 'test_tocat', 'test_ksu_exemplars',
                'test_bookprovision', 'test_ko',
