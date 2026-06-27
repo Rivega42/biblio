@@ -243,6 +243,8 @@ def main():
                'test_sdi', 'test_union', 'test_domain_routes',
                'test_vkr', 'test_ksu_auto', 'test_serials', 'test_dam',
                'test_jirbis_migrate', 'test_bp_enrollment',
+               'test_marc', 'test_catalog_versions', 'test_suppliers',
+               'test_subscription',
                'test_discovery', 'test_integration', 'test_resilience',
                'test_portal222', 'test_acquisition', 'test_tocat', 'test_ksu_exemplars',
                'test_bookprovision', 'test_ko',
