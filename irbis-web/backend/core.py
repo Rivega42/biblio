@@ -290,6 +290,17 @@ def verify_reader_password(supplied, stored):
         digest = hashlib.md5(supplied.encode('utf-8')).hexdigest()
         if hmac.compare_digest(digest, s.lower()):
             return True
+    # INTEGRATION POINT (#294, cutover jirbis→Biblio): читатели, перенесённые из
+    # jos_users, могут нести phpass-хэш ($P$/$H$) в поле RDR 130/100. Чтобы они
+    # вошли со своим существующим паролем, добавить здесь третью ветку:
+    #     from access import phpass
+    #     if phpass.verify_legacy_password(supplied, s):
+    #         return True
+    # А upgrade-on-login (пере-хэш + persist) делать НЕ тут (это чистая проверка),
+    # а в auth_reader() ниже: при успехе и phpass.needs_rehash(stored) записать в
+    # RDR-поле пароля наш нативный хэш. Реальная запись в живой ИРБИС — отдельный
+    # супервизируемый шаг (posture #222: боевой ИРБИС сейчас НЕ пишем), поэтому в
+    # этом коммите оставлена только точка подключения.
     return False
 
 
