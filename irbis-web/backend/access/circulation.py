@@ -606,7 +606,7 @@ class CirculationEngine:
                  catalog=None, catalog_db='IBIS', notifications=None,
                  staff_recipient='staff', acquisition=None,
                  archive_on_return=False, devices=None, pay=None,
-                 reader_registry=None):
+                 reader_registry=None, loan_policy=None, debtors=None):
         self.store = store or CirculationStore(':memory:')
         self.policy = policy or default_policy(tenant)
         # Optional A6 (notifications) seam — INTEGRATION_MAP edge Circulation→A6.
@@ -665,6 +665,38 @@ class CirculationEngine:
         # ``reader_registry.resolve(reader_id)``, а не держит строку-id. Best-effort/
         # опционально — без хендла поведение прежнее (back-compat).
         self.reader_registry = reader_registry
+        # Optional Loan-policy seam (INTEGRATION_MAP ребро 11.4: внешние
+        # редактируемые лимиты выдачи → circulation). ``loan_policy``
+        # (:class:`access.loan_policy.LoanPolicyService`) — декларативный слой
+        # «категория читателя × вид издания → срок/лимит/продления». When wired,
+        # checkout СПРАШИВАЕТ его для (категория, item_kind) и, если найдена ЯВНАЯ
+        # политика (matched != 'default'), её ``max_items``/``loan_days``
+        # ПЕРЕОПРЕДЕЛЯЮТ встроенный ``default_policy``-лимит. Без хендла или при
+        # отсутствии явной политики — поведение прежнее (back-compat).
+        self.loan_policy = loan_policy
+        # Optional Debtors seam (INTEGRATION_MAP ребро 11.4 — санкции): внешний
+        # реестр должников (:class:`access.debtors.DebtorsService`). When wired,
+        # checkout добавляет жёсткий гейт: ``is_blocked(reader_id)`` → отказ
+        # ``reader_blocked_debt`` (не override-абельный). Best-effort/duck-typed —
+        # без хендла поведение прежнее (back-compat).
+        self.debtors = debtors
+
+    def _resolve_loan_policy(self, category, item_kind):
+        """Явная политика выдачи для (категория, вид издания) или None.
+
+        Duck-typed/best-effort: без хендла или при дефолтном фолбэке политики
+        (``matched == 'default'``) возвращает None — тогда checkout оставляет
+        встроенный лимит (back-compat). Любой сбой хендла проглатывается."""
+        lp = getattr(self, 'loan_policy', None)
+        if lp is None:
+            return None
+        try:
+            pol = lp.resolve(category, item_kind or '*')
+        except Exception:
+            return None
+        if not pol or pol.get('matched') in (None, 'default'):
+            return None
+        return pol
 
     # ---- acquisition-driven seams (поступление → выдача · выдача → КСУ) ---- #
     def register_acquired_item(self, item, catalog_db=None):
@@ -1106,6 +1138,20 @@ class CirculationEngine:
         limits = category_limits(self.policy, category)
         reasons = []
 
+        # Ребро 11.4: внешняя редактируемая политика выдачи (loan_policy)
+        # переопределяет встроенные лимиты для (категория × вид издания), если
+        # подключён хендл И задана ЯВНАЯ политика (не дефолтный фолбэк). Иначе
+        # остаётся встроенный default_policy-лимит (back-compat).
+        ext_pol = self._resolve_loan_policy(category, item_kind)
+        if ext_pol is not None:
+            limits = dict(limits)
+            if ext_pol.get('max_items') is not None:
+                limits['max_books'] = ext_pol['max_items']
+                limits['max_dolg_books'] = min(limits['max_dolg_books'],
+                                               ext_pol['max_items'])
+            if ext_pol.get('loan_days') is not None:
+                limits['max_return_days'] = ext_pol['loan_days']
+
         # §2 debtor self-service gate (rule A): a hard debtor is denied.
         level = debt_level(self.store, self.policy, reader_id, today)
         if level == 'hard' and self.policy['debt']['reader_block_on_hard']:
@@ -1119,6 +1165,15 @@ class CirculationEngine:
 
         if reader['blocked']:
             reasons.append('reader_blocked')
+
+        # Ребро 11.4 (санкции): внешний реестр должников — жёсткий блок (не
+        # override-абельный). Best-effort: сбой хендла не ломает выдачу.
+        if getattr(self, 'debtors', None) is not None:
+            try:
+                if self.debtors.is_blocked(reader_id):
+                    reasons.append('reader_blocked_debt')
+            except Exception:
+                pass
 
         if reasons:
             # Only the debt/limit reasons are override-able by authorised staff.
