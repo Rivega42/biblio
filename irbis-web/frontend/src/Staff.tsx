@@ -11,6 +11,8 @@ import { CirculationDesk } from "./CirculationDesk";
 import { AcquisitionDesk } from "./AcquisitionDesk";
 import { BookProvisionDesk } from "./BookProvisionDesk";
 import { AdminDesk } from "./AdminDesk";
+import { CatalogingDesk } from "./CatalogingDesk";
+import { UtilitiesDesk } from "./UtilitiesDesk";
 import { PlatformDesk } from "./PlatformDesk";
 import { MigrationWizard } from "./MigrationWizard";
 import { BenchmarkPanel } from "./BenchmarkPanel";
@@ -20,7 +22,7 @@ type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) =
 
 // Функциональные модули продукта «Рабочее пространство сотрудника».
 // Собираются ПО ГРАНТАМ учётки (а не «по АРМам»): видны только разрешённые.
-type StaffRoute = "cataloging" | "circulation" | "cells" | "acquisition" | "provision" | "admin" | "platform" | "migration" | "benchmark" | "stub";
+type StaffRoute = "cataloging" | "cattools" | "circulation" | "cells" | "acquisition" | "provision" | "admin" | "utilities" | "platform" | "migration" | "benchmark" | "stub";
 type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: StaffRoute };
 const DOMAINS: DomainTile[] = [
   { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей RUSMARC", route: "cataloging" as const },
@@ -29,6 +31,8 @@ const DOMAINS: DomainTile[] = [
   { id: "cells", label: "Ячеистое хранение", icon: "grid", grant: "record.read", desc: "Карта ячеек: занятость, адрес, RFID (наша фишка)", route: "cells" as const },
   { id: "provision", label: "Книгообеспеченность", icon: "bar-chart", grant: "record.read", desc: "Обеспеченность дисциплин учебной литературой", route: "provision" as const },
   { id: "inv", label: "Инвентаризация", icon: "scan-line", grant: "record.read", desc: "Сверка фонда с ТСД", route: "stub" as const },
+  { id: "cattools", label: "Каталог · инструменты", icon: "book", grant: "record.read", desc: "MARC/MARCXML обмен, дедуп, печать ГОСТ, словари, версии", route: "cattools" as const },
+  { id: "utilities", label: "Утилиты", icon: "sliders", grant: "record.read", desc: "Статистика, экспорт, поиск дублей, пакетная валидация", route: "utilities" as const },
   { id: "admin", label: "Администрирование", icon: "sliders", grant: "admin.users", desc: "Учётки, гранты, роли, аудит", route: "admin" as const },
   { id: "platform", label: "Платформа", icon: "layers", grant: "admin.db", desc: "Арендаторы, тариф, лимиты, функциональные модули", route: "platform" as const },
   { id: "migration", label: "Миграция", icon: "download", grant: "admin.db", desc: "Онбординг-мастер переноса данных из ИРБИС64 в арендатора", route: "migration" as const },
@@ -261,6 +265,8 @@ function initials(name?: string, login?: string): string {
 // Текущий модуль по маршруту (для подсветки nav + хлебных крошек).
 function routeId(route: any): string {
   if (route === "cataloging") return "cataloging";
+  if (route === "cattools") return "cattools";
+  if (route === "utilities") return "utilities";
   if (route === "circulation") return "circulation";
   if (route === "cells") return "cells";
   if (route === "acquisition") return "acquisition";
@@ -282,6 +288,8 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
 
   const crumbLeaf =
     current === "cataloging" ? "Каталогизация" :
+    current === "cattools" ? "Каталог · инструменты" :
+    current === "utilities" ? "Утилиты" :
     current === "circulation" ? "Книговыдача" :
     current === "cells" ? "Ячеистое хранение" :
     current === "acquisition" ? "Комплектование" :
@@ -345,6 +353,8 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
 
         <div className="stf__body">
           {current === "cataloging" ? <CatalogingWorksheet staff={staff} toast={toast} />
+            : current === "cattools" ? <CatalogingDesk toast={toast} />
+            : current === "utilities" ? <UtilitiesDesk toast={toast} />
             : current === "circulation" ? <CirculationDesk toast={toast} />
             : current === "acquisition" ? <AcquisitionDesk toast={toast} />
             : current === "provision" ? <ProvisionArea staff={staff} toast={toast} />
