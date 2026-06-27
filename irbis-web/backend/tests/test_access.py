@@ -238,7 +238,7 @@ def main():
                'test_pft', 'test_authority', 'test_authority_seam', 'test_notifications',
                'test_notifications_dispatch', 'test_gbl',
                'test_catalog', 'test_record_links', 'test_circulation', 'test_circ_resolve',
-               'test_rdr40', 'test_circ_notify', 'test_circ_seams',
+               'test_rdr40', 'test_circ_notify', 'test_circ_seams', 'test_holds_batch',
                'test_discovery', 'test_integration', 'test_resilience',
                'test_portal222', 'test_acquisition', 'test_tocat', 'test_ksu_exemplars',
                'test_bookprovision', 'test_ko',

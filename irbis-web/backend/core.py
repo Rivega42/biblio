@@ -2281,6 +2281,24 @@ class Api:
             return 404, err('not_found', 'hold not found')
         return 200, ok(res)
 
+    def place_holds_batch(self, session, body):
+        """POST /api/holds/batch — оформить корзину читателя как заказы (ребро 10.2).
+
+        Принимает корзину портала ``{items:[{db?, mfn}, …]}`` и персистит каждую
+        позицию как бронь (own-store аналог RQST: «один движок, два клиента»)
+        через ``HoldService.place_many``. Идемпотентно поэлементно; публичность
+        каждой БД проверяется так же, как в одиночном ``place_hold``."""
+        ticket = self._reader_ticket(session)
+        self._guard(session, 'order', self.cfg.db_default, 'write')
+        items = []
+        for it in (body.get('items') or []):
+            db = (it.get('db') if isinstance(it, dict) else None) or self.cfg.db_default
+            self._public_db_guard(session, db)
+            items.append({'db': db,
+                          'mfn': it.get('mfn') if isinstance(it, dict) else None})
+        res = self.holds.place_many(ticket, items, default_db=self.cfg.db_default)
+        return 200, ok(res)
+
     def notifications_inbox(self, session, unread_only):
         """GET /api/notifications — the reader's dispatched notices + unread count."""
         ticket = self._reader_ticket(session)
@@ -3948,6 +3966,8 @@ class Api:
                 return self.place_hold(session, body or {})
             if method == 'GET' and path == '/api/holds':
                 return self.list_holds(session)
+            if method == 'POST' and path == '/api/holds/batch':
+                return self.place_holds_batch(session, body or {})
             if method == 'POST' and path == '/api/hold/cancel':
                 return self.cancel_hold(session, body or {})
             if method == 'GET' and path == '/api/notifications':
