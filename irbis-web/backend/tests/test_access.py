@@ -242,6 +242,7 @@ def main():
                'test_pay', 'test_reader_registry', 'test_notify_dispatch',
                'test_sdi', 'test_union', 'test_domain_routes',
                'test_vkr', 'test_ksu_auto', 'test_serials', 'test_dam',
+               'test_jirbis_migrate',
                'test_discovery', 'test_integration', 'test_resilience',
                'test_portal222', 'test_acquisition', 'test_tocat', 'test_ksu_exemplars',
                'test_bookprovision', 'test_ko',
