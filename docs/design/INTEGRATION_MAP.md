@@ -153,8 +153,8 @@ flowchart TB
 | # | Источник (поле/запись) → цель | Триггер / семантика | Дизайн? (§) | Код? (модуль / «нет») | Статус | Примечание |
 |---|---|---|---|---|---|---|
 | 6.1 | ATHR* → IBIS поля **700/701/710/606/607** подполе **^3** | При выборе авторитета — автозаполнение подполей + протягивание `^3` = номер авторитетной записи | SPEC_service_authority §3.1/§3.2 (карта), DB_AUTHORITY §5.2 | ✅ разведено: `catalog.save()` вызывает `resolve_authority_refs`→`apply_authority`→`authority.substitute()`, заполняя `^a/^b/^g` + протягивая `^3` ДО ФЛК/индекса; битый `^3` (неизвестный id) поднимает `AuthorityNotFound` | **✅** | **Шов каталог↔авторитет замкнут в save-пайплайне** (commit `cf97183`, тесты `test_integration.py::authority_on_save_checks` / `apply_authority_helper_checks`). Запись с `_authority_ref` достраивается на сохранении; авторитет-хендл опционален (back-compat). |
-| 6.2 | IBIS save → пополнение **ATHRA/ATHR*** (autoin) | **autoin.gbl**: при сохранении БО авто-создаются связанные авторитетные записи (510/710 без `^3`) | SPEC_service_authority §3.4 (системный хук на save), DB_AUTHORITY | 🟡 спроектировано как хук; код: ни `catalog.py`, ни `authority.py` не реализуют autoin-хук на сохранение | 🟡 | «Обратное» ребро каталог→авторитеты не разведено. |
-| 6.3 | ФЛК `!700/!606/!964` ↔ authority-сервис | ФЛК валидирует связь `^3` (битая ссылка → нарушение) | SPEC_service_authority §0 (ФЛК вызывает), flk.py | 🟡 flk.py есть; но правила проверки `^3` против authority-стора не подключены к `catalog.validate()` | 🟡 | flk вызывается на save, но без authority-проверки `^3`. |
+| 6.2 | IBIS save → пополнение **ATHRA/ATHR*** (autoin) | **autoin.gbl**: при сохранении БО авто-создаются связанные авторитетные записи (510/710 без `^3`) | SPEC_service_authority §3.4 (системный хук на save), DB_AUTHORITY | ✅ `catalog.autoin_authority()` + `catalog.save(..., autoin=True)` (catalog.py:743): по полям-заголовкам без `^3` зовёт `authority.autoin` (link/создать `needs_review`) и протягивает `^3` обратно в запись | **✅** | Opt-in `autoin=True` (мутирует ATHR*, потому по умолчанию off — это политика, не дыра); код+тест `test_authority_seam.py::autoin_checks`. **Реклассификация 2026-06-27: карта отставала от кода.** |
+| 6.3 | ФЛК `!700/!606/!964` ↔ authority-сервис | ФЛК валидирует связь `^3` (битая ссылка → нарушение) | SPEC_service_authority §0 (ФЛК вызывает), flk.py | ✅ `flk.py` предикат `authority_ref` (`AUTHORITY_LINK_FIELDS`/`_authref_broken`) + канон-правило `rec.authref.integrity` (enabled); `catalog.validate()`/`catalog.save()` ПЕРЕДАЮТ authority-хендл в `flk.validate(..., authority=)` (catalog.py:486-500/617-618) — битый `^3` → severity-2 | **✅** | На save включено (не opt-in); тесты `test_authority_seam.py::flk_checks`. **Реклассификация 2026-06-27: карта отставала от кода.** |
 | 6.4 | Поиск по авторитету (навигаторы `WnLink`) → IBIS | Поиск записей каталога по выбранному авторитету (`^3`/`H=`) | SPEC_service_authority §2, CAPABILITY_MAP §5 | 🟡 `authority.search()` ищет авторитеты; обратный поиск «каталог по ^3» в catalog.py не реализован (INDEX_SPEC не индексирует ^3/606/607) | 🟡 | Каталог не findable по авторитетному `^3`. |
 
 ---
@@ -221,12 +221,13 @@ flowchart TB
 
 | Статус | Рёбра 1–11 | +Device (12) | Всего |
 |---|---|---|---|
-| ✅ разведено (код+тесты) | ~30 | ~8 | **~38 (~60%)** |
-| 🟡 спроектировано-не-разведено | ~10 | 0 | ~10 |
+| ✅ разведено (код+тесты) | ~32 | ~8 | **~40 (~63%)** |
+| 🟡 спроектировано-не-разведено | ~8 | 0 | ~8 |
 | ❌ отсутствует | ~15 | 0 | ~15 |
 | **Итого рёбер** | 55 | 8 | **~63** |
 
-> Δ2026-06-27 (ветка `feat/circ-device-due-seams`): замкнуты **12.6/12.7** (device_event↔loan/holds через `circulation.devices=`-хэндл) и **3.5** (срок→уведомления, `circulation.scan_due`) → ✅ 35→38 (~57%→~60%), 🟡 13→10. Все смежные circ/device-сьюты зелёные + новый `tests/test_circ_seams.py` 54/0.
+> Δ2026-06-27 (ветка `feat/circ-device-due-seams`): замкнуты **12.6/12.7** (device_event↔loan/holds через `circulation.devices=`-хэндл) и **3.5** (срок→уведомления, `circulation.scan_due`) → ✅ 35→38, 🟡 13→10. Все смежные circ/device-сьюты зелёные + новый `tests/test_circ_seams.py` 54/0.
+> Δ2026-06-27 (реклассификация карта↔код): **6.2** (autoin `catalog.autoin_authority`) и **6.3** (ФЛК `^3` через `catalog.validate(authority=)`) уже были разведены в коде+тестах (`test_authority_seam.py`) — карта отставала. ✅ 38→40 (~63%), 🟡 10→8. **Урок: per-edge статусы сверять ПОСТРОЧНО против `access/*.py`+тестов, а не по памяти карты — часть «🟡/❌» уже закрыта.**
 
 ### Кластер 12. Устройства (chip #277) — НОВЫЕ рёбра (не было в карте)
 | # | Источник → цель | Статус | Доказательство |
