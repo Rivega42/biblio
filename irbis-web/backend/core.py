@@ -3232,6 +3232,40 @@ class Api:
             return 400, err('bad_request', 'ip required')
         return 200, ok({'match': self.ip_auth.resolve(ip)})
 
+    # ---- Browse-указатели A–Z (чисто-функциональный browse_index) --------- #
+    def _catalog_records(self, db, limit=500):
+        """Записи базы из собственного CatalogStore (без живого ИРБИС).
+
+        Источник для указателей/агрегаций own-store. Пусто, если каталог
+        недоступен."""
+        out = []
+        if self.catalog is None:
+            return out
+        try:
+            for mfn in self.catalog.list_mfns(db, limit=limit):
+                rec = self.catalog.get(db, mfn)
+                if rec is not None:
+                    out.append(rec)
+        except Exception:
+            pass
+        return out
+
+    def browse_terms(self, session, query):
+        """GET /api/browse?db=&tag=&subfield= — указатель A–Z по полю (public-read).
+
+        Перебор терминов (по умолчанию авторы 700^a) по первой букве со
+        счётчиками: ``{letters:[...], buckets:{буква:[{term,count}]}}``. Источник —
+        собственный каталог (own-store, без живого ИРБИС). Гость/читатель
+        ограничен публичной базой."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        db = (query.get('db', [self.cfg.db_default])[0])
+        self._public_db_guard(session, db)
+        from access import browse_index as _bi
+        tag = (query.get('tag', ['700'])[0] or '700').strip()
+        subfield = (query.get('subfield', ['a'])[0] or '')
+        records = self._catalog_records(db)
+        return 200, ok(_bi.browse(records, tag, subfield))
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -5624,6 +5658,9 @@ class Api:
                 return self.ip_range_add(session, body or {})
             if method == 'POST' and path == '/api/admin/ip-ranges/remove':
                 return self.ip_range_remove(session, body or {})
+            # ---- Browse-указатели A–Z (#240) ----
+            if method == 'GET' and path == '/api/browse':
+                return self.browse_terms(session, query)
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
