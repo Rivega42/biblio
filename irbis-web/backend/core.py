@@ -782,6 +782,32 @@ class Api:
                     'EXHIBITS_DB', os.path.join(here, 'exhibits.db'))))
         except Exception:
             self.exhibits = None
+        # Батч own-store модулей (эпик #240), разведённый в роуты ниже: шаблоны
+        # метаданных по виду издания (Каталогизатор) · очередь фоновых задач с
+        # приоритетами (фундамент pipeline оцифровки) · time-boxed подписки
+        # читателя на коллекции/выставки/записи. Все — own-store/stdlib+sqlite,
+        # живой ИРБИС не пишется (#222). Best-effort: сбой сборки -> None.
+        try:
+            from access import metadata_templates as _md_templates
+            self.metadata_templates = _md_templates.TemplateService(
+                _md_templates.TemplateStore(os.environ.get(
+                    'METADATA_TEMPLATES_DB', os.path.join(here, 'metadata_templates.db'))))
+        except Exception:
+            self.metadata_templates = None
+        try:
+            from access import job_queue as _job_queue
+            self.job_queue = _job_queue.JobQueue(
+                _job_queue.JobStore(os.environ.get(
+                    'JOB_QUEUE_DB', os.path.join(here, 'job_queue.db'))))
+        except Exception:
+            self.job_queue = None
+        try:
+            from access import collection_subs as _collection_subs
+            self.collection_subs = _collection_subs.CollectionSubscriptionService(
+                _collection_subs.CollectionSubStore(os.environ.get(
+                    'COLLECTION_SUBS_DB', os.path.join(here, 'collection_subs.db'))))
+        except Exception:
+            self.collection_subs = None
         # Бэклог own-store модулей (#316/#317/#318), разведённый в роуты ниже:
         # поставщики/счета + подписка-периодика (Комплектование), версии записи +
         # редактор словарей .mnu/.tre (Каталогизатор), роли RBAC + аудит-трейл +
@@ -2925,6 +2951,167 @@ class Api:
             return 200, ok({'verb': verb,
                             'ListIdentifiers': _oai.list_identifiers(records)})
         return 400, err('badVerb', 'unknown or missing verb')
+
+    # ===================================================================== #
+    # Батч own-store модулей (эпик #240): шаблоны метаданных по виду издания  #
+    # (Каталогизатор) · очередь фоновых задач (pipeline оцифровки, admin) ·   #
+    # time-boxed подписки читателя на коллекции (контур читателя).            #
+    # ===================================================================== #
+
+    # ---- Шаблоны метаданных по виду издания (TemplateService) ------------- #
+    def templates_types(self, session, query):
+        """GET /api/cataloging/templates — виды издания + шаблоны (cataloging read)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.metadata_templates is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.metadata_templates.types()})
+
+    def template_skeleton(self, session, query):
+        """GET /api/cataloging/template?type= — каркас полей под вид (cataloging read).
+
+        Неизвестный тип -> 404."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.metadata_templates is None:
+            return 404, err('not_found', 'templates unavailable')
+        type_ = (query.get('type', [''])[0] or '').strip()
+        if not type_:
+            return 400, err('bad_request', 'type required')
+        sk = self.metadata_templates.skeleton(type_)
+        if sk is None:
+            return 404, err('not_found', 'unknown template type')
+        return 200, ok(sk)
+
+    def template_save(self, session, body):
+        """POST /api/cataloging/template — сохранить кастомный шаблон (cataloging write).
+
+        ``type`` + ``fields`` (непустой список field-def с непустым ``tag``)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.metadata_templates is None:
+            return 200, ok({'template': None})
+        type_ = (body.get('type') or '').strip()
+        if not type_:
+            return 400, err('bad_request', 'type required')
+        try:
+            tpl = self.metadata_templates.save(
+                type_, body.get('fields'), label=body.get('label'))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'template': tpl})
+
+    # ---- Очередь фоновых задач (JobQueue) — pipeline оцифровки, admin ------ #
+    def job_enqueue(self, session, body):
+        """POST /api/jobs — поставить фоновую задачу (admin).
+
+        ``kind`` обязателен; ``payload`` (dict), ``priority`` (int, больше=раньше)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.job_queue is None:
+            return 200, ok({'job': None})
+        kind = (body.get('kind') or '').strip()
+        if not kind:
+            return 400, err('bad_request', 'kind required')
+        try:
+            priority = int(body.get('priority', 0))
+        except (TypeError, ValueError):
+            priority = 0
+        job = self.job_queue.enqueue(kind, payload=body.get('payload'),
+                                     priority=priority)
+        return 200, ok({'job': job})
+
+    def jobs_list(self, session, query):
+        """GET /api/jobs?status= — список задач + сводка очереди (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.job_queue is None:
+            return 200, ok({'items': [], 'stats': {'total': 0, 'by_status': {}}})
+        status = (query.get('status', [None])[0])
+        try:
+            limit = min(500, max(1, int(query.get('limit', ['100'])[0])))
+        except (TypeError, ValueError):
+            limit = 100
+        return 200, ok({'items': self.job_queue.list(status=status, limit=limit),
+                        'stats': self.job_queue.stats()})
+
+    def job_claim(self, session, body):
+        """POST /api/jobs/claim — захватить следующую задачу воркером (admin).
+
+        Пустая очередь -> ``job: null``."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.job_queue is None:
+            return 200, ok({'job': None})
+        return 200, ok({'job': self.job_queue.claim()})
+
+    def job_complete(self, session, body):
+        """POST /api/jobs/complete — завершить задачу успехом (admin).
+
+        ``id`` обязателен; ``result`` (dict) опц. Неизвестный id -> 404."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.job_queue is None:
+            return 200, ok({'job': None})
+        try:
+            jid = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        job = self.job_queue.complete(jid, result=body.get('result'))
+        if job is None:
+            return 404, err('not_found', 'job not found')
+        return 200, ok({'job': job})
+
+    def job_fail(self, session, body):
+        """POST /api/jobs/fail — завершить задачу ошибкой (admin).
+
+        ``id`` обязателен; ``error`` (строка) опц. Неизвестный id -> 404."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.job_queue is None:
+            return 200, ok({'job': None})
+        try:
+            jid = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        job = self.job_queue.fail(jid, error=(body.get('error') or ''))
+        if job is None:
+            return 404, err('not_found', 'job not found')
+        return 200, ok({'job': job})
+
+    # ---- Time-boxed подписки читателя на коллекции (CollectionSubscription) - #
+    def collection_subscribe(self, session, body):
+        """POST /api/me/collections — подписать читателя на коллекцию/выставку/запись.
+
+        Reader-scoped. ``kind`` (collection|exhibit|record) + ``ref`` обязательны;
+        ``from``/``to`` — окно дат ``YYYY-MM-DD`` (опц., открытая граница = None)."""
+        ticket = self._reader_ticket(session)
+        if self.collection_subs is None:
+            return 200, ok({'subscription': None})
+        try:
+            sub = self.collection_subs.subscribe(
+                ticket, (body.get('kind') or '').strip(),
+                (body.get('ref') or '').strip(),
+                date_from=(body.get('from') or None),
+                date_to=(body.get('to') or None))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'subscription': sub})
+
+    def collection_subs_list(self, session, query):
+        """GET /api/me/collections?active=1 — подписки читателя (reader-scoped).
+
+        ``active=1`` -> только активные на сегодня; иначе все."""
+        ticket = self._reader_ticket(session)
+        if self.collection_subs is None:
+            return 200, ok({'items': []})
+        active = query.get('active', ['0'])[0] in ('1', 'true', 'yes')
+        items = (self.collection_subs.active(ticket) if active
+                 else self.collection_subs.list(ticket))
+        return 200, ok({'items': items})
+
+    def collection_unsubscribe(self, session, body):
+        """POST /api/me/collections/cancel — отменить СВОЮ подписку (reader-scoped)."""
+        ticket = self._reader_ticket(session)
+        if self.collection_subs is None:
+            return 200, ok({'cancelled': False})
+        try:
+            sid = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        return 200, ok({'cancelled': self.collection_subs.cancel(ticket, sid)})
 
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
@@ -5278,6 +5465,29 @@ class Api:
                 return self.ocr_search(session, query)
             if method == 'GET' and path == '/api/oai':
                 return self.oai(session, query)
+            # ---- Батч #240: шаблоны метаданных · очередь задач · подписки ----
+            if method == 'GET' and path == '/api/cataloging/templates':
+                return self.templates_types(session, query)
+            if method == 'GET' and path == '/api/cataloging/template':
+                return self.template_skeleton(session, query)
+            if method == 'POST' and path == '/api/cataloging/template':
+                return self.template_save(session, body or {})
+            if method == 'POST' and path == '/api/jobs':
+                return self.job_enqueue(session, body or {})
+            if method == 'GET' and path == '/api/jobs':
+                return self.jobs_list(session, query)
+            if method == 'POST' and path == '/api/jobs/claim':
+                return self.job_claim(session, body or {})
+            if method == 'POST' and path == '/api/jobs/complete':
+                return self.job_complete(session, body or {})
+            if method == 'POST' and path == '/api/jobs/fail':
+                return self.job_fail(session, body or {})
+            if method == 'POST' and path == '/api/me/collections':
+                return self.collection_subscribe(session, body or {})
+            if method == 'GET' and path == '/api/me/collections':
+                return self.collection_subs_list(session, query)
+            if method == 'POST' and path == '/api/me/collections/cancel':
+                return self.collection_unsubscribe(session, body or {})
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
