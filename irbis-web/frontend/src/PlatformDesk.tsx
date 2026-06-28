@@ -107,13 +107,14 @@ const LIMIT_META: { key: keyof PlanLimits; name: string; icon: IconName; unit?: 
   { key: "max_storage_mb", name: "Хранилище", icon: "archive", unit: " МБ" },
 ];
 
-type Tab = "tenants" | "billing" | "matrix" | "deployment" | "connections";
+type Tab = "tenants" | "billing" | "matrix" | "deployment" | "connections" | "onboard";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "tenants", label: "Арендаторы", icon: "layers" },
   { id: "billing", label: "Тариф и лимиты", icon: "credit-card" },
   { id: "matrix", label: "Матрица доступов", icon: "sliders" },
   { id: "deployment", label: "Развёртывание", icon: "settings" },
   { id: "connections", label: "Подключения", icon: "link" },
+  { id: "onboard", label: "Онбординг", icon: "check" },
 ];
 
 // Информер «эндпойнт вкладки не развёрнут».
@@ -161,7 +162,9 @@ export function PlatformDesk({ toast }: { toast: ToastFn }) {
             ? <MatrixTab toast={toast} />
             : tab === "deployment"
               ? <DeploymentTab toast={toast} selected={selected} />
-              : <ConnectionsTab toast={toast} selected={selected} />}
+              : tab === "connections"
+                ? <ConnectionsTab toast={toast} selected={selected} />
+                : <OnboardWizard toast={toast} onGoConnections={() => setTab("connections")} onSelect={setSelected} />}
     </div>
   );
 }
@@ -770,6 +773,105 @@ function ConnectionsTab({ toast, selected }: { toast: ToastFn; selected: string 
         );
       })}
       <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: 0 }}>Секреты хранятся off-git; наружу — маскированными. Пустой/маска секрет при сохранении не затирает прежний.</p>
+    </div>
+  );
+}
+
+// ===== Онбординг-визард (#335) ==============================================
+// Гайдед-флоу оператора платформы: учреждение + режим развёртывания -> применить
+// (POST /api/admin/onboard) -> подсказка по нужным подключениям. Гейт super-admin.
+function OnboardWizard({ toast, onGoConnections, onSelect }: { toast: ToastFn; onGoConnections: () => void; onSelect: (slug: string) => void }) {
+  const [catalog, setCatalog] = React.useState<{ modes: DeploymentMode[]; topologies: DeploymentTopology[] } | null>(null);
+  const [down, setDown] = React.useState(false);
+  const [slug, setSlug] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [fullName, setFullName] = React.useState("");
+  const [mode, setMode] = React.useState("");
+  const [topology, setTopology] = React.useState("cloud");
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState<DeploymentResolved | null>(null);
+
+  React.useEffect(() => { (async () => {
+    const r = await api.adminDeploymentCatalog();
+    if (r.status === 404 || r.status === 501 || r.status === 403) { setDown(true); return; }
+    if (r.json?.ok && r.json.data) { setCatalog(r.json.data); if (r.json.data.modes[0]) setMode(r.json.data.modes[0].key); }
+  })(); }, []);
+
+  const apply = async () => {
+    const s = slug.trim();
+    if (!s || !mode) { toast({ variant: "info", title: "Заполните поля", message: "Код арендатора и режим обязательны." }); return; }
+    setBusy(true);
+    const r = await api.adminOnboard({ tenant: s, mode, topology, name: name.trim(), fullName: fullName.trim() });
+    setBusy(false);
+    if (r.json?.ok && r.json.data?.deployment) {
+      setResult(r.json.data.deployment); onSelect(s);
+      toast({ variant: "success", title: "Онбординг применён", message: s });
+    } else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db (оператор платформы)." });
+    else if (r.status === 400) toast({ variant: "error", title: "Не применено", message: "Проверьте режим/топологию." });
+    else toast({ variant: "error", title: "Не применено", message: "Повторите попытку." });
+  };
+  const reset = () => { setResult(null); setSlug(""); setName(""); setFullName(""); };
+
+  if (down) return <SectionDown icon="check" title="Онбординг подключается отдельно" />;
+  if (!catalog) return <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка…</div>;
+
+  if (result) {
+    const KIND_RU: Record<string, string> = { irbis: "ИРБИС", jirbis: "jirbis", inforost: "Инфорост" };
+    return (
+      <div className="irb-plat__card" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <Icon name="check" size={18} /><span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-strong)" }}>Шаг 1 готов — режим применён</span>
+        </div>
+        <div style={{ fontSize: 13, color: "var(--text-body)" }}>
+          Арендатор <b>{result.tenant}</b> · режим <b>{result.mode_meta ? result.mode_meta.title : result.mode}</b> · {result.topology === "onprem" ? "on-prem" : "облако"}.
+        </div>
+        <div>
+          <p className="irb-plat__cap" style={{ marginBottom: 6 }}>Шаг 2 — настройте подключения</p>
+          {result.required_connections.length
+            ? <div className="irb-plat__pick">{result.required_connections.map((c) => <span key={c} className="irb-plat__pickbtn irb-plat__pickbtn--on">{KIND_RU[c] || c}</span>)}</div>
+            : <span style={{ fontSize: 13, color: "var(--text-subtle)" }}>Внешние подключения для этого режима не требуются.</span>}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {result.required_connections.length > 0 && <Button iconLeft="link" onClick={onGoConnections}>Настроить подключения</Button>}
+          <Button variant="ghost" iconLeft="plus" onClick={reset}>Ещё арендатор</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const inStyle: React.CSSProperties = { width: "100%", boxSizing: "border-box" };
+  return (
+    <div className="irb-plat__card" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+      <p style={{ fontSize: 13, color: "var(--text-subtle)", margin: 0 }}>Шаг 1 — учреждение и режим. Что Biblio заменяет и где работает определяет нужные подключения на шаге 2.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
+        <div className="irb-plat__fld"><span className="irb-plat__fld-lab">Код арендатора</span><input className="irb-plat__in" style={inStyle} value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="vuz-spb" /></div>
+        <div className="irb-plat__fld"><span className="irb-plat__fld-lab">Краткое наименование</span><input className="irb-plat__in" style={inStyle} value={name} onChange={(e) => setName(e.target.value)} /></div>
+        <div className="irb-plat__fld"><span className="irb-plat__fld-lab">Полное наименование</span><input className="irb-plat__in" style={inStyle} value={fullName} onChange={(e) => setFullName(e.target.value)} /></div>
+      </div>
+      <div>
+        <p className="irb-plat__cap" style={{ marginBottom: 8 }}>Режим — что Biblio заменяет</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {catalog.modes.map((m) => (
+            <button key={m.key} type="button" onClick={() => setMode(m.key)}
+              style={{ textAlign: "left", padding: "10px 12px", borderRadius: "var(--radius-md)", cursor: "pointer",
+                border: "1px solid " + (mode === m.key ? "var(--accent)" : "var(--border-subtle)"), background: mode === m.key ? "var(--accent-weak)" : "var(--surface-card)" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)" }}>{m.title}</div>
+              <div style={{ fontSize: 12, color: "var(--text-subtle)", marginTop: 2 }}>{m.description}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className="irb-plat__cap" style={{ marginBottom: 8 }}>Где работает</p>
+        <div className="irb-plat__pick">
+          {catalog.topologies.map((t) => (
+            <button key={t.key} type="button" className={"irb-plat__pickbtn" + (topology === t.key ? " irb-plat__pickbtn--on" : "")} onClick={() => setTopology(t.key)}>{t.title}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <Button iconLeft="check" loading={busy} disabled={!slug.trim() || !mode} onClick={apply}>Применить и продолжить</Button>
+      </div>
     </div>
   );
 }

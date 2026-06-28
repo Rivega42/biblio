@@ -685,6 +685,9 @@ export const api = {
     jpost<{ connection: ConnectionItem }>("/api/admin/connections", b),
   adminConnectionRemove: (b: { tenant: string; kind: string }) =>
     jpost<{ removed: boolean }>("/api/admin/connections/remove", b),
+  // Онбординг «завершение визарда»: режим + брендинг одним вызовом.
+  adminOnboard: (b: { tenant: string; mode: string; topology: string; name?: string; fullName?: string }) =>
+    jpost<{ tenant: string; deployment?: DeploymentResolved; config?: LibraryConfig }>("/api/admin/onboard", b),
   // --- Конфигурация библиотеки (#335) — правит админ библиотеки (admin.users) ---
   adminLibraryConfig: () => jget<{ config: LibraryConfig }>("/api/admin/library-config"),
   adminLibraryConfigSet: (patch: Partial<LibraryConfig>) =>
