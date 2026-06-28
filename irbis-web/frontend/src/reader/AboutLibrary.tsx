@@ -5,6 +5,8 @@
 import React from "react";
 import { Icon } from "../../components/icon/Icon.jsx";
 import { getTenantContent } from "./tenantContent";
+import { api } from "../api";
+import type { LibraryConfig } from "../api";
 
 const CSS = `
 .irb-about{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:0;overflow:hidden;
@@ -35,9 +37,33 @@ if (typeof document !== "undefined" && !document.getElementById("irb-about-css")
 }
 
 export function AboutLibrary() {
-  const { about } = getTenantContent();
-  if (!about) return null;
-  const telHref = "tel:" + about.phone.replace(/[^\d+]/g, "");
+  const { about: ten } = getTenantContent();
+  // Редактируемый per-tenant конфиг (#335) перекрывает захардкоженный tenantContent
+  // там, где заполнен; иначе — фолбэк на tenant-пресет (для пилота СПб ГТБ).
+  const [cfg, setCfg] = React.useState<LibraryConfig | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await api.libraryConfig();
+      if (alive && r.json?.ok && r.json.data?.config) setCfg(r.json.data.config);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  if (!ten && !cfg) return null;
+  const rq = cfg?.requisites;
+  const about = {
+    name: cfg?.name || cfg?.full_name || ten?.name || "",
+    blurb: cfg?.about || ten?.blurb || "",
+    address: rq?.address || ten?.address || "",
+    phone: rq?.phone || ten?.phone || "",
+    email: rq?.email || ten?.email || "",
+    site: (rq?.site || ten?.site || "").replace(/^https?:\/\//, ""),
+    // конфиг хранит часы строкой; если задана — одна строка, иначе пресет-список
+    hours: (cfg?.hours ? [{ label: "Режим работы", value: cfg.hours }] : ten?.hours) || [],
+  };
+  if (!about.name && !about.blurb) return null;
+  const telHref = "tel:" + (about.phone || "").replace(/[^\d+]/g, "");
 
   return (
     <section className="irb-about" aria-label="О библиотеке">
@@ -62,9 +88,9 @@ export function AboutLibrary() {
       <div className="irb-about__col">
         <div className="irb-about__title"><Icon name="map-pin" size={16} /> Контакты</div>
         <div className="irb-about__contacts">
-          <div className="irb-about__c"><Icon name="map-pin" size={15} className="irb-about__ic" /><span>{about.address}</span></div>
-          <div className="irb-about__c"><Icon name="bell" size={15} className="irb-about__ic" /><a href={telHref}>{about.phone}</a></div>
-          <div className="irb-about__c"><Icon name="share" size={15} className="irb-about__ic" /><a href={"mailto:" + about.email}>{about.email}</a></div>
+          {about.address && <div className="irb-about__c"><Icon name="map-pin" size={15} className="irb-about__ic" /><span>{about.address}</span></div>}
+          {about.phone && <div className="irb-about__c"><Icon name="bell" size={15} className="irb-about__ic" /><a href={telHref}>{about.phone}</a></div>}
+          {about.email && <div className="irb-about__c"><Icon name="share" size={15} className="irb-about__ic" /><a href={"mailto:" + about.email}>{about.email}</a></div>}
           {about.site && <div className="irb-about__c"><Icon name="globe" size={15} className="irb-about__ic" /><a href={"https://" + about.site} target="_blank" rel="noopener noreferrer">{about.site}</a></div>}
         </div>
       </div>
