@@ -3,8 +3,15 @@
 Runs on any Python 3 with no install:  py irbis-web/backend/server.py
 The aiohttp variant (app_aiohttp.py) wraps the SAME core."""
 import json
+import os
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+
+# Запуск из любого cwd: добавить каталог backend в sys.path, чтобы локальные
+# импорты (core/reader_page/static_files) резолвились и когда сервер стартуют не
+# из backend/ (напр. через preview/launch.json из корня репозитория).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core import Api, Raw
 from reader_page import READER_HTML
