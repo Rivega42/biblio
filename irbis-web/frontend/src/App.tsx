@@ -232,8 +232,16 @@ export function App() {
       await api.initGuest();
       const h = await api.health(); setServer(h.json?.data);
       const startDb = h.json?.data?.db || "IBIS"; setDb(startDb);
-      const d = await api.databases(); if (d.json?.ok && d.json.data) setDatabases(d.json.data.items);
+      // Шелл (шапка, вход сотрудника, лендинг) доступен СРАЗУ после быстрых
+      // guest+health — НЕ ждём каталог. Иначе при недоступном/медленном источнике
+      // каталога (живой ИРБИС лежит, own-store пуст) весь портал висел на
+      // «Загрузка каталога…» и до входа сотрудника было не добраться.
       setReady(true);
+      // Каталог грузим отдельно и мягко деградируем: список баз просто пуст,
+      // портал остаётся рабочим. Сбой/таймаут проглатываем.
+      try {
+        const d = await api.databases(); if (d.json?.ok && d.json.data) setDatabases(d.json.data.items);
+      } catch { /* каталог недоступен — деградируем мягко */ }
       // OIDC-callback (узел 3 MVP-2c): провайдер вернул ?code&state на наш
       // redirect_uri (= URL портала). Сверяем state с сохранённым (CSRF) → завершаем.
       try {
