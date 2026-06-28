@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-28**
-- Версия кода (git): **`96f3128`**
-- Файлов: **275** · строк: **82212** · условных страниц: **1495**
-- **SHA-256 всего листинга:** `4851b13adc113b2d26249e572cc4c6f139bb87afcebfff0969084739c0aef8ac`
+- Версия кода (git): **`907a2ba`**
+- Файлов: **275** · строк: **82222** · условных страниц: **1495**
+- **SHA-256 всего листинга:** `75a07589daf039aaf3f40bdeaa32ccd1697293552c362cf11a02730cdd5844f4`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -11,7 +11,7 @@
 | Файл | Строк | SHA-256 |
 |---|---:|---|
 | `irbis-web/backend/server.py` | 121 | `4a0fd3f7fc881dc7b737eb974323a0426e54ac409dcaffc9881561049995bc40` |
-| `irbis-web/backend/core.py` | 5995 | `329a862ef948d8ac4ca1d0bd349bebe2b46ca151bfc01c344cc720708219bee1` |
+| `irbis-web/backend/core.py` | 5996 | `119e406084319062fcf54156b8aca10f147c5daaf1918bc23b9d06887ada230c` |
 | `irbis-web/backend/config.py` | 115 | `2aaee5116648201577e42d4669658940fa2e835d149a91a1d52fbbfcdb95e765` |
 | `irbis-web/backend/access/catalog.py` | 1188 | `af898c9d65180b08eebd03097d2d9471424034701191637a0c968fc157e214f3` |
 | `irbis-web/backend/access/circulation.py` | 1714 | `fdd3e8fa76c20484e398fff94c002cc60769971b36573cfe648a0e77e9138470` |
@@ -184,7 +184,7 @@
 | `irbis-web/backend/tests/test_portal222.py` | 390 | `58cc8cdb35369ce2df4d279c3737fd5e3f43dffdcb65a278649ffc450252f477` |
 | `irbis-web/backend/tests/test_rdr40.py` | 408 | `8b70c0d1eee7ac247a50d949753aa3980703af776e27c58a515be1c24cf2d6a2` |
 | `irbis-web/backend/tests/test_reader_agent.py` | 192 | `f3a040c04eca5264949320c1b896ca8f2e54a7187c7a4532fa50280477bcad1a` |
-| `irbis-web/backend/tests/test_reader_auth.py` | 403 | `754ecd4ecf469c00a9aecc35f8f16e91bb347eb5d3a32aa0596d428279cfe8bb` |
+| `irbis-web/backend/tests/test_reader_auth.py` | 412 | `4f8262d5c0bc0432dd301a39a02fdce9e8ff94b14adbd5190bf923c3176d4b24` |
 | `irbis-web/backend/tests/test_reader_registry.py` | 137 | `19f14361cc9a54956a03bfc21c1bf9b635e637e05404c1471e5d31d35a02db2f` |
 | `irbis-web/backend/tests/test_readers.py` | 102 | `10f7cda3c7cf13c720991aff26656a27e58ba82e67fcf8537f3d24a44f40460a` |
 | `irbis-web/backend/tests/test_record_links.py` | 165 | `5924849cebf687568f500689c25f976ec2c4140d5c81515481b15f782cab393a` |
