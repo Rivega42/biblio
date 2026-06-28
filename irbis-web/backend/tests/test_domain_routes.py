@@ -1205,6 +1205,35 @@ def onboarding_config_route_checks():
     check('удалить подключение -> removed true', st == 200 and p['data']['removed'] is True)
 
 
+def ocr_pipeline_route_checks():
+    print('-- OCR-pipeline: очередь распознавания (job_queue + ocr) через route()')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    SUP = _sess(api, 'staff', 'op', [{'function': 'admin.db', 'db': '*', 'level': 'admin'}])
+    R = _reader(api)
+
+    st, p = api.route('POST', '/api/ocr/recognize', {},
+                      {'assetRef': 'dam://doc9',
+                       'pages': [{'page_no': 1, 'text': 'Распознанный текст про Гамлета'}]}, S)
+    check('recognize -> задача pending kind=ocr',
+          st == 200 and p['data']['job']['status'] == 'pending' and p['data']['job']['kind'] == 'ocr')
+    st, p = api.route('GET', '/api/ocr/search', {'q': ['Гамлет']}, None, R)
+    check('до обработки поиск пуст', st == 200 and len(p['data']['hits']) == 0)
+    st, p = api.route('POST', '/api/ocr/process', {}, {}, SUP)
+    check('process -> done + indexed 1',
+          st == 200 and p['data']['job']['status'] == 'done' and p['data']['indexed'] == 1)
+    st, p = api.route('GET', '/api/ocr/search', {'q': ['Гамлет']}, None, R)
+    check('после обработки поиск находит', st == 200 and len(p['data']['hits']) == 1)
+    st, p = api.route('POST', '/api/ocr/process', {}, {}, SUP)
+    check('пустая очередь -> job null', st == 200 and p['data']['job'] is None)
+    st, p = api.route('POST', '/api/ocr/recognize', {}, {'assetRef': 'x'}, R)
+    check('reader recognize -> 403', st == 403)
+    st, p = api.route('POST', '/api/ocr/process', {}, {}, S)
+    check('staff-cat process (не super-admin) -> 403', st == 403)
+    st, p = api.route('POST', '/api/ocr/recognize', {}, {}, S)
+    check('recognize без assetRef -> 400', st == 400)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1227,6 +1256,7 @@ def main():
     browse_route_checks()
     access_matrix_route_checks()
     onboarding_config_route_checks()
+    ocr_pipeline_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
