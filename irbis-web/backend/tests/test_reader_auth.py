@@ -143,6 +143,15 @@ def password_helper_checks():
     check('MD5 верный', core.verify_reader_password('s3cret', md5))
     check('MD5 верный (UPPER hex)', core.verify_reader_password('s3cret', md5.upper()))
     check('MD5 неверный', not core.verify_reader_password('nope', md5))
+    # phpass ($P$) перенесённых из jos_users — бесшовный вход (#294, cutover).
+    # Реальный дамп jirbis2 (2026-06-28): все 240 учёток несут phpass.
+    from access import phpass as _phpass
+    ph = _phpass.hash('s3cret')
+    check('phpass — это $P$/$H$ длиной 34', _phpass.is_phpass(ph))
+    check('phpass верный (бесшовный вход jos_users)',
+          core.verify_reader_password('s3cret', ph))
+    check('phpass неверный пароль -> False',
+          not core.verify_reader_password('nope', ph))
     check('пустой supplied -> False', not core.verify_reader_password('', 's3cret'))
     check('пустой stored -> False', not core.verify_reader_password('x', ''))
     # значение пароля выбирается из 130 (приоритет) либо 100
