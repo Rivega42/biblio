@@ -1226,6 +1226,16 @@ def onboarding_config_route_checks():
           and p['data']['plan']['items_total'] == 2 and p['data']['plan']['assets_total'] == 3)
     check('инфорост-план: запись 200^a из title',
           p['data']['plan']['records'][0]['200'][0]['a'] == 'Афиша Чайки')
+    # создание выставок из плана
+    st, p = api.route('POST', '/api/admin/inforost/import-exhibits', {},
+                      {'export': export}, SUP)
+    check('инфорост->выставки: создана 1 выставка, 2 позиции',
+          st == 200 and p['data']['created'] == 1 and p['data']['items'] == 2)
+    check('выставка c1 реально создана', api.exhibits.get('c1') is not None)
+    st, p = api.route('POST', '/api/admin/inforost/import-exhibits', {},
+                      {'export': export}, SUP)
+    check('повторное создание идемпотентно: created=0, skipped=1',
+          st == 200 and p['data']['created'] == 0 and p['data']['skipped'] == 1)
     st, p = api.route('POST', '/api/admin/inforost/import', {},
                       {'tenant': 't_if', 'export': export}, SUP)
     check('инфорост-импорт: new>0', st == 200 and p['data']['new'] > 0)
