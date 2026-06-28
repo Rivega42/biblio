@@ -384,6 +384,17 @@ export interface TariffTable {
   cells: Record<string, Record<string, TariffCell>>;
 }
 
+// Режимы развёртывания (#335) — оператор платформы: что заменяем × где (cloud/onprem).
+export interface DeploymentMode { key: string; title: string; needs_irbis: boolean; needs_jirbis: boolean; description: string }
+export interface DeploymentTopology { key: string; title: string }
+export interface DeploymentResolved {
+  tenant: string; mode: string; topology: string; mode_meta: DeploymentMode | null;
+  required_connections: string[]; default_modules: string[]; configured: boolean;
+}
+// Внешние подключения (#335) — секреты приходят маскированными ('***').
+export interface ConnectionItem { kind: string; enabled: boolean | number; config: Record<string, string | number> }
+export interface ConnectionHint { key: string; label: string; secret: boolean }
+
 // Конфигурация библиотеки (#335) — публичная: брендинг + юр.реквизиты + контакты
 // (заменяет захардкоженный tenantContent). Правится в админке библиотеки.
 export interface LibraryRequisites {
@@ -656,6 +667,19 @@ export const api = {
   // Удалить тариф-колонку.
   adminTariffDelete: (name: string) =>
     jpost<{ removed: boolean }>("/api/admin/tariffs/delete", { name }),
+  // --- Онбординг: режим развёртывания + подключения (#335, оператор платформы) ---
+  adminDeploymentCatalog: () =>
+    jget<{ modes: DeploymentMode[]; topologies: DeploymentTopology[] }>("/api/admin/deployment/catalog"),
+  adminDeployment: (tenant: string) =>
+    jget<{ deployment: DeploymentResolved }>("/api/admin/deployment?" + qs({ tenant })),
+  adminDeploymentSet: (b: { tenant: string; mode: string; topology: string }) =>
+    jpost<{ deployment: unknown; resolved: DeploymentResolved }>("/api/admin/deployment", b),
+  adminConnections: (tenant: string) =>
+    jget<{ items: ConnectionItem[]; kinds: string[]; hints: Record<string, ConnectionHint[]> }>("/api/admin/connections?" + qs({ tenant })),
+  adminConnectionSet: (b: { tenant: string; kind: string; config: Record<string, unknown>; enabled?: boolean }) =>
+    jpost<{ connection: ConnectionItem }>("/api/admin/connections", b),
+  adminConnectionRemove: (b: { tenant: string; kind: string }) =>
+    jpost<{ removed: boolean }>("/api/admin/connections/remove", b),
   // --- Конфигурация библиотеки (#335) — правит админ библиотеки (admin.users) ---
   adminLibraryConfig: () => jget<{ config: LibraryConfig }>("/api/admin/library-config"),
   adminLibraryConfigSet: (patch: Partial<LibraryConfig>) =>
