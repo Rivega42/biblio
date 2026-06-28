@@ -997,6 +997,32 @@ def batch240b_route_checks():
     check('staff-без-admin ip-ranges -> 403', st == 403)
 
 
+def browse_route_checks():
+    print('-- #240 Browse-указатели A–Z через route()')
+    api = _api()
+    G = _sess(api, 'guest', 'g', READER_G)
+    R = _reader(api)
+    # каталог с авторами под указатель 700^a
+    api.catalog.save('IBIS', _rec('Кн1', **{'700': [{'a': 'Антонов'}]}))
+    api.catalog.save('IBIS', _rec('Кн2', **{'700': [{'a': 'Борисов'}]}))
+    api.catalog.save('IBIS', _rec('Кн3', **{'700': [{'a': 'Антипов'}]}))
+
+    st, p = api.route('GET', '/api/browse', {'tag': ['700'], 'subfield': ['a']}, None, G)
+    check('browse 700^a -> 200', st == 200)
+    d = p['data']
+    check('буквы указателя [А, Б]', d['letters'] == ['А', 'Б'])
+    check('буква А: Антипов перед Антоновым',
+          [x['term'] for x in d['buckets']['А']] == ['Антипов', 'Антонов'])
+    check('буква Б: Борисов (count 1)',
+          d['buckets']['Б'][0]['term'] == 'Борисов' and d['buckets']['Б'][0]['count'] == 1)
+    # public-db guard: читатель не может перебирать служебную базу
+    st, p = api.route('GET', '/api/browse', {'db': ['RDR'], 'tag': ['700']}, None, R)
+    check('browse служебной базы (reader) -> 403', st == 403)
+    # пустое поле -> пустой указатель
+    st, p = api.route('GET', '/api/browse', {'tag': ['999'], 'subfield': ['z']}, None, G)
+    check('browse по пустому полю -> letters []', st == 200 and p['data']['letters'] == [])
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1016,6 +1042,7 @@ def main():
     digitization_route_checks()
     batch240_route_checks()
     batch240b_route_checks()
+    browse_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
