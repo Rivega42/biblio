@@ -758,6 +758,13 @@ export const api = {
   marcImport: (iso2709_b64: string) => jpost<{ records: unknown[]; count: number }>("/api/cataloging/marc/import", { iso2709_b64 }),
   marcxmlExport: (records: unknown[]) => jpost<{ marcxml: string; count: number }>("/api/cataloging/marcxml/export", { records }),
   marcxmlImport: (marcxml: string) => jpost<{ records: unknown[]; count: number }>("/api/cataloging/marcxml/import", { marcxml }),
+  // Copy-cataloging через SRU/Z39.50 (#240): собрать URL · разобрать ответ · импорт.
+  copyCatalogUrl: (b: { base: string; field: string; term: string; max?: number }) =>
+    jpost<{ url: string; query: string }>("/api/cataloging/copy/url", b),
+  copyCatalogParse: (xml: string, isbn?: string, title?: string) =>
+    jpost<{ total: number; records: unknown[]; count: number; candidates?: unknown[] }>("/api/cataloging/copy/parse", { xml, isbn, title }),
+  copyCatalogImport: (xml: string) =>
+    jpost<{ created: number; skipped: number; mfns: number[] }>("/api/cataloging/copy/import", { xml }),
   dedupScan: (records: unknown[]) => jpost<{ clusters: { key: string; members: number[] }[]; stats: Record<string, unknown> }>("/api/cataloging/dedup", { records }),
   catalogPrint: (records: unknown[], form: string) => jpost<{ text: string; form: string; count: number }>("/api/cataloging/print", { records, form }),
   vocabValues: (vocab: string) => jget<{ items: Array<Record<string, unknown>> }>("/api/cataloging/vocab?" + qs({ vocab })),
