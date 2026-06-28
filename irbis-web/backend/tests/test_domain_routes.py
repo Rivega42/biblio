@@ -1277,6 +1277,44 @@ def onboarding_config_route_checks():
     check('tenant-админ онбординг -> 403', st == 403)
 
 
+_SRU_XML = (
+    '<?xml version="1.0"?>'
+    '<searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/">'
+    '<numberOfRecords>1</numberOfRecords><records><record><recordData>'
+    '<record xmlns="http://www.loc.gov/MARC21/slim"><leader>00000nam</leader>'
+    '<datafield tag="010" ind1=" " ind2=" "><subfield code="a">978-5-00-000000-0</subfield></datafield>'
+    '<datafield tag="200" ind1="1" ind2=" "><subfield code="a">Вишнёвый сад</subfield></datafield>'
+    '<datafield tag="700" ind1=" " ind2=" "><subfield code="a">Чехов</subfield></datafield>'
+    '</record></recordData></record></records></searchRetrieveResponse>')
+
+
+def copy_cataloging_route_checks():
+    print('-- Copy-cataloging SRU/Z39.50 через route() (#240)')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    R = _reader(api)
+
+    st, p = api.route('POST', '/api/cataloging/copy/url', {},
+                      {'base': 'http://sru.example/sru', 'field': 'title', 'term': 'Вишнёвый'}, S)
+    check('copy url -> SRU searchRetrieve',
+          st == 200 and 'searchRetrieve' in p['data']['url'] and 'dc.title' in p['data']['query'])
+    st, p = api.route('POST', '/api/cataloging/copy/parse', {}, {'xml': _SRU_XML}, S)
+    check('copy parse -> 1 запись, 200^a верный',
+          st == 200 and p['data']['total'] == 1
+          and p['data']['records'][0]['200'][0]['a'] == 'Вишнёвый сад')
+    st, p = api.route('POST', '/api/cataloging/copy/parse', {},
+                      {'xml': _SRU_XML, 'isbn': '978-5-00-000000-0'}, S)
+    check('copy parse: кандидат по ISBN найден',
+          st == 200 and len(p['data'].get('candidates', [])) == 1)
+    st, p = api.route('POST', '/api/cataloging/copy/import', {}, {'xml': _SRU_XML}, S)
+    check('copy import -> created 1 + mfn',
+          st == 200 and p['data']['created'] == 1 and len(p['data']['mfns']) == 1)
+    st, p = api.route('POST', '/api/cataloging/copy/url', {}, {'base': 'x'}, S)
+    check('copy url без term -> 400', st == 400)
+    st, p = api.route('POST', '/api/cataloging/copy/import', {}, {'xml': _SRU_XML}, R)
+    check('reader copy import -> 403', st == 403)
+
+
 def ocr_pipeline_route_checks():
     print('-- OCR-pipeline: очередь распознавания (job_queue + ocr) через route()')
     api = _api()
@@ -1328,6 +1366,7 @@ def main():
     browse_route_checks()
     access_matrix_route_checks()
     onboarding_config_route_checks()
+    copy_cataloging_route_checks()
     ocr_pipeline_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
