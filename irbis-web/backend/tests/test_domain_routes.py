@@ -740,6 +740,9 @@ def digitization_route_checks():
     api = _api()
     S = _sess(api, 'staff', 'cat', STAFF_G)
     R = _reader(api)
+    # Раздел «Оцифровка» гейтится тарифом (#331 Фаза 3): тест-тенанту 'public' даём
+    # тариф pro (включает оцифровку), иначе exhibit_create -> 402.
+    api.tariffs.assign_tenant('public', 'pro')
 
     # --- Виртуальные выставки: черновик -> позиция -> публикация -> витрина ---
     st, p = api.route('POST', '/api/exhibits', {},
@@ -862,6 +865,11 @@ def digitization_route_checks():
     check('OAI неподдерживаемый формат -> 400', st == 400)
     st, p = api.route('GET', '/api/oai', {'verb': ['Bogus']}, None, {})
     check('OAI неизвестный verb -> 400', st == 400)
+
+    # --- gating раздела по тарифу (#331 Фаза 3): standard без оцифровки -> 402 ---
+    api.tariffs.assign_tenant('public', 'standard')
+    st, p = api.route('POST', '/api/exhibits', {}, {'slug': 'x2', 'title': 'X'}, S)
+    check('тариф без раздела «Оцифровка» -> exhibit_create 402', st == 402)
 
 
 def batch240_route_checks():
