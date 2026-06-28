@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-28**
-- Версия кода (git): **`aa4b1f5`**
-- Файлов: **289** · строк: **86634** · условных страниц: **1576**
-- **SHA-256 всего листинга:** `7fcbe638925afa2322359423757845726cbb8c78f6ea8a337df09379e3b6ffe0`
+- Версия кода (git): **`ef44e52`**
+- Файлов: **289** · строк: **86677** · условных страниц: **1576**
+- **SHA-256 всего листинга:** `ee11c512c18f9489a2593ef74f5ccd2316386148e1a95aed458b2ef35c502f66`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -11,7 +11,7 @@
 | Файл | Строк | SHA-256 |
 |---|---:|---|
 | `irbis-web/backend/server.py` | 121 | `4a0fd3f7fc881dc7b737eb974323a0426e54ac409dcaffc9881561049995bc40` |
-| `irbis-web/backend/core.py` | 6395 | `691a364a6707bd3482364b992e3fccf4ccdde35100ea16eab568cde66696f445` |
+| `irbis-web/backend/core.py` | 6423 | `d2ffae0a5ad5827ec524b8702d00d43149921c9cbbc342dd15e90e86bb83eb50` |
 | `irbis-web/backend/config.py` | 115 | `2aaee5116648201577e42d4669658940fa2e835d149a91a1d52fbbfcdb95e765` |
 | `irbis-web/backend/access/catalog.py` | 1188 | `af898c9d65180b08eebd03097d2d9471424034701191637a0c968fc157e214f3` |
 | `irbis-web/backend/access/circulation.py` | 1714 | `fdd3e8fa76c20484e398fff94c002cc60769971b36573cfe648a0e77e9138470` |
@@ -146,7 +146,7 @@
 | `irbis-web/backend/tests/test_devices.py` | 162 | `86e9116b89e1b26d8358566c17aae52f02222f7fa2a41df8512836f3128d5c66` |
 | `irbis-web/backend/tests/test_discipline_norms.py` | 160 | `5160bb59f659456805b6efee2a871e1197527666d7befb8893a3977d52324fe7` |
 | `irbis-web/backend/tests/test_discovery.py` | 363 | `a9d4b06a7457b77be26a0249f80d8882a7e94d47feb9d8c6246d03287646aaa7` |
-| `irbis-web/backend/tests/test_domain_routes.py` | 1291 | `ae37b416bfe79cad7dba4e4b148e277e8be31975c435d36126c93289b401cc5f` |
+| `irbis-web/backend/tests/test_domain_routes.py` | 1306 | `ca91d1a5274c3e23977c28c4c423788570ee038f8bb3f31436d19d54fa4462ad` |
 | `irbis-web/backend/tests/test_encoding.py` | 57 | `b3aa6e9777a8d584423b76419275ab63e2bd4d049227bfdd5fe7eb10a52b0d58` |
 | `irbis-web/backend/tests/test_engine_routes.py` | 417 | `946850994cda92110a6e0e3235e1c0ec2cf60ea00026e0585a0897d43bc539d0` |
 | `irbis-web/backend/tests/test_exhibits.py` | 209 | `13bc9ff42f369bf7983dac88d142eef403d489514d400fc3259356ba0648660c` |
