@@ -1230,6 +1230,21 @@ def onboarding_config_route_checks():
     st, p = api.route('POST', '/api/admin/inforost/plan', {}, {'export': export}, R)
     check('reader к инфорост -> 403', st == 403)
 
+    # --- Онбординг «завершение визарда»: режим + брендинг одним вызовом ---
+    st, p = api.route('POST', '/api/admin/onboard', {},
+                      {'tenant': 't9', 'mode': 'replace_irbis', 'topology': 'cloud',
+                       'name': 'Новая', 'fullName': 'Новая библиотека'}, SUP)
+    check('onboard -> режим replace_irbis + нужное подключение irbis',
+          st == 200 and p['data']['deployment']['mode'] == 'replace_irbis'
+          and p['data']['deployment']['required_connections'] == ['irbis'])
+    check('onboard -> брендинг записан', p['data']['config']['name'] == 'Новая'
+          and p['data']['config']['full_name'] == 'Новая библиотека')
+    st, p = api.route('POST', '/api/admin/onboard', {},
+                      {'tenant': 't9', 'mode': 'плохой', 'topology': 'cloud'}, SUP)
+    check('onboard невалидный режим -> 400', st == 400)
+    st, p = api.route('POST', '/api/admin/onboard', {}, {'tenant': 't9', 'mode': 'full'}, TA)
+    check('tenant-админ онбординг -> 403', st == 403)
+
 
 def ocr_pipeline_route_checks():
     print('-- OCR-pipeline: очередь распознавания (job_queue + ocr) через route()')
