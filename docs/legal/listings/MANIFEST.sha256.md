@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-28**
-- Версия кода (git): **`c95e2b9`**
-- Файлов: **289** · строк: **86689** · условных страниц: **1577**
-- **SHA-256 всего листинга:** `173e38eb8812dd52f5d3a49237fffcda9b50ac2a8c5200c107614517a972574b`
+- Версия кода (git): **`a40f420`**
+- Файлов: **290** · строк: **86786** · условных страниц: **1578**
+- **SHA-256 всего листинга:** `079350e06c4e143e99341cf8d9f1b97a148200e9cafb28e409f9a8a0028421c5`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -264,7 +264,7 @@
 | `irbis-web/frontend/src/PlatformDesk.tsx` | 775 | `55c71ff3f7307b872be9e5ca44aba99080f670fe353f2c28281d6300902038c6` |
 | `irbis-web/frontend/src/Staff.tsx` | 1230 | `08f4bfbbac7ab8cafd780bc3d3169992bc2d7301cd0ec4d3a2405000d391e916` |
 | `irbis-web/frontend/src/UtilitiesDesk.tsx` | 403 | `0b1afa74f032a638ed03f6e59d9854379b1ef97f917f975fa5e84ae0a7b65fb9` |
-| `irbis-web/frontend/src/api.ts` | 773 | `f48d5b4b706cb0c8d7c8d0f1176f9812ddfd8574acda626f38596afb695d8b77` |
+| `irbis-web/frontend/src/api.ts` | 778 | `fa3675b21991177b3b10225a30f9948d8c0cfefbe32ca39059569e01a4c95ac6` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 188 | `b364926e1a4282a688eff2a9e07101820e16bfad8f68e12b7a137aad82d2685f` |
 | `irbis-web/frontend/src/landing/DemoRequestForm.tsx` | 216 | `c6e175d56b6b7d09346db0b72f38ec47cf8389396e1be97524d5dba17cd505e3` |
@@ -273,6 +273,7 @@
 | `irbis-web/frontend/src/main.tsx` | 18 | `fe62e0037c01cbec9b2450cb074164eea32590d3331020b709c4daa6dcd52aa2` |
 | `irbis-web/frontend/src/reader/AboutLibrary.tsx` | 99 | `e18dec2f2ddd65f2ef0167eeb8bf9d5db0d4cce17aa17fd0146d165c6283139f` |
 | `irbis-web/frontend/src/reader/ArchiveList.tsx` | 82 | `26326624faf6e469519f621795417564dfeb75a68a6da70dde8c69a8dcba1a24` |
+| `irbis-web/frontend/src/reader/BrowseAZ.tsx` | 88 | `46e043facbb5a5383f56ea30bf41a2974856e3105e4723ae6b19516bb6f66eee` |
 | `irbis-web/frontend/src/reader/CalendarGrid.tsx` | 112 | `2ed431df8aea463865def31d5e95a39893b124982e4ae89ad141a505e9a7bd1b` |
 | `irbis-web/frontend/src/reader/Collections.tsx` | 66 | `78cd5dcdf3f5a3761495c7dee7140282af2e4568a5d8a56dba7e2d7192c7a91a` |
 | `irbis-web/frontend/src/reader/Consent.tsx` | 286 | `53a4b27cd5fcbd318cafc5cf881abd99b3803153cf4ffe1a69a0ea0a0292314e` |
@@ -282,7 +283,7 @@
 | `irbis-web/frontend/src/reader/GalleryGrid.tsx` | 113 | `89522accc3106d2e0517e0715f4ad45e281d4e36db9f3410418eb478ecef510e` |
 | `irbis-web/frontend/src/reader/HistoryTab.tsx` | 102 | `ced520ea8d28d87b68f189ed24ceac00916be6eb5543cdd1c50d99ac3b346743` |
 | `irbis-web/frontend/src/reader/HoldsTab.tsx` | 121 | `65d84990d834702ee566c24853fd99196ba41f5595f23805d0e905e6ec8ebea7` |
-| `irbis-web/frontend/src/reader/HomeScreen.tsx` | 195 | `f1727ed7a9984a60c3e2cf038e46e458b496d7e22bdabad587e12484036d7d57` |
+| `irbis-web/frontend/src/reader/HomeScreen.tsx` | 199 | `0f9c4c68b1628a0c9fb147fd40da71f5c8989ef7a8d37bfe8375207eabf02451` |
 | `irbis-web/frontend/src/reader/LibraryFeed.tsx` | 147 | `38c8074cb055eab842b7646cd40c914f3274262a3235996bc225154e5e121f58` |
 | `irbis-web/frontend/src/reader/LinkedRecords.tsx` | 217 | `585919e8765732a0bb2746864a65080377ad90d29e22403588ac20d507205ebf` |
 | `irbis-web/frontend/src/reader/NotificationInbox.tsx` | 188 | `afb353609dd59864b784a826790ecb18988b0b5f2667a3e15acd056b48021968` |
