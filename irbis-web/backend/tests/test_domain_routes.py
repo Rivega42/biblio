@@ -53,6 +53,9 @@ from access.facet_config import FacetService, FacetConfigStore
 from access.ip_auth import IpAuthService, IpRangeStore
 from access.tariff_store import TariffStore
 from access import access_matrix as _am
+from access.deployment import DeploymentService, DeploymentStore
+from access.library_config import LibraryConfigService, LibraryConfigStore
+from access.connections import ConnectionService, ConnectionStore
 from access import circulation as _circ
 
 PASS = [0]
@@ -136,6 +139,10 @@ def _api():
     # Матрица доступов (#331) — свежий in-memory стор тарифов + сид дефолтов.
     api.tariffs = TariffStore(':memory:')
     _am.seed_defaults(api.tariffs)
+    # Онбординг-конфиг (#335) — свежие in-memory сторы.
+    api.deployment = DeploymentService(DeploymentStore(':memory:'))
+    api.library_config = LibraryConfigService(LibraryConfigStore(':memory:'))
+    api.connections = ConnectionService(ConnectionStore(':memory:'))
     return api
 
 
@@ -1108,6 +1115,82 @@ def access_matrix_route_checks():
     check('удалить тариф vuz -> removed true', st == 200 and p['data']['removed'] is True)
 
 
+def onboarding_config_route_checks():
+    print('-- Онбординг-конфиг: режим/конфиг библиотеки/подключения через route() (#335)')
+    api = _api()
+    SUPER_G = [{'function': 'admin.db', 'db': '*', 'level': 'admin'}]
+    TADMIN_G = [{'function': 'admin.users', 'db': '*', 'level': 'admin'}]
+    SUP = _sess(api, 'staff', 'op', SUPER_G)
+    TA = _sess(api, 'staff', 'libadmin', TADMIN_G)
+    R = _reader(api)
+    G = _sess(api, 'guest', 'g', READER_G)
+
+    # --- Режим развёртывания (super-admin) ---
+    st, p = api.route('GET', '/api/admin/deployment/catalog', {}, None, SUP)
+    check('каталог режимов -> 4 режима + 2 топологии',
+          st == 200 and len(p['data']['modes']) == 4 and len(p['data']['topologies']) == 2)
+    st, p = api.route('POST', '/api/admin/deployment', {},
+                      {'tenant': 't1', 'mode': 'overlay_jirbis', 'topology': 'onprem'}, SUP)
+    check('задать режим overlay_jirbis/onprem -> 200',
+          st == 200 and p['data']['resolved']['required_connections'] == ['irbis', 'jirbis'])
+    st, p = api.route('POST', '/api/admin/deployment', {},
+                      {'tenant': 't1', 'mode': 'bogus', 'topology': 'cloud'}, SUP)
+    check('невалидный режим -> 400', st == 400)
+    st, p = api.route('GET', '/api/admin/deployment', {'tenant': ['t1']}, None, SUP)
+    check('резолв t1 -> configured overlay_jirbis',
+          st == 200 and p['data']['deployment']['configured']
+          and p['data']['deployment']['mode'] == 'overlay_jirbis')
+    st, p = api.route('GET', '/api/admin/deployment/catalog', {}, None, TA)
+    check('tenant-админ к режиму развёртывания -> 403', st == 403)
+
+    # --- Конфиг библиотеки (tenant-admin правит, public читает) ---
+    st, p = api.route('POST', '/api/admin/library-config', {},
+                      {'name': 'Театралка', 'requisites': {'inn': '7800123456'}}, TA)
+    check('tenant-админ задаёт name+ИНН -> 200',
+          st == 200 and p['data']['config']['name'] == 'Театралка'
+          and p['data']['config']['requisites']['inn'] == '7800123456')
+    st, p = api.route('POST', '/api/admin/library-config', {},
+                      {'requisites': {'email': 'lib@x.ru'}}, TA)
+    check('deep-merge: email добавлен, ИНН сохранён',
+          st == 200 and p['data']['config']['requisites']['inn'] == '7800123456'
+          and p['data']['config']['requisites']['email'] == 'lib@x.ru')
+    st, p = api.route('GET', '/api/library-config', {}, None, G)
+    check('публичный конфиг (guest) -> name виден',
+          st == 200 and p['data']['config']['name'] == 'Театралка')
+    st, p = api.route('POST', '/api/admin/library-config', {}, {'name': 'X'}, R)
+    check('reader правит конфиг -> 403', st == 403)
+
+    # --- Подключения (super-admin, секреты маскируются) ---
+    st, p = api.route('POST', '/api/admin/connections', {},
+                      {'tenant': 't1', 'kind': 'irbis',
+                       'config': {'host': '10.0.0.5', 'port': 6666, 'user': 'MASTER',
+                                  'password': 's3cret'}}, SUP)
+    check('задать ИРБИС-подключение -> 200, пароль замаскирован',
+          st == 200 and p['data']['connection']['config']['password'] == '***'
+          and p['data']['connection']['config']['host'] == '10.0.0.5')
+    # обновление host с маской пароля не затирает секрет
+    st, p = api.route('POST', '/api/admin/connections', {},
+                      {'tenant': 't1', 'kind': 'irbis',
+                       'config': {'host': '10.0.0.9', 'password': '***'}}, SUP)
+    check('обновление host с маской -> 200', st == 200)
+    check('секрет не затёрт (get_raw прежний)',
+          api.connections.get_raw('t1', 'irbis')['config']['password'] == 's3cret'
+          and api.connections.get_raw('t1', 'irbis')['config']['host'] == '10.0.0.9')
+    st, p = api.route('GET', '/api/admin/connections', {'tenant': ['t1']}, None, SUP)
+    check('список подключений (маск.) + hints',
+          st == 200 and len(p['data']['items']) == 1
+          and p['data']['items'][0]['config']['password'] == '***'
+          and 'irbis' in p['data']['hints'])
+    st, p = api.route('POST', '/api/admin/connections', {},
+                      {'tenant': 't1', 'kind': 'bogus', 'config': {}}, SUP)
+    check('невалидный kind -> 400', st == 400)
+    st, p = api.route('GET', '/api/admin/connections', {}, None, TA)
+    check('tenant-админ к подключениям -> 403 (секреты — операторские)', st == 403)
+    st, p = api.route('POST', '/api/admin/connections/remove', {},
+                      {'tenant': 't1', 'kind': 'irbis'}, SUP)
+    check('удалить подключение -> removed true', st == 200 and p['data']['removed'] is True)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1129,6 +1212,7 @@ def main():
     batch240b_route_checks()
     browse_route_checks()
     access_matrix_route_checks()
+    onboarding_config_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
