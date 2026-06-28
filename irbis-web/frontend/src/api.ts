@@ -369,6 +369,21 @@ export interface IiifManifest {
   items?: Array<Record<string, unknown>>;
 }
 
+// Матрица доступов (#331): строки каталога (раздел/функция/ресурс), колонки —
+// тарифы, ячейки — included/value/enforcement (редактируется в админ-таблице).
+export interface TariffRow {
+  kind: "section" | "function" | "resource";
+  item_key: string; title: string;
+  section?: string; fn?: string; module?: string;
+  resource?: string; res_kind?: "cap" | "pack"; unit?: string;
+}
+export interface TariffCol { name: string; title: string; sort: number }
+export interface TariffCell { included: boolean; value: number | null; enforcement: "block" | "grace" }
+export interface TariffTable {
+  rows: TariffRow[]; tariffs: TariffCol[];
+  cells: Record<string, Record<string, TariffCell>>;
+}
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -615,6 +630,19 @@ export const api = {
   adminAudit: (limit = 50) => jget<{ items: AuditEntry[] }>("/api/admin/audit?" + qs({ limit })),
   // Список баз данных контура (код / имя / публичность).
   adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
+  // --- Матрица доступов / тарифы (#331) -----------------------------------
+  // Редактируемая таблица: строки каталога × колонки тарифов × ячейки.
+  adminTariffs: () => jget<TariffTable>("/api/admin/tariffs"),
+  // Задать ячейку (частичный апдейт: included/value/enforcement).
+  adminTariffCell: (tariff: string, itemKey: string,
+                    patch: { included?: boolean; value?: number | null; enforcement?: "block" | "grace" }) =>
+    jpost<{ cell: TariffCell }>("/api/admin/tariffs/cell", { tariff, itemKey, ...patch }),
+  // Добавить тариф-колонку.
+  adminTariffCreate: (name: string, title?: string, sort?: number) =>
+    jpost<{ tariff: TariffCol }>("/api/admin/tariffs", { name, title, sort }),
+  // Удалить тариф-колонку.
+  adminTariffDelete: (name: string) =>
+    jpost<{ removed: boolean }>("/api/admin/tariffs/delete", { name }),
 
   // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) -------
   // Список арендаторов контура. 404/501 → degrade (информер).
