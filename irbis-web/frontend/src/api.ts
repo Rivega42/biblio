@@ -384,6 +384,17 @@ export interface TariffTable {
   cells: Record<string, Record<string, TariffCell>>;
 }
 
+// Конфигурация библиотеки (#335) — публичная: брендинг + юр.реквизиты + контакты
+// (заменяет захардкоженный tenantContent). Правится в админке библиотеки.
+export interface LibraryRequisites {
+  inn: string; ogrn: string; kpp: string;
+  legal_address: string; address: string; phone: string; email: string; site: string;
+}
+export interface LibraryConfig {
+  name: string; full_name: string; logo_url: string; tint: string;
+  requisites: LibraryRequisites; hours: string; about: string;
+}
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -447,6 +458,8 @@ export const api = {
   // pages — число канв; пусто (0) -> у записи нет оцифрованных образов.
   iiifManifest: (db: string, mfn: number) =>
     jget<{ manifest: IiifManifest; pages: number }>("/api/iiif/manifest?" + qs({ db, mfn })),
+  // Публичная конфигурация библиотеки (#335): брендинг/реквизиты/контакты.
+  libraryConfig: () => jget<{ config: LibraryConfig }>("/api/library-config"),
   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
   // Reader orders (G12). Endpoint may not exist yet → caller stubs the list on 404.
   orders: () => jget<{ items: OrderItem[] }>("/api/me/orders"),
