@@ -13,6 +13,7 @@ import React from "react";
 import { api } from "./api";
 import type { Tenant, BillingInfo, PlanLimits } from "./api";
 import type { TariffTable, TariffRow, TariffCell } from "./api";
+import type { DeploymentMode, DeploymentTopology, DeploymentResolved, ConnectionItem, ConnectionHint } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -106,11 +107,13 @@ const LIMIT_META: { key: keyof PlanLimits; name: string; icon: IconName; unit?: 
   { key: "max_storage_mb", name: "Хранилище", icon: "archive", unit: " МБ" },
 ];
 
-type Tab = "tenants" | "billing" | "matrix";
+type Tab = "tenants" | "billing" | "matrix" | "deployment" | "connections";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "tenants", label: "Арендаторы", icon: "layers" },
   { id: "billing", label: "Тариф и лимиты", icon: "credit-card" },
   { id: "matrix", label: "Матрица доступов", icon: "sliders" },
+  { id: "deployment", label: "Развёртывание", icon: "settings" },
+  { id: "connections", label: "Подключения", icon: "link" },
 ];
 
 // Информер «эндпойнт вкладки не развёрнут».
@@ -154,7 +157,11 @@ export function PlatformDesk({ toast }: { toast: ToastFn }) {
         ? <TenantsTab toast={toast} selected={selected} onSelect={setSelected} onManage={openBilling} />
         : tab === "billing"
           ? <BillingTab toast={toast} selected={selected} onSelect={setSelected} />
-          : <MatrixTab toast={toast} />}
+          : tab === "matrix"
+            ? <MatrixTab toast={toast} />
+            : tab === "deployment"
+              ? <DeploymentTab toast={toast} selected={selected} />
+              : <ConnectionsTab toast={toast} selected={selected} />}
     </div>
   );
 }
@@ -617,6 +624,152 @@ function MatrixTab({ toast }: { toast: ToastFn }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ===== Развёртывание (#335) =================================================
+// Оператор платформы выбирает режим (что Biblio заменяет) и топологию (cloud/
+// onprem) для выбранного арендатора. Гейт — super-admin (admin.db).
+function DeploymentTab({ toast, selected }: { toast: ToastFn; selected: string | null }) {
+  const [catalog, setCatalog] = React.useState<{ modes: DeploymentMode[]; topologies: DeploymentTopology[] } | null>(null);
+  const [dep, setDep] = React.useState<DeploymentResolved | null>(null);
+  const [down, setDown] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => { (async () => {
+    const r = await api.adminDeploymentCatalog();
+    if (r.status === 404 || r.status === 501 || r.status === 403) { setDown(true); return; }
+    if (r.json?.ok && r.json.data) setCatalog(r.json.data);
+  })(); }, []);
+  React.useEffect(() => { (async () => {
+    if (!selected) { setDep(null); return; }
+    const r = await api.adminDeployment(selected);
+    if (r.json?.ok && r.json.data?.deployment) setDep(r.json.data.deployment);
+  })(); }, [selected]);
+
+  const apply = async (mode: string, topology: string) => {
+    if (!selected) return;
+    setBusy(true);
+    const r = await api.adminDeploymentSet({ tenant: selected, mode, topology });
+    setBusy(false);
+    if (r.json?.ok && r.json.data?.resolved) { setDep(r.json.data.resolved); toast({ variant: "success", title: "Режим сохранён", message: r.json.data.resolved.mode }); }
+    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db (оператор платформы)." });
+    else toast({ variant: "error", title: "Не сохранено", message: "Повторите попытку." });
+  };
+
+  if (down) return <SectionDown icon="settings" title="Развёртывание подключается отдельно" />;
+  if (!selected) return <SectionDown icon="settings" title="Выберите арендатора на вкладке «Арендаторы»" />;
+  if (!catalog || !dep) return <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка…</div>;
+
+  return (
+    <div className="irb-plat__card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <p className="irb-plat__cap" style={{ marginBottom: 8 }}>Режим — что Biblio заменяет</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {catalog.modes.map((m) => (
+            <button key={m.key} type="button" onClick={() => apply(m.key, dep.topology)} disabled={busy}
+              style={{ textAlign: "left", padding: "11px 13px", borderRadius: "var(--radius-md)", cursor: "pointer",
+                border: "1px solid " + (dep.mode === m.key ? "var(--accent)" : "var(--border-subtle)"),
+                background: dep.mode === m.key ? "var(--accent-weak)" : "var(--surface-card)" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)" }}>{m.title}</div>
+              <div style={{ fontSize: 12, color: "var(--text-subtle)", marginTop: 2 }}>{m.description}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className="irb-plat__cap" style={{ marginBottom: 8 }}>Где работает</p>
+        <div className="irb-plat__pick">
+          {catalog.topologies.map((t) => (
+            <button key={t.key} type="button" disabled={busy}
+              className={"irb-plat__pickbtn" + (dep.topology === t.key ? " irb-plat__pickbtn--on" : "")}
+              onClick={() => apply(dep.mode, t.key)}>{t.title}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", fontSize: 12, color: "var(--text-muted)", borderTop: "1px solid var(--border-subtle)", paddingTop: 12 }}>
+        <span>Нужные подключения: <b style={{ color: "var(--text-body)" }}>{dep.required_connections.join(", ") || "—"}</b></span>
+        <span>Модулей по режиму: <b style={{ color: "var(--text-body)" }}>{dep.default_modules.length}</b></span>
+      </div>
+    </div>
+  );
+}
+
+// ===== Подключения (#335) ===================================================
+// Внешние подключения арендатора (ИРБИС/jirbis/инфорост). Секреты маскированы;
+// пустой/маска-секрет при сохранении не затирает прежний. Гейт super-admin.
+function ConnectionsTab({ toast, selected }: { toast: ToastFn; selected: string | null }) {
+  const [data, setData] = React.useState<{ items: ConnectionItem[]; kinds: string[]; hints: Record<string, ConnectionHint[]> } | null>(null);
+  const [down, setDown] = React.useState(false);
+  const [draft, setDraft] = React.useState<Record<string, Record<string, string>>>({});
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    if (!selected) { setData(null); return; }
+    const r = await api.adminConnections(selected);
+    if (r.status === 404 || r.status === 501 || r.status === 403) { setDown(true); return; }
+    setDown(false);
+    if (r.json?.ok && r.json.data) {
+      setData(r.json.data);
+      const d: Record<string, Record<string, string>> = {};
+      for (const it of r.json.data.items) d[it.kind] = Object.fromEntries(Object.entries(it.config).map(([k, v]) => [k, String(v ?? "")]));
+      setDraft(d);
+    }
+  }, [selected]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const setVal = (kind: string, key: string, v: string) =>
+    setDraft((d) => ({ ...d, [kind]: { ...(d[kind] || {}), [key]: v } }));
+
+  const save = async (kind: string) => {
+    if (!selected) return;
+    setBusy(true);
+    const r = await api.adminConnectionSet({ tenant: selected, kind, config: draft[kind] || {} });
+    setBusy(false);
+    if (r.json?.ok) { toast({ variant: "success", title: "Подключение сохранено", message: kind }); load(); }
+    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
+    else toast({ variant: "error", title: "Не сохранено", message: "Проверьте поля." });
+  };
+  const remove = async (kind: string) => {
+    if (!selected) return;
+    const r = await api.adminConnectionRemove({ tenant: selected, kind });
+    if (r.json?.ok) { toast({ variant: "success", title: "Удалено", message: kind }); load(); }
+  };
+
+  if (down) return <SectionDown icon="link" title="Подключения подключаются отдельно" />;
+  if (!selected) return <SectionDown icon="link" title="Выберите арендатора на вкладке «Арендаторы»" />;
+  if (!data) return <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка…</div>;
+
+  const KIND_RU: Record<string, string> = { irbis: "ИРБИС (каталог/выдача)", jirbis: "jirbis (Joomla — cutover)", inforost: "Инфорост (оцифровка)" };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {data.kinds.map((kind) => {
+        const hints = data.hints[kind] || [];
+        const exists = data.items.some((i) => i.kind === kind);
+        return (
+          <div key={kind} className="irb-plat__card" style={{ padding: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)" }}>{KIND_RU[kind] || kind}</span>
+              <div style={{ display: "flex", gap: 8 }}>
+                {exists && <Button size="sm" variant="ghost" iconLeft="trash" onClick={() => remove(kind)}>Удалить</Button>}
+                <Button size="sm" iconLeft="check" loading={busy} onClick={() => save(kind)}>Сохранить</Button>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
+              {hints.map((h) => (
+                <label key={h.key} className="irb-plat__fld">
+                  <span className="irb-plat__fld-lab">{h.label}{h.secret ? " (секрет)" : ""}</span>
+                  <input className="irb-plat__in" type={h.secret ? "password" : "text"}
+                    value={(draft[kind]?.[h.key]) ?? ""} onChange={(e) => setVal(kind, h.key, e.target.value)}
+                    placeholder={h.secret ? "не меняется" : ""} aria-label={h.label} />
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: 0 }}>Секреты хранятся off-git; наружу — маскированными. Пустой/маска секрет при сохранении не затирает прежний.</p>
     </div>
   );
 }
