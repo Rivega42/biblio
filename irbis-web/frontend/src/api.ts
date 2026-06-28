@@ -361,6 +361,14 @@ export interface ExhibitItem {
 }
 export interface ExhibitView { exhibit: ExhibitSummary; items: ExhibitItem[] }
 
+// IIIF Presentation v3 манифест (свободная форма — нам нужны items/label/канвы).
+// Канва несёт painting-аннотацию на образ страницы; URL образа — в body.id.
+export interface IiifManifest {
+  "@context"?: string; id?: string; type?: string;
+  label?: Record<string, string[]>;
+  items?: Array<Record<string, unknown>>;
+}
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -420,6 +428,10 @@ export const api = {
   // вид выставки — сводка + позиции. 404/пусто → вызывающий код прячет блок.
   exhibits: () => jget<{ items: ExhibitSummary[] }>("/api/exhibits"),
   exhibit: (slug: string) => jget<ExhibitView>("/api/exhibits/" + encodeURIComponent(slug)),
+  // IIIF-манифест записи (трек «Оцифровка»): страницы образа для просмотрщика.
+  // pages — число канв; пусто (0) -> у записи нет оцифрованных образов.
+  iiifManifest: (db: string, mfn: number) =>
+    jget<{ manifest: IiifManifest; pages: number }>("/api/iiif/manifest?" + qs({ db, mfn })),
   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
   // Reader orders (G12). Endpoint may not exist yet → caller stubs the list on 404.
   orders: () => jget<{ items: OrderItem[] }>("/api/me/orders"),
