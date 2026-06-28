@@ -38,6 +38,7 @@ from access.shelves import ShelfService
 from access.social import SocialService
 from access import acquisition as _acquisition
 from access import bookprovision as _bookprovision
+from access import phpass               # cutover jirbis→Biblio: phpass-вход (#294)
 from access import devices as _devices
 from access import locker as _locker
 from access import readers as _readers
@@ -290,17 +291,17 @@ def verify_reader_password(supplied, stored):
         digest = hashlib.md5(supplied.encode('utf-8')).hexdigest()
         if hmac.compare_digest(digest, s.lower()):
             return True
-    # INTEGRATION POINT (#294, cutover jirbis→Biblio): читатели, перенесённые из
-    # jos_users, могут нести phpass-хэш ($P$/$H$) в поле RDR 130/100. Чтобы они
-    # вошли со своим существующим паролем, добавить здесь третью ветку:
-    #     from access import phpass
-    #     if phpass.verify_legacy_password(supplied, s):
-    #         return True
-    # А upgrade-on-login (пере-хэш + persist) делать НЕ тут (это чистая проверка),
-    # а в auth_reader() ниже: при успехе и phpass.needs_rehash(stored) записать в
-    # RDR-поле пароля наш нативный хэш. Реальная запись в живой ИРБИС — отдельный
-    # супервизируемый шаг (posture #222: боевой ИРБИС сейчас НЕ пишем), поэтому в
-    # этом коммите оставлена только точка подключения.
+    # 3) phpass ($P$/$H$) перенесённых из jos_users (#294, cutover jirbis→Biblio):
+    # реальный дамп jirbis2 (2026-06-28) подтвердил — ВСЕ 240 учёток несут phpass,
+    # поэтому бесшовный вход переносится именно этой веткой. Чистая проверка в
+    # постоянном времени (verify_legacy_password → phpass.verify, для не-phpass
+    # вернёт False, поэтому ветки plaintext/MD5 выше не дублируются).
+    if phpass.verify_legacy_password(supplied, s):
+        return True
+    # Upgrade-on-login (пере-хэш в наш нативный pbkdf2 + persist) делается НЕ здесь
+    # (это чистая проверка), а в слое входа при verify==True И phpass.needs_rehash:
+    # запись нативного хэша в поле пароля. Реальный persist в живой ИРБИС — отдельный
+    # супервизируемый шаг (posture #222: боевой ИРБИС сейчас НЕ пишем).
     return False
 
 
