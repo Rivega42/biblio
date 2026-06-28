@@ -38,6 +38,7 @@ import { HistoryTab } from "./reader/HistoryTab";
 import { SaveSearchButton, SavedSearchMenu, SavedSearchesPanel } from "./reader/SavedSearches";
 import { ConsentBanner, ConsentToggle, EraseDataCard } from "./reader/Consent";
 import { CookiePanel } from "./reader/CookiePanel";
+import { Requisites } from "./reader/Requisites";
 import { DocViewer } from "./reader/DocViewer";
 import type { DocPage } from "./reader/DocViewer";
 import type { SavedSearch } from "./api";
@@ -206,6 +207,7 @@ export function App() {
   const [staff, setStaff] = React.useState<StaffSession | null>(null);
   const [staffRoute, setStaffRoute] = React.useState<any>("desktop");
   const [staffLoginOpen, setStaffLoginOpen] = React.useState(false);
+  const [requisitesOpen, setRequisitesOpen] = React.useState(false);   // #335 модал «Реквизиты»
   // Discovery façade (G1): главная-лендинг показывается до первого поиска.
   const [home, setHome] = React.useState(true);
   // Представление выдачи (G4) и сортировка (G6) и размер страницы (G19).
@@ -808,6 +810,10 @@ export function App() {
       <footer style={{ borderTop: "1px solid var(--border-subtle)", padding: "14px 20px", fontSize: "var(--text-xs)", color: "var(--text-subtle)", display: "flex", gap: 10, alignItems: "center" }}>
         <Icon name="globe" size={14} />
         <span>Читательский портал поверх ИРБИС64 (база {DB}). Работает в защищённом контуре.</span>
+        <button type="button" onClick={() => setRequisitesOpen(true)}
+          style={{ marginLeft: "auto", border: "none", background: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "var(--text-xs)", textDecoration: "underline", fontFamily: "inherit" }}>
+          Реквизиты
+        </button>
       </footer>
 
       {loginOpen && <LoginOverlay onClose={() => setLoginOpen(false)} onSubmit={doLogin} bindProvider={oidcBindProvider} />}
@@ -820,6 +826,7 @@ export function App() {
       {/* Кукипанель (#335) — для ВСЕХ посетителей сайта (не только читателя); сама
           прячется, когда выбор уже сделан (localStorage). */}
       <CookiePanel />
+      {requisitesOpen && <Requisites onClose={() => setRequisitesOpen(false)} />}
       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
     </div>
   );
