@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-28**
-- Версия кода (git): **`c52df88`**
-- Файлов: **279** · строк: **83709** · условных страниц: **1522**
-- **SHA-256 всего листинга:** `304d69db5f5c5ffdad365076148207cff99ade43cb05d5ff2ada97594f041f57`
+- Версия кода (git): **`dca65b2`**
+- Файлов: **280** · строк: **83867** · условных страниц: **1525**
+- **SHA-256 всего листинга:** `3bb91b95dbb759f1ecf83041b2148ac50a20a3a2d9277a2a941537b8ac6156be`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -247,7 +247,7 @@
 | `irbis-web/frontend/components/viewer/FileViewer.jsx` | 156 | `ebc9849e151def9e8c4ecdafebe1fc1fb3418ec345d3f1a4b96a924223668aa2` |
 | `irbis-web/frontend/src/AcquisitionDesk.tsx` | 514 | `14fb28cee56e30b21f6e6b92a390abe75b2cacf49a4ef257fb32d7ad5b183796` |
 | `irbis-web/frontend/src/AdminDesk.tsx` | 549 | `83a13bd21a9b18977ceafa9ba0e77751fb3042de84e3826703e795c72a628f24` |
-| `irbis-web/frontend/src/App.tsx` | 1577 | `87dca5821aa0fb2ccc6e1faf039b9ec72222e51448c14173faf82979963e612c` |
+| `irbis-web/frontend/src/App.tsx` | 1581 | `0babb8c44b118fa1b3fa9b61ebb9d6276efee18ef0400825800e4d5dd444b78e` |
 | `irbis-web/frontend/src/BenchmarkPanel.tsx` | 442 | `365e5de598e181cc0520a964d1c470cb296d42a182ac44699366cac24909442a` |
 | `irbis-web/frontend/src/BookProvisionDesk.tsx` | 493 | `6e1d2a8c30d7b493db9da0686ef7658ea37cdc0b4fcee2739c3a0dc537b3486b` |
 | `irbis-web/frontend/src/CatalogingDesk.tsx` | 424 | `3e37f0529427d41181885fae16d064f6566f334949f495af65617de5090243cb` |
@@ -268,6 +268,7 @@
 | `irbis-web/frontend/src/reader/CalendarGrid.tsx` | 112 | `2ed431df8aea463865def31d5e95a39893b124982e4ae89ad141a505e9a7bd1b` |
 | `irbis-web/frontend/src/reader/Collections.tsx` | 66 | `78cd5dcdf3f5a3761495c7dee7140282af2e4568a5d8a56dba7e2d7192c7a91a` |
 | `irbis-web/frontend/src/reader/Consent.tsx` | 286 | `53a4b27cd5fcbd318cafc5cf881abd99b3803153cf4ffe1a69a0ea0a0292314e` |
+| `irbis-web/frontend/src/reader/CookiePanel.tsx` | 154 | `4e06f2e6f2efb9e4c1879a76fe40b2aa97f71efb2aae309a2e066917cf4effa7` |
 | `irbis-web/frontend/src/reader/DocViewer.tsx` | 191 | `6756c5476673272fb21ca6eb4b44502cb8b43d40db11888ff1ad71d0d02fdea8` |
 | `irbis-web/frontend/src/reader/Exhibits.tsx` | 209 | `218c697233aa1c168303d2f11971f6990e61fba6c1aa41a8eff85cce887a2741` |
 | `irbis-web/frontend/src/reader/GalleryGrid.tsx` | 113 | `89522accc3106d2e0517e0715f4ad45e281d4e36db9f3410418eb478ecef510e` |
