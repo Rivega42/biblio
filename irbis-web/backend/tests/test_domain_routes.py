@@ -1029,9 +1029,13 @@ def browse_route_checks():
 
 
 def access_matrix_route_checks():
-    print('-- Матрица доступов / тарифы через route() (#331)')
+    print('-- Матрица доступов / тарифы через route() (#331, платформа/super-admin)')
     api = _api()
-    A = _sess(api, 'staff', 'adm', ADMIN_G)
+    # Тарифы — контроль ОПЕРАТОРА ПЛАТФОРМЫ: гейт _require_super_admin (admin.db),
+    # НЕ per-tenant админка библиотеки (admin.users).
+    SUPER_G = [{'function': 'admin.db', 'db': '*', 'level': 'admin'}]
+    TENANT_ADMIN_G = [{'function': 'admin.users', 'db': '*', 'level': 'admin'}]
+    A = _sess(api, 'staff', 'op', SUPER_G)
     R = _reader(api)
 
     # Редактируемая таблица: строки каталога × тарифы-колонки.
@@ -1093,6 +1097,13 @@ def access_matrix_route_checks():
     check('reader смотрит тарифы -> 403', st == 403)
     st, p = api.route('POST', '/api/admin/tariffs', {}, {'name': 'x'}, R)
     check('reader создаёт тариф -> 403', st == 403)
+    # КЛЮЧЕВОЕ: tenant-админ библиотеки (admin.users, без admin.db) НЕ управляет
+    # тарифами платформы — это контроль оператора, а не одной библиотеки.
+    TA = _sess(api, 'staff', 'libadmin', TENANT_ADMIN_G)
+    st, p = api.route('GET', '/api/admin/tariffs', {}, None, TA)
+    check('tenant-админ (admin.users) смотрит тарифы -> 403', st == 403)
+    st, p = api.route('POST', '/api/admin/tariffs', {}, {'name': 'x'}, TA)
+    check('tenant-админ создаёт тариф -> 403', st == 403)
     st, p = api.route('POST', '/api/admin/tariffs/delete', {}, {'name': 'vuz'}, A)
     check('удалить тариф vuz -> removed true', st == 200 and p['data']['removed'] is True)
 

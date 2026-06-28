@@ -12,6 +12,7 @@
 import React from "react";
 import { api } from "./api";
 import type { Tenant, BillingInfo, PlanLimits } from "./api";
+import type { TariffTable, TariffRow, TariffCell } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -105,10 +106,11 @@ const LIMIT_META: { key: keyof PlanLimits; name: string; icon: IconName; unit?: 
   { key: "max_storage_mb", name: "Хранилище", icon: "archive", unit: " МБ" },
 ];
 
-type Tab = "tenants" | "billing";
+type Tab = "tenants" | "billing" | "matrix";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "tenants", label: "Арендаторы", icon: "layers" },
   { id: "billing", label: "Тариф и лимиты", icon: "credit-card" },
+  { id: "matrix", label: "Матрица доступов", icon: "sliders" },
 ];
 
 // Информер «эндпойнт вкладки не развёрнут».
@@ -150,7 +152,9 @@ export function PlatformDesk({ toast }: { toast: ToastFn }) {
       </div>
       {tab === "tenants"
         ? <TenantsTab toast={toast} selected={selected} onSelect={setSelected} onManage={openBilling} />
-        : <BillingTab toast={toast} selected={selected} onSelect={setSelected} />}
+        : tab === "billing"
+          ? <BillingTab toast={toast} selected={selected} onSelect={setSelected} />
+          : <MatrixTab toast={toast} />}
     </div>
   );
 }
@@ -479,6 +483,140 @@ function Meter({ icon, name, used, limit, unit = "" }: {
       </div>
       <div className="irb-plat__track"><div className="irb-plat__fill" style={{ width: (lim && hasUsed ? pct : 0) + "%", background: color }} /></div>
       <span className="irb-plat__meter-pct">{note}</span>
+    </div>
+  );
+}
+
+// ===== Матрица доступов (#331) ==============================================
+// Главная тарифная control-поверхность ОПЕРАТОРА ПЛАТФОРМЫ (не per-tenant
+// админки библиотеки): редактируемая таблица «разделы/функции × тарифы».
+// Галочка — раздел/функция входит в тариф (функция наследует раздел, пока не
+// переопределена явной ячейкой); число — лимит ресурса (пусто = безлимит);
+// select — режим при превышении/недоступности (блок 402 / грейс). Изменение
+// сразу пишется POST /api/admin/tariffs/cell. Гейт — super-admin (admin.db).
+function matrixIncluded(cells: TariffTable["cells"], row: TariffRow, tname: string): boolean {
+  const c = cells[tname]?.[row.item_key];
+  if (c) return c.included;
+  if (row.kind === "function" && row.section) {
+    const sc = cells[tname]?.["section:" + row.section];
+    return sc ? sc.included : false;
+  }
+  return row.kind === "resource";
+}
+function matrixEnf(cells: TariffTable["cells"], row: TariffRow, tname: string): "block" | "grace" {
+  const c = cells[tname]?.[row.item_key];
+  if (c) return c.enforcement;
+  if (row.kind === "function" && row.section) {
+    const sc = cells[tname]?.["section:" + row.section];
+    if (sc) return sc.enforcement;
+  }
+  return "block";
+}
+
+function MatrixTab({ toast }: { toast: ToastFn }) {
+  const [data, setData] = React.useState<TariffTable | null>(null);
+  const [down, setDown] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [newName, setNewName] = React.useState("");
+  const [newTitle, setNewTitle] = React.useState("");
+
+  const load = React.useCallback(async () => {
+    const r = await api.adminTariffs();
+    if (r.status === 404 || r.status === 501 || r.status === 403) { setDown(true); return; }
+    setDown(false);
+    if (r.json?.ok && r.json.data) setData(r.json.data); else setData({ rows: [], tariffs: [], cells: {} });
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const patch = async (tname: string, itemKey: string,
+                       p: { included?: boolean; value?: number | null; enforcement?: "block" | "grace" }) => {
+    setBusy(true);
+    const r = await api.adminTariffCell(tname, itemKey, p);
+    setBusy(false);
+    const cell: TariffCell | undefined = r.json?.ok ? (r.json.data as any)?.cell : undefined;
+    if (cell) setData((d) => d && ({ ...d, cells: { ...d.cells, [tname]: { ...(d.cells[tname] || {}), [itemKey]: cell } } }));
+    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db (оператор платформы)." });
+    else toast({ variant: "error", title: "Не сохранено", message: "Ячейка тарифа не обновлена." });
+  };
+  const addTariff = async () => {
+    const n = newName.trim(); if (!n) return;
+    const r = await api.adminTariffCreate(n, newTitle.trim() || n, data ? data.tariffs.length : 0);
+    if (r.json?.ok) { setNewName(""); setNewTitle(""); load(); toast({ variant: "success", title: "Тариф добавлен", message: n }); }
+    else toast({ variant: "error", title: "Не добавлен", message: "Тариф с таким кодом уже есть." });
+  };
+  const delTariff = async (n: string) => {
+    const r = await api.adminTariffDelete(n);
+    if (r.json?.ok) { load(); toast({ variant: "success", title: "Тариф удалён", message: n }); }
+  };
+
+  if (down) return <SectionDown icon="sliders" title="Матрица доступов подключается отдельно" />;
+  if (data === null) return <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка матрицы…</div>;
+
+  return (
+    <div className="irb-plat__card">
+      <div className="irb-plat__bar">
+        <span style={{ fontSize: 13, color: "var(--text-muted)", maxWidth: 460 }}>
+          Тарифная сетка платформы: разделы/функции × тарифы. Галочка — входит в тариф; число — лимит (вкл. число аккаунтов); режим — блок (402) / грейс при превышении.
+        </span>
+        <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
+          <div className="irb-plat__fld"><span className="irb-plat__fld-lab">Код</span>
+            <input className="irb-plat__in" placeholder="vuz" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: 100 }} aria-label="Код нового тарифа" /></div>
+          <div className="irb-plat__fld"><span className="irb-plat__fld-lab">Название</span>
+            <input className="irb-plat__in" placeholder="ВУЗ" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} style={{ width: 130 }} aria-label="Название нового тарифа" /></div>
+          <Button variant="secondary" size="sm" onClick={addTariff} disabled={busy || !newName.trim()}>
+            <Icon name="plus" size={14} /> Тариф
+          </Button>
+        </div>
+      </div>
+      <div className="irb-plat__scroll">
+        <table className="irb-plat__tbl">
+          <thead>
+            <tr>
+              <th>Раздел / функция / ресурс</th>
+              {data.tariffs.map((t) => (
+                <th key={t.name} style={{ textAlign: "center" }}>
+                  {t.title}{" "}
+                  <button type="button" onClick={() => delTariff(t.name)} title={"Удалить тариф " + t.name}
+                    aria-label={"Удалить тариф " + t.name}
+                    style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-subtle)", padding: 2 }}>
+                    <Icon name="trash" size={12} />
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.rows.map((row) => (
+              <tr key={row.item_key}>
+                <td style={{ paddingLeft: row.kind === "function" ? 28 : 14 }} className={row.kind === "resource" ? "irb-plat__mono" : ""}>
+                  {row.kind === "section" ? <b>{row.title}</b> : row.title}
+                  {row.kind === "resource" && row.unit ? <span style={{ color: "var(--text-subtle)" }}> ({row.unit})</span> : null}
+                </td>
+                {data.tariffs.map((t) => (
+                  <td key={t.name} style={{ textAlign: "center", whiteSpace: "nowrap" }}>
+                    {row.kind === "resource"
+                      ? <input type="number" min={0} placeholder="∞" className="irb-plat__in"
+                          value={data.cells[t.name]?.[row.item_key]?.value ?? ""}
+                          onChange={(e) => patch(t.name, row.item_key, { value: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
+                          style={{ width: 66, padding: "5px 7px" }} aria-label={row.title + " — лимит в тарифе " + t.name} />
+                      : <input type="checkbox" checked={matrixIncluded(data.cells, row, t.name)}
+                          onChange={(e) => patch(t.name, row.item_key, { included: e.target.checked })}
+                          aria-label={row.title + " в тарифе " + t.name} />}
+                    {" "}
+                    <select value={matrixEnf(data.cells, row, t.name)}
+                      onChange={(e) => patch(t.name, row.item_key, { enforcement: e.target.value as "block" | "grace" })}
+                      style={{ fontSize: 11 }} title="Поведение при превышении/недоступности"
+                      aria-label={"Режим: " + row.title + " / " + t.name}>
+                      <option value="block">блок</option>
+                      <option value="grace">грейс</option>
+                    </select>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

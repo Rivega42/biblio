@@ -3285,7 +3285,7 @@ class Api:
 
         По умолчанию — тенант текущей сессии. Резолвит из редактируемого стора
         тарифов: какие разделы/функции включены, лимиты (+à-la-carte), enforcement."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         from access import access_matrix as _am
         if self.tariffs is None:
             return 200, ok({'matrix': None})
@@ -3297,7 +3297,7 @@ class Api:
 
         Строки каталога (разделы/функции/ресурсы — SSOT) × колонки тарифов ×
         ячейки (included/value/enforcement)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         from access import access_matrix as _am
         if self.tariffs is None:
             return 200, ok({'rows': _am.catalog_rows(), 'tariffs': [], 'cells': {}})
@@ -3305,7 +3305,7 @@ class Api:
 
     def tariff_create(self, session, body):
         """POST /api/admin/tariffs — добавить тариф-колонку (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.tariffs is None:
             return 200, ok({'tariff': None})
         name = (body.get('name') or '').strip()
@@ -3324,7 +3324,7 @@ class Api:
         ``tariff`` + ``itemKey`` обязательны; ``included`` (bool), ``value`` (int),
         ``enforcement`` ('block'|'grace') — частичный апдейт (непереданные не
         затираются)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.tariffs is None:
             return 200, ok({'cell': None})
         tariff = (body.get('tariff') or '').strip()
@@ -3348,7 +3348,7 @@ class Api:
 
     def tariff_assign(self, session, body):
         """POST /api/admin/tariffs/assign — назначить тариф тенанту (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.tariffs is None:
             return 200, ok({'assigned': None})
         tenant = (body.get('tenant') or '').strip()
@@ -3365,7 +3365,7 @@ class Api:
         """POST /api/admin/tariffs/addon — докупить à-la-carte пакет тенанту (admin).
 
         ``tenant`` + ``resource`` + ``packs`` + ``packSize``."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.tariffs is None:
             return 200, ok({'addon': None})
         tenant = (body.get('tenant') or '').strip()
@@ -3381,7 +3381,7 @@ class Api:
 
     def tariff_delete(self, session, body):
         """POST /api/admin/tariffs/delete — удалить тариф-колонку (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.tariffs is None:
             return 200, ok({'removed': False})
         name = (body.get('name') or '').strip()

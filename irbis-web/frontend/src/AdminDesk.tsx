@@ -31,7 +31,6 @@
 import React from "react";
 import { api } from "./api";
 import type { AuditEntry, AdminDatabase, PdnAccessEntry } from "./api";
-import type { TariffTable, TariffRow, TariffCell } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -95,14 +94,13 @@ if (typeof document !== "undefined" && !document.getElementById("adm-css")) {
   const s = document.createElement("style"); s.id = "adm-css"; s.textContent = CSS; document.head.appendChild(s);
 }
 
-type Tab = "users" | "roles" | "audit" | "pdn" | "databases" | "tariffs";
+type Tab = "users" | "roles" | "audit" | "pdn" | "databases";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "users", label: "Пользователи", icon: "users" },
   { id: "roles", label: "Роли", icon: "shield" },
   { id: "audit", label: "Аудит", icon: "list" },
   { id: "pdn", label: "Доступ к ПДн", icon: "eye" },
   { id: "databases", label: "Базы", icon: "archive" },
-  { id: "tariffs", label: "Тарифы", icon: "credit-card" },
 ];
 
 // Информер «эндпойнт вкладки не развёрнут» (404/501) или «нет прав» (403).
@@ -127,7 +125,7 @@ export function AdminDesk({ toast }: { toast: ToastFn }) {
     <div className="stf__pagehead">
       <div className="stf__h1">
         <h2>Администрирование</h2>
-        <span className="stf__pill">Учётки · роли · аудит · ПДн · базы · тарифы</span>
+        <span className="stf__pill">Учётки · роли · аудит · ПДн · базы</span>
       </div>
     </div>
   );
@@ -146,8 +144,7 @@ export function AdminDesk({ toast }: { toast: ToastFn }) {
         : tab === "roles" ? <RolesTab />
         : tab === "audit" ? <AuditTab />
         : tab === "pdn" ? <PdnAccessTab />
-        : tab === "databases" ? <DatabasesTab />
-        : <TariffsTab toast={toast} />}
+        : <DatabasesTab />}
     </div>
   );
 }
@@ -349,136 +346,6 @@ function RolesTab() {
                     : <span style={{ color: "var(--text-subtle)" }}>—</span>}
                 </div>
               </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ===== Тарифы (матрица доступов, #331) ======================================
-// Редактируемая таблица: строки каталога (раздел/функция/ресурс) × колонки
-// тарифов. Галочка — включено (функция наследует раздел, пока не переопределена);
-// число — лимит ресурса; select — режим при превышении (block/grace). Изменение
-// ячейки сразу пишется POST /api/admin/tariffs/cell.
-function effIncluded(cells: TariffTable["cells"], row: TariffRow, tname: string): boolean {
-  const c = cells[tname]?.[row.item_key];
-  if (c) return c.included;
-  if (row.kind === "function" && row.section) {
-    const sc = cells[tname]?.["section:" + row.section];
-    return sc ? sc.included : false;
-  }
-  return row.kind === "resource";
-}
-function cellEnf(cells: TariffTable["cells"], row: TariffRow, tname: string): "block" | "grace" {
-  const c = cells[tname]?.[row.item_key];
-  if (c) return c.enforcement;
-  if (row.kind === "function" && row.section) {
-    const sc = cells[tname]?.["section:" + row.section];
-    if (sc) return sc.enforcement;
-  }
-  return "block";
-}
-
-function TariffsTab({ toast }: { toast: ToastFn }) {
-  const [data, setData] = React.useState<TariffTable | null>(null);
-  const [state, setState] = React.useState<"live" | "down" | "forbidden">("live");
-  const [busy, setBusy] = React.useState(false);
-  const [newName, setNewName] = React.useState("");
-  const [newTitle, setNewTitle] = React.useState("");
-
-  const load = React.useCallback(async () => {
-    const r = await api.adminTariffs();
-    if (r.status === 404 || r.status === 501) { setState("down"); return; }
-    if (r.status === 403) { setState("forbidden"); return; }
-    if (r.json?.ok && r.json.data) setData(r.json.data); else setData({ rows: [], tariffs: [], cells: {} });
-    setState("live");
-  }, []);
-  React.useEffect(() => { load(); }, [load]);
-
-  const patch = async (tname: string, itemKey: string,
-                       p: { included?: boolean; value?: number | null; enforcement?: "block" | "grace" }) => {
-    setBusy(true);
-    const r = await api.adminTariffCell(tname, itemKey, p);
-    setBusy(false);
-    const cell: TariffCell | undefined = r.json?.ok ? (r.json.data as any)?.cell : undefined;
-    if (cell) {
-      setData((d) => d && ({ ...d, cells: { ...d.cells, [tname]: { ...(d.cells[tname] || {}), [itemKey]: cell } } }));
-    } else toast({ variant: "error", title: "Не сохранено", message: "Ячейка тарифа не обновлена." });
-  };
-
-  const addTariff = async () => {
-    const n = newName.trim(); if (!n) return;
-    const r = await api.adminTariffCreate(n, newTitle.trim() || n, data ? data.tariffs.length : 0);
-    if (r.json?.ok) { setNewName(""); setNewTitle(""); load(); toast({ variant: "success", title: "Тариф добавлен", message: n }); }
-    else toast({ variant: "error", title: "Не добавлен", message: "Тариф с таким кодом уже есть." });
-  };
-  const delTariff = async (n: string) => {
-    const r = await api.adminTariffDelete(n);
-    if (r.json?.ok) { load(); toast({ variant: "success", title: "Тариф удалён", message: n }); }
-  };
-
-  if (state === "down") return <SectionDown icon="credit-card" title="Тарифы подключаются отдельно" />;
-  if (state === "forbidden") return <SectionDown icon="credit-card" title="Недостаточно прав для тарифов" description={FORBIDDEN_DESC} />;
-  if (data === null) return <div className="adm__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка тарифов…</div>;
-
-  return (
-    <div className="adm__card adm__scroll">
-      <div style={{ padding: "10px 12px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid var(--border-subtle)" }}>
-        <span style={{ fontSize: 13, color: "var(--text-subtle)" }}>
-          Матрица доступов: разделы/функции × тарифы. Галочка — входит в тариф; число — лимит; режим — блок/грейс при превышении.
-        </span>
-        <span style={{ flex: 1 }} />
-        <input placeholder="код (vuz)" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: 110 }} aria-label="Код нового тарифа" />
-        <input placeholder="название" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} style={{ width: 130 }} aria-label="Название нового тарифа" />
-        <button type="button" onClick={addTariff} disabled={busy || !newName.trim()} className="adm__btn">
-          <Icon name="plus" size={14} /> Тариф
-        </button>
-      </div>
-      <table className="adm__tbl">
-        <thead>
-          <tr>
-            <th>Раздел / функция / ресурс</th>
-            {data.tariffs.map((t) => (
-              <th key={t.name} style={{ textAlign: "center", whiteSpace: "nowrap" }}>
-                {t.title}{" "}
-                <button type="button" onClick={() => delTariff(t.name)} title={"Удалить тариф " + t.name}
-                  aria-label={"Удалить тариф " + t.name}
-                  style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-subtle)", padding: 2 }}>
-                  <Icon name="trash" size={12} />
-                </button>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.rows.map((row) => (
-            <tr key={row.item_key}>
-              <td style={{ paddingLeft: row.kind === "function" ? 26 : 8 }} className={row.kind === "resource" ? "adm__mono" : ""}>
-                {row.kind === "section" ? <b>{row.title}</b> : row.title}
-                {row.kind === "resource" && row.unit ? <span style={{ color: "var(--text-subtle)" }}> ({row.unit})</span> : null}
-              </td>
-              {data.tariffs.map((t) => (
-                <td key={t.name} style={{ textAlign: "center", whiteSpace: "nowrap" }}>
-                  {row.kind === "resource"
-                    ? <input type="number" min={0} placeholder="∞"
-                        value={data.cells[t.name]?.[row.item_key]?.value ?? ""}
-                        onChange={(e) => patch(t.name, row.item_key, { value: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
-                        style={{ width: 70 }} aria-label={row.title + " — лимит в тарифе " + t.name} />
-                    : <input type="checkbox" checked={effIncluded(data.cells, row, t.name)}
-                        onChange={(e) => patch(t.name, row.item_key, { included: e.target.checked })}
-                        aria-label={row.title + " в тарифе " + t.name} />}
-                  {" "}
-                  <select value={cellEnf(data.cells, row, t.name)}
-                    onChange={(e) => patch(t.name, row.item_key, { enforcement: e.target.value as "block" | "grace" })}
-                    style={{ fontSize: 11, padding: "1px 2px" }} title="Поведение при превышении/недоступности"
-                    aria-label={"Режим enforcement: " + row.title + " / " + t.name}>
-                    <option value="block">блок</option>
-                    <option value="grace">грейс</option>
-                  </select>
-                </td>
-              ))}
             </tr>
           ))}
         </tbody>
