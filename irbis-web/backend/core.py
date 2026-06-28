@@ -3828,6 +3828,68 @@ class Api:
             return 400, err('bad_request', str(e))
         return 200, ok({'records': records, 'count': len(records)})
 
+    # ---- Каталогизатор: copy-cataloging через SRU/Z39.50 (#240) ---------- #
+    def copy_search_url(self, session, body):
+        """POST /api/cataloging/copy/url — собрать SRU-URL для копикаталогизации (cataloging read).
+
+        ``base`` (URL SRU-сервиса) + ``field`` (title|author|isbn|any) + ``term``.
+        Сетевой вызов делает вызывающий слой (граница транспорта); возвращаем URL +
+        CQL-запрос."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import sru as _sru
+        base = (body.get('base') or '').strip()
+        term = (body.get('term') or '').strip()
+        if not base or not term:
+            return 400, err('bad_request', 'base/term required')
+        query = _sru.search_query((body.get('field') or 'any'), term)
+        try:
+            mx = min(50, max(1, int(body.get('max', 10))))
+        except (TypeError, ValueError):
+            mx = 10
+        return 200, ok({'url': _sru.sru_url(base, query, max_records=mx), 'query': query})
+
+    def copy_parse(self, session, body):
+        """POST /api/cataloging/copy/parse — разобрать SRU-ответ -> записи + кандидаты (cataloging read).
+
+        ``xml`` — SRU searchRetrieveResponse (с MARCXML). Опц. ``isbn``/``title`` —
+        отфильтровать кандидатов-дублей для импорта."""
+        self._guard(session, 'cataloging', '*', 'read')
+        from access import sru as _sru
+        parsed = _sru.parse_response(body.get('xml') or '')
+        out = {'total': parsed['total'], 'records': parsed['records'],
+               'count': len(parsed['records'])}
+        if body.get('isbn') or body.get('title'):
+            out['candidates'] = _sru.candidates(
+                parsed['records'], isbn=body.get('isbn'), title=body.get('title'))
+        return 200, ok(out)
+
+    def copy_import(self, session, body):
+        """POST /api/cataloging/copy/import — импортировать записи SRU-ответа в каталог (cataloging write).
+
+        Разбирает ``xml`` (SRU/MARCXML) и сохраняет записи в собственный CatalogStore
+        (920=PAZK по умолч., ФЛК; невалидные -> skipped). Не пишет живой ИРБИС (#222)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.catalog is None:
+            return 200, ok({'created': 0, 'skipped': 0, 'mfns': []})
+        from access import sru as _sru
+        parsed = _sru.parse_response(body.get('xml') or '')
+        db = self.cfg.db_default
+        created, skipped, mfns = 0, 0, []
+        for rec in parsed['records']:
+            rec = dict(rec)
+            rec.setdefault('920', 'PAZK')
+            try:
+                res = self.catalog.save(db, rec)
+            except Exception:
+                skipped += 1
+                continue
+            if res and res.get('saved') and res.get('mfn'):
+                created += 1
+                mfns.append(res['mfn'])
+            else:
+                skipped += 1
+        return 200, ok({'created': created, 'skipped': skipped, 'mfns': mfns})
+
     # ---- Каталогизатор: дедуп / copy-cataloging (PR #317) ---------------- #
     def dedup_scan(self, session, body):
         """POST /api/cataloging/dedup — кластеры дублей + сводка (staff)."""
@@ -6183,6 +6245,13 @@ class Api:
                 return self.marcxml_export(session, body or {})
             if method == 'POST' and path == '/api/cataloging/marcxml/import':
                 return self.marcxml_import(session, body or {})
+            # ---- Каталогизатор: copy-cataloging SRU/Z39.50 (#240) ----
+            if method == 'POST' and path == '/api/cataloging/copy/url':
+                return self.copy_search_url(session, body or {})
+            if method == 'POST' and path == '/api/cataloging/copy/parse':
+                return self.copy_parse(session, body or {})
+            if method == 'POST' and path == '/api/cataloging/copy/import':
+                return self.copy_import(session, body or {})
             # ---- Каталогизатор: дедуп / печать ГОСТ (PR #317) ----
             if method == 'POST' and path == '/api/cataloging/dedup':
                 return self.dedup_scan(session, body or {})
