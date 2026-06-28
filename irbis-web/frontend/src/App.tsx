@@ -37,6 +37,7 @@ import { InThisEdition, RecordHost, FulltextBlock } from "./reader/LinkedRecords
 import { HistoryTab } from "./reader/HistoryTab";
 import { SaveSearchButton, SavedSearchMenu, SavedSearchesPanel } from "./reader/SavedSearches";
 import { ConsentBanner, ConsentToggle, EraseDataCard } from "./reader/Consent";
+import { CookiePanel } from "./reader/CookiePanel";
 import { DocViewer } from "./reader/DocViewer";
 import type { DocPage } from "./reader/DocViewer";
 import type { SavedSearch } from "./api";
@@ -816,6 +817,9 @@ export function App() {
       {/* Согласие на обработку ПДн (#199) — баннер первого сеанса. Только для вошедшего
           читателя (не гость, не контекст сотрудника). Сам прячется при given/404. */}
       {context === "reader" && account.loggedIn && <ConsentBanner toast={toast} />}
+      {/* Кукипанель (#335) — для ВСЕХ посетителей сайта (не только читателя); сама
+          прячется, когда выбор уже сделан (localStorage). */}
+      <CookiePanel />
       <ToastViewport toasts={toasts} onDismiss={(id: number) => setToasts((x) => x.filter((y) => y.id !== id))} />
     </div>
   );
