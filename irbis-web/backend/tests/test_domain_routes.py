@@ -56,6 +56,7 @@ from access import access_matrix as _am
 from access.deployment import DeploymentService, DeploymentStore
 from access.library_config import LibraryConfigService, LibraryConfigStore
 from access.connections import ConnectionService, ConnectionStore
+from access.inforost import InforostService, InforostImportStore
 from access import circulation as _circ
 
 PASS = [0]
@@ -143,6 +144,7 @@ def _api():
     api.deployment = DeploymentService(DeploymentStore(':memory:'))
     api.library_config = LibraryConfigService(LibraryConfigStore(':memory:'))
     api.connections = ConnectionService(ConnectionStore(':memory:'))
+    api.inforost = InforostService(InforostImportStore(':memory:'))
     return api
 
 
@@ -1203,6 +1205,30 @@ def onboarding_config_route_checks():
     st, p = api.route('POST', '/api/admin/connections/remove', {},
                       {'tenant': 't1', 'kind': 'irbis'}, SUP)
     check('удалить подключение -> removed true', st == 200 and p['data']['removed'] is True)
+
+    # --- Импорт из Инфорост (источник оцифровки, super-admin) ---
+    export = {'collections': [
+        {'id': 'c1', 'title': 'Афиши 1920-х', 'description': 'd',
+         'items': [{'id': 'i1', 'title': 'Афиша Чайки', 'author': 'Театр', 'year': '1925',
+                    'pages': [{'no': 1, 'image': 'http://if/i1/1.jpg'}, {'no': 2, 'image': 'http://if/i1/2.jpg'}]},
+                   {'id': 'i2', 'title': 'Программа', 'pages': [{'no': 1, 'image': 'http://if/i2/1.jpg'}]}]}]}
+    st, p = api.route('POST', '/api/admin/inforost/plan', {}, {'export': export}, SUP)
+    check('инфорост-план: 1 коллекция, 2 записи, 3 образа',
+          st == 200 and p['data']['plan']['collections_total'] == 1
+          and p['data']['plan']['items_total'] == 2 and p['data']['plan']['assets_total'] == 3)
+    check('инфорост-план: запись 200^a из title',
+          p['data']['plan']['records'][0]['200'][0]['a'] == 'Афиша Чайки')
+    st, p = api.route('POST', '/api/admin/inforost/import', {},
+                      {'tenant': 't_if', 'export': export}, SUP)
+    check('инфорост-импорт: new>0', st == 200 and p['data']['new'] > 0)
+    st, p = api.route('POST', '/api/admin/inforost/import', {},
+                      {'tenant': 't_if', 'export': export}, SUP)
+    check('повторный импорт идемпотентен: new=0, skipped>0',
+          st == 200 and p['data']['new'] == 0 and p['data']['skipped'] > 0)
+    st, p = api.route('POST', '/api/admin/inforost/plan', {}, {'export': export}, TA)
+    check('tenant-админ к инфорост -> 403', st == 403)
+    st, p = api.route('POST', '/api/admin/inforost/plan', {}, {'export': export}, R)
+    check('reader к инфорост -> 403', st == 403)
 
 
 def ocr_pipeline_route_checks():

@@ -864,6 +864,13 @@ class Api:
                     'CONNECTIONS_DB', os.path.join(here, 'connections.db'))))
         except Exception:
             self.connections = None
+        try:
+            from access import inforost as _inforost
+            self.inforost = _inforost.InforostService(
+                _inforost.InforostImportStore(os.environ.get(
+                    'INFOROST_DB', os.path.join(here, 'inforost.db'))))
+        except Exception:
+            self.inforost = None
         # Бэклог own-store модулей (#316/#317/#318), разведённый в роуты ниже:
         # поставщики/счета + подписка-периодика (Комплектование), версии записи +
         # редактор словарей .mnu/.tre (Каталогизатор), роли RBAC + аудит-трейл +
@@ -3561,6 +3568,28 @@ class Api:
         kind = (body.get('kind') or '').strip()
         return 200, ok({'removed': self.connections.remove(tenant, kind)})
 
+    # ---- Импорт из Инфорост (источник оцифровки, super-admin, #240/#335) -- #
+    def inforost_plan(self, session, body):
+        """POST /api/admin/inforost/plan — сухой план импорта из инфорост-экспорта (super-admin).
+
+        Тело ``export`` — выгрузка инфорост (коллекции/позиции/страницы); ответ —
+        сводный план (выставки/записи/число образов), НИЧЕГО не пишет."""
+        self._require_super_admin(session)
+        if self.inforost is None:
+            return 200, ok({'plan': None})
+        return 200, ok({'plan': self.inforost.plan(body.get('export') or {})})
+
+    def inforost_import(self, session, body):
+        """POST /api/admin/inforost/import — зафиксировать импорт в журнал (super-admin).
+
+        Регистрирует коллекции/позиции инфорост-экспорта в own-store журнал
+        (идемпотентно по source_id). Возвращает ``{new, skipped, plan}``."""
+        self._require_super_admin(session)
+        if self.inforost is None:
+            return 200, ok({'new': 0, 'skipped': 0})
+        tenant = (body.get('tenant') or '').strip() or session.get('tenant', DEFAULT_TENANT)
+        return 200, ok(self.inforost.import_log(tenant, body.get('export') or {}))
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -6028,6 +6057,10 @@ class Api:
                 return self.connection_set(session, body or {})
             if method == 'POST' and path == '/api/admin/connections/remove':
                 return self.connection_remove(session, body or {})
+            if method == 'POST' and path == '/api/admin/inforost/plan':
+                return self.inforost_plan(session, body or {})
+            if method == 'POST' and path == '/api/admin/inforost/import':
+                return self.inforost_import(session, body or {})
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
