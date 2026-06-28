@@ -656,6 +656,10 @@ export const api = {
   // Удалить тариф-колонку.
   adminTariffDelete: (name: string) =>
     jpost<{ removed: boolean }>("/api/admin/tariffs/delete", { name }),
+  // --- Конфигурация библиотеки (#335) — правит админ библиотеки (admin.users) ---
+  adminLibraryConfig: () => jget<{ config: LibraryConfig }>("/api/admin/library-config"),
+  adminLibraryConfigSet: (patch: Partial<LibraryConfig>) =>
+    jpost<{ config: LibraryConfig }>("/api/admin/library-config", patch),
 
   // --- Платформа: арендаторы + тариф/биллинг (#207, #209; epic #223) -------
   // Список арендаторов контура. 404/501 → degrade (информер).
