@@ -31,6 +31,7 @@
 import React from "react";
 import { api } from "./api";
 import type { AuditEntry, AdminDatabase, PdnAccessEntry } from "./api";
+import type { LibraryConfig } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -94,13 +95,14 @@ if (typeof document !== "undefined" && !document.getElementById("adm-css")) {
   const s = document.createElement("style"); s.id = "adm-css"; s.textContent = CSS; document.head.appendChild(s);
 }
 
-type Tab = "users" | "roles" | "audit" | "pdn" | "databases";
+type Tab = "users" | "roles" | "audit" | "pdn" | "databases" | "library";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "users", label: "Пользователи", icon: "users" },
   { id: "roles", label: "Роли", icon: "shield" },
   { id: "audit", label: "Аудит", icon: "list" },
   { id: "pdn", label: "Доступ к ПДн", icon: "eye" },
   { id: "databases", label: "Базы", icon: "archive" },
+  { id: "library", label: "Учреждение", icon: "book-open" },
 ];
 
 // Информер «эндпойнт вкладки не развёрнут» (404/501) или «нет прав» (403).
@@ -144,7 +146,8 @@ export function AdminDesk({ toast }: { toast: ToastFn }) {
         : tab === "roles" ? <RolesTab />
         : tab === "audit" ? <AuditTab />
         : tab === "pdn" ? <PdnAccessTab />
-        : <DatabasesTab />}
+        : tab === "databases" ? <DatabasesTab />
+        : <LibraryTab toast={toast} />}
     </div>
   );
 }
@@ -350,6 +353,94 @@ function RolesTab() {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ===== Учреждение (конфигурация библиотеки, #335) ===========================
+// Редактор публичной конфигурации СВОЕЙ библиотеки (per-tenant, гейт admin.users):
+// наименование, логотип, тинт, юр.реквизиты (ИНН/ОГРН/КПП/адрес), контакты, часы,
+// «о библиотеке». Заменяет захардкоженный tenantContent. Сохранение — частичный
+// апдейт POST /api/admin/library-config (бэкенд deep-merge).
+function LibFld({ label, value, onChange, area }: { label: string; value: string; onChange: (v: string) => void; area?: boolean }) {
+  const st: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "8px 11px", borderRadius: "var(--radius-md,8px)", border: "1px solid var(--border-strong,#cdd3da)", background: "var(--surface-card)", color: "var(--text-body)", fontFamily: "var(--font-ui,inherit)", fontSize: "13px" };
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <span style={{ fontSize: "10.5px", fontWeight: 600, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--text-subtle)" }}>{label}</span>
+      {area
+        ? <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} style={st} />
+        : <input value={value} onChange={(e) => onChange(e.target.value)} style={st} />}
+    </label>
+  );
+}
+
+function LibraryTab({ toast }: { toast: ToastFn }) {
+  const [cfg, setCfg] = React.useState<LibraryConfig | null>(null);
+  const [state, setState] = React.useState<"live" | "down" | "forbidden">("live");
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => { (async () => {
+    const r = await api.adminLibraryConfig();
+    if (r.status === 404 || r.status === 501) { setState("down"); return; }
+    if (r.status === 403) { setState("forbidden"); return; }
+    if (r.json?.ok && r.json.data?.config) setCfg(r.json.data.config);
+    setState("live");
+  })(); }, []);
+
+  const setF = (k: keyof LibraryConfig, v: string) => setCfg((c) => c && ({ ...c, [k]: v }));
+  const setR = (k: keyof LibraryConfig["requisites"], v: string) =>
+    setCfg((c) => c && ({ ...c, requisites: { ...c.requisites, [k]: v } }));
+
+  const save = async () => {
+    if (!cfg) return;
+    setSaving(true);
+    const r = await api.adminLibraryConfigSet(cfg);
+    setSaving(false);
+    if (r.json?.ok && (r.json.data as any)?.config) { setCfg((r.json.data as any).config); toast({ variant: "success", title: "Сохранено", message: "Конфигурация учреждения обновлена." }); }
+    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.users (админ библиотеки)." });
+    else toast({ variant: "error", title: "Не сохранено", message: "Повторите попытку." });
+  };
+
+  if (state === "down") return <SectionDown icon="book-open" title="Конфигурация учреждения подключается отдельно" />;
+  if (state === "forbidden") return <SectionDown icon="book-open" title="Недостаточно прав для конфигурации" description={FORBIDDEN_DESC} />;
+  if (cfg === null) return <div className="adm__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка конфигурации…</div>;
+
+  const rq = cfg.requisites;
+  const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 };
+  return (
+    <div className="adm__card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
+      <div>
+        <p style={{ fontSize: 13, color: "var(--text-subtle)", margin: "0 0 12px" }}>Публичные данные библиотеки — показываются на портале (шапка, «О библиотеке», страница «Реквизиты»). Заменяют захардкоженный контент.</p>
+        <div style={grid}>
+          <LibFld label="Краткое наименование" value={cfg.name} onChange={(v) => setF("name", v)} />
+          <LibFld label="Полное наименование" value={cfg.full_name} onChange={(v) => setF("full_name", v)} />
+          <LibFld label="URL логотипа" value={cfg.logo_url} onChange={(v) => setF("logo_url", v)} />
+          <LibFld label="Цвет акцента (тинт)" value={cfg.tint} onChange={(v) => setF("tint", v)} />
+        </div>
+      </div>
+      <div>
+        <p style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-subtle)", margin: "0 0 9px" }}>Юридические реквизиты</p>
+        <div style={grid}>
+          <LibFld label="ИНН" value={rq.inn} onChange={(v) => setR("inn", v)} />
+          <LibFld label="ОГРН" value={rq.ogrn} onChange={(v) => setR("ogrn", v)} />
+          <LibFld label="КПП" value={rq.kpp} onChange={(v) => setR("kpp", v)} />
+          <LibFld label="Юридический адрес" value={rq.legal_address} onChange={(v) => setR("legal_address", v)} />
+        </div>
+      </div>
+      <div>
+        <p style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-subtle)", margin: "0 0 9px" }}>Контакты</p>
+        <div style={grid}>
+          <LibFld label="Адрес" value={rq.address} onChange={(v) => setR("address", v)} />
+          <LibFld label="Телефон" value={rq.phone} onChange={(v) => setR("phone", v)} />
+          <LibFld label="E-mail" value={rq.email} onChange={(v) => setR("email", v)} />
+          <LibFld label="Сайт" value={rq.site} onChange={(v) => setR("site", v)} />
+          <LibFld label="Часы работы" value={cfg.hours} onChange={(v) => setF("hours", v)} />
+        </div>
+      </div>
+      <LibFld label="О библиотеке" value={cfg.about} onChange={(v) => setF("about", v)} area />
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <Button iconLeft="check" loading={saving} onClick={save}>Сохранить</Button>
+      </div>
     </div>
   );
 }
