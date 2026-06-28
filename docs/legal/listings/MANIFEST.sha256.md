@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-28**
-- Версия кода (git): **`6ce362f`**
-- Файлов: **290** · строк: **86937** · условных страниц: **1581**
-- **SHA-256 всего листинга:** `3a2356f80d32e33c3e4c8c29733646ab47a8755860110c56cf5f3c395207617c`
+- Версия кода (git): **`5eebba6`**
+- Файлов: **290** · строк: **86955** · условных страниц: **1582**
+- **SHA-256 всего листинга:** `4343621bbbcdec2d62ee9436c4777771bcb4b9c192a26bd7a68713d8403ccc25`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -255,7 +255,7 @@
 | `irbis-web/frontend/components/viewer/FileViewer.jsx` | 156 | `ebc9849e151def9e8c4ecdafebe1fc1fb3418ec345d3f1a4b96a924223668aa2` |
 | `irbis-web/frontend/src/AcquisitionDesk.tsx` | 514 | `14fb28cee56e30b21f6e6b92a390abe75b2cacf49a4ef257fb32d7ad5b183796` |
 | `irbis-web/frontend/src/AdminDesk.tsx` | 640 | `d01ae6b0e8b746a99809665a518e2158361b57250db93223116ac586e89eddfa` |
-| `irbis-web/frontend/src/App.tsx` | 1588 | `475e3c52e280dcd13ed14c57ce28e28a9ded5f6bdf0cfb31988c461ecfcbb1a7` |
+| `irbis-web/frontend/src/App.tsx` | 1606 | `3b4d6f2239f3a340117efb39137894a00ad16b353bd4e9bda570eac0cc0a93d6` |
 | `irbis-web/frontend/src/BenchmarkPanel.tsx` | 442 | `365e5de598e181cc0520a964d1c470cb296d42a182ac44699366cac24909442a` |
 | `irbis-web/frontend/src/BookProvisionDesk.tsx` | 493 | `6e1d2a8c30d7b493db9da0686ef7658ea37cdc0b4fcee2739c3a0dc537b3486b` |
 | `irbis-web/frontend/src/CatalogingDesk.tsx` | 424 | `3e37f0529427d41181885fae16d064f6566f334949f495af65617de5090243cb` |
