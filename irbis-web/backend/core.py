@@ -2818,8 +2818,12 @@ class Api:
         """POST /api/exhibits — создать выставку-черновик (cataloging write).
 
         ``slug``/``title`` обязательны; дубликат ``slug`` -> 400. Флаг
-        ``published`` публикует сразу (иначе создаётся черновик)."""
+        ``published`` публикует сразу (иначе создаётся черновик). Раздел
+        «Оцифровка» гейтится тарифом (#331 Фаза 3): нет в тарифе -> 402/грейс."""
         self._guard(session, 'cataloging', '*', 'write')
+        if self._matrix_section_verdict(session, 'digitization') == 'deny':
+            raise Denied(402, 'payment_required',
+                         'раздел «Оцифровка» не входит в тариф')
         if self.exhibits is None:
             return 200, ok({'exhibit': None})
         slug = (body.get('slug') or '').strip()
