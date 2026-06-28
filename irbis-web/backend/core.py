@@ -838,6 +838,32 @@ class Api:
             _access_matrix.seed_defaults(self.tariffs)
         except Exception:
             self.tariffs = None
+        # Онбординг-конфиг (issue #335): режим развёртывания (надстройка/замена ×
+        # облако/on-prem) · редактируемая конфигурация библиотеки (наименование/
+        # логотип/реквизиты — заменяет захардкоженный фронт tenantContent) ·
+        # внешние подключения (ИРБИС/jirbis/инфорост, секреты маскируются наружу,
+        # off-git). Best-effort: сбой -> None (резолверы деградируют).
+        try:
+            from access import deployment as _deployment
+            self.deployment = _deployment.DeploymentService(
+                _deployment.DeploymentStore(os.environ.get(
+                    'DEPLOYMENT_DB', os.path.join(here, 'deployment.db'))))
+        except Exception:
+            self.deployment = None
+        try:
+            from access import library_config as _library_config
+            self.library_config = _library_config.LibraryConfigService(
+                _library_config.LibraryConfigStore(os.environ.get(
+                    'LIBRARY_CONFIG_DB', os.path.join(here, 'library_config.db'))))
+        except Exception:
+            self.library_config = None
+        try:
+            from access import connections as _connections
+            self.connections = _connections.ConnectionService(
+                _connections.ConnectionStore(os.environ.get(
+                    'CONNECTIONS_DB', os.path.join(here, 'connections.db'))))
+        except Exception:
+            self.connections = None
         # Бэклог own-store модулей (#316/#317/#318), разведённый в роуты ниже:
         # поставщики/счета + подписка-периодика (Комплектование), версии записи +
         # редактор словарей .mnu/.tre (Каталогизатор), роли RBAC + аудит-трейл +
@@ -3389,6 +3415,107 @@ class Api:
             return 400, err('bad_request', 'name required')
         return 200, ok({'removed': self.tariffs.delete_tariff(name)})
 
+    # ---- Онбординг: режим развёртывания (super-admin, #335) --------------- #
+    def deployment_catalog(self, session, query):
+        """GET /api/admin/deployment/catalog — режимы×топологии для визарда (super-admin)."""
+        self._require_super_admin(session)
+        from access import deployment as _dep
+        if self.deployment is not None:
+            return 200, ok(self.deployment.catalog())
+        return 200, ok({'modes': _dep.REPLACEMENT_MODES, 'topologies': _dep.TOPOLOGIES})
+
+    def deployment_get(self, session, query):
+        """GET /api/admin/deployment?tenant= — режим развёртывания тенанта (super-admin)."""
+        self._require_super_admin(session)
+        if self.deployment is None:
+            return 200, ok({'deployment': None})
+        tenant = (query.get('tenant', [None])[0]) or session.get('tenant', DEFAULT_TENANT)
+        return 200, ok({'deployment': self.deployment.resolve(tenant)})
+
+    def deployment_set(self, session, body):
+        """POST /api/admin/deployment — задать режим/топологию тенанта (super-admin)."""
+        self._require_super_admin(session)
+        if self.deployment is None:
+            return 200, ok({'deployment': None})
+        tenant = (body.get('tenant') or '').strip() or session.get('tenant', DEFAULT_TENANT)
+        try:
+            res = self.deployment.set(tenant, (body.get('mode') or '').strip(),
+                                      (body.get('topology') or '').strip())
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'deployment': res, 'resolved': self.deployment.resolve(tenant)})
+
+    # ---- Конфигурация библиотеки (брендинг/реквизиты, #335) --------------- #
+    def library_config_public(self, session, query):
+        """GET /api/library-config — публичная конфигурация библиотеки (public-read).
+
+        Брендинг/реквизиты/контакты для читательского портала (заменяет
+        захардкоженный tenantContent). Ничего секретного."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        if self.library_config is None:
+            return 200, ok({'config': None})
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        return 200, ok({'config': self.library_config.public(tenant)})
+
+    def library_config_get(self, session, query):
+        """GET /api/admin/library-config — полная конфигурация (tenant-admin)."""
+        self._require_admin(session, 'admin.users')
+        if self.library_config is None:
+            return 200, ok({'config': None})
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        return 200, ok({'config': self.library_config.get(tenant)})
+
+    def library_config_set(self, session, body):
+        """POST /api/admin/library-config — частичный апдейт конфигурации (tenant-admin)."""
+        self._require_admin(session, 'admin.users')
+        if self.library_config is None:
+            return 200, ok({'config': None})
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        try:
+            cfg = self.library_config.update(tenant, body or {})
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'config': cfg})
+
+    # ---- Внешние подключения (ИРБИС/jirbis/инфорост, super-admin, #335) --- #
+    def connections_list(self, session, query):
+        """GET /api/admin/connections?tenant= — подключения тенанта (МАСКИРОВАННЫЕ, super-admin).
+
+        Секреты наружу как ``***``; реальные значения — только внутреннему слою."""
+        self._require_super_admin(session)
+        from access import connections as _conn
+        tenant = (query.get('tenant', [None])[0]) or session.get('tenant', DEFAULT_TENANT)
+        hints = {k: _conn.FIELD_HINTS.get(k, []) for k in _conn.KINDS}
+        items = self.connections.list(tenant) if self.connections else []
+        return 200, ok({'items': items, 'kinds': list(_conn.KINDS), 'hints': hints})
+
+    def connection_set(self, session, body):
+        """POST /api/admin/connections — задать подключение (super-admin).
+
+        ``kind`` (irbis|jirbis|inforost) + ``config``. Секрет, переданный как ``***``/
+        пустой — не затирает ранее сохранённый. Возвращает МАСКИРОВАННЫЙ вид."""
+        self._require_super_admin(session)
+        if self.connections is None:
+            return 200, ok({'connection': None})
+        tenant = (body.get('tenant') or '').strip() or session.get('tenant', DEFAULT_TENANT)
+        kind = (body.get('kind') or '').strip()
+        config = body.get('config')
+        try:
+            res = self.connections.set(tenant, kind, config,
+                                       enabled=bool(body.get('enabled', True)))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'connection': res})
+
+    def connection_remove(self, session, body):
+        """POST /api/admin/connections/remove — удалить подключение (super-admin)."""
+        self._require_super_admin(session)
+        if self.connections is None:
+            return 200, ok({'removed': False})
+        tenant = (body.get('tenant') or '').strip() or session.get('tenant', DEFAULT_TENANT)
+        kind = (body.get('kind') or '').strip()
+        return 200, ok({'removed': self.connections.remove(tenant, kind)})
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -5799,6 +5926,25 @@ class Api:
                 return self.tariff_addon(session, body or {})
             if method == 'POST' and path == '/api/admin/tariffs/delete':
                 return self.tariff_delete(session, body or {})
+            # ---- Онбординг: режим развёртывания / конфиг библиотеки / подключения (#335) ----
+            if method == 'GET' and path == '/api/admin/deployment/catalog':
+                return self.deployment_catalog(session, query)
+            if method == 'GET' and path == '/api/admin/deployment':
+                return self.deployment_get(session, query)
+            if method == 'POST' and path == '/api/admin/deployment':
+                return self.deployment_set(session, body or {})
+            if method == 'GET' and path == '/api/library-config':
+                return self.library_config_public(session, query)
+            if method == 'GET' and path == '/api/admin/library-config':
+                return self.library_config_get(session, query)
+            if method == 'POST' and path == '/api/admin/library-config':
+                return self.library_config_set(session, body or {})
+            if method == 'GET' and path == '/api/admin/connections':
+                return self.connections_list(session, query)
+            if method == 'POST' and path == '/api/admin/connections':
+                return self.connection_set(session, body or {})
+            if method == 'POST' and path == '/api/admin/connections/remove':
+                return self.connection_remove(session, body or {})
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
