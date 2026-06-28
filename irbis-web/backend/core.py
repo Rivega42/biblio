@@ -2943,6 +2943,51 @@ class Api:
                 else self.ocr.search_all(q))
         return 200, ok({'hits': hits})
 
+    # ---- OCR-pipeline: очередь распознавания (job_queue + ocr, #240/#335) --- #
+    def ocr_recognize(self, session, body):
+        """POST /api/ocr/recognize — поставить документ в очередь OCR (cataloging write).
+
+        Кладёт фоновую задачу (job_queue, kind ``ocr``): ``assetRef`` + ``pages``
+        (страницы-сырьё). Реальное распознавание — воркером (``/api/ocr/process``)
+        вне HTTP. Возвращает поставленную задачу. Очередь недоступна -> job null."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.job_queue is None:
+            return 200, ok({'job': None})
+        asset_ref = (body.get('assetRef') or '').strip()
+        if not asset_ref:
+            return 400, err('bad_request', 'assetRef required')
+        try:
+            priority = int(body.get('priority', 0))
+        except (TypeError, ValueError):
+            priority = 0
+        job = self.job_queue.enqueue('ocr', payload={'assetRef': asset_ref,
+                                                      'pages': body.get('pages') or []},
+                                     priority=priority)
+        return 200, ok({'job': job})
+
+    def ocr_process(self, session, body):
+        """POST /api/ocr/process — обработать следующую OCR-задачу очереди (super-admin).
+
+        Воркер pipeline оцифровки: захватывает pending-задачу job_queue, индексирует
+        её страницы в OCR-слой (поиск по тексту), завершает задачу с итогом. Не-ocr
+        задачу возвращает в очередь (fail с пометкой). Пустая очередь -> job null."""
+        self._require_super_admin(session)
+        if self.job_queue is None or self.ocr is None:
+            return 200, ok({'job': None})
+        job = self.job_queue.claim()
+        if job is None:
+            return 200, ok({'job': None})
+        if job.get('kind') != 'ocr':
+            # чужой вид задачи — помечаем ошибкой, не индексируем
+            return 200, ok({'job': self.job_queue.fail(job['id'], 'not an ocr job'),
+                            'indexed': 0})
+        payload = job.get('payload') or {}
+        asset_ref = payload.get('assetRef') or ''
+        indexed = (self.ocr.index_document(asset_ref, payload.get('pages') or [])
+                   if asset_ref else 0)
+        done = self.job_queue.complete(job['id'], result={'indexed': indexed})
+        return 200, ok({'job': done, 'indexed': indexed})
+
     # ---- OAI-PMH 2.0 провайдер метаданных (чисто-функциональный oai_pmh.py) - #
     def _oai_records(self, limit=200):
         """Записи публичной базы (own-store CatalogStore) для OAI-провайдера.
@@ -5900,6 +5945,10 @@ class Api:
                 return self.ocr_index(session, body or {})
             if method == 'GET' and path == '/api/ocr/search':
                 return self.ocr_search(session, query)
+            if method == 'POST' and path == '/api/ocr/recognize':
+                return self.ocr_recognize(session, body or {})
+            if method == 'POST' and path == '/api/ocr/process':
+                return self.ocr_process(session, body or {})
             if method == 'GET' and path == '/api/oai':
                 return self.oai(session, query)
             # ---- Батч #240: шаблоны метаданных · очередь задач · подписки ----
