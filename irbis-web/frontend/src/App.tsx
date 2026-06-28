@@ -42,6 +42,7 @@ import { Requisites } from "./reader/Requisites";
 import { DocViewer } from "./reader/DocViewer";
 import type { DocPage } from "./reader/DocViewer";
 import type { SavedSearch } from "./api";
+import type { LibraryConfig } from "./api";
 import { layoutProfile, defaultLayout, layoutAllows } from "./reader/dbLayout";
 import type { LayoutKind } from "./reader/dbLayout";
 
@@ -208,6 +209,13 @@ export function App() {
   const [staffRoute, setStaffRoute] = React.useState<any>("desktop");
   const [staffLoginOpen, setStaffLoginOpen] = React.useState(false);
   const [requisitesOpen, setRequisitesOpen] = React.useState(false);   // #335 модал «Реквизиты»
+  // #335: брендинг библиотеки из редактируемого конфига (шапка/логотип); фолбэк —
+  // захардкоженный СПб ГТБ, пока конфиг пуст.
+  const [libConfig, setLibConfig] = React.useState<LibraryConfig | null>(null);
+  React.useEffect(() => { (async () => {
+    const r = await api.libraryConfig();
+    if (r.json?.ok && r.json.data?.config && (r.json.data.config.name || r.json.data.config.logo_url)) setLibConfig(r.json.data.config);
+  })(); }, []);
   // Discovery façade (G1): главная-лендинг показывается до первого поиска.
   const [home, setHome] = React.useState(true);
   // Представление выдачи (G4) и сортировка (G6) и размер страницы (G19).
@@ -562,13 +570,23 @@ export function App() {
       <header className="irb-appheader" style={{ background: "var(--accent)", color: "var(--text-on-accent, #fff)", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
         <button onClick={goHome} title="На главную" aria-label="На главную"
           style={{ display: "inline-flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
-          {/* #255 п.1: официальный логотип СПб ГТБ (лира) на белой подложке + название текстом. */}
+          {/* Логотип + название: из редактируемого конфига библиотеки (#335), фолбэк — СПб ГТБ. */}
           <span className="irb-brand__logo" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", height: 42, padding: "5px 12px", borderRadius: 12, background: "#fff", boxShadow: "var(--shadow-sm)" }}>
-            <img src={sptlLogo} alt="Санкт-Петербургская государственная театральная библиотека" style={{ height: 30, width: "auto", display: "block" }} />
+            <img src={libConfig?.logo_url || sptlLogo}
+              alt={libConfig?.full_name || libConfig?.name || "Санкт-Петербургская государственная театральная библиотека"}
+              onError={(e) => { if (e.currentTarget.src !== sptlLogo) e.currentTarget.src = sptlLogo; }}
+              style={{ height: 30, width: "auto", display: "block" }} />
           </span>
           <span style={{ display: "flex", flexDirection: "column", lineHeight: 1.13, textAlign: "left", whiteSpace: "nowrap" }}>
-            <span className="irb-brand__over" style={{ fontSize: "var(--text-2xs, 11px)", opacity: .9, letterSpacing: ".01em" }}>Санкт-Петербургская государственная</span>
-            <b className="irb-brand__main" style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-base, 15px)", letterSpacing: "-.01em" }}>Театральная библиотека</b>
+            {libConfig?.name
+              ? <>
+                  {libConfig.full_name && libConfig.full_name !== libConfig.name && <span className="irb-brand__over" style={{ fontSize: "var(--text-2xs, 11px)", opacity: .9, letterSpacing: ".01em" }}>{libConfig.full_name}</span>}
+                  <b className="irb-brand__main" style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-base, 15px)", letterSpacing: "-.01em" }}>{libConfig.name}</b>
+                </>
+              : <>
+                  <span className="irb-brand__over" style={{ fontSize: "var(--text-2xs, 11px)", opacity: .9, letterSpacing: ".01em" }}>Санкт-Петербургская государственная</span>
+                  <b className="irb-brand__main" style={{ fontFamily: "var(--font-record-title, inherit)", fontSize: "var(--text-base, 15px)", letterSpacing: "-.01em" }}>Театральная библиотека</b>
+                </>}
           </span>
         </button>
         {/* Пилюля текущей базы (G18) — контекст «где я ищу». */}
