@@ -1,0 +1,149 @@
+// Виртуальные выставки (трек «Оцифровка», G2+) — горизонтальная полка
+// опубликованных кураторских подборок. Данные из GET /api/exhibits (только
+// published-витрина); клик по выставке раскрывает её позиции из
+// GET /api/exhibits/{slug} (записи каталога + опц. оцифрованный образ), клик по
+// позиции открывает запись через onOpen(mfn, db). Если эндпойнта нет (404) или
+// опубликованных выставок нет — блок не рендерится (graceful degrade). Стиль
+// строго на Biblio-токенах; обложек у выставок нет — тонированные подложки.
+import React from "react";
+import { api } from "../api";
+import type { ExhibitSummary, ExhibitItem } from "../api";
+import { Icon } from "../../components/icon/Icon.jsx";
+
+const TINTS = [
+  "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
+  "var(--cover-tint-4, #3E4C7E)", "var(--cover-tint-5, #1F8A5B)", "var(--cover-tint-6, #8A4F9E)",
+];
+
+const CSS = `
+.irb-exh{margin:0;}
+.irb-exh__head{display:flex;align-items:baseline;gap:10px;margin:0 0 12px;flex-wrap:wrap;}
+.irb-exh__title{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-semibold,600);
+  font-size:var(--text-xl,1.25rem);letter-spacing:-.01em;margin:0;color:var(--text-strong);}
+.irb-exh__sub{font-size:var(--text-sm);color:var(--text-subtle);}
+.irb-exh__rail{display:flex;gap:14px;overflow-x:auto;padding:4px 2px 12px;scroll-snap-type:x mandatory;scrollbar-width:thin;}
+.irb-exh__card{flex:none;width:236px;min-height:138px;scroll-snap-align:start;display:flex;flex-direction:column;
+  justify-content:flex-end;gap:6px;position:relative;overflow:hidden;
+  border:2px solid transparent;border-radius:var(--radius-xl,16px);padding:16px;cursor:pointer;text-align:left;
+  color:#fff;font-family:inherit;box-shadow:var(--shadow-md);
+  transition:transform var(--dur,.18s) var(--ease-standard,ease),box-shadow var(--dur,.18s) var(--ease-standard,ease);}
+.irb-exh__card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);}
+.irb-exh__card:focus-visible{outline:var(--focus-ring-width,2px) solid var(--focus-ring-color,var(--accent));outline-offset:2px;}
+.irb-exh__card[aria-expanded="true"]{border-color:#fff;}
+.irb-exh__card::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 85% 0%,rgba(255,255,255,.20),transparent 60%);}
+.irb-exh__ic{position:relative;width:38px;height:38px;border-radius:11px;background:rgba(255,255,255,.20);
+  display:inline-flex;align-items:center;justify-content:center;margin-bottom:auto;}
+.irb-exh__name{position:relative;font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-bold,700);
+  font-size:var(--text-lg,1.05rem);line-height:1.15;text-shadow:0 1px 4px rgba(0,0,0,.28);}
+.irb-exh__desc{position:relative;font-size:var(--text-xs);opacity:.94;line-height:1.3;text-shadow:0 1px 3px rgba(0,0,0,.3);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.irb-exh__go{position:relative;display:inline-flex;align-items:center;gap:5px;font-size:var(--text-2xs,11px);
+  font-weight:var(--weight-semibold,600);opacity:.92;margin-top:2px;}
+.irb-exh__panel{margin-top:4px;border:1px solid var(--border-subtle);border-radius:var(--radius-lg,12px);
+  background:var(--surface-card);box-shadow:var(--shadow-sm);padding:14px 16px;}
+.irb-exh__panelhead{display:flex;align-items:baseline;gap:8px;margin:0 0 10px;flex-wrap:wrap;}
+.irb-exh__panelttl{font-family:var(--font-display,var(--font-serif));font-weight:var(--weight-semibold,600);
+  font-size:var(--text-lg,1.05rem);margin:0;color:var(--text-strong);}
+.irb-exh__paneldesc{font-size:var(--text-sm);color:var(--text-subtle);}
+.irb-exh__items{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
+.irb-exh__item{display:flex;align-items:flex-start;gap:10px;width:100%;background:none;border:none;
+  padding:8px 10px;border-radius:var(--radius-md,8px);cursor:pointer;text-align:left;font-family:inherit;
+  color:var(--text-body);transition:background-color var(--dur,.18s) var(--ease-standard,ease);}
+.irb-exh__item:hover{background:var(--surface-sunken);}
+.irb-exh__item:focus-visible{outline:var(--focus-ring-width,2px) solid var(--focus-ring-color,var(--accent));outline-offset:1px;}
+.irb-exh__num{flex:none;width:22px;height:22px;border-radius:6px;background:var(--surface-sunken);color:var(--text-subtle);
+  font-size:var(--text-2xs,11px);font-weight:var(--weight-bold,700);display:inline-flex;align-items:center;justify-content:center;}
+.irb-exh__cap{flex:1;min-width:0;font-size:var(--text-sm);line-height:1.3;}
+.irb-exh__asset{display:inline-flex;align-items:center;gap:4px;font-size:var(--text-2xs,11px);color:var(--accent);margin-top:2px;}
+.irb-exh__empty{font-size:var(--text-sm);color:var(--text-subtle);margin:0;}
+`;
+
+if (typeof document !== "undefined" && !document.getElementById("irb-exh-css")) {
+  const s = document.createElement("style"); s.id = "irb-exh-css"; s.textContent = CSS; document.head.appendChild(s);
+}
+
+export function Exhibits({ db, onOpen }: { db: string; onOpen: (mfn: number, db: string) => void }) {
+  const [list, setList] = React.useState<ExhibitSummary[] | null>(null);
+  const [open, setOpen] = React.useState<string | null>(null);
+  const [items, setItems] = React.useState<ExhibitItem[] | null>(null);
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await api.exhibits();
+      if (!alive) return;
+      if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) setList(r.json.data.items);
+      else setList([]); // 404 / error → пусто, блок скрывается
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const toggle = async (slug: string) => {
+    if (open === slug) { setOpen(null); setItems(null); return; }
+    setOpen(slug); setItems(null);
+    const r = await api.exhibit(slug);
+    if (r.json?.ok && r.json.data && Array.isArray(r.json.data.items)) setItems(r.json.data.items);
+    else setItems([]);
+  };
+
+  if (list === null || !list.length) return null; // загрузка / нет опубликованных — не показываем
+
+  const active = list.find((e) => e.slug === open) || null;
+
+  return (
+    <section className="irb-exh" aria-label="Виртуальные выставки">
+      <div className="irb-exh__head">
+        <h2 className="irb-exh__title">Виртуальные выставки</h2>
+        <span className="irb-exh__sub">кураторские подборки из фонда — нажмите, чтобы открыть</span>
+      </div>
+      <div className="irb-exh__rail" role="list">
+        {list.map((e, i) => (
+          <button
+            key={e.slug} type="button" role="listitem" className="irb-exh__card"
+            aria-expanded={open === e.slug} onClick={() => toggle(e.slug)}
+            aria-label={"Выставка «" + e.title + "» — открыть подборку"}
+            style={{ background: "linear-gradient(150deg," + TINTS[i % TINTS.length] + ",rgba(0,0,0,.5))" }}
+          >
+            <span className="irb-exh__ic"><Icon name="image" size={20} /></span>
+            <span className="irb-exh__name">{e.title}</span>
+            {e.description && <span className="irb-exh__desc">{e.description}</span>}
+            <span className="irb-exh__go">
+              {open === e.slug ? "Свернуть" : "Открыть выставку"} <Icon name={open === e.slug ? "chevron-up" : "arrow-right"} size={12} />
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {active && (
+        <div className="irb-exh__panel">
+          <div className="irb-exh__panelhead">
+            <h3 className="irb-exh__panelttl">{active.title}</h3>
+            {active.description && <span className="irb-exh__paneldesc">{active.description}</span>}
+          </div>
+          {items === null
+            ? <p className="irb-exh__empty">Загрузка подборки…</p>
+            : !items.length
+              ? <p className="irb-exh__empty">В этой выставке пока нет позиций.</p>
+              : (
+                <ul className="irb-exh__items">
+                  {items.map((it, i) => (
+                    <li key={it.id}>
+                      <button type="button" className="irb-exh__item"
+                        onClick={() => onOpen(it.mfn, it.db || db)}
+                        aria-label={"Открыть запись" + (it.caption ? ": " + it.caption : "")}>
+                        <span className="irb-exh__num">{i + 1}</span>
+                        <span className="irb-exh__cap">
+                          {it.caption || ("Запись " + (it.db || db) + " · MFN " + it.mfn)}
+                          {it.asset_ref && <span className="irb-exh__asset"><Icon name="image" size={11} /> оцифрованный образ</span>}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+        </div>
+      )}
+    </section>
+  );
+}

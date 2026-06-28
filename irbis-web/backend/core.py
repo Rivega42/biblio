@@ -762,6 +762,26 @@ class Api:
                 _dam.DamStore(os.environ.get('DAM_DB', os.path.join(here, 'dam.db'))))
         except Exception:
             self.dam = None
+        # Трек «Оцифровка» (PR #325), разведён в роуты ниже: OCR-слой (own-store —
+        # полнотекст распознанных образов постранично) + виртуальные выставки
+        # (own-store — кураторские подборки-витрина над каталогом, public-read).
+        # IIIF-манифесты (Presentation v3) и OAI-PMH провайдер — чисто-функциональны
+        # (импортируются в хендлерах, как marc/db_utils). Никаких записей в живой
+        # ИРБИС: выставка ССЫЛАЕТСЯ на записи/образы, OCR — свой текстовый слой,
+        # IIIF/OAI — маппинг каталога в JSON/DC. Best-effort: сбой сборки -> None.
+        try:
+            from access import ocr as _ocr
+            self.ocr = _ocr.OcrService(
+                _ocr.OcrStore(os.environ.get('OCR_DB', os.path.join(here, 'ocr.db'))))
+        except Exception:
+            self.ocr = None
+        try:
+            from access import exhibits as _exhibits
+            self.exhibits = _exhibits.ExhibitService(
+                _exhibits.ExhibitStore(os.environ.get(
+                    'EXHIBITS_DB', os.path.join(here, 'exhibits.db'))))
+        except Exception:
+            self.exhibits = None
         # Бэклог own-store модулей (#316/#317/#318), разведённый в роуты ниже:
         # поставщики/счета + подписка-периодика (Комплектование), версии записи +
         # редактор словарей .mnu/.tre (Каталогизатор), роли RBAC + аудит-трейл +
@@ -2673,6 +2693,238 @@ class Api:
         except (TypeError, ValueError):
             return 400, err('bad_request', 'mfn required')
         return 200, ok({'items': self.dam.assets_for(db, mfn)})
+
+    # ===================================================================== #
+    # Трек «Оцифровка» (PR #325): виртуальные выставки · IIIF-манифесты ·    #
+    # OCR-полнотекст · OAI-PMH провайдер. Гварды: витрина выставок и поиск   #
+    # OCR — public-read (search); правка выставок и индексация OCR —          #
+    # cataloging write; OAI-PMH — публичный (анонимный харвестер). Все —      #
+    # own-store/чисто-функциональны, живой ИРБИС не пишется (#222).           #
+    # ===================================================================== #
+
+    # ---- Виртуальные выставки (own-store ExhibitService) ------------------ #
+    def exhibits_list(self, session, query):
+        """GET /api/exhibits — опубликованные выставки (public-read витрина).
+
+        Отдаёт ТОЛЬКО опубликованные подборки (черновики на витрину не попадают)."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        if self.exhibits is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.exhibits.public_exhibits()})
+
+    def exhibit_view(self, session, slug):
+        """GET /api/exhibits/{slug} — публичный вид выставки + позиции (public-read).
+
+        На витрине видны только ОПУБЛИКОВАННЫЕ выставки: черновик/неизвестный
+        slug -> 404 (чтобы черновик нельзя было подсмотреть по прямой ссылке)."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        if self.exhibits is None:
+            return 404, err('not_found', 'exhibit not found')
+        view = self.exhibits.view(slug)
+        if view is None or not view['exhibit'].get('published'):
+            return 404, err('not_found', 'exhibit not found')
+        return 200, ok(view)
+
+    def exhibit_create(self, session, body):
+        """POST /api/exhibits — создать выставку-черновик (cataloging write).
+
+        ``slug``/``title`` обязательны; дубликат ``slug`` -> 400. Флаг
+        ``published`` публикует сразу (иначе создаётся черновик)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.exhibits is None:
+            return 200, ok({'exhibit': None})
+        slug = (body.get('slug') or '').strip()
+        title = (body.get('title') or '').strip()
+        if not slug or not title:
+            return 400, err('bad_request', 'slug/title required')
+        try:
+            ex = self.exhibits.create(slug, title,
+                                      (body.get('description') or '').strip())
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        if body.get('published'):
+            ex = self.exhibits.publish(slug)
+        return 200, ok({'exhibit': ex})
+
+    def exhibit_add_item(self, session, body):
+        """POST /api/exhibits/item — добавить запись/образ в выставку (cataloging write).
+
+        ``slug`` + ``mfn`` обязательны; ``db`` (по умолч. публичная), ``caption``,
+        ``assetRef`` — опциональны. Неизвестный ``slug`` -> 400."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.exhibits is None:
+            return 200, ok({'item': None})
+        slug = (body.get('slug') or '').strip()
+        if not slug:
+            return 400, err('bad_request', 'slug required')
+        try:
+            mfn = int(body.get('mfn'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        db = (body.get('db') or self.cfg.db_default)
+        try:
+            item = self.exhibits.add_record(
+                slug, db, mfn, caption=(body.get('caption') or ''),
+                asset_ref=(body.get('assetRef') or ''))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'item': item})
+
+    def exhibit_publish(self, session, body):
+        """POST /api/exhibits/publish — опубликовать/снять выставку (cataloging write).
+
+        ``slug`` обязателен; ``published`` (по умолч. True) задаёт направление.
+        Неизвестный ``slug`` -> 404."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.exhibits is None:
+            return 200, ok({'exhibit': None})
+        slug = (body.get('slug') or '').strip()
+        if not slug:
+            return 400, err('bad_request', 'slug required')
+        if self.exhibits.get(slug) is None:
+            return 404, err('not_found', 'exhibit not found')
+        published = body.get('published', True)
+        ex = (self.exhibits.publish(slug) if published
+              else self.exhibits.unpublish(slug))
+        return 200, ok({'exhibit': ex})
+
+    # ---- IIIF Presentation v3 манифест (чисто-функциональный iiif.py) ----- #
+    def iiif_manifest(self, session, query):
+        """GET /api/iiif/manifest?db=&mfn= — IIIF Presentation v3 манифест (public-read).
+
+        Собирает манифест из DAM-ассетов записи: каждый ассет с числом страниц
+        (955^N) раскрывается в канвы (URL образа = ``<ref>/<page_no>``, размеры
+        ``w``/``h`` из query или дефолт). Метка манифеста — краткое заглавие записи
+        (best-effort OPAC-brief, деградирует до ``MFN N``). Нет страничных ассетов
+        -> валидный манифест без канв. Гость/читатель ограничен публичной базой."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        db = (query.get('db', [self.cfg.db_default])[0])
+        try:
+            mfn = int(query.get('mfn', ['0'])[0])
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'mfn required')
+        if mfn <= 0:
+            return 400, err('bad_request', 'mfn required')
+        self._public_db_guard(session, db)
+        from access import iiif as _iiif
+        base = os.environ.get(
+            'IIIF_BASE_URL', 'http://%s:%d/iiif' % (self.cfg.app_host, self.cfg.app_port))
+        manifest_id = '%s/%s/%d/manifest' % (base.rstrip('/'), db, mfn)
+        label = (self._hold_brief(db, mfn) or {}).get('title') or ('MFN %d' % mfn)
+        try:
+            w = int(query.get('w', ['1000'])[0])
+            h = int(query.get('h', ['1414'])[0])
+        except (TypeError, ValueError):
+            w, h = 1000, 1414
+        pages = []
+        if self.dam is not None:
+            for a in self.dam.assets_for(db, mfn):
+                n = a.get('pages')
+                if not n:
+                    continue
+                ref = (a.get('ref') or '').rstrip('/')
+                for i in range(1, int(n) + 1):
+                    pages.append({'page_no': i, 'image': '%s/%d' % (ref, i),
+                                  'width': w, 'height': h})
+        man = _iiif.manifest_from_pages(
+            manifest_id, label, manifest_id + '/canvas/', pages)
+        return 200, ok({'manifest': man, 'pages': len(pages)})
+
+    # ---- OCR-полнотекст образов (own-store OcrService) -------------------- #
+    def ocr_index(self, session, body):
+        """POST /api/ocr/index — проиндексировать OCR-текст документа (cataloging write).
+
+        ``assetRef`` обязателен; ``pages`` — список ``{page_no, text}`` (upsert по
+        странице). Возвращает число обработанных страниц и итог по документу."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.ocr is None:
+            return 200, ok({'indexed': 0})
+        asset_ref = (body.get('assetRef') or '').strip()
+        if not asset_ref:
+            return 400, err('bad_request', 'assetRef required')
+        pages = body.get('pages') or []
+        n = self.ocr.index_document(asset_ref, pages,
+                                    lang=(body.get('lang') or 'rus'))
+        return 200, ok({'indexed': n, 'pageCount': self.ocr.page_count(asset_ref)})
+
+    def ocr_search(self, session, query):
+        """GET /api/ocr/search?q=[&assetRef=] — поиск по OCR-слою (public-read).
+
+        Без ``assetRef`` — по всем документам (``{asset_ref,page_no,snippet}``); с
+        ним — внутри одного (``{page_no,snippet}``). Пустой ``q`` -> []."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        if self.ocr is None:
+            return 200, ok({'hits': []})
+        q = (query.get('q', [''])[0] or '').strip()
+        asset_ref = (query.get('assetRef', [''])[0] or '').strip()
+        hits = (self.ocr.search_in_document(asset_ref, q) if asset_ref
+                else self.ocr.search_all(q))
+        return 200, ok({'hits': hits})
+
+    # ---- OAI-PMH 2.0 провайдер метаданных (чисто-функциональный oai_pmh.py) - #
+    def _oai_records(self, limit=200):
+        """Записи публичной базы (own-store CatalogStore) для OAI-провайдера.
+
+        tag-keyed dict + инжектированный ``mfn`` (его читает ``oai_identifier``).
+        Источник — СВОЙ каталог (без обращения к живому ИРБИС). Пусто, если каталог
+        недоступен."""
+        out = []
+        if self.catalog is None:
+            return out
+        db = self.cfg.db_default
+        try:
+            for mfn in self.catalog.list_mfns(db, limit=limit):
+                rec = self.catalog.get(db, mfn)
+                if rec is None:
+                    continue
+                rec = dict(rec)
+                rec.setdefault('mfn', mfn)
+                out.append(rec)
+        except Exception:
+            pass
+        return out
+
+    def oai(self, session, query):
+        """GET /api/oai?verb= — OAI-PMH 2.0 провайдер метаданных каталога (public).
+
+        Анонимный (харвестеры безсессионны), отдаёт только публичную базу в
+        Dublin Core (``oai_dc``). Диспетч обязательных глаголов: Identify,
+        ListMetadataFormats, GetRecord, ListRecords, ListIdentifiers. Записи — из
+        собственного каталога (никогда не из живого ИРБИС). Неизвестный verb -> 400
+        (badVerb), неподдерживаемый формат -> 400 (cannotDisseminateFormat)."""
+        from access import oai_pmh as _oai
+        verb = (query.get('verb', [''])[0] or '').strip()
+        base_url = os.environ.get(
+            'OAI_BASE_URL',
+            'http://%s:%d/api/oai' % (self.cfg.app_host, self.cfg.app_port))
+        if verb == 'Identify':
+            return 200, ok({'verb': verb, 'Identify': _oai.identify(
+                os.environ.get('OAI_REPO_NAME', 'Biblio OAI-PMH'), base_url,
+                os.environ.get('OAI_ADMIN_EMAIL', 'admin@localhost'),
+                _oai.DEFAULT_DATESTAMP)})
+        if verb == 'ListMetadataFormats':
+            return 200, ok({'verb': verb,
+                            'ListMetadataFormats': _oai.list_metadata_formats()})
+        prefix = (query.get('metadataPrefix', ['oai_dc'])[0] or 'oai_dc')
+        if prefix != 'oai_dc':
+            return 400, err('cannotDisseminateFormat', 'unsupported metadataPrefix')
+        records = self._oai_records()
+        if verb == 'GetRecord':
+            ident = (query.get('identifier', [''])[0] or '').strip()
+            if not ident:
+                return 400, err('badArgument', 'identifier required')
+            rec = _oai.get_record(records, ident)
+            if rec is None:
+                return 404, err('idDoesNotExist', 'no such record')
+            return 200, ok({'verb': verb, 'GetRecord': rec})
+        if verb == 'ListRecords':
+            set_spec = (query.get('set', [None])[0])
+            return 200, ok({'verb': verb, 'ListRecords':
+                            _oai.list_records(records, set_spec=set_spec)})
+        if verb == 'ListIdentifiers':
+            return 200, ok({'verb': verb,
+                            'ListIdentifiers': _oai.list_identifiers(records)})
+        return 400, err('badVerb', 'unknown or missing verb')
 
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
@@ -5002,6 +5254,30 @@ class Api:
                 return self.dam_attach(session, body or {})
             if method == 'GET' and path == '/api/dam':
                 return self.dam_assets(session, query)
+            # ---- Оцифровка: выставки / IIIF / OCR / OAI-PMH (PR #325) ----
+            # Точные пути POST/GET — выше generic-роута выставки по slug (тот
+            # GET-only, len(parts)==3), чтобы /api/exhibits/item|publish не
+            # перехватывались как slug. Новые namespace'ы (/api/exhibits, /api/iiif,
+            # /api/ocr, /api/oai) не коллизируют с существующим диспетчем.
+            if method == 'POST' and path == '/api/exhibits':
+                return self.exhibit_create(session, body or {})
+            if method == 'POST' and path == '/api/exhibits/item':
+                return self.exhibit_add_item(session, body or {})
+            if method == 'POST' and path == '/api/exhibits/publish':
+                return self.exhibit_publish(session, body or {})
+            if method == 'GET' and path == '/api/exhibits':
+                return self.exhibits_list(session, query)
+            if (method == 'GET' and len(parts) == 3
+                    and parts[0] == 'api' and parts[1] == 'exhibits'):
+                return self.exhibit_view(session, parts[2])
+            if method == 'GET' and path == '/api/iiif/manifest':
+                return self.iiif_manifest(session, query)
+            if method == 'POST' and path == '/api/ocr/index':
+                return self.ocr_index(session, body or {})
+            if method == 'GET' and path == '/api/ocr/search':
+                return self.ocr_search(session, query)
+            if method == 'GET' and path == '/api/oai':
+                return self.oai(session, query)
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})

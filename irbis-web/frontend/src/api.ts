@@ -349,6 +349,18 @@ export interface BpProvisionReport {
   bindings?: BpProvisionBinding[];
 }
 
+// Трек «Оцифровка»: виртуальные выставки (витрина на портале). Сводка выставки и
+// её позиции (ссылки на записи каталога + опц. оцифрованный образ).
+export interface ExhibitSummary {
+  id: number; slug: string; title: string; description: string;
+  published: number; created_at: string; updated_at: string;
+}
+export interface ExhibitItem {
+  id: number; exhibit_id: number; db: string; mfn: number;
+  asset_ref: string; caption: string; sort: number; created_at: string;
+}
+export interface ExhibitView { exhibit: ExhibitSummary; items: ExhibitItem[] }
+
 let token: string | null = null;
 const authHeaders = (): Record<string, string> => (token ? { Authorization: "Bearer " + token } : {});
 
@@ -404,6 +416,10 @@ export const api = {
   // Rubricator terms with counts (browse navigators) — used for example-query seeds.
   rubricator: (db: string, prefix: string, limit = 12) =>
     jget<{ terms: Term[] }>("/api/rubricator?" + qs({ db, prefix, limit })),
+  // Трек «Оцифровка»: публичная витрина выставок. Список — только опубликованные;
+  // вид выставки — сводка + позиции. 404/пусто → вызывающий код прячет блок.
+  exhibits: () => jget<{ items: ExhibitSummary[] }>("/api/exhibits"),
+  exhibit: (slug: string) => jget<ExhibitView>("/api/exhibits/" + encodeURIComponent(slug)),
   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
   // Reader orders (G12). Endpoint may not exist yet → caller stubs the list on 404.
   orders: () => jget<{ items: OrderItem[] }>("/api/me/orders"),

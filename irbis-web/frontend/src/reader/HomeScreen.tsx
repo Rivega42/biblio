@@ -13,6 +13,7 @@ import { Icon } from "../../components/icon/Icon.jsx";
 import { SearchBar } from "../../components/catalog/SearchBar.jsx";
 import { DatabaseSelector } from "../../components/catalog/DatabaseSelector.jsx";
 import { Showcase } from "./Showcase";
+import { Exhibits } from "./Exhibits";
 import { Collections } from "./Collections";
 import { Rubricator } from "./Rubricator";
 import { LibraryNews, LibraryEvents } from "./LibraryFeed";
@@ -173,6 +174,9 @@ export function HomeScreen({
 
       {/* ===== Витрина новых поступлений (G2) — живые данные /api/showcase ===== */}
       <Showcase db={db} onOpen={onOpen} />
+
+      {/* ===== Виртуальные выставки (трек «Оцифровка») — /api/exhibits ===== */}
+      <Exhibits db={db} onOpen={onOpen} />
 
       {/* ===== Рубрикатор «Просмотр по разделам» — живой словарь /api/rubricator ===== */}
       <Rubricator db={db} onSearch={onSearch} />
