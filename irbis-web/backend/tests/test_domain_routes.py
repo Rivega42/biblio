@@ -1236,6 +1236,19 @@ def onboarding_config_route_checks():
                       {'export': export}, SUP)
     check('повторное создание идемпотентно: created=0, skipped=1',
           st == 200 and p['data']['created'] == 0 and p['data']['skipped'] == 1)
+    # создание каталожных записей из плана
+    st, p = api.route('POST', '/api/admin/inforost/import-records', {},
+                      {'export': export}, SUP)
+    check('инфорост->записи: created+skipped==2, mfns соответствуют created',
+          st == 200 and (p['data']['created'] + p['data']['skipped']) == 2
+          and len(p['data']['mfns']) == p['data']['created'] and p['data']['created'] >= 1)
+    # публикация выставки сразу на витрину
+    st, p = api.route('POST', '/api/admin/inforost/import-exhibits', {},
+                      {'export': {'collections': [{'id': 'pub1', 'title': 'Опубл',
+                                  'items': [{'id': 'p1', 'title': 'A'}]}]}, 'publish': True}, SUP)
+    check('импорт с publish -> created 1', st == 200 and p['data']['created'] == 1)
+    check('выставка pub1 опубликована (на витрине)',
+          any(e.get('slug') == 'pub1' for e in api.exhibits.public_exhibits()))
     st, p = api.route('POST', '/api/admin/inforost/import', {},
                       {'tenant': 't_if', 'export': export}, SUP)
     check('инфорост-импорт: new>0', st == 200 and p['data']['new'] > 0)

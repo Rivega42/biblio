@@ -3651,8 +3651,38 @@ class Api:
                     caption=(it.get('caption') or ''),
                     asset_ref=(assets[0] if assets else ''))
                 items += 1
+            if body.get('publish'):
+                self.exhibits.publish(slug)   # сразу на витрину
             created += 1
         return 200, ok({'created': created, 'skipped': skipped, 'items': items})
+
+    def inforost_import_records(self, session, body):
+        """POST /api/admin/inforost/import-records — создать каталожные записи из плана (super-admin).
+
+        Записи инфорост-плана сохраняются в собственный CatalogStore (own-store, не
+        живой ИРБИС #222). Добавляем код рабочего листа 920 (по умолчанию PAZK),
+        если его нет. Невалидная запись (ФЛК sev-1) -> skipped. Возвращает число
+        созданных/пропущенных + их MFN."""
+        self._require_super_admin(session)
+        if self.inforost is None or self.catalog is None:
+            return 200, ok({'created': 0, 'skipped': 0, 'mfns': []})
+        plan = self.inforost.plan(body.get('export') or {})
+        db = self.cfg.db_default
+        created, skipped, mfns = 0, 0, []
+        for rec in plan.get('records', []):
+            rec = dict(rec)
+            rec.setdefault('920', 'PAZK')
+            try:
+                res = self.catalog.save(db, rec)
+            except Exception:
+                skipped += 1
+                continue
+            if res and res.get('saved') and res.get('mfn'):
+                created += 1
+                mfns.append(res['mfn'])
+            else:
+                skipped += 1
+        return 200, ok({'created': created, 'skipped': skipped, 'mfns': mfns})
 
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
@@ -6129,6 +6159,8 @@ class Api:
                 return self.inforost_import(session, body or {})
             if method == 'POST' and path == '/api/admin/inforost/import-exhibits':
                 return self.inforost_import_exhibits(session, body or {})
+            if method == 'POST' and path == '/api/admin/inforost/import-records':
+                return self.inforost_import_records(session, body or {})
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
