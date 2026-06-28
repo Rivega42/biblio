@@ -4956,6 +4956,37 @@ class Api:
         self._guard(session, function, '*', 'admin')
         return self._store_for(session.get('tenant', DEFAULT_TENANT))
 
+    # ---- Enforcement матрицы доступов (#331 Фаза 2) ----------------------- #
+    def _matrix_enforce_cap(self, session, resource, current):
+        """Применить лимит тарифа к ресурсу при текущем потреблении ``current``.
+
+        Резолвит матрицу тенанта; превышение (``current >= limit``) при режиме
+        ``block`` -> ``Denied(402)``; при ``grace`` или в пределах -> возвращает
+        ``(verdict, info)`` для мягкого предупреждения. Fail-open: нет стора
+        тарифов -> ``('allow', {})`` (dev/непровиженные работают)."""
+        if self.tariffs is None:
+            return 'allow', {}
+        from access import access_matrix as _am
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        verdict, info = _am.cap_verdict(_am.resolve(self.tariffs, tenant),
+                                        resource, current)
+        if verdict == 'deny':
+            raise Denied(402, 'payment_required',
+                         'лимит тарифа исчерпан: %s (%s/%s)'
+                         % (resource, current, info.get('limit')))
+        return verdict, info
+
+    def _matrix_section_verdict(self, session, section):
+        """Вердикт раздела матрицы для тенанта: ``allow|grace|deny``.
+
+        Fail-open: нет стора тарифов -> ``allow``. Вызывающий роут сам решает —
+        ``deny`` обычно -> 402 (раздел не входит в тариф)."""
+        if self.tariffs is None:
+            return 'allow'
+        from access import access_matrix as _am
+        return _am.section_verdict(
+            _am.resolve(self.tariffs, session.get('tenant', DEFAULT_TENANT)), section)
+
     @staticmethod
     def _account_view(store, acc):
         """Shape one staff account row as the admin list item (roles + grants)."""
@@ -4986,6 +5017,9 @@ class Api:
             return 400, err('bad_request', 'login required')
         if store.get_account(login):
             return 409, err('conflict', 'login exists: %s' % login)
+        # Лимит тарифа на число сотруднических аккаунтов (#331 Фаза 2): при
+        # block-режиме сверх лимита -> 402; иначе создаём (grace мягко пропускает).
+        self._matrix_enforce_cap(session, 'staff_seats', len(store.list_accounts()))
         password = body.get('password') or os.environ.get('ADMIN_DEFAULT_PASSWORD', 'changeme')
         full_name = (body.get('fullName') or '').strip()
         acc = store.create_account(login, password, full_name)

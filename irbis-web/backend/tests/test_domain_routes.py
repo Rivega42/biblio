@@ -1114,6 +1114,20 @@ def access_matrix_route_checks():
     st, p = api.route('POST', '/api/admin/tariffs/delete', {}, {'name': 'vuz'}, A)
     check('удалить тариф vuz -> removed true', st == 200 and p['data']['removed'] is True)
 
+    # --- ENFORCEMENT лимита staff_seats при создании учётки (#331 Фаза 2) ---
+    # В сиде уже 2 учётки (admin, librarian). Дефолтный тариф public-тенанта —
+    # standard; ставим его cap staff_seats=2 block -> создание 3-й учётки -> 402.
+    api.tariffs.set_entry('standard', _am.cap_key('staff_seats'), value=2, enforcement='block')
+    ADM = _sess(api, 'staff', 'a', [{'function': 'admin.users', 'db': '*', 'level': 'admin'}])
+    st, p = api.route('POST', '/api/admin/users', {}, {'login': 'over1', 'fullName': 'N'}, ADM)
+    check('учётка сверх лимита staff_seats -> 402', st == 402)
+    api.tariffs.set_entry('standard', _am.cap_key('staff_seats'), value=50, enforcement='block')
+    st, p = api.route('POST', '/api/admin/users', {}, {'login': 'ok2', 'fullName': 'N'}, ADM)
+    check('в пределах лимита -> 200', st == 200)
+    api.tariffs.set_entry('standard', _am.cap_key('staff_seats'), value=1, enforcement='grace')
+    st, p = api.route('POST', '/api/admin/users', {}, {'login': 'grace3', 'fullName': 'N'}, ADM)
+    check('сверх лимита но grace -> 200 (мягко)', st == 200)
+
 
 def onboarding_config_route_checks():
     print('-- Онбординг-конфиг: режим/конфиг библиотеки/подключения через route() (#335)')
