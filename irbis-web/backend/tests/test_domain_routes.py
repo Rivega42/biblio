@@ -46,6 +46,9 @@ from access.discipline_norms import DisciplineNormService, DisciplineStore
 from access.kko_reports import KkoSnapshotStore
 from access.ocr import OcrService, OcrStore
 from access.exhibits import ExhibitService, ExhibitStore
+from access.metadata_templates import TemplateService, TemplateStore
+from access.job_queue import JobQueue, JobStore
+from access.collection_subs import CollectionSubscriptionService, CollectionSubStore
 from access import circulation as _circ
 
 PASS = [0]
@@ -116,6 +119,13 @@ def _api():
     # Трек «Оцифровка» (PR #325) — свежие in-memory сторы.
     api.ocr = OcrService(OcrStore(':memory:'))
     api.exhibits = ExhibitService(ExhibitStore(':memory:'))
+    # Батч #240 — свежие in-memory сторы. job_queue/collection_subs с фикс. now
+    # для детерминизма (FIFO по id; подписки активны на фиксированную «сегодня»).
+    api.metadata_templates = TemplateService(TemplateStore(':memory:'))
+    api.job_queue = JobQueue(JobStore(':memory:'))
+    api.collection_subs = CollectionSubscriptionService(
+        CollectionSubStore(':memory:', now=lambda: '2026-06-28T00:00:00+00:00'),
+        now=lambda: '2026-06-28T00:00:00+00:00')
     return api
 
 
@@ -835,6 +845,96 @@ def digitization_route_checks():
     check('OAI неизвестный verb -> 400', st == 400)
 
 
+def batch240_route_checks():
+    print('-- Батч #240: шаблоны метаданных / очередь задач / подписки через route()')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    A = _sess(api, 'staff', 'adm', ADMIN_G)
+    R = _reader(api)
+
+    # --- Шаблоны метаданных (Каталогизатор) ---
+    st, p = api.route('GET', '/api/cataloging/templates', {}, None, S)
+    check('типы шаблонов -> >=5 встроенных', st == 200 and len(p['data']['items']) >= 5)
+    st, p = api.route('GET', '/api/cataloging/template', {'type': ['book']}, None, S)
+    check('skeleton book -> 200 + 200 required',
+          st == 200 and p['data']['type'] == 'book'
+          and any(f['tag'] == '200' and f['required'] for f in p['data']['fields']))
+    st, p = api.route('GET', '/api/cataloging/template', {'type': ['bogus']}, None, S)
+    check('skeleton неизвестного типа -> 404', st == 404)
+    st, p = api.route('GET', '/api/cataloging/template', {}, None, S)
+    check('skeleton без type -> 400', st == 400)
+    st, p = api.route('POST', '/api/cataloging/template', {},
+                      {'type': 'book', 'fields': [{'tag': '200', 'label': 'Загл.'}],
+                       'label': 'Книга (наш)'}, S)
+    check('сохранить кастом -> 200', st == 200 and p['data']['template']['label'] == 'Книга (наш)')
+    st, p = api.route('GET', '/api/cataloging/template', {'type': ['book']}, None, S)
+    check('кастом бьёт встроенный (1 поле)', st == 200 and len(p['data']['fields']) == 1)
+    st, p = api.route('POST', '/api/cataloging/template', {},
+                      {'type': 'book', 'fields': [{'label': 'без тега'}]}, S)
+    check('кастом без tag -> 400', st == 400)
+    st, p = api.route('POST', '/api/cataloging/template', {},
+                      {'type': 'book', 'fields': [{'tag': '200'}]}, R)
+    check('reader сохраняет шаблон -> 403', st == 403)
+
+    # --- Очередь фоновых задач (admin) ---
+    st, p = api.route('POST', '/api/jobs', {},
+                      {'kind': 'ocr', 'payload': {'asset': 'a1'}, 'priority': 1}, A)
+    check('enqueue ocr (prio 1) -> 200 pending',
+          st == 200 and p['data']['job']['status'] == 'pending')
+    st, p = api.route('POST', '/api/jobs', {},
+                      {'kind': 'tiles', 'payload': {'asset': 'a2'}, 'priority': 5}, A)
+    check('enqueue tiles (prio 5) -> 200', st == 200)
+    jid5 = p['data']['job']['id']
+    st, p = api.route('POST', '/api/jobs/claim', {}, {}, A)
+    check('claim -> сначала бОльший приоритет (tiles)',
+          st == 200 and p['data']['job']['id'] == jid5
+          and p['data']['job']['status'] == 'running')
+    st, p = api.route('POST', '/api/jobs/complete', {},
+                      {'id': jid5, 'result': {'pages': 3}}, A)
+    check('complete -> done + result', st == 200
+          and p['data']['job']['status'] == 'done'
+          and p['data']['job']['result']['pages'] == 3)
+    st, p = api.route('GET', '/api/jobs', {}, None, A)
+    check('list + stats (total 2, done 1)', st == 200
+          and p['data']['stats']['total'] == 2
+          and p['data']['stats']['by_status']['done'] == 1)
+    st, p = api.route('POST', '/api/jobs/complete', {}, {'id': 999999}, A)
+    check('complete неизвестного id -> 404', st == 404)
+    st, p = api.route('POST', '/api/jobs', {}, {'kind': 'x'}, R)
+    check('reader enqueue -> 403', st == 403)
+    st, p = api.route('POST', '/api/jobs', {}, {'kind': 'x'}, S)
+    check('staff-без-admin enqueue -> 403', st == 403)
+
+    # --- Time-boxed подписки читателя на коллекции ---
+    st, p = api.route('POST', '/api/me/collections', {},
+                      {'kind': 'exhibit', 'ref': 'teatr-1920',
+                       'from': '2026-06-01', 'to': '2026-12-31'}, R)
+    check('подписка на выставку -> 200', st == 200 and p['data']['subscription'])
+    st, p = api.route('POST', '/api/me/collections', {},
+                      {'kind': 'collection', 'ref': 'expired',
+                       'from': '2025-01-01', 'to': '2025-12-31'}, R)
+    check('подписка с прошедшим окном -> 200', st == 200)
+    st, p = api.route('GET', '/api/me/collections', {}, None, R)
+    check('все подписки -> 2', st == 200 and len(p['data']['items']) == 2)
+    st, p = api.route('GET', '/api/me/collections', {'active': ['1']}, None, R)
+    check('активные на сегодня -> 1 (прошедшее окно отфильтровано)',
+          st == 200 and len(p['data']['items']) == 1
+          and p['data']['items'][0]['target_ref'] == 'teatr-1920')
+    st, p = api.route('POST', '/api/me/collections', {},
+                      {'kind': 'bogus', 'ref': 'x'}, R)
+    check('подписка с невалидным kind -> 400', st == 400)
+    st, p = api.route('POST', '/api/me/collections', {}, {'kind': 'exhibit', 'ref': 'x'}, S)
+    check('staff (не reader) подписка -> 403', st == 403)
+    st, p = api.route('GET', '/api/me/collections', {}, None, R)
+    first_id = p['data']['items'][0]['id']
+    st, p = api.route('POST', '/api/me/collections/cancel', {}, {'id': first_id}, R)
+    check('отмена своей подписки -> cancelled true', st == 200 and p['data']['cancelled'] is True)
+    other = _reader(api, ticket='222', rdr_mfn=2)
+    st, p = api.route('POST', '/api/me/collections/cancel', {}, {'id': 99999}, other)
+    check('отмена чужой/несуществующей -> cancelled false',
+          st == 200 and p['data']['cancelled'] is False)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -852,6 +952,7 @@ def main():
     backlog_bp_route_checks()
     edge_11_4_checks()
     digitization_route_checks()
+    batch240_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
