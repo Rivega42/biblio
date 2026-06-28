@@ -3497,6 +3497,32 @@ class Api:
             return 400, err('bad_request', str(e))
         return 200, ok({'deployment': res, 'resolved': self.deployment.resolve(tenant)})
 
+    def onboard_apply(self, session, body):
+        """POST /api/admin/onboard — шаг «завершения» онбординга арендатора (super-admin).
+
+        Оркестрирует одним вызовом: режим развёртывания (deployment) + базовый
+        брендинг (library_config name/full_name). Возвращает резолв режима (с
+        нужными подключениями) + конфиг — чтобы визард повёл к следующему шагу
+        (настройка подключений ИРБИС/jirbis/инфорост по required_connections)."""
+        self._require_super_admin(session)
+        tenant = (body.get('tenant') or '').strip() or session.get('tenant', DEFAULT_TENANT)
+        out = {'tenant': tenant}
+        if self.deployment is not None and (body.get('mode') or '').strip():
+            try:
+                self.deployment.set(tenant, (body.get('mode') or '').strip(),
+                                    (body.get('topology') or '').strip() or 'cloud')
+            except ValueError as e:
+                return 400, err('bad_request', str(e))
+            out['deployment'] = self.deployment.resolve(tenant)
+        if self.library_config is not None and (body.get('name') or body.get('fullName')):
+            patch = {}
+            if body.get('name'):
+                patch['name'] = body.get('name')
+            if body.get('fullName'):
+                patch['full_name'] = body.get('fullName')
+            out['config'] = self.library_config.update(tenant, patch)
+        return 200, ok(out)
+
     # ---- Конфигурация библиотеки (брендинг/реквизиты, #335) --------------- #
     def library_config_public(self, session, query):
         """GET /api/library-config — публичная конфигурация библиотеки (public-read).
@@ -6045,6 +6071,8 @@ class Api:
                 return self.deployment_get(session, query)
             if method == 'POST' and path == '/api/admin/deployment':
                 return self.deployment_set(session, body or {})
+            if method == 'POST' and path == '/api/admin/onboard':
+                return self.onboard_apply(session, body or {})
             if method == 'GET' and path == '/api/library-config':
                 return self.library_config_public(session, query)
             if method == 'GET' and path == '/api/admin/library-config':
