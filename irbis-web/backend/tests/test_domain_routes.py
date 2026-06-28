@@ -49,6 +49,8 @@ from access.exhibits import ExhibitService, ExhibitStore
 from access.metadata_templates import TemplateService, TemplateStore
 from access.job_queue import JobQueue, JobStore
 from access.collection_subs import CollectionSubscriptionService, CollectionSubStore
+from access.facet_config import FacetService, FacetConfigStore
+from access.ip_auth import IpAuthService, IpRangeStore
 from access import circulation as _circ
 
 PASS = [0]
@@ -126,6 +128,9 @@ def _api():
     api.collection_subs = CollectionSubscriptionService(
         CollectionSubStore(':memory:', now=lambda: '2026-06-28T00:00:00+00:00'),
         now=lambda: '2026-06-28T00:00:00+00:00')
+    # Батч #240 (2-я волна) — свежие in-memory сторы.
+    api.facets_cfg = FacetService(FacetConfigStore(':memory:'))
+    api.ip_auth = IpAuthService(IpRangeStore(':memory:'))
     return api
 
 
@@ -935,6 +940,63 @@ def batch240_route_checks():
           st == 200 and p['data']['cancelled'] is False)
 
 
+def batch240b_route_checks():
+    print('-- Батч #240 (2-я волна): авто-фасеты / реестр IP-диапазонов через route()')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    A = _sess(api, 'staff', 'adm', ADMIN_G)
+    R = _reader(api)
+
+    # --- Авто-фасеты «поле→фасет» ---
+    st, p = api.route('GET', '/api/facet-config', {}, None, S)
+    check('конфиг фасетов: дефолт >=5', st == 200 and len(p['data']['items']) >= 5
+          and any(f['key'] == '900^b' for f in p['data']['items']))
+    recs = [_rec('Книга A', **{'101': 'rus', '900': [{'b': '01'}]}),
+            _rec('Книга B', **{'101': 'rus', '900': [{'b': '05'}]}),
+            _rec('Book C', **{'101': 'eng', '900': [{'b': '01'}]})]
+    st, p = api.route('POST', '/api/facets/compute', {}, {'records': recs}, S)
+    lang = {x['value']: x['count'] for x in p['data']['facets'].get('101', [])}
+    check('compute язык rus=2/eng=1', st == 200 and lang.get('rus') == 2 and lang.get('eng') == 1)
+    check('compute язык сортирован по убыванию', p['data']['facets']['101'][0]['value'] == 'rus')
+    st, p = api.route('POST', '/api/facet-config', {},
+                      {'tag': '999', 'subfield': 'x', 'label': 'Мой фасет'}, S)
+    check('upsert кастом-фасета -> 200', st == 200 and p['data']['facet']['tag'] == '999')
+    fid = p['data']['facet']['id']
+    st, p = api.route('GET', '/api/facet-config', {}, None, S)
+    check('кастом замещает дефолт (1 фасет 999^x)',
+          st == 200 and len(p['data']['items']) == 1 and p['data']['items'][0]['key'] == '999^x')
+    st, p = api.route('POST', '/api/facet-config/remove', {}, {'id': fid}, S)
+    check('remove кастом-фасета -> 200 removed', st == 200 and p['data']['removed'] is True)
+    st, p = api.route('POST', '/api/facet-config', {}, {'subfield': 'x'}, S)
+    check('upsert без tag -> 400', st == 400)
+    st, p = api.route('POST', '/api/facet-config', {}, {'tag': '999'}, R)
+    check('reader правит конфиг фасетов -> 403', st == 403)
+
+    # --- Реестр IP-диапазонов организаций (admin) ---
+    st, p = api.route('POST', '/api/admin/ip-ranges', {},
+                      {'cidr': '10.0.0.0/8', 'org': 'ВУЗ-A', 'role': 'org'}, A)
+    check('добавить /8 ВУЗ-A -> 200', st == 200 and p['data']['range']['org'] == 'ВУЗ-A')
+    st, p = api.route('POST', '/api/admin/ip-ranges', {},
+                      {'cidr': '10.1.2.0/24', 'org': 'Библ-B'}, A)
+    check('добавить более специфичный /24 Библ-B -> 200', st == 200)
+    st, p = api.route('GET', '/api/admin/ip-ranges/resolve', {'ip': ['10.1.2.5']}, None, A)
+    check('resolve 10.1.2.5 -> Библ-B (специфичнее)',
+          st == 200 and p['data']['match'] and p['data']['match']['org'] == 'Библ-B')
+    st, p = api.route('GET', '/api/admin/ip-ranges/resolve', {'ip': ['10.9.9.9']}, None, A)
+    check('resolve 10.9.9.9 -> ВУЗ-A (/8)',
+          st == 200 and p['data']['match']['org'] == 'ВУЗ-A')
+    st, p = api.route('GET', '/api/admin/ip-ranges/resolve', {'ip': ['8.8.8.8']}, None, A)
+    check('resolve вне всех -> null', st == 200 and p['data']['match'] is None)
+    st, p = api.route('POST', '/api/admin/ip-ranges', {}, {'cidr': 'не-cidr', 'org': 'X'}, A)
+    check('кривой CIDR -> 400', st == 400)
+    st, p = api.route('POST', '/api/admin/ip-ranges', {}, {'cidr': '10.0.0.0/8'}, A)
+    check('пустой org -> 400', st == 400)
+    st, p = api.route('GET', '/api/admin/ip-ranges', {}, None, R)
+    check('reader смотрит ip-ranges -> 403', st == 403)
+    st, p = api.route('GET', '/api/admin/ip-ranges', {}, None, S)
+    check('staff-без-admin ip-ranges -> 403', st == 403)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -953,6 +1015,7 @@ def main():
     edge_11_4_checks()
     digitization_route_checks()
     batch240_route_checks()
+    batch240b_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
