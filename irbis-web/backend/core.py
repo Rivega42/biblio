@@ -808,6 +808,23 @@ class Api:
                     'COLLECTION_SUBS_DB', os.path.join(here, 'collection_subs.db'))))
         except Exception:
             self.collection_subs = None
+        # Батч #240 (вторая волна): авто-фасеты «поле→фасет» (конфиг + подсчёт по
+        # записям) + реестр IP-диапазонов организаций (провайдер IP-авто-входа,
+        # резолв IP→организация). Оба own-store/stdlib, живой ИРБИС не пишется.
+        try:
+            from access import facet_config as _facet_config
+            self.facets_cfg = _facet_config.FacetService(
+                _facet_config.FacetConfigStore(os.environ.get(
+                    'FACET_CONFIG_DB', os.path.join(here, 'facet_config.db'))))
+        except Exception:
+            self.facets_cfg = None
+        try:
+            from access import ip_auth as _ip_auth
+            self.ip_auth = _ip_auth.IpAuthService(
+                _ip_auth.IpRangeStore(os.environ.get(
+                    'IP_AUTH_DB', os.path.join(here, 'ip_auth.db'))))
+        except Exception:
+            self.ip_auth = None
         # Бэклог own-store модулей (#316/#317/#318), разведённый в роуты ниже:
         # поставщики/счета + подписка-периодика (Комплектование), версии записи +
         # редактор словарей .mnu/.tre (Каталогизатор), роли RBAC + аудит-трейл +
@@ -3112,6 +3129,108 @@ class Api:
         except (TypeError, ValueError):
             return 400, err('bad_request', 'id required')
         return 200, ok({'cancelled': self.collection_subs.cancel(ticket, sid)})
+
+    # ---- Авто-фасеты «поле→фасет» (FacetService) -------------------------- #
+    def facet_config_list(self, session, query):
+        """GET /api/facet-config — активный набор фасетов тенанта (cataloging read)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.facets_cfg is None:
+            return 200, ok({'items': []})
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        return 200, ok({'items': self.facets_cfg.configured(tenant)})
+
+    def facet_config_set(self, session, body):
+        """POST /api/facet-config — завести/обновить facet-def (cataloging write).
+
+        ``tag`` обязателен; ``subfield`` (опц., '' = поле-скаляр), ``label``,
+        ``enabled``, ``sort``."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.facets_cfg is None:
+            return 200, ok({'facet': None})
+        tag = (body.get('tag') or '').strip()
+        if not tag:
+            return 400, err('bad_request', 'tag required')
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        label = (body.get('label') or tag).strip()
+        try:
+            sort = int(body.get('sort', 0))
+        except (TypeError, ValueError):
+            sort = 0
+        facet = self.facets_cfg.upsert(
+            tenant, tag, (body.get('subfield') or ''), label,
+            enabled=bool(body.get('enabled', True)), sort=sort)
+        return 200, ok({'facet': facet})
+
+    def facet_config_remove(self, session, body):
+        """POST /api/facet-config/remove — удалить facet-def по id (cataloging write)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.facets_cfg is None:
+            return 200, ok({'removed': False})
+        try:
+            fid = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        return 200, ok({'removed': self.facets_cfg.remove(fid)})
+
+    def facets_compute(self, session, body):
+        """POST /api/facets/compute — подсчёт авто-фасетов по набору записей (cataloging read).
+
+        Утилита превью: ``records`` — список tag-keyed записей; возвращает
+        ``{key: [{value,count}...]}`` по активному набору фасетов тенанта."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.facets_cfg is None:
+            return 200, ok({'facets': {}})
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        records = body.get('records') or []
+        return 200, ok({'facets': self.facets_cfg.compute(records, tenant=tenant)})
+
+    # ---- Реестр IP-диапазонов организаций (IpAuthService) — admin --------- #
+    def ip_ranges_list(self, session, query):
+        """GET /api/admin/ip-ranges — список IP-диапазонов организаций (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.ip_auth is None:
+            return 200, ok({'items': []})
+        return 200, ok({'items': self.ip_auth.list()})
+
+    def ip_range_add(self, session, body):
+        """POST /api/admin/ip-ranges — добавить IP-диапазон организации (admin).
+
+        ``cidr`` + ``org`` обязательны; ``role``/``label`` опц. Кривой CIDR/
+        пустой org -> 400."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.ip_auth is None:
+            return 200, ok({'range': None})
+        try:
+            rng = self.ip_auth.add_range(
+                (body.get('cidr') or '').strip(), (body.get('org') or '').strip(),
+                role=(body.get('role') or ''), label=(body.get('label') or ''))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'range': rng})
+
+    def ip_range_remove(self, session, body):
+        """POST /api/admin/ip-ranges/remove — удалить диапазон по id (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.ip_auth is None:
+            return 200, ok({'removed': False})
+        try:
+            rid = int(body.get('id'))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'id required')
+        return 200, ok({'removed': self.ip_auth.remove(rid)})
+
+    def ip_resolve(self, session, query):
+        """GET /api/admin/ip-ranges/resolve?ip= — резолв IP→организация (admin).
+
+        Диагностика провайдера IP-авто-входа: к какой организации отнесён IP
+        (самый специфичный включённый диапазон) или ``null``."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.ip_auth is None:
+            return 200, ok({'match': None})
+        ip = (query.get('ip', [''])[0] or '').strip()
+        if not ip:
+            return 400, err('bad_request', 'ip required')
+        return 200, ok({'match': self.ip_auth.resolve(ip)})
 
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
@@ -5488,6 +5607,23 @@ class Api:
                 return self.collection_subs_list(session, query)
             if method == 'POST' and path == '/api/me/collections/cancel':
                 return self.collection_unsubscribe(session, body or {})
+            # ---- Батч #240 (2-я волна): авто-фасеты + реестр IP-диапазонов ----
+            if method == 'GET' and path == '/api/facet-config':
+                return self.facet_config_list(session, query)
+            if method == 'POST' and path == '/api/facet-config':
+                return self.facet_config_set(session, body or {})
+            if method == 'POST' and path == '/api/facet-config/remove':
+                return self.facet_config_remove(session, body or {})
+            if method == 'POST' and path == '/api/facets/compute':
+                return self.facets_compute(session, body or {})
+            if method == 'GET' and path == '/api/admin/ip-ranges/resolve':
+                return self.ip_resolve(session, query)
+            if method == 'GET' and path == '/api/admin/ip-ranges':
+                return self.ip_ranges_list(session, query)
+            if method == 'POST' and path == '/api/admin/ip-ranges':
+                return self.ip_range_add(session, body or {})
+            if method == 'POST' and path == '/api/admin/ip-ranges/remove':
+                return self.ip_range_remove(session, body or {})
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
