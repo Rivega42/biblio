@@ -90,9 +90,10 @@ function ToolDown({ icon, title }: { icon: IconName; title: string }) {
   );
 }
 
-type Tab = "marc" | "dedup" | "print" | "vocab" | "versions";
+type Tab = "marc" | "copy" | "dedup" | "print" | "vocab" | "versions";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "marc", label: "Обмен MARC", icon: "download" },
+  { id: "copy", label: "Копикаталогизация", icon: "search" },
   { id: "dedup", label: "Дубли", icon: "copy" },
   { id: "print", label: "Печать ГОСТ", icon: "file-text" },
   { id: "vocab", label: "Словари", icon: "list" },
@@ -118,6 +119,7 @@ export function CatalogingDesk({ toast }: { toast: ToastFn }) {
         ))}
       </div>
       {tab === "marc" ? <MarcTab toast={toast} />
+        : tab === "copy" ? <CopyTab toast={toast} />
         : tab === "dedup" ? <DedupTab toast={toast} />
         : tab === "print" ? <PrintTab toast={toast} />
         : tab === "vocab" ? <VocabTab toast={toast} />
@@ -418,6 +420,88 @@ function VersionsTab() {
             </table>
           </div>
         ) : <div className="cat__hint">Версии не найдены.</div>)}
+      </div>
+    </div>
+  );
+}
+
+// ===== Копикаталогизация (SRU/Z39.50, #240) =================================
+// Заимствование описания из внешнего SRU-сервиса: 1) собрать URL запроса (поле +
+// термин), оператор открывает его во внешнем инструменте; 2) вставить SRU-ответ
+// (XML с MARCXML) -> разобрать -> превью записей; 3) импортировать в каталог.
+// Сетевой вызов к внешнему сервису — вне браузера (CORS), поэтому ответ вставляется.
+function CopyTab({ toast }: { toast: ToastFn }) {
+  const [base, setBase] = React.useState("");
+  const [field, setField] = React.useState("title");
+  const [term, setTerm] = React.useState("");
+  const [url, setUrl] = React.useState<string | null>(null);
+  const [xml, setXml] = React.useState("");
+  const [parsed, setParsed] = React.useState<{ total: number; records: any[] } | null>(null);
+  const [busy, setBusy] = React.useState<"url" | "parse" | "imp" | null>(null);
+  const [down, setDown] = React.useState(false);
+
+  const buildUrl = async () => {
+    if (!base.trim() || !term.trim()) { toast({ variant: "info", title: "Заполните поля", message: "URL сервиса и термин обязательны." }); return; }
+    setBusy("url"); const r = await api.copyCatalogUrl({ base: base.trim(), field, term: term.trim() }); setBusy(null);
+    if (r.status === 404 || r.status === 501) { setDown(true); return; }
+    if (r.status === 403) { toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант каталогизации." }); return; }
+    if (r.json?.ok && r.json.data) setUrl(r.json.data.url);
+    else toast({ variant: "error", title: "Не собрано", message: "Проверьте поля." });
+  };
+  const doParse = async () => {
+    if (!xml.trim()) { toast({ variant: "info", title: "Вставьте ответ", message: "Вставьте SRU-ответ (XML)." }); return; }
+    setBusy("parse"); const r = await api.copyCatalogParse(xml); setBusy(null);
+    if (r.json?.ok && r.json.data) setParsed({ total: r.json.data.total, records: r.json.data.records as any[] });
+    else toast({ variant: "error", title: "Не разобрано", message: "Проверьте формат SRU-ответа." });
+  };
+  const doImport = async () => {
+    setBusy("imp"); const r = await api.copyCatalogImport(xml); setBusy(null);
+    if (r.json?.ok && r.json.data) toast({ variant: "success", title: "Импортировано", message: "Создано записей: " + r.json.data.created + (r.json.data.skipped ? " · пропущено: " + r.json.data.skipped : "") });
+    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант каталогизации (write)." });
+    else toast({ variant: "error", title: "Не импортировано", message: "Повторите попытку." });
+  };
+  const recTitle = (rec: any): string => { try { return rec["200"][0].a || "—"; } catch { return "—"; } };
+
+  if (down) return <ToolDown icon="search" title="Копикаталогизация подключается отдельно" />;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="cat__card">
+        <div className="cat__bar"><span className="cat__cap">1 · запрос к внешнему SRU-сервису</span></div>
+        <div className="cat__body">
+          <div className="cat__row">
+            <div className="cat__fld" style={{ flex: "2 1 220px" }}><span className="cat__fld-lab">URL SRU-сервиса</span><input className="cat__in" value={base} onChange={(e) => setBase(e.target.value)} placeholder="https://нэб.рф/sru" /></div>
+            <div className="cat__fld"><span className="cat__fld-lab">Поле</span>
+              <select className="cat__in" value={field} onChange={(e) => setField(e.target.value)}>
+                <option value="title">Заглавие</option><option value="author">Автор</option><option value="isbn">ISBN</option><option value="any">Везде</option>
+              </select>
+            </div>
+            <div className="cat__fld"><span className="cat__fld-lab">Запрос</span><input className="cat__in" value={term} onChange={(e) => setTerm(e.target.value)} /></div>
+          </div>
+          <div className="cat__actions"><Button iconLeft="search" loading={busy === "url"} onClick={buildUrl}>Собрать URL запроса</Button></div>
+          {url && <><p className="cat__hint">Откройте URL во внешнем инструменте (Z39.50/SRU-клиент) и вставьте ответ ниже:</p><pre className="cat__pre" style={{ maxHeight: 90 }}>{url}</pre></>}
+        </div>
+      </div>
+
+      <div className="cat__card">
+        <div className="cat__bar"><span className="cat__cap">2 · SRU-ответ → превью → импорт</span></div>
+        <div className="cat__body">
+          <div className="cat__fld"><span className="cat__fld-lab">SRU-ответ (XML с MARCXML)</span>
+            <textarea className="cat__ta" value={xml} onChange={(e) => setXml(e.target.value)} placeholder="<searchRetrieveResponse>…</searchRetrieveResponse>" />
+          </div>
+          <div className="cat__actions">
+            <Button variant="ghost" iconLeft="search" loading={busy === "parse"} onClick={doParse}>Разобрать</Button>
+            <Button iconLeft="download" loading={busy === "imp"} disabled={!parsed || !parsed.total} onClick={doImport}>Импортировать в каталог</Button>
+          </div>
+          {parsed && (
+            <div>
+              <p className="cat__hint">Найдено записей: <b>{parsed.total}</b></p>
+              {parsed.records.length > 0 && (
+                <pre className="cat__pre">{parsed.records.map((r, i) => (i + 1) + ". " + recTitle(r)).join("\n")}</pre>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
