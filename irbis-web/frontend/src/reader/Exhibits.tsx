@@ -7,8 +7,31 @@
 // строго на Biblio-токенах; обложек у выставок нет — тонированные подложки.
 import React from "react";
 import { api } from "../api";
-import type { ExhibitSummary, ExhibitItem } from "../api";
+import type { ExhibitSummary, ExhibitItem, IiifManifest } from "../api";
 import { Icon } from "../../components/icon/Icon.jsx";
+import { DocViewer } from "./DocViewer";
+import type { DocPage } from "./DocViewer";
+
+// IIIF-манифест -> страницы для DocViewer. Из каждой канвы берём URL образа
+// (painting-аннотация: items[0].items[0].body.id) и подпись (label.<lang>[0]).
+// Канвы без URL пропускаем.
+function manifestToPages(manifest: IiifManifest | undefined): DocPage[] {
+  const canvases = manifest && Array.isArray(manifest.items) ? manifest.items : [];
+  const pages: DocPage[] = [];
+  canvases.forEach((c, i) => {
+    const anyc = c as any;
+    let url: string | undefined;
+    try { url = anyc?.items?.[0]?.items?.[0]?.body?.id; } catch { url = undefined; }
+    let name: string | undefined;
+    const lbl = anyc?.label;
+    if (lbl && typeof lbl === "object") {
+      const first = Object.values(lbl)[0];
+      if (Array.isArray(first) && first.length) name = String(first[0]);
+    }
+    if (url) pages.push({ name: name ? "Стр. " + name : "Стр. " + (i + 1), url, kind: "image" });
+  });
+  return pages;
+}
 
 const TINTS = [
   "var(--cover-tint-1, #2F5D62)", "var(--cover-tint-2, #C96442)", "var(--cover-tint-3, #6B5CA5)",
@@ -47,7 +70,15 @@ const CSS = `
   font-size:var(--text-lg,1.05rem);margin:0;color:var(--text-strong);}
 .irb-exh__paneldesc{font-size:var(--text-sm);color:var(--text-subtle);}
 .irb-exh__items{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
-.irb-exh__item{display:flex;align-items:flex-start;gap:10px;width:100%;background:none;border:none;
+.irb-exh__itemrow{display:flex;align-items:stretch;gap:6px;}
+.irb-exh__digi{flex:none;display:inline-flex;align-items:center;gap:5px;background:none;
+  border:1px solid var(--border-subtle);border-radius:var(--radius-md,8px);padding:0 11px;cursor:pointer;
+  font-family:inherit;font-size:var(--text-xs);color:var(--accent);white-space:nowrap;
+  transition:background-color var(--dur,.18s) var(--ease-standard,ease);}
+.irb-exh__digi:hover:not(:disabled){background:var(--surface-sunken);}
+.irb-exh__digi:disabled{opacity:.55;cursor:default;color:var(--text-subtle);}
+.irb-exh__digi:focus-visible{outline:var(--focus-ring-width,2px) solid var(--focus-ring-color,var(--accent));outline-offset:1px;}
+.irb-exh__item{flex:1;min-width:0;display:flex;align-items:flex-start;gap:10px;width:100%;background:none;border:none;
   padding:8px 10px;border-radius:var(--radius-md,8px);cursor:pointer;text-align:left;font-family:inherit;
   color:var(--text-body);transition:background-color var(--dur,.18s) var(--ease-standard,ease);}
 .irb-exh__item:hover{background:var(--surface-sunken);}
@@ -67,6 +98,23 @@ export function Exhibits({ db, onOpen }: { db: string; onOpen: (mfn: number, db:
   const [list, setList] = React.useState<ExhibitSummary[] | null>(null);
   const [open, setOpen] = React.useState<string | null>(null);
   const [items, setItems] = React.useState<ExhibitItem[] | null>(null);
+  // Встроенный IIIF-просмотрщик: страницы открытой записи + статусы по позициям
+  // ('loading' пока тянем манифест, 'empty' если оцифрованных образов нет).
+  const [viewer, setViewer] = React.useState<{ pages: DocPage[]; title: string } | null>(null);
+  const [digi, setDigi] = React.useState<Record<number, "loading" | "empty">>({});
+
+  const openDigitized = async (it: ExhibitItem) => {
+    if (digi[it.id] === "loading") return;
+    setDigi((d) => ({ ...d, [it.id]: "loading" }));
+    const r = await api.iiifManifest(it.db || db, it.mfn);
+    const pages = r.json?.ok && r.json.data ? manifestToPages(r.json.data.manifest) : [];
+    if (pages.length) {
+      setDigi((d) => { const n = { ...d }; delete n[it.id]; return n; });
+      setViewer({ pages, title: it.caption || ("Запись · MFN " + it.mfn) });
+    } else {
+      setDigi((d) => ({ ...d, [it.id]: "empty" })); // нет оцифрованных образов
+    }
+  };
 
   React.useEffect(() => {
     let alive = true;
@@ -128,7 +176,7 @@ export function Exhibits({ db, onOpen }: { db: string; onOpen: (mfn: number, db:
               : (
                 <ul className="irb-exh__items">
                   {items.map((it, i) => (
-                    <li key={it.id}>
+                    <li key={it.id} className="irb-exh__itemrow">
                       <button type="button" className="irb-exh__item"
                         onClick={() => onOpen(it.mfn, it.db || db)}
                         aria-label={"Открыть запись" + (it.caption ? ": " + it.caption : "")}>
@@ -138,11 +186,23 @@ export function Exhibits({ db, onOpen }: { db: string; onOpen: (mfn: number, db:
                           {it.asset_ref && <span className="irb-exh__asset"><Icon name="image" size={11} /> оцифрованный образ</span>}
                         </span>
                       </button>
+                      <button type="button" className="irb-exh__digi"
+                        onClick={() => openDigitized(it)}
+                        disabled={digi[it.id] === "loading" || digi[it.id] === "empty"}
+                        aria-label={"Смотреть оцифровку записи MFN " + it.mfn}
+                        title="Постраничный просмотр оцифрованных образов">
+                        <Icon name={digi[it.id] === "loading" ? "clock" : "images"} size={14} />
+                        {digi[it.id] === "empty" ? "нет страниц" : "Оцифровка"}
+                      </button>
                     </li>
                   ))}
                 </ul>
               )}
         </div>
+      )}
+
+      {viewer && (
+        <DocViewer pages={viewer.pages} title={viewer.title} onClose={() => setViewer(null)} />
       )}
     </section>
   );

@@ -12,6 +12,12 @@ ROLE_GRANTS = {
     'cataloger': [
         ('search', '*', 'read'), ('record.read', '*', 'read'), ('terms', '*', 'read'),
         ('file', '*', 'read'), ('record.write', 'IBIS', 'write'), ('cat.gbl', 'IBIS', 'write'),
+        # Функция-модуль 'cataloging' — на неё гвардятся own-store роуты каталога
+        # (MARC/MARCXML обмен, дедуп, печать, версии, словари, ВКР, DAM, периодика,
+        # шаблоны метаданных, авто-фасеты, выставки-правка, OCR-индекс). Без неё
+        # реальный каталогизатор получал 403 на этих роутах (грант существовал
+        # только в тестах). Write покрывает и read-гварды (write >= read).
+        ('cataloging', '*', 'write'),
     ],
     'administrator': [
         ('search', '*', 'read'), ('record.read', '*', 'read'), ('record.write', '*', 'write'),
@@ -22,6 +28,9 @@ ROLE_GRANTS = {
         ('acq.receipt', '*', 'write'), ('acq.read', '*', 'read'),
         ('bp.write', '*', 'write'), ('bp.read', '*', 'read'),
         ('cat.gbl', '*', 'write'),
+        # См. коммент в роли 'cataloger': own-store роуты каталога гвардятся на
+        # функцию 'cataloging'; администратору она тоже нужна (иначе 403).
+        ('cataloging', '*', 'write'),
     ],
 }
 
