@@ -44,6 +44,8 @@ from access.loan_policy import LoanPolicyService, LoanPolicyStore
 from access.debtors import DebtorsService, DebtStore
 from access.discipline_norms import DisciplineNormService, DisciplineStore
 from access.kko_reports import KkoSnapshotStore
+from access.ocr import OcrService, OcrStore
+from access.exhibits import ExhibitService, ExhibitStore
 from access import circulation as _circ
 
 PASS = [0]
@@ -111,6 +113,9 @@ def _api():
     api.debtors = DebtorsService(DebtStore(':memory:'))
     api.discipline_norms = DisciplineNormService(DisciplineStore(':memory:'))
     api.kko_snapshots = KkoSnapshotStore(':memory:')
+    # Трек «Оцифровка» (PR #325) — свежие in-memory сторы.
+    api.ocr = OcrService(OcrStore(':memory:'))
+    api.exhibits = ExhibitService(ExhibitStore(':memory:'))
     return api
 
 
@@ -701,6 +706,135 @@ def edge_11_4_checks():
           d3.decision == _circ.DENY and 'reader_blocked_debt' in d3.reasons)
 
 
+def digitization_route_checks():
+    print('-- Оцифровка: выставки / IIIF / OCR / OAI-PMH через route()')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    R = _reader(api)
+
+    # --- Виртуальные выставки: черновик -> позиция -> публикация -> витрина ---
+    st, p = api.route('POST', '/api/exhibits', {},
+                      {'slug': 'teatr-1920', 'title': 'Театр 1920-х',
+                       'description': 'Афиши и программы'}, S)
+    check('создать выставку -> 200',
+          st == 200 and p['data']['exhibit']['slug'] == 'teatr-1920')
+    st, p = api.route('GET', '/api/exhibits', {}, None, R)
+    check('витрина пуста (черновик не виден) -> 0',
+          st == 200 and len(p['data']['items']) == 0)
+    st, p = api.route('GET', '/api/exhibits/teatr-1920', {}, None, R)
+    check('view черновика (reader) -> 404', st == 404)
+    st, p = api.route('POST', '/api/exhibits/item', {},
+                      {'slug': 'teatr-1920', 'db': 'IBIS', 'mfn': 5,
+                       'caption': 'Афиша «Чайки»', 'assetRef': 'dam://a1'}, S)
+    check('добавить позицию -> 200',
+          st == 200 and p['data']['item']['mfn'] == 5)
+    st, p = api.route('POST', '/api/exhibits/publish', {},
+                      {'slug': 'teatr-1920', 'published': True}, S)
+    check('публикация -> 200',
+          st == 200 and p['data']['exhibit']['published'] == 1)
+    st, p = api.route('GET', '/api/exhibits', {}, None, R)
+    check('витрина: 1 опубликованная (public-read)',
+          st == 200 and len(p['data']['items']) == 1)
+    st, p = api.route('GET', '/api/exhibits/teatr-1920', {}, None, R)
+    check('view опубликованной -> 200 + 1 позиция',
+          st == 200 and len(p['data']['items']) == 1
+          and p['data']['exhibit']['slug'] == 'teatr-1920')
+    # Гварды + валидация выставок.
+    st, p = api.route('POST', '/api/exhibits', {}, {'slug': 'x', 'title': 'X'}, R)
+    check('reader создаёт выставку -> 403', st == 403)
+    st, p = api.route('POST', '/api/exhibits', {}, {'title': 'без-слага'}, S)
+    check('создание без slug -> 400', st == 400)
+    st, p = api.route('POST', '/api/exhibits', {},
+                      {'slug': 'teatr-1920', 'title': 'dup'}, S)
+    check('дубликат slug -> 400', st == 400)
+    st, p = api.route('POST', '/api/exhibits/publish', {}, {'slug': 'нет'}, S)
+    check('публикация неизвестной -> 404', st == 404)
+    st, p = api.route('POST', '/api/exhibits/item', {},
+                      {'slug': 'нет', 'mfn': 1}, S)
+    check('позиция в неизвестную выставку -> 400', st == 400)
+
+    # --- OCR: индексация (staff) + поиск (public-read) ---
+    st, p = api.route('POST', '/api/ocr/index', {},
+                      {'assetRef': 'dam://doc1',
+                       'pages': [{'page_no': 1, 'text': 'Чайка Антона Чехова'},
+                                 {'page_no': 2, 'text': 'Вишнёвый сад пьеса'}]}, S)
+    check('OCR index -> 2 страницы',
+          st == 200 and p['data']['indexed'] == 2 and p['data']['pageCount'] == 2)
+    st, p = api.route('GET', '/api/ocr/search', {'q': ['чехов']}, None, R)
+    check('OCR search по всем (public, кириллица/регистр) -> 1 хит',
+          st == 200 and len(p['data']['hits']) == 1
+          and p['data']['hits'][0]['asset_ref'] == 'dam://doc1')
+    st, p = api.route('GET', '/api/ocr/search',
+                      {'q': ['сад'], 'assetRef': ['dam://doc1']}, None, R)
+    check('OCR search в документе -> 1 (page 2)',
+          st == 200 and len(p['data']['hits']) == 1
+          and p['data']['hits'][0]['page_no'] == 2)
+    st, p = api.route('GET', '/api/ocr/search', {'q': ['']}, None, R)
+    check('OCR search пустой q -> []',
+          st == 200 and p['data']['hits'] == [])
+    st, p = api.route('POST', '/api/ocr/index', {}, {'pages': []}, S)
+    check('OCR index без assetRef -> 400', st == 400)
+    st, p = api.route('POST', '/api/ocr/index', {},
+                      {'assetRef': 'd', 'pages': []}, R)
+    check('reader OCR index -> 403', st == 403)
+
+    # --- IIIF: манифест Presentation v3 из DAM-ассетов записи ---
+    api.dam.attach('IBIS', 5, '955', 'http://img/doc5', pages=3,
+                   rights_template='R1')
+    st, p = api.route('GET', '/api/iiif/manifest',
+                      {'db': ['IBIS'], 'mfn': ['5']}, None, R)
+    man = p['data']['manifest']
+    check('IIIF manifest -> v3 + 3 канвы',
+          st == 200 and man['type'] == 'Manifest' and '@context' in man
+          and len(man['items']) == 3 and p['data']['pages'] == 3)
+    check('IIIF canvas -> painting-аннотация на образ страницы',
+          man['items'][0]['items'][0]['items'][0]['body']['id']
+          == 'http://img/doc5/1')
+    st, p = api.route('GET', '/api/iiif/manifest',
+                      {'db': ['IBIS'], 'mfn': ['99']}, None, R)
+    check('IIIF без ассетов -> манифест без канв',
+          st == 200 and len(p['data']['manifest']['items']) == 0)
+    st, p = api.route('GET', '/api/iiif/manifest',
+                      {'db': ['IBIS'], 'mfn': ['0']}, None, R)
+    check('IIIF без mfn -> 400', st == 400)
+
+    # --- OAI-PMH: провайдер метаданных (анонимный харвестер) ---
+    api.catalog.save('IBIS', _rec('Чайка', **{'700': [{'a': 'Чехов А.П.'}],
+                                              '210': [{'c': 'Искусство', 'd': '1980'}]}))
+    st, p = api.route('GET', '/api/oai', {'verb': ['Identify']}, None, {})
+    check('OAI Identify (anon) -> 200 v2.0',
+          st == 200 and p['data']['Identify']['protocolVersion'] == '2.0')
+    st, p = api.route('GET', '/api/oai', {'verb': ['ListMetadataFormats']},
+                      None, {})
+    check('OAI ListMetadataFormats -> oai_dc',
+          st == 200
+          and p['data']['ListMetadataFormats'][0]['metadataPrefix'] == 'oai_dc')
+    st, p = api.route('GET', '/api/oai', {'verb': ['ListRecords']}, None, {})
+    check('OAI ListRecords -> >=1 + DC-маппинг',
+          st == 200 and len(p['data']['ListRecords']) >= 1
+          and p['data']['ListRecords'][0]['metadata']['title'] == 'Чайка'
+          and p['data']['ListRecords'][0]['metadata']['creator'] == 'Чехов А.П.')
+    st, p = api.route('GET', '/api/oai', {'verb': ['ListIdentifiers']}, None, {})
+    check('OAI ListIdentifiers -> >=1', st == 200
+          and len(p['data']['ListIdentifiers']) >= 1)
+    ident = p['data']['ListIdentifiers'][0]['identifier']
+    st, p = api.route('GET', '/api/oai',
+                      {'verb': ['GetRecord'], 'identifier': [ident]}, None, {})
+    check('OAI GetRecord по identifier -> запись',
+          st == 200
+          and p['data']['GetRecord']['header']['identifier'] == ident)
+    st, p = api.route('GET', '/api/oai',
+                      {'verb': ['GetRecord'], 'identifier': ['oai:biblio:99999']},
+                      None, {})
+    check('OAI GetRecord неизвестный id -> 404', st == 404)
+    st, p = api.route('GET', '/api/oai',
+                      {'verb': ['ListRecords'], 'metadataPrefix': ['marc21']},
+                      None, {})
+    check('OAI неподдерживаемый формат -> 400', st == 400)
+    st, p = api.route('GET', '/api/oai', {'verb': ['Bogus']}, None, {})
+    check('OAI неизвестный verb -> 400', st == 400)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -717,6 +851,7 @@ def main():
     backlog_circ_route_checks()
     backlog_bp_route_checks()
     edge_11_4_checks()
+    digitization_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
