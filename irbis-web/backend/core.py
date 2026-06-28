@@ -3620,6 +3620,40 @@ class Api:
         tenant = (body.get('tenant') or '').strip() or session.get('tenant', DEFAULT_TENANT)
         return 200, ok(self.inforost.import_log(tenant, body.get('export') or {}))
 
+    def inforost_import_exhibits(self, session, body):
+        """POST /api/admin/inforost/import-exhibits — создать выставки из инфорост-плана (super-admin).
+
+        Каждая инфорост-коллекция -> выставка own-store (slug/title/описание) + её
+        позиции (подпись + ссылка на оцифрованный образ). Идемпотентно: выставка с
+        существующим slug пропускается. mfn позиций = 0 (плейсхолдер — каталожная
+        запись создаётся отдельным проходом; здесь привязка к образу). Возвращает
+        число созданных/пропущенных выставок."""
+        self._require_super_admin(session)
+        if self.inforost is None or self.exhibits is None:
+            return 200, ok({'created': 0, 'skipped': 0})
+        plan = self.inforost.plan(body.get('export') or {})
+        created, skipped, items = 0, 0, 0
+        for coll in plan.get('collections', []):
+            slug = (coll.get('slug') or '').strip()
+            if not slug or self.exhibits.get(slug) is not None:
+                skipped += 1
+                continue
+            try:
+                self.exhibits.create(slug, coll.get('title') or slug,
+                                     coll.get('description') or '')
+            except ValueError:
+                skipped += 1
+                continue
+            for it in (coll.get('items') or []):
+                assets = it.get('assets') or []
+                self.exhibits.add_record(
+                    slug, self.cfg.db_default, 0,
+                    caption=(it.get('caption') or ''),
+                    asset_ref=(assets[0] if assets else ''))
+                items += 1
+            created += 1
+        return 200, ok({'created': created, 'skipped': skipped, 'items': items})
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -6093,6 +6127,8 @@ class Api:
                 return self.inforost_plan(session, body or {})
             if method == 'POST' and path == '/api/admin/inforost/import':
                 return self.inforost_import(session, body or {})
+            if method == 'POST' and path == '/api/admin/inforost/import-exhibits':
+                return self.inforost_import_exhibits(session, body or {})
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
