@@ -458,6 +458,11 @@ export const api = {
   // Discovery showcase (G2): new arrivals etc. `kind` defaults to "new" on the backend.
   showcase: (db: string, kind = "new", limit = 12) =>
     jget<{ items: ShowcaseItem[] }>("/api/showcase?" + qs({ db, kind, limit })),
+  // Указатель A–Z (#240): термины по первой букве со счётчиками из own-store
+  // каталога (tag по умолч. 700 авторы, subfield a). Пусто -> блок скрыт.
+  browseIndex: (db: string, tag = "700", subfield = "a") =>
+    jget<{ letters: string[]; buckets: Record<string, { term: string; count: number }[]> }>(
+      "/api/browse?" + qs({ db, tag, subfield })),
   // Rubricator terms with counts (browse navigators) — used for example-query seeds.
   rubricator: (db: string, prefix: string, limit = 12) =>
     jget<{ terms: Term[] }>("/api/rubricator?" + qs({ db, prefix, limit })),

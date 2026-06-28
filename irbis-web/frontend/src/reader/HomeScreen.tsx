@@ -16,6 +16,7 @@ import { Showcase } from "./Showcase";
 import { Exhibits } from "./Exhibits";
 import { Collections } from "./Collections";
 import { Rubricator } from "./Rubricator";
+import { BrowseAZ } from "./BrowseAZ";
 import { LibraryNews, LibraryEvents } from "./LibraryFeed";
 import { AboutLibrary } from "./AboutLibrary";
 
@@ -180,6 +181,9 @@ export function HomeScreen({
 
       {/* ===== Рубрикатор «Просмотр по разделам» — живой словарь /api/rubricator ===== */}
       <Rubricator db={db} onSearch={onSearch} />
+
+      {/* ===== Указатель авторов A–Z (#240) — own-store /api/browse ===== */}
+      <BrowseAZ db={db} onSearch={onSearch} />
 
       {/* Селектор баз перенесён под строку поиска (hero, #255 п.2) — здесь больше
           не дублируем «Где искать», чтобы не было двух конкурирующих выборов базы. */}
