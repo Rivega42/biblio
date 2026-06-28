@@ -251,6 +251,7 @@ def main():
                'test_discipline_norms',
                'test_metadata_templates', 'test_job_queue', 'test_collection_subs',
                'test_facet_config', 'test_ip_auth', 'test_browse_index',
+               'test_tariff_store', 'test_access_matrix',
                'test_iiif', 'test_ocr', 'test_oai_pmh', 'test_exhibits',
                'test_discovery', 'test_integration', 'test_resilience',
                'test_portal222', 'test_acquisition', 'test_tocat', 'test_ksu_exemplars',

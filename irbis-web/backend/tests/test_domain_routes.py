@@ -51,6 +51,8 @@ from access.job_queue import JobQueue, JobStore
 from access.collection_subs import CollectionSubscriptionService, CollectionSubStore
 from access.facet_config import FacetService, FacetConfigStore
 from access.ip_auth import IpAuthService, IpRangeStore
+from access.tariff_store import TariffStore
+from access import access_matrix as _am
 from access import circulation as _circ
 
 PASS = [0]
@@ -131,6 +133,9 @@ def _api():
     # Батч #240 (2-я волна) — свежие in-memory сторы.
     api.facets_cfg = FacetService(FacetConfigStore(':memory:'))
     api.ip_auth = IpAuthService(IpRangeStore(':memory:'))
+    # Матрица доступов (#331) — свежий in-memory стор тарифов + сид дефолтов.
+    api.tariffs = TariffStore(':memory:')
+    _am.seed_defaults(api.tariffs)
     return api
 
 
@@ -1023,6 +1028,75 @@ def browse_route_checks():
     check('browse по пустому полю -> letters []', st == 200 and p['data']['letters'] == [])
 
 
+def access_matrix_route_checks():
+    print('-- Матрица доступов / тарифы через route() (#331)')
+    api = _api()
+    A = _sess(api, 'staff', 'adm', ADMIN_G)
+    R = _reader(api)
+
+    # Редактируемая таблица: строки каталога × тарифы-колонки.
+    st, p = api.route('GET', '/api/admin/tariffs', {}, None, A)
+    check('таблица тарифов -> 3 колонки + строки каталога',
+          st == 200 and len(p['data']['tariffs']) == 3 and len(p['data']['rows']) > 20)
+    check('ячейки standard несут section:opac',
+          _am.section_key('opac') in p['data']['cells']['standard'])
+
+    # Эффективная матрица тенанта (по умолчанию public -> default standard).
+    st, p = api.route('GET', '/api/admin/access-matrix', {}, None, A)
+    m = p['data']['matrix']
+    check('матрица: каталогизация включена (standard)',
+          st == 200 and m['sections']['cataloging']['included'])
+    check('матрица: оцифровка выключена (standard)',
+          not m['sections']['digitization']['included'])
+
+    # Создать тариф-колонку + назначить тенанту + проверить резолв.
+    st, p = api.route('POST', '/api/admin/tariffs', {},
+                      {'name': 'vuz', 'title': 'ВУЗ', 'sort': 5}, A)
+    check('создать тариф vuz -> 200', st == 200 and p['data']['tariff']['name'] == 'vuz')
+    # включить раздел оцифровки в новом тарифе
+    st, p = api.route('POST', '/api/admin/tariffs/cell', {},
+                      {'tariff': 'vuz', 'itemKey': _am.section_key('digitization'),
+                       'included': True, 'enforcement': 'block'}, A)
+    check('ячейка vuz/section:digitization included -> 200',
+          st == 200 and p['data']['cell']['included'] is True)
+    st, p = api.route('POST', '/api/admin/tariffs/assign', {},
+                      {'tenant': 't_vuz', 'tariff': 'vuz'}, A)
+    check('назначить vuz тенанту t_vuz -> 200', st == 200)
+    st, p = api.route('GET', '/api/admin/access-matrix', {'tenant': ['t_vuz']}, None, A)
+    check('t_vuz: оцифровка теперь включена',
+          st == 200 and p['data']['matrix']['sections']['digitization']['included'])
+
+    # À-la-carte: задать базу ocr_pages=0 ячейкой (иначе ресурс безлимитен), потом докупить.
+    st, p = api.route('POST', '/api/admin/tariffs/cell', {},
+                      {'tariff': 'vuz', 'itemKey': _am.cap_key('ocr_pages'),
+                       'value': 0, 'enforcement': 'block'}, A)
+    check('ячейка vuz/cap:ocr_pages value=0 -> 200',
+          st == 200 and p['data']['cell']['value'] == 0)
+    st, p = api.route('POST', '/api/admin/tariffs/addon', {},
+                      {'tenant': 't_vuz', 'resource': 'ocr_pages',
+                       'packs': 3, 'packSize': 1000}, A)
+    check('à-la-carte addon -> 200', st == 200)
+    st, p = api.route('GET', '/api/admin/access-matrix', {'tenant': ['t_vuz']}, None, A)
+    check('t_vuz: ocr_pages лимит = 3000 (3×1000)',
+          p['data']['matrix']['caps']['ocr_pages']['limit'] == 3000)
+
+    # Валидация + гварды.
+    st, p = api.route('POST', '/api/admin/tariffs/cell', {},
+                      {'tariff': 'нет', 'itemKey': 'x'}, A)
+    check('ячейка неизвестного тарифа -> 400', st == 400)
+    st, p = api.route('POST', '/api/admin/tariffs/assign', {},
+                      {'tenant': 't', 'tariff': 'неттакого'}, A)
+    check('назначить несуществующий тариф -> 400', st == 400)
+    st, p = api.route('POST', '/api/admin/tariffs', {}, {'title': 'без имени'}, A)
+    check('создать тариф без name -> 400', st == 400)
+    st, p = api.route('GET', '/api/admin/tariffs', {}, None, R)
+    check('reader смотрит тарифы -> 403', st == 403)
+    st, p = api.route('POST', '/api/admin/tariffs', {}, {'name': 'x'}, R)
+    check('reader создаёт тариф -> 403', st == 403)
+    st, p = api.route('POST', '/api/admin/tariffs/delete', {}, {'name': 'vuz'}, A)
+    check('удалить тариф vuz -> removed true', st == 200 and p['data']['removed'] is True)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1043,6 +1117,7 @@ def main():
     batch240_route_checks()
     batch240b_route_checks()
     browse_route_checks()
+    access_matrix_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
