@@ -826,6 +826,18 @@ class Api:
                     'IP_AUTH_DB', os.path.join(here, 'ip_auth.db'))))
         except Exception:
             self.ip_auth = None
+        # Матрица доступов (issue #331): own-store РЕДАКТИРУЕМЫХ тарифов (data-driven,
+        # правятся в админ-таблице) + каталог разделов/функций (SSOT в access_matrix).
+        # Дефолтные тарифы (free/standard/pro) сидируются идемпотентно из текущих
+        # PLANS; дальше — админ-правки. Best-effort: сбой -> None (резолвер fail-open).
+        try:
+            from access import tariff_store as _tariff_store
+            from access import access_matrix as _access_matrix
+            self.tariffs = _tariff_store.TariffStore(os.environ.get(
+                'TARIFFS_DB', os.path.join(here, 'tariffs.db')))
+            _access_matrix.seed_defaults(self.tariffs)
+        except Exception:
+            self.tariffs = None
         # Бэклог own-store модулей (#316/#317/#318), разведённый в роуты ниже:
         # поставщики/счета + подписка-периодика (Комплектование), версии записи +
         # редактор словарей .mnu/.tre (Каталогизатор), роли RBAC + аудит-трейл +
@@ -3267,6 +3279,116 @@ class Api:
         records = self._catalog_records(db)
         return 200, ok(_bi.browse(records, tag, subfield))
 
+    # ---- Матрица доступов / тарифы (admin, issue #331) -------------------- #
+    def access_matrix_get(self, session, query):
+        """GET /api/admin/access-matrix?tenant= — эффективная матрица тенанта (admin).
+
+        По умолчанию — тенант текущей сессии. Резолвит из редактируемого стора
+        тарифов: какие разделы/функции включены, лимиты (+à-la-carte), enforcement."""
+        self._guard(session, 'admin', '*', 'admin')
+        from access import access_matrix as _am
+        if self.tariffs is None:
+            return 200, ok({'matrix': None})
+        tenant = (query.get('tenant', [None])[0]) or session.get('tenant', DEFAULT_TENANT)
+        return 200, ok({'tenant': tenant, 'matrix': _am.resolve(self.tariffs, tenant)})
+
+    def tariffs_table(self, session, query):
+        """GET /api/admin/tariffs — данные редактируемой админ-таблицы (admin).
+
+        Строки каталога (разделы/функции/ресурсы — SSOT) × колонки тарифов ×
+        ячейки (included/value/enforcement)."""
+        self._guard(session, 'admin', '*', 'admin')
+        from access import access_matrix as _am
+        if self.tariffs is None:
+            return 200, ok({'rows': _am.catalog_rows(), 'tariffs': [], 'cells': {}})
+        return 200, ok(_am.editable_table(self.tariffs))
+
+    def tariff_create(self, session, body):
+        """POST /api/admin/tariffs — добавить тариф-колонку (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.tariffs is None:
+            return 200, ok({'tariff': None})
+        name = (body.get('name') or '').strip()
+        if not name:
+            return 400, err('bad_request', 'name required')
+        try:
+            t = self.tariffs.create_tariff(name, title=(body.get('title') or name),
+                                           sort=int(body.get('sort', 0)))
+        except Exception:
+            return 400, err('bad_request', 'tariff exists or invalid')
+        return 200, ok({'tariff': t})
+
+    def tariff_cell_set(self, session, body):
+        """POST /api/admin/tariffs/cell — задать ячейку матрицы (admin).
+
+        ``tariff`` + ``itemKey`` обязательны; ``included`` (bool), ``value`` (int),
+        ``enforcement`` ('block'|'grace') — частичный апдейт (непереданные не
+        затираются)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.tariffs is None:
+            return 200, ok({'cell': None})
+        tariff = (body.get('tariff') or '').strip()
+        item_key = (body.get('itemKey') or '').strip()
+        if not tariff or not item_key:
+            return 400, err('bad_request', 'tariff/itemKey required')
+        included = body.get('included')
+        value = body.get('value')
+        value = int(value) if isinstance(value, (int, float)) else None
+        enforcement = body.get('enforcement')
+        if enforcement is not None and enforcement not in ('block', 'grace'):
+            return 400, err('bad_request', 'enforcement must be block|grace')
+        try:
+            cell = self.tariffs.set_entry(
+                tariff, item_key,
+                included=(bool(included) if included is not None else None),
+                value=value, enforcement=enforcement)
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'cell': cell})
+
+    def tariff_assign(self, session, body):
+        """POST /api/admin/tariffs/assign — назначить тариф тенанту (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.tariffs is None:
+            return 200, ok({'assigned': None})
+        tenant = (body.get('tenant') or '').strip()
+        tariff = (body.get('tariff') or '').strip()
+        if not tenant or not tariff:
+            return 400, err('bad_request', 'tenant/tariff required')
+        try:
+            res = self.tariffs.assign_tenant(tenant, tariff)
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'assigned': res})
+
+    def tariff_addon(self, session, body):
+        """POST /api/admin/tariffs/addon — докупить à-la-carte пакет тенанту (admin).
+
+        ``tenant`` + ``resource`` + ``packs`` + ``packSize``."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.tariffs is None:
+            return 200, ok({'addon': None})
+        tenant = (body.get('tenant') or '').strip()
+        resource = (body.get('resource') or '').strip()
+        if not tenant or not resource:
+            return 400, err('bad_request', 'tenant/resource required')
+        try:
+            packs = int(body.get('packs', 1))
+            pack_size = int(body.get('packSize', 0))
+        except (TypeError, ValueError):
+            return 400, err('bad_request', 'packs/packSize must be int')
+        return 200, ok({'addon': self.tariffs.add_addon(tenant, resource, packs, pack_size)})
+
+    def tariff_delete(self, session, body):
+        """POST /api/admin/tariffs/delete — удалить тариф-колонку (admin)."""
+        self._guard(session, 'admin', '*', 'admin')
+        if self.tariffs is None:
+            return 200, ok({'removed': False})
+        name = (body.get('name') or '').strip()
+        if not name:
+            return 400, err('bad_request', 'name required')
+        return 200, ok({'removed': self.tariffs.delete_tariff(name)})
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -5662,6 +5784,21 @@ class Api:
             # ---- Browse-указатели A–Z (#240) ----
             if method == 'GET' and path == '/api/browse':
                 return self.browse_terms(session, query)
+            # ---- Матрица доступов / тарифы (admin, #331) ----
+            if method == 'GET' and path == '/api/admin/access-matrix':
+                return self.access_matrix_get(session, query)
+            if method == 'GET' and path == '/api/admin/tariffs':
+                return self.tariffs_table(session, query)
+            if method == 'POST' and path == '/api/admin/tariffs':
+                return self.tariff_create(session, body or {})
+            if method == 'POST' and path == '/api/admin/tariffs/cell':
+                return self.tariff_cell_set(session, body or {})
+            if method == 'POST' and path == '/api/admin/tariffs/assign':
+                return self.tariff_assign(session, body or {})
+            if method == 'POST' and path == '/api/admin/tariffs/addon':
+                return self.tariff_addon(session, body or {})
+            if method == 'POST' and path == '/api/admin/tariffs/delete':
+                return self.tariff_delete(session, body or {})
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
