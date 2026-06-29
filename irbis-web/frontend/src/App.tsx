@@ -37,6 +37,7 @@ import { InThisEdition, RecordHost, FulltextBlock } from "./reader/LinkedRecords
 import { HistoryTab } from "./reader/HistoryTab";
 import { SaveSearchButton, SavedSearchMenu, SavedSearchesPanel } from "./reader/SavedSearches";
 import { CollectionSubsPanel } from "./reader/CollectionSubs";
+import { FulltextSearchPanel } from "./reader/FulltextSearch";
 import { ConsentBanner, ConsentToggle, EraseDataCard } from "./reader/Consent";
 import { CookiePanel } from "./reader/CookiePanel";
 import { Requisites } from "./reader/Requisites";
@@ -631,6 +632,11 @@ export function App() {
             {/* «Для вас» (#133) — персональная подборка; скрыта, если эндпойнт пуст/404. */}
             <ForYouRecommendations refreshKey={forYouRefresh}
               onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }} />
+            {/* Морфо-полнотекст (#368): поиск по полным текстам/каталогу со стеммингом
+                + BM25; прячется при недоступном эндпойнте. */}
+            <FulltextSearchPanel
+              cardSx={{ background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-xl,16px)", boxShadow: "var(--shadow-sm)" }}
+              h2Sx={{ fontFamily: "var(--font-display,var(--font-serif))", fontWeight: 600, fontSize: "var(--text-xl,1.25rem)", letterSpacing: "-.02em", margin: 0 }} />
           </div>
         ) : (
         <>

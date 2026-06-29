@@ -3380,6 +3380,38 @@ class Api:
             pass
         return out
 
+    @staticmethod
+    def _record_search_text(rec):
+        """Поисковый текст каталожной записи для FTS (#368): заглавие/авторы/темы/аннотация.
+
+        Собирает значения подполей ключевых БО-полей в одну строку: 200 (заглавие
+        ^a/^b/^e/^f), 700/701/710 (авторы ^a/^b/^g), 606/610 (темы/коллектив),
+        330/331 (аннотация/реферат). Поля повторяющиеся (list инстансов), подполя —
+        dict или строка. Возвращает (title, text): title = первое 200^a; text = всё
+        склеено пробелом (включая title)."""
+        def vals(tag, keys):
+            out = []
+            raw = rec.get(tag)
+            if raw is None:
+                return out
+            for inst in (raw if isinstance(raw, list) else [raw]):
+                if isinstance(inst, dict):
+                    for k, v in inst.items():
+                        if (not keys or str(k).strip().lower() in keys) and v:
+                            out.append(str(v))
+                elif inst:
+                    out.append(str(inst))
+            return out
+        title_parts = vals('200', {'a', 'b', 'e', 'f'})
+        title = title_parts[0] if title_parts else ''
+        parts = []
+        parts += title_parts
+        for tag, keys in (('700', {'a', 'b', 'g'}), ('701', {'a', 'b', 'g'}),
+                          ('710', {'a', 'b'}), ('606', set()), ('610', set()),
+                          ('330', set()), ('331', set())):
+            parts += vals(tag, keys)
+        return title, ' '.join(p for p in parts if p)
+
     def browse_terms(self, session, query):
         """GET /api/browse?db=&tag=&subfield= — указатель A–Z по полю (public-read).
 
@@ -3953,6 +3985,34 @@ class Api:
         for ref, texts in by_ref.items():
             try:
                 self.search_index.index('ocr:' + ref, '\n'.join(texts), db='OCR', title=ref)
+                n += 1
+            except Exception:
+                pass
+        return 200, ok({'reindexed': n})
+
+    def fulltext_reindex_catalog(self, session, query):
+        """POST /api/fulltext/reindex-catalog?db= — переиндексировать каталог в FTS (super-admin).
+
+        Бэкфилл own-store каталога: для каждой записи извлекает заглавие/авторов/темы/
+        аннотацию и индексирует с морфологией (ref=cat:<db>:<mfn>). Делает морфо-поиск
+        полезным по основному корпусу, а не только по OCR. Возвращает число записей."""
+        self._require_super_admin(session)
+        if self.search_index is None or self.catalog is None:
+            return 200, ok({'reindexed': 0})
+        db = (query.get('db') or [self.cfg.db_default])[0]
+        n = 0
+        try:
+            mfns = list(self.catalog.list_mfns(db, limit=5000))
+        except Exception:
+            mfns = []
+        for mfn in mfns:
+            rec = self.catalog.get(db, mfn)
+            if rec is None:
+                continue
+            title, text = self._record_search_text(rec)
+            try:
+                self.search_index.index('cat:%s:%s' % (db, mfn), text, db=db,
+                                        mfn=int(mfn), title=title)
                 n += 1
             except Exception:
                 pass
@@ -6589,6 +6649,8 @@ class Api:
                 return self.fulltext_index(session, body or {})
             if method == 'POST' and path == '/api/fulltext/reindex-ocr':
                 return self.fulltext_reindex_ocr(session, body or {})
+            if method == 'POST' and path == '/api/fulltext/reindex-catalog':
+                return self.fulltext_reindex_catalog(session, query)
             # ---- Аналитический обзор библиотеки (штат) ----
             if method == 'GET' and path == '/api/analytics/overview':
                 return self.analytics_overview(session)
