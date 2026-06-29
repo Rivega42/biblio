@@ -2564,11 +2564,17 @@ class Api:
     def _social_terms(self, db, mfn):
         """Seed-record terms for recommendations: 606 subjects, 700 authors, 610
         collectives. Reads the live record (never writes); degrades to empty on any
-        server hiccup so recommendations never raise."""
-        try:
-            rec = self.irbis.read_record(db, mfn)
-        except (IrbisError, OSError, socket.error):
-            return {'subjects': [], 'authors': [], 'collectives': []}
+        server hiccup so recommendations never raise. ДЕМО/own-store (#374): для баз
+        OWN_SEARCH_DBS термины берём из own-store (рекомендации работают без ИРБИС)."""
+        if db.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+            rec = self._own_record(db, mfn)
+            if rec is None:
+                return {'subjects': [], 'authors': [], 'collectives': []}
+        else:
+            try:
+                rec = self.irbis.read_record(db, mfn)
+            except (IrbisError, OSError, socket.error):
+                return {'subjects': [], 'authors': [], 'collectives': []}
         subjects = []
         for f in fields(rec, '606'):
             head = sf(f, 'A') or sf(f, 'a') or (f.get('text') or '').strip()
@@ -2594,6 +2600,14 @@ class Api:
         term = (term or '').strip()
         if not term:
             return []
+        # ДЕМО/own-store (#374): кандидатов по термину ищем в own-store CatalogStore
+        # для баз OWN_SEARCH_DBS — рекомендации «Похожие» работают без ИРБИС.
+        if db.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+            try:
+                res = self.catalog.search(db, '%s=%s' % (prefix, term), limit=50, offset=0)
+                return [it['mfn'] for it in res.get('items', [])]
+            except Exception:
+                return []
         try:
             _count, mfns = self.irbis.search(db, '"%s=%s"' % (prefix, term))
         except (IrbisError, OSError, socket.error):

@@ -1640,6 +1640,12 @@ def demo_own_store_checks():
         brief = api._brief_item('IBIS', mfn)
         check('бриф из own-store: заглавие «Чайка» (не «MFN N»)',
               brief.get('title') == 'Чайка' and brief.get('author'))
+        # «Похожие» (#374, B2): рекомендации работают без ИРБИС (own-store термины+поиск)
+        r2 = api.catalog.save('IBIS', _rec('Вишнёвый сад', **{'700': [{'a': 'Чехов'}]}))
+        st, p = api.route('GET', '/api/recommendations', {'db': ['IBIS'], 'mfn': [str(mfn)]}, None, G)
+        recs = [it['mfn'] for it in (p['data'].get('items') or [])]
+        check('«Похожие» из own-store (без ИРБИС): находит запись того же автора',
+              st == 200 and r2.get('mfn') in recs)
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 
