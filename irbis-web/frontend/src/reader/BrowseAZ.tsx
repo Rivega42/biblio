@@ -36,30 +36,46 @@ if (typeof document !== "undefined" && !document.getElementById("irb-az-css")) {
   const s = document.createElement("style"); s.id = "irb-az-css"; s.textContent = CSS; document.head.appendChild(s);
 }
 
+// Индексы перебора: тег/подполе own-store + префикс поиска при клике по термину.
+const AZ_INDEXES = [
+  { key: "authors", label: "Авторы", tag: "700", sub: "a", prefix: "A" },
+  { key: "subjects", label: "Темы", tag: "606", sub: "a", prefix: "S" },
+] as const;
+
 export function BrowseAZ({ db, onSearch }: { db: string; onSearch: (prefix: string, query: string) => void }) {
   const [data, setData] = React.useState<{ letters: string[]; buckets: Record<string, { term: string; count: number }[]> } | null>(null);
   const [active, setActive] = React.useState<string | null>(null);
+  const [idx, setIdx] = React.useState<typeof AZ_INDEXES[number]["key"]>("authors");
+  const cur = AZ_INDEXES.find((x) => x.key === idx) || AZ_INDEXES[0];
 
   React.useEffect(() => {
     let alive = true;
     setData(null); setActive(null);
     (async () => {
-      const r = await api.browseIndex(db, "700", "a");
+      const r = await api.browseIndex(db, cur.tag, cur.sub);
       if (!alive) return;
       if (r.json?.ok && r.json.data && Array.isArray(r.json.data.letters)) setData(r.json.data);
       else setData({ letters: [], buckets: {} });
     })();
     return () => { alive = false; };
-  }, [db]);
+  }, [db, cur.tag, cur.sub]);
 
   if (data === null || !data.letters.length) return null; // загрузка / пусто — не показываем
   const terms = active ? (data.buckets[active] || []) : [];
 
   return (
-    <section className="irb-az" aria-label="Указатель авторов A–Z">
+    <section className="irb-az" aria-label="Указатель A–Z">
       <div className="irb-az__head">
-        <h2 className="irb-az__title">Указатель авторов</h2>
-        <span className="irb-az__sub">выберите букву — перейдите к автору</span>
+        <h2 className="irb-az__title">Указатель</h2>
+        <span className="irb-az__sub">выберите индекс и букву — перейдите к поиску</span>
+        <span style={{ flex: 1 }} />
+        <span className="irb-az__letters" role="group" aria-label="Индекс перебора">
+          {AZ_INDEXES.map((x) => (
+            <button key={x.key} type="button"
+              className={"irb-az__l" + (idx === x.key ? " irb-az__l--on" : "")}
+              aria-pressed={idx === x.key} onClick={() => { setIdx(x.key); setActive(null); }}>{x.label}</button>
+          ))}
+        </span>
       </div>
       <div className="irb-az__letters" role="group" aria-label="Буквы">
         {data.letters.map((l) => (
@@ -74,8 +90,8 @@ export function BrowseAZ({ db, onSearch }: { db: string; onSearch: (prefix: stri
           {terms.length
             ? terms.map((t, i) => (
                 <button key={t.term + i} type="button" role="listitem" className="irb-az__t"
-                  onClick={() => onSearch("A", t.term)}
-                  aria-label={"Автор «" + t.term + "» — " + t.count + " — перейти к поиску"}>
+                  onClick={() => onSearch(cur.prefix, t.term)}
+                  aria-label={t.term + " — " + t.count + " — перейти к поиску"}>
                   <span className="irb-az__term">{t.term}</span>
                   <span className="irb-az__count">{t.count}</span>
                 </button>
