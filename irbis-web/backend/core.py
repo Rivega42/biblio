@@ -1731,9 +1731,69 @@ class Api:
                 out['didYouMean'] = dym
         return 200, ok(out)
 
+    @staticmethod
+    def _own_to_fields(record):
+        """Own-store запись (tag-keyed) -> список fields как у ``irbis.parse_record``.
+
+        Каждое поле -> ``{tag, value:'^a..^b..', text, subfields}``. '' / None-ключ
+        подполя = «голова» поля (без подполей). Служебные ('*mfn' и т.п.) и
+        нецифровые теги пропускаются. Используется демо-фолбэком ``_own_record``."""
+        from irbis.parser import parse_subfields
+        out = []
+        for tag, insts in (record or {}).items():
+            st = str(tag)
+            if not st.isdigit():
+                continue
+            for inst in (insts if isinstance(insts, list) else [insts]):
+                if isinstance(inst, dict):
+                    head, parts = '', []
+                    for k, v in inst.items():
+                        sv = '' if v is None else str(v)
+                        if k in ('', None):
+                            head = sv
+                        else:
+                            parts.append('^%s%s' % (k, sv))
+                    value = head + ''.join(parts)
+                else:
+                    value = '' if inst is None else str(inst)
+                h, subs = parse_subfields(value)
+                out.append({'tag': st, 'value': value, 'text': h, 'subfields': subs})
+        return out
+
+    def _own_record(self, db, mfn):
+        """Запись из own-store CatalogStore в форме ``record()`` (демо/own-store, #374).
+
+        None, если каталога нет или запись отсутствует. Бриф — через ``catalog.brief``
+        (PFT поверх own-store), мягко -> '' при ошибке."""
+        if self.catalog is None:
+            return None
+        try:
+            record = self.catalog.get(db, int(mfn))
+        except Exception:
+            record = None
+        if record is None:
+            return None
+        try:
+            brief = self.catalog.brief(db, int(mfn)) or ''
+        except Exception:
+            brief = ''
+        return {'mfn': int(mfn), 'status': '0', 'version': 0, 'guid': None,
+                'fields': self._own_to_fields(record), 'brief': brief}
+
     def record(self, session, db, mfn):
         self._guard(session, 'record.read', db, 'read')
         self._public_db_guard(session, db)
+        # ДЕМО/own-store (#229/#374): базы из OWN_SEARCH_DBS обслуживаются из НАШЕГО
+        # каталога в обход ИРБИС (search() уже так делает) — распространяем на деталь
+        # записи, чтобы экраны работали без живого ИРБИС. Прод (пустой флаг) — как был.
+        if db.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+            rec = self._own_record(db, mfn)
+            if rec is None:
+                return 404, err('not_found', 'record %s/%s not found' % (db, mfn))
+            rec['db'] = db
+            rec['hasCover'] = any(f['tag'] == '953' for f in rec['fields'])
+            self._log_history(session, db, mfn)
+            return 200, ok(rec)
         rec = self.irbis.read_record(db, mfn)
         try:
             rec['brief'] = self.irbis.format_record(db, mfn, '@brief')
@@ -1749,6 +1809,13 @@ class Api:
     def render(self, session, db, mfn, fmt):
         self._guard(session, 'record.read', db, 'read')
         self._public_db_guard(session, db)
+        # ДЕМО/own-store (#374): для own_search_dbs рендерим бриф из own-store.
+        if db.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+            try:
+                rendered = self.catalog.brief(db, int(mfn)) or ''
+            except Exception:
+                rendered = ''
+            return 200, ok({'db': db, 'mfn': mfn, 'fmt': fmt, 'rendered': rendered})
         return 200, ok({'db': db, 'mfn': mfn, 'fmt': fmt,
                         'rendered': self.irbis.format_record(db, mfn, fmt)})
 
