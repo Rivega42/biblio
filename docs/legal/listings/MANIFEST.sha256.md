@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-29**
-- Версия кода (git): **`a9281ff`**
-- Файлов: **298** · строк: **90060** · условных страниц: **1638**
-- **SHA-256 всего листинга:** `b0fdaf74b9f2396558212e7e6111629ce317df2a0095f63ee609c182719f5ade`
+- Версия кода (git): **`95ed263`**
+- Файлов: **299** · строк: **90200** · условных страниц: **1641**
+- **SHA-256 всего листинга:** `b07ad61e74ad22b36be2012442ede64560626131585c65445faddf771f661d3f`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -285,7 +285,7 @@
 | `irbis-web/frontend/src/reader/Collections.tsx` | 66 | `78cd5dcdf3f5a3761495c7dee7140282af2e4568a5d8a56dba7e2d7192c7a91a` |
 | `irbis-web/frontend/src/reader/Consent.tsx` | 286 | `53a4b27cd5fcbd318cafc5cf881abd99b3803153cf4ffe1a69a0ea0a0292314e` |
 | `irbis-web/frontend/src/reader/CookiePanel.tsx` | 154 | `4e06f2e6f2efb9e4c1879a76fe40b2aa97f71efb2aae309a2e066917cf4effa7` |
-| `irbis-web/frontend/src/reader/DocViewer.tsx` | 191 | `6756c5476673272fb21ca6eb4b44502cb8b43d40db11888ff1ad71d0d02fdea8` |
+| `irbis-web/frontend/src/reader/DocViewer.tsx` | 218 | `004f94ba960f3ddb4dacf04c153247513e94abb277477d3a6f55f1fe76f3d8df` |
 | `irbis-web/frontend/src/reader/Exhibits.tsx` | 228 | `b8268d5ad1323bbc695b7d6fd20aea0ac422b519ac56b8496d62575927d4805d` |
 | `irbis-web/frontend/src/reader/GalleryGrid.tsx` | 113 | `89522accc3106d2e0517e0715f4ad45e281d4e36db9f3410418eb478ecef510e` |
 | `irbis-web/frontend/src/reader/HistoryTab.tsx` | 102 | `ced520ea8d28d87b68f189ed24ceac00916be6eb5543cdd1c50d99ac3b346743` |
@@ -296,6 +296,7 @@
 | `irbis-web/frontend/src/reader/LinkedRecords.tsx` | 217 | `585919e8765732a0bb2746864a65080377ad90d29e22403588ac20d507205ebf` |
 | `irbis-web/frontend/src/reader/NotificationInbox.tsx` | 188 | `afb353609dd59864b784a826790ecb18988b0b5f2667a3e15acd056b48021968` |
 | `irbis-web/frontend/src/reader/OrdersTab.tsx` | 118 | `1f290743447f6c06ad3e373d8b4383f8e04847246e3a469d9fa14ca9be1a088a` |
+| `irbis-web/frontend/src/reader/PdfViewer.tsx` | 113 | `8441ea4fa9deb3db52ce095d492dcc5291edcde2194e18633fd6c42410197189` |
 | `irbis-web/frontend/src/reader/PerBaseSearchForm.tsx` | 198 | `f4b081e8b19c865265a902d0e802e53f1cb24e2199ab78ce435ecea64bf1a897` |
 | `irbis-web/frontend/src/reader/Recommendations.tsx` | 114 | `54df7fcc50cfa6cae22685b3e0b95ca47f0ff6df894fa974cf42d09390bec777` |
 | `irbis-web/frontend/src/reader/Requisites.tsx` | 124 | `6821ec62ab5d051bd568b395577f2e6169fc726264a7b3507bf4ab9ccb80e18f` |
