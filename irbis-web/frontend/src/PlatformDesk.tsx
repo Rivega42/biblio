@@ -13,7 +13,7 @@ import React from "react";
 import { api } from "./api";
 import type { Tenant, BillingInfo, PlanLimits } from "./api";
 import type { TariffTable, TariffRow, TariffCell } from "./api";
-import type { DeploymentMode, DeploymentTopology, DeploymentResolved, ConnectionItem, ConnectionHint } from "./api";
+import type { DeploymentMode, DeploymentTopology, DeploymentResolved, ConnectionItem, ConnectionHint, WebhookSub, WebhookTarget } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -107,13 +107,14 @@ const LIMIT_META: { key: keyof PlanLimits; name: string; icon: IconName; unit?: 
   { key: "max_storage_mb", name: "Хранилище", icon: "archive", unit: " МБ" },
 ];
 
-type Tab = "tenants" | "billing" | "matrix" | "deployment" | "connections" | "onboard";
+type Tab = "tenants" | "billing" | "matrix" | "deployment" | "connections" | "webhooks" | "onboard";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "tenants", label: "Арендаторы", icon: "layers" },
   { id: "billing", label: "Тариф и лимиты", icon: "credit-card" },
   { id: "matrix", label: "Матрица доступов", icon: "sliders" },
   { id: "deployment", label: "Развёртывание", icon: "settings" },
   { id: "connections", label: "Подключения", icon: "link" },
+  { id: "webhooks", label: "Вебхуки", icon: "share" },
   { id: "onboard", label: "Онбординг", icon: "check" },
 ];
 
@@ -164,7 +165,9 @@ export function PlatformDesk({ toast }: { toast: ToastFn }) {
               ? <DeploymentTab toast={toast} selected={selected} />
               : tab === "connections"
                 ? <ConnectionsTab toast={toast} selected={selected} />
-                : <OnboardWizard toast={toast} onGoConnections={() => setTab("connections")} onSelect={setSelected} />}
+                : tab === "webhooks"
+                  ? <WebhooksTab toast={toast} selected={selected} />
+                  : <OnboardWizard toast={toast} onGoConnections={() => setTab("connections")} onSelect={setSelected} />}
     </div>
   );
 }
@@ -773,6 +776,112 @@ function ConnectionsTab({ toast, selected }: { toast: ToastFn; selected: string 
         );
       })}
       <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: 0 }}>Секреты хранятся off-git; наружу — маскированными. Пустой/маска секрет при сохранении не затирает прежний.</p>
+    </div>
+  );
+}
+
+// ===== Исходящие вебхуки (#356) =============================================
+// Оператор платформы (admin.db) управляет подписками тенанта на события:
+// добавить (событие/url/секрет), вкл/выкл, удалить, превью отправляемого payload
+// с HMAC-подписью. Секрет наружу маскируется (***).
+const WH_EVENT_RU: Record<string, string> = {
+  "record.created": "Создана запись", "loan.issued": "Выдача",
+  "hold.placed": "Бронь", "import.completed": "Импорт завершён",
+};
+function WebhooksTab({ toast, selected }: { toast: ToastFn; selected: string | null }) {
+  const [data, setData] = React.useState<{ items: WebhookSub[]; events: string[] } | null>(null);
+  const [down, setDown] = React.useState(false);
+  const [event, setEvent] = React.useState("");
+  const [url, setUrl] = React.useState("");
+  const [secret, setSecret] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [preview, setPreview] = React.useState<Record<number, WebhookTarget | "empty">>({});
+
+  const load = React.useCallback(async () => {
+    if (!selected) { setData(null); return; }
+    const r = await api.adminWebhooks(selected);
+    if (r.status === 404 || r.status === 501 || r.status === 403) { setDown(true); return; }
+    setDown(false);
+    if (r.json?.ok && r.json.data) { setData(r.json.data); if (!event && r.json.data.events[0]) setEvent(r.json.data.events[0]); }
+  }, [selected, event]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    if (!selected) return;
+    const u = url.trim();
+    if (!event || !u) { toast({ variant: "info", title: "Заполните поля", message: "Событие и URL обязательны." }); return; }
+    setBusy(true);
+    const r = await api.adminWebhookSubscribe({ tenant: selected, event, url: u, secret: secret.trim() });
+    setBusy(false);
+    if (r.json?.ok) { setUrl(""); setSecret(""); toast({ variant: "success", title: "Подписка добавлена", message: WH_EVENT_RU[event] || event }); load(); }
+    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
+    else if (r.status === 400) toast({ variant: "error", title: "Не добавлено", message: "Проверьте событие и URL." });
+    else toast({ variant: "error", title: "Не добавлено", message: "Повторите попытку." });
+  };
+  const toggle = async (s: WebhookSub) => {
+    const r = await api.adminWebhookSetActive({ id: s.id, active: !(s.active === true || s.active === 1) });
+    if (r.json?.ok) load();
+  };
+  const remove = async (id: number) => {
+    const r = await api.adminWebhookRemove({ id });
+    if (r.json?.ok) { toast({ variant: "success", title: "Подписка удалена" }); load(); }
+  };
+  const doPreview = async (s: WebhookSub) => {
+    if (!selected) return;
+    const r = await api.adminWebhookPreview({ tenant: selected, event: s.event, data: { example: true } });
+    const t = r.json?.ok && r.json.data ? r.json.data.targets.find((x) => x.subscription_id === s.id) : undefined;
+    setPreview((p) => ({ ...p, [s.id]: t || "empty" }));
+  };
+
+  if (down) return <SectionDown icon="share" title="Вебхуки подключаются отдельно" />;
+  if (!selected) return <SectionDown icon="share" title="Выберите арендатора на вкладке «Арендаторы»" />;
+  if (!data) return <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка…</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="irb-plat__card" style={{ padding: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)", marginBottom: 10 }}>Новая подписка</div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(150px,1fr) minmax(200px,2fr) minmax(120px,1fr) auto", gap: 10, alignItems: "end" }}>
+          <label className="irb-plat__fld">
+            <span className="irb-plat__fld-lab">Событие</span>
+            <select className="irb-plat__in" value={event} onChange={(e) => setEvent(e.target.value)} aria-label="Событие">
+              {data.events.map((ev) => <option key={ev} value={ev}>{WH_EVENT_RU[ev] || ev}</option>)}
+            </select>
+          </label>
+          <label className="irb-plat__fld">
+            <span className="irb-plat__fld-lab">URL приёмника</span>
+            <input className="irb-plat__in" type="text" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" aria-label="URL приёмника" />
+          </label>
+          <label className="irb-plat__fld">
+            <span className="irb-plat__fld-lab">Секрет (HMAC)</span>
+            <input className="irb-plat__in" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="опц." aria-label="Секрет HMAC" />
+          </label>
+          <Button size="sm" iconLeft="plus" loading={busy} onClick={add}>Добавить</Button>
+        </div>
+      </div>
+
+      {data.items.length === 0
+        ? <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Подписок пока нет. Добавьте первую выше.</div>
+        : data.items.map((s) => {
+          const on = s.active === true || s.active === 1;
+          const pv = preview[s.id];
+          return (
+            <div key={s.id} className="irb-plat__card" style={{ padding: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 999, background: "var(--surface-sunken,#f1efe9)", color: "var(--text-subtle)" }}>{WH_EVENT_RU[s.event] || s.event}</span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: "var(--text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.url}</span>
+                <span style={{ fontSize: 12, color: on ? "var(--text-strong)" : "var(--text-subtle)" }}>{on ? "активна" : "выключена"}</span>
+                <Button size="sm" variant="ghost" iconLeft="eye" onClick={() => doPreview(s)}>Превью</Button>
+                <Button size="sm" variant="ghost" iconLeft={on ? "x-circle" : "check-circle"} onClick={() => toggle(s)}>{on ? "Выключить" : "Включить"}</Button>
+                <Button size="sm" variant="ghost" iconLeft="trash" onClick={() => remove(s.id)}>Удалить</Button>
+              </div>
+              {pv && (pv === "empty"
+                ? <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: "10px 0 0" }}>Превью пусто (подписка неактивна или событие не совпало).</p>
+                : <pre style={{ margin: "10px 0 0", padding: 10, background: "var(--surface-sunken,#f5f3ee)", borderRadius: 8, fontSize: 11.5, overflow: "auto", maxHeight: 160 }}>{"подпись HMAC: " + pv.signature.slice(0, 24) + "…\n" + JSON.stringify(pv.payload, null, 2)}</pre>)}
+            </div>
+          );
+        })}
+      <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: 0 }}>Секрет хранится off-git, наружу маскируется (***). Тело подписывается HMAC-SHA256; реальная отправка — на стороне коннектора.</p>
     </div>
   );
 }
