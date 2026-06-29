@@ -391,6 +391,49 @@ export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSessi
   );
 }
 
+// Аналитический обзор — «пульс библиотеки» на лендинге штата (GET /api/analytics/
+// overview). Карточки ключевых метрик; недоступность эндпойнта (404/501/403) —
+// тихо ничего не рендерим (лендинг продолжает работать).
+const OVERVIEW_CARDS: { key: string; label: string; icon: IconName }[] = [
+  { key: "records", label: "Записей в каталоге", icon: "book" },
+  { key: "readers", label: "Читателей", icon: "user" },
+  { key: "loans_archived", label: "Выдач в архиве", icon: "package" },
+  { key: "exhibits", label: "Выставок", icon: "images" },
+  { key: "ocr_pages", label: "Распознано страниц", icon: "scan-line" },
+  { key: "authority", label: "Авторитетных заголовков", icon: "list-tree" },
+  { key: "staff_seats", label: "Сотрудников", icon: "users" },
+];
+function AnalyticsOverview() {
+  const [metrics, setMetrics] = React.useState<Record<string, number> | null>(null);
+  const [hidden, setHidden] = React.useState(false);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await api.analyticsOverview();
+      if (!alive) return;
+      if (r.status === 404 || r.status === 501 || r.status === 403) { setHidden(true); return; }
+      if (r.json?.ok && r.json.data) setMetrics(r.json.data.metrics || {});
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (hidden || metrics === null) return null;
+  const cards = OVERVIEW_CARDS.filter((c) => typeof metrics[c.key] === "number");
+  if (!cards.length) return null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))", gap: 10, marginBottom: 18 }}>
+      {cards.map((c) => (
+        <div key={c.key} style={{ background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-lg)", padding: "12px 14px", display: "flex", alignItems: "center", gap: 11 }}>
+          <span style={{ background: "var(--accent-weak)", color: "var(--accent)", borderRadius: "var(--radius-md)", padding: 7, flex: "none", display: "inline-flex" }}><Icon name={c.icon} size={17} /></span>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: "block", fontWeight: 700, fontSize: 19, lineHeight: 1.1, color: "var(--text-strong)" }}>{metrics[c.key].toLocaleString("ru-RU")}</span>
+            <span style={{ display: "block", color: "var(--text-subtle)", fontSize: 11.5, marginTop: 2 }}>{c.label}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StaffDesktop({ staff, tiles, onOpen }: { staff: StaffSession; tiles: typeof DOMAINS; onOpen: (d: typeof DOMAINS[number]) => void }) {
   return (
     <div>
@@ -403,6 +446,7 @@ function StaffDesktop({ staff, tiles, onOpen }: { staff: StaffSession; tiles: ty
       <p style={{ color: "var(--text-subtle)", fontSize: 13, marginTop: 0, marginBottom: 16 }}>
         {staff.name || staff.login} · модули собраны <b>по грантам учётки</b>, а не «по АРМам». Видны только разрешённые функции.
       </p>
+      <AnalyticsOverview />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(248px,1fr))", gap: 12 }}>
         {tiles.map((d) => (
           <button key={d.id} type="button" onClick={() => onOpen(d)}

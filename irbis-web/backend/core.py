@@ -3881,6 +3881,26 @@ class Api:
                         'mode': r.get('mode'),
                         'modules': r.get('default_modules', [])})
 
+    def analytics_overview(self, session):
+        """GET /api/analytics/overview — сводка ключевых метрик библиотеки (штат).
+
+        Пульс библиотеки одним вызовом: фонд/читатели/штат/оцифровка/выставки/
+        авторитет/архив выдач. Каждая метрика — best-effort по own-store (свой
+        try/except -> 0/None), чтобы дашборд никогда не падал из-за одного стора."""
+        self._require_staff(session)
+        tenant = session.get('tenant', DEFAULT_TENANT)
+        m = dict(self._tenant_usage(tenant))   # records/readers/staff_seats/ocr_pages
+        def _safe(fn, default=0):
+            try:
+                return fn()
+            except Exception:
+                return default
+        m['exhibits'] = _safe(lambda: len(self.exhibits.list(published_only=False)) if self.exhibits else 0)
+        m['exhibits_public'] = _safe(lambda: len(self.exhibits.public_exhibits()) if self.exhibits else 0)
+        m['authority'] = _safe(lambda: len(self.authority_control.store.list(limit=100000)) if self.authority_control else 0)
+        m['loans_archived'] = _safe(lambda: int(self.circulation.count_archived()) if self.circulation else 0)
+        return 200, ok({'tenant': tenant, 'metrics': m})
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -6483,6 +6503,9 @@ class Api:
             # ---- Активные модули тенанта по режиму развёртывания (#335) ----
             if method == 'GET' and path == '/api/me/modules':
                 return self.my_modules(session)
+            # ---- Аналитический обзор библиотеки (штат) ----
+            if method == 'GET' and path == '/api/analytics/overview':
+                return self.analytics_overview(session)
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
