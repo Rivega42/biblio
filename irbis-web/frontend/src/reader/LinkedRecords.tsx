@@ -173,9 +173,15 @@ export function FulltextBlock({ db, mfn, onViewDoc }: {
   const canView = level === "view" || level === "download";
 
   // Открыть артефакт в просмотрщике: page-ресурсы рисуем как страницы, прочее —
-  // как файл (откроется в новой вкладке кнопкой просмотрщика).
+  // как файл (PDF листается встроенно). Гейтинг прав (#369 Ф2): pageLimit (^F) →
+  // maxPages вьюера (показ N из M + баннер); уровень view ⇒ downloadable=false
+  // (прячем внешние ссылки-скачивание, оставляя только встроенный просмотр).
   const open = (a: FulltextArtifact) => {
-    const page: DocPage = { name: a.ref, url: a.ref, kind: looksLikeImage(a.ref) ? "image" : "file" };
+    const page: DocPage = {
+      name: a.ref, url: a.ref, kind: looksLikeImage(a.ref) ? "image" : "file",
+      maxPages: typeof pageLimit === "number" && pageLimit > 0 ? pageLimit : undefined,
+      downloadable: level === "download",
+    };
     onViewDoc([page], 0, a.kind ? a.kind.toUpperCase() : "Полный текст");
   };
 
