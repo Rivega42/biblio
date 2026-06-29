@@ -36,6 +36,7 @@ import { SimilarRecommendations, ForYouRecommendations } from "./reader/Recommen
 import { InThisEdition, RecordHost, FulltextBlock } from "./reader/LinkedRecords";
 import { HistoryTab } from "./reader/HistoryTab";
 import { SaveSearchButton, SavedSearchMenu, SavedSearchesPanel } from "./reader/SavedSearches";
+import { CollectionSubsPanel } from "./reader/CollectionSubs";
 import { ConsentBanner, ConsentToggle, EraseDataCard } from "./reader/Consent";
 import { CookiePanel } from "./reader/CookiePanel";
 import { Requisites } from "./reader/Requisites";
@@ -1070,7 +1071,7 @@ function toneDot(tone: LoanView["tone"]): React.CSSProperties {
 }
 
 function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSearch, onErased, onBack, onLogout }: { cab: CabinetData | null; ticket?: string; toast: (t: { variant: ToastVariant; title: string; message?: string }) => void; holdsRefresh?: number; onOpenRecord?: (db: string, mfn: number) => void; onRunSearch?: (s: SavedSearch) => void; onErased?: () => void; onBack: () => void; onLogout: () => void }) {
-  const [cabTab, setCabTab] = React.useState<"formular" | "orders" | "history" | "saved">("formular");
+  const [cabTab, setCabTab] = React.useState<"formular" | "orders" | "history" | "saved" | "collections">("formular");
   const today = React.useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const loans = React.useMemo(() => (cab?.loans || []).map((l) => buildLoan(l, today)), [cab, today]);
   const onHand = loans.filter((l) => l.onHand);
@@ -1145,7 +1146,7 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSe
 
           {/* Вкладки кабинета: Формуляр / Заказы (G12) / История (#134) / Запросы (#133) */}
           <div className="irb-cab-tabs" role="tablist" aria-label="Разделы кабинета" style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", flexWrap: "wrap" }}>
-            {([["formular", "Формуляр"], ["orders", "Заказы"], ["history", "История"], ["saved", "Запросы"]] as const).map(([key, label]) => {
+            {([["formular", "Формуляр"], ["orders", "Заказы"], ["history", "История"], ["saved", "Запросы"], ["collections", "Подписки"]] as const).map(([key, label]) => {
               const on = cabTab === key;
               return (
                 <button key={key} role="tab" aria-selected={on} onClick={() => setCabTab(key)}
@@ -1173,6 +1174,9 @@ function CabinetScreen({ cab, ticket, toast, holdsRefresh, onOpenRecord, onRunSe
             <SavedSearchesPanel cardSx={cardSx} standalone
               h2Sx={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }}
               toast={toast} onRun={(s) => onRunSearch?.(s)} />
+          ) : cabTab === "collections" ? (
+            /* Подписки на коллекции (#240) — GET /api/me/collections, отмена. */
+            <CollectionSubsPanel cardSx={cardSx} h2Sx={{ ...h2Sx, fontSize: "var(--text-2xl,22px)" }} toast={toast} />
           ) : (
           <>
           {/* На руках сейчас — LIVE формуляр */}

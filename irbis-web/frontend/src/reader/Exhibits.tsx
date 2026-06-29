@@ -102,6 +102,14 @@ export function Exhibits({ db, onOpen }: { db: string; onOpen: (mfn: number, db:
   // ('loading' пока тянем манифест, 'empty' если оцифрованных образов нет).
   const [viewer, setViewer] = React.useState<{ pages: DocPage[]; title: string } | null>(null);
   const [digi, setDigi] = React.useState<Record<number, "loading" | "empty">>({});
+  // Подписка читателя на выставку (#240): 'busy'|'ok'|'err'(не читатель) по slug.
+  const [subState, setSubState] = React.useState<Record<string, "busy" | "ok" | "err">>({});
+
+  const subscribe = async (slug: string) => {
+    setSubState((s) => ({ ...s, [slug]: "busy" }));
+    const r = await api.collectionSubscribe({ kind: "exhibit", ref: slug });
+    setSubState((s) => ({ ...s, [slug]: (r.json?.ok && (r.json.data as any)?.subscription) ? "ok" : "err" }));
+  };
 
   const openDigitized = async (it: ExhibitItem) => {
     if (digi[it.id] === "loading") return;
@@ -168,6 +176,17 @@ export function Exhibits({ db, onOpen }: { db: string; onOpen: (mfn: number, db:
           <div className="irb-exh__panelhead">
             <h3 className="irb-exh__panelttl">{active.title}</h3>
             {active.description && <span className="irb-exh__paneldesc">{active.description}</span>}
+            <span style={{ flex: 1 }} />
+            <button type="button" className="irb-exh__digi"
+              onClick={() => subscribe(active.slug)}
+              disabled={subState[active.slug] === "busy" || subState[active.slug] === "ok"}
+              title="Подписаться на обновления выставки"
+              aria-label={"Подписаться на выставку " + active.title}>
+              <Icon name={subState[active.slug] === "ok" ? "check" : "bell"} size={14} />
+              {subState[active.slug] === "ok" ? "Вы подписаны"
+                : subState[active.slug] === "err" ? "Войдите как читатель"
+                : "Подписаться"}
+            </button>
           </div>
           {items === null
             ? <p className="irb-exh__empty">Загрузка подборки…</p>
