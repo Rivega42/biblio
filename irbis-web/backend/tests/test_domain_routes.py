@@ -1636,6 +1636,10 @@ def demo_own_store_checks():
               st == 200 and any('Чайка' in v for v in f200) and len(p['data']['fields']) >= 1)
         st, p = api.route('GET', '/api/record/IBIS/99999', {}, None, G)
         check('несуществующая запись own-store -> 404', st == 404)
+        # бриф (брони/формуляр/полки) резолвит заглавие из own-store, не «MFN N»
+        brief = api._brief_item('IBIS', mfn)
+        check('бриф из own-store: заглавие «Чайка» (не «MFN N»)',
+              brief.get('title') == 'Чайка' and brief.get('author'))
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 
