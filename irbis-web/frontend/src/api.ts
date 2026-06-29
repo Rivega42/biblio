@@ -361,6 +361,12 @@ export interface ExhibitItem {
 }
 export interface ExhibitView { exhibit: ExhibitSummary; items: ExhibitItem[] }
 
+// Time-boxed подписки читателя на коллекции/выставки/записи (#240).
+export interface CollectionSub {
+  id: number; reader?: string; target_kind: string; target_ref: string;
+  date_from: string | null; date_to: string | null; created_at: string;
+}
+
 // IIIF Presentation v3 манифест (свободная форма — нам нужны items/label/канвы).
 // Канва несёт painting-аннотацию на образ страницы; URL образа — в body.id.
 export interface IiifManifest {
@@ -474,6 +480,13 @@ export const api = {
   // pages — число канв; пусто (0) -> у записи нет оцифрованных образов.
   iiifManifest: (db: string, mfn: number) =>
     jget<{ manifest: IiifManifest; pages: number }>("/api/iiif/manifest?" + qs({ db, mfn })),
+  // Подписки читателя на коллекции/выставки (#240) — reader-scoped.
+  collectionSubs: (active = false) =>
+    jget<{ items: CollectionSub[] }>("/api/me/collections" + (active ? "?" + qs({ active: 1 }) : "")),
+  collectionSubscribe: (b: { kind: string; ref: string; from?: string; to?: string }) =>
+    jpost<{ subscription: CollectionSub }>("/api/me/collections", b),
+  collectionSubCancel: (id: number | string) =>
+    jpost<{ cancelled: boolean }>("/api/me/collections/cancel", { id }),
   // Публичная конфигурация библиотеки (#335): брендинг/реквизиты/контакты.
   libraryConfig: () => jget<{ config: LibraryConfig }>("/api/library-config"),
   cabinet: () => jget<CabinetData>("/api/me/cabinet"),
