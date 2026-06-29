@@ -12,7 +12,7 @@
 import React from "react";
 import { api } from "./api";
 import type { Tenant, BillingInfo, PlanLimits } from "./api";
-import type { TariffTable, TariffRow, TariffCell } from "./api";
+import type { TariffTable, TariffRow, TariffCell, MatrixCap, ResourceUsage } from "./api";
 import type { DeploymentMode, DeploymentTopology, DeploymentResolved, ConnectionItem, ConnectionHint, WebhookSub, WebhookTarget } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
@@ -526,12 +526,58 @@ function matrixEnf(cells: TariffTable["cells"], row: TariffRow, tname: string): 
   return "block";
 }
 
+// Полоса «Потребление vs лимит» для выбранного тенанта (#331). Показывает
+// фактическое использование ресурсов против лимита тарифа; красная при превышении.
+function UsageBars({ tenant }: { tenant: string }) {
+  const [caps, setCaps] = React.useState<Record<string, MatrixCap> | null>(null);
+  const [usage, setUsage] = React.useState<ResourceUsage>({});
+  const [tariff, setTariff] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await api.adminAccessMatrix(tenant);
+      if (!alive) return;
+      if (r.json?.ok && r.json.data?.matrix) { setCaps(r.json.data.matrix.caps); setUsage(r.json.data.usage || {}); setTariff(r.json.data.matrix.tariff); }
+      else setCaps({});
+    })();
+    return () => { alive = false; };
+  }, [tenant]);
+  if (caps === null) return null;
+  const keys = Object.keys(caps);
+  return (
+    <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border-subtle)", display: "flex", flexWrap: "wrap", gap: 14 }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-strong)", width: "100%" }}>
+        Потребление · тенант «{tenant}»{tariff ? " · тариф " + tariff : " · тариф не назначен"}
+      </span>
+      {keys.map((k) => {
+        const cap = caps[k]; const used = usage[k] ?? 0; const lim = cap.limit;
+        const pct = lim && lim > 0 ? Math.min(100, Math.round((used / lim) * 100)) : 0;
+        const over = lim != null && used > lim;
+        const near = lim != null && !over && pct >= 80;
+        const color = over ? "var(--danger,#c0392b)" : near ? "var(--warning,#b8860b)" : "var(--accent,#2d7d6e)";
+        return (
+          <div key={k} style={{ minWidth: 150, flex: "1 1 150px", maxWidth: 230 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--text-subtle)", marginBottom: 4 }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cap.title}</span>
+              <span style={{ color: over ? color : "var(--text-muted)", fontWeight: over ? 700 : 500 }}>{used}{lim == null ? " / ∞" : " / " + lim}</span>
+            </div>
+            <div style={{ height: 6, borderRadius: 999, background: "var(--surface-sunken,#eceae3)", overflow: "hidden" }}>
+              <div style={{ width: (lim == null ? 0 : pct) + "%", height: "100%", background: color, transition: "width .3s" }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MatrixTab({ toast }: { toast: ToastFn }) {
   const [data, setData] = React.useState<TariffTable | null>(null);
   const [down, setDown] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [newName, setNewName] = React.useState("");
   const [newTitle, setNewTitle] = React.useState("");
+  const [usageTenant, setUsageTenant] = React.useState("public");
 
   const load = React.useCallback(async () => {
     const r = await api.adminTariffs();
@@ -567,11 +613,14 @@ function MatrixTab({ toast }: { toast: ToastFn }) {
 
   return (
     <div className="irb-plat__card">
+      <UsageBars key={usageTenant} tenant={usageTenant} />
       <div className="irb-plat__bar">
-        <span style={{ fontSize: 13, color: "var(--text-muted)", maxWidth: 460 }}>
+        <span style={{ fontSize: 13, color: "var(--text-muted)", maxWidth: 420 }}>
           Тарифная сетка платформы: разделы/функции × тарифы. Галочка — входит в тариф; число — лимит (вкл. число аккаунтов); режим — блок (402) / грейс при превышении.
         </span>
         <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
+          <div className="irb-plat__fld"><span className="irb-plat__fld-lab">Тенант (потребление)</span>
+            <input className="irb-plat__in" placeholder="public" value={usageTenant} onChange={(e) => setUsageTenant(e.target.value || "public")} style={{ width: 110 }} aria-label="Тенант для счётчиков потребления" /></div>
           <div className="irb-plat__fld"><span className="irb-plat__fld-lab">Код</span>
             <input className="irb-plat__in" placeholder="vuz" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: 100 }} aria-label="Код нового тарифа" /></div>
           <div className="irb-plat__fld"><span className="irb-plat__fld-lab">Название</span>

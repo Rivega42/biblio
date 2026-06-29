@@ -1073,6 +1073,11 @@ def access_matrix_route_checks():
           st == 200 and m['sections']['cataloging']['included'])
     check('матрица: оцифровка выключена (standard)',
           not m['sections']['digitization']['included'])
+    # Счётчики использования (#331): usage по ключам ресурсов + staff_seats из сида.
+    usage = p['data']['usage']
+    check('usage присутствует со всеми ключами ресурсов',
+          isinstance(usage, dict) and set(usage) >= {'staff_seats', 'readers', 'records', 'ocr_pages'})
+    check('usage.staff_seats == 2 (сид: admin+librarian)', usage['staff_seats'] == 2)
 
     # Создать тариф-колонку + назначить тенанту + проверить резолв.
     st, p = api.route('POST', '/api/admin/tariffs', {},

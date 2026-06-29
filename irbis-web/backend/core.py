@@ -3391,7 +3391,8 @@ class Api:
         if self.tariffs is None:
             return 200, ok({'matrix': None})
         tenant = (query.get('tenant', [None])[0]) or session.get('tenant', DEFAULT_TENANT)
-        return 200, ok({'tenant': tenant, 'matrix': _am.resolve(self.tariffs, tenant)})
+        return 200, ok({'tenant': tenant, 'matrix': _am.resolve(self.tariffs, tenant),
+                        'usage': self._tenant_usage(tenant)})
 
     def tariffs_table(self, session, query):
         """GET /api/admin/tariffs — данные редактируемой админ-таблицы (admin).
@@ -5399,6 +5400,35 @@ class Api:
         from access import access_matrix as _am
         return _am.section_verdict(
             _am.resolve(self.tariffs, session.get('tenant', DEFAULT_TENANT)), section)
+
+    def _tenant_usage(self, tenant):
+        """Текущее потребление ресурсов тенанта (usage vs cap, #331).
+
+        Best-effort подсчёт по own-store: каждый счётчик в своём try/except (любая
+        ошибка -> 0), чтобы виджет лимитов никогда не падал. ``storage_mb`` пока не
+        отслеживается -> 0. Ключи совпадают с ``access_matrix.RESOURCES``."""
+        u = {'staff_seats': 0, 'readers': 0, 'records': 0, 'ocr_pages': 0, 'storage_mb': 0}
+        try:
+            u['staff_seats'] = len(self._store_for(tenant).list_accounts())
+        except Exception:
+            pass
+        try:
+            if self.reader_registry is not None:
+                u['readers'] = len(self.reader_registry.list())
+        except Exception:
+            pass
+        try:
+            if self.catalog is not None:
+                u['records'] = int(self.catalog.count(self.cfg.db_default))
+        except Exception:
+            pass
+        try:
+            store = getattr(self.ocr, 'store', None)
+            if store is not None:
+                u['ocr_pages'] = len(store.all_pages())
+        except Exception:
+            pass
+        return u
 
     @staticmethod
     def _account_view(store, acc):
