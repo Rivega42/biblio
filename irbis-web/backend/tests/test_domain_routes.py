@@ -1393,6 +1393,22 @@ def webhooks_route_checks():
     # журнал доставки пуст по умолчанию
     st, p = api.route('GET', '/api/admin/webhooks/deliveries', {}, None, SUP)
     check('журнал доставки -> 200 (пусто)', st == 200 and p['data']['items'] == [])
+    # ЭМИССИЯ на доменном событии (#356): активная подписка + событие -> журнал.
+    # Проверяем helper _webhooks_emit (его дёргают circ_issue/place_hold/save_record).
+    st, p = api.route('POST', '/api/admin/webhooks', {},
+                      {'tenant': 'public', 'event': 'hold.placed',
+                       'url': 'https://h/x', 'secret': 's'}, SUP)
+    esid = p['data']['id']
+    n = api._webhooks_emit('public', 'hold.placed', {'mfn': 7})
+    check('эмиссия hold.placed -> 1 цель подготовлена', n == 1)
+    n0 = api._webhooks_emit('public', 'loan.issued', {'x': 1})
+    check('эмиссия события без подписок -> 0 целей', n0 == 0)
+    st, p = api.route('GET', '/api/admin/webhooks/deliveries',
+                      {'subscriptionId': [str(esid)]}, None, SUP)
+    check('журнал доставки наполнился (prepared)',
+          st == 200 and len(p['data']['items']) == 1
+          and p['data']['items'][0]['event'] == 'hold.placed'
+          and p['data']['items'][0]['status'] == 'prepared')
     # гварды: tenant-админ и reader не управляют операторскими вебхуками
     st, p = api.route('GET', '/api/admin/webhooks', {'tenant': ['t1']}, None, TA)
     check('tenant-админ к вебхукам -> 403', st == 403)
