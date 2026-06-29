@@ -57,6 +57,7 @@ from access.deployment import DeploymentService, DeploymentStore
 from access.library_config import LibraryConfigService, LibraryConfigStore
 from access.connections import ConnectionService, ConnectionStore
 from access.inforost import InforostService, InforostImportStore
+from access.webhooks import WebhookService, WebhookStore
 from access import circulation as _circ
 
 PASS = [0]
@@ -145,6 +146,7 @@ def _api():
     api.library_config = LibraryConfigService(LibraryConfigStore(':memory:'))
     api.connections = ConnectionService(ConnectionStore(':memory:'))
     api.inforost = InforostService(InforostImportStore(':memory:'))
+    api.webhooks = WebhookService(WebhookStore(':memory:'))
     return api
 
 
@@ -1344,6 +1346,62 @@ def ocr_pipeline_route_checks():
     check('recognize без assetRef -> 400', st == 400)
 
 
+def webhooks_route_checks():
+    print('-- Исходящие вебхуки: реестр/подпись/превью/журнал через route() (#356, super-admin)')
+    api = _api()
+    SUP = _sess(api, 'staff', 'op', [{'function': 'admin.db', 'db': '*', 'level': 'admin'}])
+    TA = _sess(api, 'staff', 'libadmin', [{'function': 'admin.users', 'db': '*', 'level': 'admin'}])
+    R = _reader(api)
+
+    # каталог событий доступен super-admin
+    st, p = api.route('GET', '/api/admin/webhooks', {'tenant': ['t1']}, None, SUP)
+    check('список webhooks -> пусто + каталог событий',
+          st == 200 and p['data']['items'] == [] and 'record.created' in p['data']['events'])
+    # подписка на валидное событие; secret маскируется наружу
+    st, p = api.route('POST', '/api/admin/webhooks', {},
+                      {'tenant': 't1', 'event': 'loan.issued',
+                       'url': 'https://hook.example/x', 'secret': 'shh'}, SUP)
+    check('подписка loan.issued -> 200, secret маскирован',
+          st == 200 and p['data']['event'] == 'loan.issued' and p['data']['secret'] == '***')
+    sid = p['data']['id']
+    # невалидное событие / пустой url -> 400
+    st, p = api.route('POST', '/api/admin/webhooks', {},
+                      {'tenant': 't1', 'event': 'bogus.evt', 'url': 'https://x'}, SUP)
+    check('невалидное событие -> 400', st == 400)
+    st, p = api.route('POST', '/api/admin/webhooks', {},
+                      {'tenant': 't1', 'event': 'loan.issued', 'url': ''}, SUP)
+    check('пустой url -> 400', st == 400)
+    # превью: что отправим по событию (payload + подпись по активной подписке)
+    st, p = api.route('POST', '/api/admin/webhooks/preview', {},
+                      {'tenant': 't1', 'event': 'loan.issued', 'data': {'mfn': 42}}, SUP)
+    check('превью loan.issued -> 1 цель с payload+подписью',
+          st == 200 and len(p['data']['targets']) == 1
+          and p['data']['targets'][0]['payload']['data']['mfn'] == 42
+          and len(p['data']['targets'][0]['signature']) == 64)
+    # чужое событие -> целей нет
+    st, p = api.route('POST', '/api/admin/webhooks/preview', {},
+                      {'tenant': 't1', 'event': 'hold.placed', 'data': {}}, SUP)
+    check('превью события без подписок -> []', st == 200 and p['data']['targets'] == [])
+    # выключить подписку -> превью пусто
+    st, p = api.route('POST', '/api/admin/webhooks/active', {}, {'id': sid, 'active': False}, SUP)
+    check('выключить подписку -> active 0', st == 200 and p['data']['active'] == 0)
+    st, p = api.route('POST', '/api/admin/webhooks/preview', {},
+                      {'tenant': 't1', 'event': 'loan.issued', 'data': {}}, SUP)
+    check('неактивная подписка не попадает в превью', st == 200 and p['data']['targets'] == [])
+    # журнал доставки пуст по умолчанию
+    st, p = api.route('GET', '/api/admin/webhooks/deliveries', {}, None, SUP)
+    check('журнал доставки -> 200 (пусто)', st == 200 and p['data']['items'] == [])
+    # гварды: tenant-админ и reader не управляют операторскими вебхуками
+    st, p = api.route('GET', '/api/admin/webhooks', {'tenant': ['t1']}, None, TA)
+    check('tenant-админ к вебхукам -> 403', st == 403)
+    st, p = api.route('POST', '/api/admin/webhooks', {},
+                      {'tenant': 't1', 'event': 'loan.issued', 'url': 'https://x'}, R)
+    check('reader к вебхукам -> 403', st == 403)
+    # удаление
+    st, p = api.route('POST', '/api/admin/webhooks/remove', {}, {'id': sid}, SUP)
+    check('удалить подписку -> removed true', st == 200 and p['data']['removed'] is True)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1368,6 +1426,7 @@ def main():
     onboarding_config_route_checks()
     copy_cataloging_route_checks()
     ocr_pipeline_route_checks()
+    webhooks_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
