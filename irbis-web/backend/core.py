@@ -3134,7 +3134,7 @@ class Api:
         """POST /api/jobs — поставить фоновую задачу (admin).
 
         ``kind`` обязателен; ``payload`` (dict), ``priority`` (int, больше=раньше)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.job_queue is None:
             return 200, ok({'job': None})
         kind = (body.get('kind') or '').strip()
@@ -3149,8 +3149,8 @@ class Api:
         return 200, ok({'job': job})
 
     def jobs_list(self, session, query):
-        """GET /api/jobs?status= — список задач + сводка очереди (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        """GET /api/jobs?status= — список задач + сводка очереди (super-admin)."""
+        self._require_super_admin(session)
         if self.job_queue is None:
             return 200, ok({'items': [], 'stats': {'total': 0, 'by_status': {}}})
         status = (query.get('status', [None])[0])
@@ -3165,7 +3165,7 @@ class Api:
         """POST /api/jobs/claim — захватить следующую задачу воркером (admin).
 
         Пустая очередь -> ``job: null``."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.job_queue is None:
             return 200, ok({'job': None})
         return 200, ok({'job': self.job_queue.claim()})
@@ -3174,7 +3174,7 @@ class Api:
         """POST /api/jobs/complete — завершить задачу успехом (admin).
 
         ``id`` обязателен; ``result`` (dict) опц. Неизвестный id -> 404."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.job_queue is None:
             return 200, ok({'job': None})
         try:
@@ -3187,10 +3187,10 @@ class Api:
         return 200, ok({'job': job})
 
     def job_fail(self, session, body):
-        """POST /api/jobs/fail — завершить задачу ошибкой (admin).
+        """POST /api/jobs/fail — завершить задачу ошибкой (super-admin).
 
         ``id`` обязателен; ``error`` (строка) опц. Неизвестный id -> 404."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._require_super_admin(session)
         if self.job_queue is None:
             return 200, ok({'job': None})
         try:

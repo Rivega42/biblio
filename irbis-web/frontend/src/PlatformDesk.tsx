@@ -13,7 +13,7 @@ import React from "react";
 import { api } from "./api";
 import type { Tenant, BillingInfo, PlanLimits } from "./api";
 import type { TariffTable, TariffRow, TariffCell, MatrixCap, ResourceUsage } from "./api";
-import type { DeploymentMode, DeploymentTopology, DeploymentResolved, ConnectionItem, ConnectionHint, WebhookSub, WebhookTarget } from "./api";
+import type { DeploymentMode, DeploymentTopology, DeploymentResolved, ConnectionItem, ConnectionHint, WebhookSub, WebhookTarget, JobItem, JobStats } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -107,7 +107,7 @@ const LIMIT_META: { key: keyof PlanLimits; name: string; icon: IconName; unit?: 
   { key: "max_storage_mb", name: "Хранилище", icon: "archive", unit: " МБ" },
 ];
 
-type Tab = "tenants" | "billing" | "matrix" | "deployment" | "connections" | "webhooks" | "onboard";
+type Tab = "tenants" | "billing" | "matrix" | "deployment" | "connections" | "webhooks" | "jobs" | "onboard";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "tenants", label: "Арендаторы", icon: "layers" },
   { id: "billing", label: "Тариф и лимиты", icon: "credit-card" },
@@ -115,6 +115,7 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "deployment", label: "Развёртывание", icon: "settings" },
   { id: "connections", label: "Подключения", icon: "link" },
   { id: "webhooks", label: "Вебхуки", icon: "share" },
+  { id: "jobs", label: "Задачи", icon: "clock" },
   { id: "onboard", label: "Онбординг", icon: "check" },
 ];
 
@@ -167,7 +168,9 @@ export function PlatformDesk({ toast }: { toast: ToastFn }) {
                 ? <ConnectionsTab toast={toast} selected={selected} />
                 : tab === "webhooks"
                   ? <WebhooksTab toast={toast} selected={selected} />
-                  : <OnboardWizard toast={toast} onGoConnections={() => setTab("connections")} onSelect={setSelected} />}
+                  : tab === "jobs"
+                    ? <JobsTab toast={toast} />
+                    : <OnboardWizard toast={toast} onGoConnections={() => setTab("connections")} onSelect={setSelected} />}
     </div>
   );
 }
@@ -931,6 +934,70 @@ function WebhooksTab({ toast, selected }: { toast: ToastFn; selected: string | n
           );
         })}
       <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: 0 }}>Секрет хранится off-git, наружу маскируется (***). Тело подписывается HMAC-SHA256; реальная отправка — на стороне коннектора.</p>
+    </div>
+  );
+}
+
+// ===== Фоновые задачи (#240) ================================================
+// Оператор платформы (admin.db) видит очередь фоновых задач (OCR, тайлы, реиндекс):
+// сводка по статусам + последние задачи + ручной прогон OCR-конвейера.
+const JOB_STATUS_RU: Record<string, string> = { pending: "в очереди", running: "выполняется", done: "готово", failed: "ошибка" };
+function JobsTab({ toast }: { toast: ToastFn }) {
+  const [data, setData] = React.useState<{ items: JobItem[]; stats: JobStats } | null>(null);
+  const [down, setDown] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    const r = await api.adminJobs();
+    if (r.status === 404 || r.status === 501 || r.status === 403) { setDown(true); return; }
+    setDown(false);
+    if (r.json?.ok && r.json.data) setData(r.json.data); else setData({ items: [], stats: { total: 0, by_status: {} } });
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const processOcr = async () => {
+    setBusy(true);
+    const r = await api.adminOcrProcess();
+    setBusy(false);
+    if (r.json?.ok) {
+      const job = r.json.data?.job;
+      if (job) toast({ variant: "success", title: "OCR-задача обработана", message: "проиндексировано: " + (r.json.data?.indexed ?? 0) });
+      else toast({ variant: "info", title: "Очередь OCR пуста" });
+      load();
+    } else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
+    else toast({ variant: "error", title: "Не обработано", message: "Повторите попытку." });
+  };
+
+  if (down) return <SectionDown icon="clock" title="Очередь задач подключается отдельно" />;
+  if (!data) return <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка очереди…</div>;
+
+  const STATUS_COLOR: Record<string, string> = { pending: "var(--text-subtle)", running: "var(--accent,#2d7d6e)", done: "var(--text-muted)", failed: "var(--danger,#c0392b)" };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="irb-plat__card" style={{ padding: 14, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)" }}>Всего задач: {data.stats.total}</span>
+        {(["pending", "running", "done", "failed"] as const).map((s) => (
+          <span key={s} style={{ fontSize: 12.5, color: STATUS_COLOR[s] }}>
+            {JOB_STATUS_RU[s]}: <b>{data.stats.by_status[s] ?? 0}</b>
+          </span>
+        ))}
+        <span style={{ flex: 1 }} />
+        <Button size="sm" iconLeft="refresh-cw" variant="ghost" onClick={load}>Обновить</Button>
+        <Button size="sm" iconLeft="scan-line" loading={busy} onClick={processOcr}>Обработать OCR</Button>
+      </div>
+      {data.items.length === 0
+        ? <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Очередь пуста.</div>
+        : <div className="irb-plat__card" style={{ padding: 0, overflow: "hidden" }}>
+            {data.items.map((j, i) => (
+              <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 16px", borderTop: i ? "1px solid var(--border-subtle)" : "none" }}>
+                <span className="irb-plat__mono" style={{ fontSize: 12, color: "var(--text-subtle)", minWidth: 36 }}>#{j.id}</span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: "var(--text-strong)" }}>{j.kind}</span>
+                {j.error ? <span style={{ fontSize: 11.5, color: "var(--danger,#c0392b)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.error}</span> : null}
+                <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 9px", borderRadius: 999, background: "var(--surface-sunken,#f1efe9)", color: STATUS_COLOR[j.status] || "var(--text-subtle)" }}>{JOB_STATUS_RU[j.status] || j.status}</span>
+              </div>
+            ))}
+          </div>}
+      <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: 0 }}>Воркеры забирают задачи по приоритету (больше — раньше). «Обработать OCR» прогоняет одну задачу распознавания синхронно.</p>
     </div>
   );
 }
