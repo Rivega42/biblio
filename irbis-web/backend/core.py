@@ -913,6 +913,13 @@ class Api:
         except Exception:
             self.vocab_editor = None
         try:
+            from access import authority_control as _authc
+            self.authority_control = _authc.AuthorityService(
+                _authc.AuthorityStore(os.environ.get(
+                    'AUTHORITY_CTL_DB', os.path.join(here, 'authority_control.db'))))
+        except Exception:
+            self.authority_control = None
+        try:
             from access import roles as _roles
             self.roles = _roles.RoleService(
                 _roles.RoleStore(os.environ.get(
@@ -3758,6 +3765,81 @@ class Api:
         sid = int(sid[0]) if sid and sid[0] else None
         return 200, ok({'items': self.webhooks.store.deliveries(sid)})
 
+    # ---- Авторитетный/нормативный контроль (#359, Каталогизатор) --------- #
+    # Own-store заголовков (персона/орг/тема/гео) + варианты + см.-ссылки +
+    # дедуп/слияние. Контроль точек доступа. Гейт cataloging (штат).
+    def authority_search(self, session, query):
+        """GET /api/authority?kind=&q= — поиск заголовков (с вариантами и см.-также)."""
+        self._guard(session, 'cataloging', '*', 'read')
+        if self.authority_control is None:
+            return 200, ok({'items': []})
+        kind = (query.get('kind') or [None])[0]
+        q = (query.get('q') or [None])[0]
+        return 200, ok({'items': self.authority_control.search(kind, q)})
+
+    def authority_create(self, session, body):
+        """POST /api/authority — создать/найти заголовок (дедуп по виду+норме)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.authority_control is None:
+            return 503, err('unavailable', 'authority store off')
+        try:
+            h = self.authority_control.create(body.get('kind') or '',
+                                              body.get('heading') or '', body.get('note') or '')
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'heading': h})
+
+    def authority_variant(self, session, body):
+        """POST /api/authority/variant — добавить вариант формы к заголовку."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.authority_control is None:
+            return 503, err('unavailable', 'authority store off')
+        v = self.authority_control.add_variant(int(body.get('headingId') or 0), body.get('variant') or '')
+        if v is None:
+            return 404, err('not_found', 'heading not found')
+        return 200, ok({'variant': v})
+
+    def authority_link(self, session, body):
+        """POST /api/authority/link — связать заголовки см./см.-также."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.authority_control is None:
+            return 503, err('unavailable', 'authority store off')
+        try:
+            x = self.authority_control.link(int(body.get('srcId') or 0), int(body.get('dstId') or 0),
+                                            body.get('refType') or 'see_also')
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'xref': x})
+
+    def authority_find_or_create(self, session, body):
+        """POST /api/authority/find-or-create — контроль точки доступа (вернуть/создать)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.authority_control is None:
+            return 503, err('unavailable', 'authority store off')
+        try:
+            h = self.authority_control.find_or_create(body.get('kind') or '', body.get('heading') or '')
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok({'heading': h})
+
+    def authority_merge(self, session, body):
+        """POST /api/authority/merge — слить дубль заголовков (drop -> keep)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.authority_control is None:
+            return 503, err('unavailable', 'authority store off')
+        try:
+            res = self.authority_control.merge(int(body.get('keepId') or 0), int(body.get('dropId') or 0))
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok(res)
+
+    def authority_remove(self, session, body):
+        """POST /api/authority/remove — удалить заголовок (каскадно вар./ссылки)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.authority_control is None:
+            return 503, err('unavailable', 'authority store off')
+        return 200, ok({'removed': self.authority_control.store.remove(int(body.get('id') or 0))})
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -6310,6 +6392,21 @@ class Api:
                 return self.webhooks_preview(session, body or {})
             if method == 'GET' and path == '/api/admin/webhooks/deliveries':
                 return self.webhooks_deliveries(session, query)
+            # ---- Авторитетный/нормативный контроль (#359) ----
+            if method == 'GET' and path == '/api/authority':
+                return self.authority_search(session, query)
+            if method == 'POST' and path == '/api/authority':
+                return self.authority_create(session, body or {})
+            if method == 'POST' and path == '/api/authority/variant':
+                return self.authority_variant(session, body or {})
+            if method == 'POST' and path == '/api/authority/link':
+                return self.authority_link(session, body or {})
+            if method == 'POST' and path == '/api/authority/find-or-create':
+                return self.authority_find_or_create(session, body or {})
+            if method == 'POST' and path == '/api/authority/merge':
+                return self.authority_merge(session, body or {})
+            if method == 'POST' and path == '/api/authority/remove':
+                return self.authority_remove(session, body or {})
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})

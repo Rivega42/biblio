@@ -58,6 +58,7 @@ from access.library_config import LibraryConfigService, LibraryConfigStore
 from access.connections import ConnectionService, ConnectionStore
 from access.inforost import InforostService, InforostImportStore
 from access.webhooks import WebhookService, WebhookStore
+from access.authority_control import AuthorityService as AuthCtlService, AuthorityStore as AuthCtlStore
 from access import circulation as _circ
 
 PASS = [0]
@@ -147,6 +148,7 @@ def _api():
     api.connections = ConnectionService(ConnectionStore(':memory:'))
     api.inforost = InforostService(InforostImportStore(':memory:'))
     api.webhooks = WebhookService(WebhookStore(':memory:'))
+    api.authority_control = AuthCtlService(AuthCtlStore(':memory:'))
     return api
 
 
@@ -1402,6 +1404,66 @@ def webhooks_route_checks():
     check('удалить подписку -> removed true', st == 200 and p['data']['removed'] is True)
 
 
+def authority_route_checks():
+    print('-- Авторитетный контроль: заголовки/варианты/см.-ссылки/слияние через route() (#359)')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    R = _reader(api)
+
+    # создать заголовок (персона), дедуп по виду+норме
+    st, p = api.route('POST', '/api/authority', {},
+                      {'kind': 'person', 'heading': 'Чехов, Антон Павлович'}, S)
+    check('создать заголовок-персону -> 200', st == 200 and p['data']['heading']['kind'] == 'person')
+    hid = p['data']['heading']['id']
+    st, p = api.route('POST', '/api/authority', {},
+                      {'kind': 'person', 'heading': '  чехов,  антон   павлович '}, S)
+    check('дедуп по норме -> тот же id', st == 200 and p['data']['heading']['id'] == hid)
+    # невалидный вид -> 400
+    st, p = api.route('POST', '/api/authority', {}, {'kind': 'bogus', 'heading': 'X'}, S)
+    check('невалидный вид -> 400', st == 400)
+    st, p = api.route('POST', '/api/authority', {}, {'kind': 'person', 'heading': '  '}, S)
+    check('пустой заголовок -> 400', st == 400)
+    # вариант формы
+    st, p = api.route('POST', '/api/authority/variant', {},
+                      {'headingId': hid, 'variant': 'Chekhov, Anton'}, S)
+    check('добавить вариант -> 200', st == 200 and p['data']['variant']['heading_id'] == hid)
+    st, p = api.route('POST', '/api/authority/variant', {}, {'headingId': 99999, 'variant': 'X'}, S)
+    check('вариант к несуществующему -> 404', st == 404)
+    # второй заголовок + см.-также
+    st, p = api.route('POST', '/api/authority', {},
+                      {'kind': 'person', 'heading': 'Чехонте, Антоша'}, S)
+    hid2 = p['data']['heading']['id']
+    st, p = api.route('POST', '/api/authority/link', {},
+                      {'srcId': hid2, 'dstId': hid, 'refType': 'see'}, S)
+    check('связать см. -> 200', st == 200 and p['data']['xref']['ref_type'] == 'see')
+    st, p = api.route('POST', '/api/authority/link', {},
+                      {'srcId': hid, 'dstId': hid, 'refType': 'see'}, S)
+    check('self-ссылка -> 400', st == 400)
+    # поиск с вариантами/ссылками
+    st, p = api.route('GET', '/api/authority', {'kind': ['person'], 'q': ['чехов']}, None, S)
+    found = [h for h in p['data']['items'] if h['id'] == hid]
+    check('поиск находит + variants присутствуют',
+          st == 200 and len(found) == 1 and len(found[0]['variants']) == 1)
+    # find-or-create: контроль точки доступа
+    st, p = api.route('POST', '/api/authority/find-or-create', {},
+                      {'kind': 'person', 'heading': 'Чехов, Антон Павлович'}, S)
+    check('find-or-create существующего -> created false', st == 200 and p['data']['heading']['created'] is False)
+    st, p = api.route('POST', '/api/authority/find-or-create', {},
+                      {'kind': 'subject', 'heading': 'Драматургия'}, S)
+    check('find-or-create нового -> created true', st == 200 and p['data']['heading']['created'] is True)
+    # слияние дублей
+    st, p = api.route('POST', '/api/authority/merge', {}, {'keepId': hid, 'dropId': hid2}, S)
+    check('merge -> merged true', st == 200 and p['data']['merged'] is True)
+    st, p = api.route('GET', '/api/authority', {'q': ['чехонте']}, None, S)
+    check('слитый заголовок стал вариантом keep (не отдельным)',
+          all(h['id'] != hid2 for h in p['data']['items']))
+    # гварды
+    st, p = api.route('POST', '/api/authority', {}, {'kind': 'person', 'heading': 'X'}, R)
+    check('reader создаёт заголовок -> 403', st == 403)
+    st, p = api.route('GET', '/api/authority', {}, None, R)
+    check('reader смотрит авторитет -> 403', st == 403)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1427,6 +1489,7 @@ def main():
     copy_cataloging_route_checks()
     ocr_pipeline_route_checks()
     webhooks_route_checks()
+    authority_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
