@@ -1604,6 +1604,13 @@ def fulltext_route_checks():
     # реиндекс OCR-слоя
     st, p = api.route('POST', '/api/fulltext/reindex-ocr', {}, {}, SUP)
     check('reindex-ocr -> reindexed >= 1', st == 200 and p['data']['reindexed'] >= 1)
+    # реиндекс КАТАЛОГА: own-store записи -> морфо-FTS (поиск по корпусу, не только OCR)
+    api.catalog.save('IBIS', _rec('Чайка', **{'700': [{'a': 'Чехов'}], '606': [{'a': 'драматургия'}]}))
+    st, p = api.route('POST', '/api/fulltext/reindex-catalog', {'db': ['IBIS']}, {}, SUP)
+    check('reindex-catalog -> reindexed >= 1', st == 200 and p['data']['reindexed'] >= 1)
+    st, p = api.route('GET', '/api/fulltext/search', {'q': ['Чехов']}, None, R)
+    check('морфо-FTS по каталогу: запись найдена по автору (700^a, cat-реф)',
+          st == 200 and any(h['ref'].startswith('cat:IBIS:') for h in p['data']['hits']))
     # гварды
     st, p = api.route('POST', '/api/fulltext/index', {}, {'ref': 'x', 'text': 'y'}, R)
     check('reader индексирует -> 403', st == 403)

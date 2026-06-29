@@ -339,6 +339,11 @@ export interface FulltextAccess { level: FulltextLevel; pageLimit?: number; down
 export interface FulltextResult {
   db: string; mfn: number; artifacts: FulltextArtifact[]; access: FulltextAccess;
 }
+// Хит морфо-полнотекста (#368): ref (cat:<db>:<mfn> | ocr:<asset>), заглавие,
+// score BM25, matched — основы запроса, реально найденные в документе.
+export interface FtsHit {
+  ref: string; db: string; mfn: number; title: string; score: number; matched: string[];
+}
 // --- Книгообеспеченность: отчёт ККО (быстрая справка) ----------------------
 // Отчёт по обеспеченности (GET /api/bp/provision) для деска ККО: запрашивается
 // по дисциплине / специальности / факультету. coefficient — коэффициент Кко
@@ -550,6 +555,14 @@ export const api = {
   // 404/501 → блок «Полный текст» скрывается.
   fulltext: (db: string, mfn: number) =>
     jget<FulltextResult>("/api/fulltext/" + db + "/" + mfn),
+  // --- Морфо-полнотекст: own-store FTS + BM25 (#368) -----------------------
+  // Поиск по полным текстам/каталогу с морфологией (русский стеммер) и
+  // ранжированием BM25. Реф вида cat:<db>:<mfn> (каталог) | ocr:<asset> (OCR).
+  // 404/501 → панель прячется.
+  fulltextSearch: (q: string, limit = 20) =>
+    jget<{ query: string; hits: FtsHit[] }>("/api/fulltext/search?" + qs({ q, limit })),
+  fulltextMoreLike: (ref: string) =>
+    jget<{ ref: string; hits: FtsHit[] }>("/api/fulltext/more-like?" + qs({ ref })),
 
   // --- Бронирование (#222) -------------------------------------------------
   // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
