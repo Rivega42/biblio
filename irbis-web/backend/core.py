@@ -2133,6 +2133,9 @@ class Api:
             assigned = int(r.data[0].split('#')[0])
         self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
             session['actor'], 'record.write', db, assigned, 'ok', {'created': mfn == 0})
+        if mfn == 0:
+            self._webhooks_emit(session.get('tenant', DEFAULT_TENANT), 'record.created',
+                                {'db': db, 'mfn': assigned})
         return 200, ok({'db': db, 'mfn': assigned, 'created': mfn == 0, 'returnCode': r.return_code})
 
     def validate_record(self, session, body):
@@ -2538,6 +2541,8 @@ class Api:
         except (TypeError, ValueError):
             return 400, err('bad_request', 'mfn required')
         res = self.holds.place(ticket, db, mfn)
+        self._webhooks_emit(session.get('tenant', DEFAULT_TENANT), 'hold.placed',
+                            {'mfn': mfn, 'db': db, 'ticket': ticket})
         return 200, ok(res)
 
     def list_holds(self, session):
@@ -3702,6 +3707,25 @@ class Api:
     # Реестр подписок per-tenant на события + подписанный payload (HMAC) +
     # журнал доставки. Секреты наружу маскируются. Реальная сетевая отправка —
     # на слое applier; здесь — реестр + prepare/preview + журнал. Super-admin.
+    def _webhooks_emit(self, tenant, event, data):
+        """Эмиссия исходящего вебхука на доменном событии (#356).
+
+        Подготовить цели по АКТИВНЫМ подпискам тенанта и зажурналировать доставку
+        (статус ``prepared``). Реальная сетевая отправка — на слое коннектора;
+        здесь фиксируем намерение в журнал, чтобы оператор видел трафик. Полностью
+        best-effort: если стор не собран или подписок нет — тихо ноль, событие
+        никогда не должно ломать основную операцию (выдачу/бронь/сохранение)."""
+        wh = getattr(self, 'webhooks', None)
+        if wh is None:
+            return 0
+        try:
+            targets = wh.prepare(tenant, event, data or {})
+            for t in targets:
+                wh.store.log_delivery(t['subscription_id'], event, 'prepared')
+            return len(targets)
+        except Exception:
+            return 0
+
     def webhooks_list(self, session, query):
         """GET /api/admin/webhooks?tenant= — подписки тенанта (secret маскирован, super-admin)."""
         self._require_super_admin(session)
@@ -5241,6 +5265,9 @@ class Api:
         if 'catalog_mfn' in d.computed:
             out['catalogMfn'] = d.computed['catalog_mfn']
             out['exemplarStatus'] = d.computed['exemplar_status']
+        self._webhooks_emit(session.get('tenant', DEFAULT_TENANT), 'loan.issued',
+                            {'loanId': loan['id'], 'ticket': ticket, 'item': item,
+                             'due': d.computed['due']})
         return 200, ok(out)
 
     def circ_return(self, session, body):
