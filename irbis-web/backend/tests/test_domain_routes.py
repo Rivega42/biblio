@@ -1287,6 +1287,22 @@ def onboarding_config_route_checks():
     st, p = api.route('POST', '/api/admin/onboard', {}, {'tenant': 't9', 'mode': 'full'}, TA)
     check('tenant-админ онбординг -> 403', st == 403)
 
+    # --- Активные модули по режиму (#335): фронт прячет неактуальные десктопы ---
+    api.route('POST', '/api/admin/deployment', {},
+              {'tenant': 'public', 'mode': 'overlay_jirbis', 'topology': 'cloud'}, SUP)
+    ST = _sess(api, 'staff', 'cat', STAFF_G)
+    st, p = api.route('GET', '/api/me/modules', {}, None, ST)
+    check('me/modules: overlay_jirbis -> configured, бэк-офис скрыт (без cataloging)',
+          st == 200 and p['data']['configured'] is True
+          and p['data']['mode'] == 'overlay_jirbis'
+          and 'cataloging' not in p['data']['modules'] and 'opac' in p['data']['modules'])
+    api.route('POST', '/api/admin/deployment', {},
+              {'tenant': 'public', 'mode': 'full', 'topology': 'cloud'}, SUP)
+    st, p = api.route('GET', '/api/me/modules', {}, None, ST)
+    check('me/modules: full -> cataloging включён', st == 200 and 'cataloging' in p['data']['modules'])
+    st, p = api.route('GET', '/api/me/modules', {}, None, R)
+    check('reader к me/modules -> 403', st == 403)
+
 
 _SRU_XML = (
     '<?xml version="1.0"?>'
