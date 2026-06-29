@@ -512,7 +512,8 @@ def backlog_cataloging_route_checks():
 def backlog_admin_route_checks():
     print('-- #318 Администратор: RBAC + аудит-трейл + конфиг через route()')
     api = _api()
-    A = _sess(api, 'staff', 'adm', ADMIN_G)
+    # AdminDesk per-library: гейт admin.users (роли/аудит/конфиг конкретной библиотеки).
+    A = _sess(api, 'staff', 'adm', [{'function': 'admin.users', 'db': '*', 'level': 'admin'}])
     S = _sess(api, 'staff', 'lib', STAFF_BL_G)
 
     st, p = api.route('POST', '/api/admin/rbac/role', {},

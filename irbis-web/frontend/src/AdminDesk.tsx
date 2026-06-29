@@ -30,7 +30,7 @@
 // остальные продолжают работать; приложение не падает.
 import React from "react";
 import { api } from "./api";
-import type { AuditEntry, AdminDatabase, PdnAccessEntry } from "./api";
+import type { AuditTrailEntry, AuditSummary, AdminDatabase, PdnAccessEntry } from "./api";
 import type { LibraryConfig } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
@@ -449,6 +449,11 @@ function LibraryTab({ toast }: { toast: ToastFn }) {
 // Backend отдаёт ts как float epoch (сек) и detail как ОБЪЕКТ — форматируем оба.
 function fmtAuditTs(ts: any): string {
   if (ts == null) return "—";
+  // ISO-строка (own-store audit-trail) — парсим как дату напрямую.
+  if (typeof ts === "string" && /[-T:]/.test(ts)) {
+    const di = new Date(ts);
+    if (!isNaN(di.getTime())) return di.toLocaleString("ru-RU");
+  }
   const n = typeof ts === "number" ? ts : parseFloat(String(ts));
   if (!isFinite(n)) return String(ts);
   // epoch в секундах → мс. (значения вида 1.7e9 — секунды)
@@ -472,60 +477,74 @@ const auditOk = (r: string | undefined): boolean =>
   r ? /^ok$|success|успе|^2\d\d$/i.test(r) : true;
 
 function AuditTab() {
-  const [rows, setRows] = React.useState<AuditEntry[] | null>(null);
+  const [rows, setRows] = React.useState<AuditTrailEntry[] | null>(null);
+  const [summary, setSummary] = React.useState<AuditSummary | null>(null);
   const [state, setState] = React.useState<"live" | "down" | "forbidden">("live");
-  const [limit, setLimit] = React.useState(50);
+  const [limit, setLimit] = React.useState(100);
+  const [actor, setActor] = React.useState("");
+  const [action, setAction] = React.useState("");
+  const [status, setStatus] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
-  async function load(lim: number) {
+  const load = React.useCallback(async () => {
     setLoading(true);
-    const r = await api.adminAudit(lim);
+    const r = await api.adminAuditTrail({ actor: actor.trim(), action: action.trim(), status: status.trim(), limit });
     setLoading(false);
     if (r.status === 404 || r.status === 501) { setState("down"); return; }
     if (r.status === 403) { setState("forbidden"); return; }
-    if (r.json?.ok && r.json.data) setRows(r.json.data.items || []); else setRows([]);
+    if (r.json?.ok && r.json.data) { setRows(r.json.data.items || []); setSummary(r.json.data.summary || null); } else { setRows([]); setSummary(null); }
     setState("live");
-  }
-  React.useEffect(() => { void load(limit); }, [limit]);
+  }, [actor, action, status, limit]);
+  React.useEffect(() => { void load(); }, [load]);
 
   if (state === "down") return <SectionDown icon="list" title="Журнал аудита подключается отдельно" />;
   if (state === "forbidden") return <SectionDown icon="shield" title="Недостаточно прав для администрирования" description={FORBIDDEN_DESC} />;
 
+  const topActions = summary ? Object.entries(summary.by_action).sort((a, b) => b[1] - a[1]).slice(0, 5) : [];
   return (
     <div className="adm__card">
-      <div className="adm__bar">
-        <span className="adm__cap">Журнал операций {rows ? "· " + rows.length : ""}</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 12, color: "var(--text-subtle)" }}>Показывать</span>
-          <select className="adm__in" style={{ width: "auto", padding: "5px 9px" }} value={limit} onChange={(e) => setLimit(parseInt(e.target.value, 10))}>
-            {[25, 50, 100, 200].map((n) => <option key={n} value={n}>{n}</option>)}
+      <div className="adm__bar" style={{ flexWrap: "wrap", gap: 8 }}>
+        <span className="adm__cap">Журнал операций {rows ? "· " + rows.length : ""}{summary ? " из " + summary.total : ""}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <input className="adm__in" style={{ width: 120, padding: "5px 9px" }} placeholder="актор" value={actor} onChange={(e) => setActor(e.target.value)} aria-label="Фильтр по актору" />
+          <input className="adm__in" style={{ width: 140, padding: "5px 9px" }} placeholder="действие" value={action} onChange={(e) => setAction(e.target.value)} aria-label="Фильтр по действию" />
+          <select className="adm__in" style={{ width: "auto", padding: "5px 9px" }} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Фильтр по результату">
+            <option value="">все результаты</option><option value="ok">ok</option><option value="error">error</option><option value="denied">denied</option>
           </select>
-          <Button size="sm" variant="ghost" iconLeft="refresh-cw" loading={loading} onClick={() => load(limit)}>Обновить</Button>
+          <select className="adm__in" style={{ width: "auto", padding: "5px 9px" }} value={limit} onChange={(e) => setLimit(parseInt(e.target.value, 10))} aria-label="Лимит">
+            {[50, 100, 200, 500].map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <Button size="sm" variant="ghost" iconLeft="refresh-cw" loading={loading} onClick={() => load()}>Обновить</Button>
         </div>
       </div>
+      {summary && summary.total > 0 ? (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "0 0 12px", fontSize: 12, color: "var(--text-subtle)" }}>
+          <span>всего: <b style={{ color: "var(--text-strong)" }}>{summary.total}</b></span>
+          {topActions.map(([k, v]) => <span key={k}>{k}: <b style={{ color: "var(--text-strong)" }}>{v}</b></span>)}
+        </div>
+      ) : null}
       {rows === null ? (
         <div style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка журнала…</div>
       ) : rows.length === 0 ? (
-        <div style={{ padding: 4 }}><EmptyState icon="list" title="Журнал пуст" description="Операции сотрудников (вход, правка записей, выдача, администрирование) фиксируются здесь с меткой времени, актором и результатом." /></div>
+        <div style={{ padding: 4 }}><EmptyState icon="list" title="Журнал пуст" description="Операции сотрудников (вход, правка записей, выдача, администрирование) фиксируются здесь с меткой времени, актором и результатом. Уточните фильтры выше." /></div>
       ) : (
         <div className="adm__scroll">
           <table className="adm__tbl">
-            <thead><tr><th>Время</th><th>Актор</th><th>Функция</th><th>Результат</th></tr></thead>
+            <thead><tr><th>Время</th><th>Актор</th><th>Действие</th><th>Объект</th><th>Результат</th></tr></thead>
             <tbody>
               {rows.map((e, i) => {
-                const ok = e.ok != null ? e.ok : auditOk(e.result);
-                const detailStr = fmtAuditDetail((e as any).detail);
-                const fn = e.function || (e as any).fn || "—";
-                const db = (e as any).db;
+                const ok = auditOk(e.status);
+                const obj = [e.object_type, e.object_id].filter(Boolean).join(" #");
                 return (
-                  <tr key={i}>
+                  <tr key={e.id ?? i}>
                     <td className="adm__mono" style={{ whiteSpace: "nowrap" }}>{fmtAuditTs(e.ts)}</td>
                     <td className="adm__mono">{e.actor || "—"}</td>
                     <td>
-                      {fn}{db ? <span className="adm__mono" style={{ color: "var(--text-subtle)" }}> · {db}</span> : null}
-                      {detailStr ? <div style={{ fontSize: 11.5, color: "var(--text-subtle)", marginTop: 2 }}>{detailStr}</div> : null}
+                      {e.action || "—"}{e.db && e.db !== "*" ? <span className="adm__mono" style={{ color: "var(--text-subtle)" }}> · {e.db}</span> : null}
+                      {e.note ? <div style={{ fontSize: 11.5, color: "var(--text-subtle)", marginTop: 2 }}>{e.note}</div> : null}
                     </td>
-                    <td><span className={"adm__res adm__res--" + (ok ? "ok" : "err")}><Icon name={ok ? "check" : "x"} size={12} />{e.result || (ok ? "OK" : "ошибка")}</span></td>
+                    <td className="adm__mono" style={{ color: "var(--text-subtle)" }}>{obj || "—"}</td>
+                    <td><span className={"adm__res adm__res--" + (ok ? "ok" : "err")}><Icon name={ok ? "check" : "x"} size={12} />{e.status || (ok ? "OK" : "ошибка")}</span></td>
                   </tr>
                 );
               })}
