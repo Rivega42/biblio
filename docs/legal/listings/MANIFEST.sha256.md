@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-29**
-- Версия кода (git): **`a7eedf5`**
-- Файлов: **294** · строк: **87942** · условных страниц: **1599**
-- **SHA-256 всего листинга:** `450870c8a928128da56b59b032af99f3bd71617a53688d8c6579570f95d65804`
+- Версия кода (git): **`43337a7`**
+- Файлов: **294** · строк: **87958** · условных страниц: **1600**
+- **SHA-256 всего листинга:** `3025fdc8c814ccec9fbbc52b0fd16f65f99c7db23fd9513a580f2b97655213f0`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -275,7 +275,7 @@
 | `irbis-web/frontend/src/main.tsx` | 18 | `fe62e0037c01cbec9b2450cb074164eea32590d3331020b709c4daa6dcd52aa2` |
 | `irbis-web/frontend/src/reader/AboutLibrary.tsx` | 99 | `e18dec2f2ddd65f2ef0167eeb8bf9d5db0d4cce17aa17fd0146d165c6283139f` |
 | `irbis-web/frontend/src/reader/ArchiveList.tsx` | 82 | `26326624faf6e469519f621795417564dfeb75a68a6da70dde8c69a8dcba1a24` |
-| `irbis-web/frontend/src/reader/BrowseAZ.tsx` | 88 | `46e043facbb5a5383f56ea30bf41a2974856e3105e4723ae6b19516bb6f66eee` |
+| `irbis-web/frontend/src/reader/BrowseAZ.tsx` | 104 | `82aa2ba8575247e26b6b1ddb8eefc41b70cca4b672c5db12344f0455ca30fff4` |
 | `irbis-web/frontend/src/reader/CalendarGrid.tsx` | 112 | `2ed431df8aea463865def31d5e95a39893b124982e4ae89ad141a505e9a7bd1b` |
 | `irbis-web/frontend/src/reader/CollectionSubs.tsx` | 78 | `ad325763366d674e48136fec7ced6d430c1c4e2978224fa8272b7cd2f84db52d` |
 | `irbis-web/frontend/src/reader/Collections.tsx` | 66 | `78cd5dcdf3f5a3761495c7dee7140282af2e4568a5d8a56dba7e2d7192c7a91a` |
