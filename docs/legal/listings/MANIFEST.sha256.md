@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-29**
-- Версия кода (git): **`9f3f407`**
-- Файлов: **293** · строк: **87867** · условных страниц: **1598**
-- **SHA-256 всего листинга:** `d01eb09612a835560e7a2ebfa00eaddfbe622d18b4d5a46cd3b970969408eabd`
+- Версия кода (git): **`a7eedf5`**
+- Файлов: **294** · строк: **87942** · условных страниц: **1599**
+- **SHA-256 всего листинга:** `450870c8a928128da56b59b032af99f3bd71617a53688d8c6579570f95d65804`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -282,11 +282,12 @@
 | `irbis-web/frontend/src/reader/Consent.tsx` | 286 | `53a4b27cd5fcbd318cafc5cf881abd99b3803153cf4ffe1a69a0ea0a0292314e` |
 | `irbis-web/frontend/src/reader/CookiePanel.tsx` | 154 | `4e06f2e6f2efb9e4c1879a76fe40b2aa97f71efb2aae309a2e066917cf4effa7` |
 | `irbis-web/frontend/src/reader/DocViewer.tsx` | 191 | `6756c5476673272fb21ca6eb4b44502cb8b43d40db11888ff1ad71d0d02fdea8` |
-| `irbis-web/frontend/src/reader/Exhibits.tsx` | 228 | `fe15d71cfc381f6428bb6ebde22388b5998b2856ace4aa6104f5d3db3ed2a0a7` |
+| `irbis-web/frontend/src/reader/Exhibits.tsx` | 228 | `b8268d5ad1323bbc695b7d6fd20aea0ac422b519ac56b8496d62575927d4805d` |
 | `irbis-web/frontend/src/reader/GalleryGrid.tsx` | 113 | `89522accc3106d2e0517e0715f4ad45e281d4e36db9f3410418eb478ecef510e` |
 | `irbis-web/frontend/src/reader/HistoryTab.tsx` | 102 | `ced520ea8d28d87b68f189ed24ceac00916be6eb5543cdd1c50d99ac3b346743` |
 | `irbis-web/frontend/src/reader/HoldsTab.tsx` | 121 | `65d84990d834702ee566c24853fd99196ba41f5595f23805d0e905e6ec8ebea7` |
 | `irbis-web/frontend/src/reader/HomeScreen.tsx` | 199 | `0f9c4c68b1628a0c9fb147fd40da71f5c8989ef7a8d37bfe8375207eabf02451` |
+| `irbis-web/frontend/src/reader/IiifViewer.tsx` | 75 | `aa5aa7bc2b4c6185f5e11b43e3f48d3e855a8528e51e46da66885744a42f5a88` |
 | `irbis-web/frontend/src/reader/LibraryFeed.tsx` | 147 | `38c8074cb055eab842b7646cd40c914f3274262a3235996bc225154e5e121f58` |
 | `irbis-web/frontend/src/reader/LinkedRecords.tsx` | 217 | `585919e8765732a0bb2746864a65080377ad90d29e22403588ac20d507205ebf` |
 | `irbis-web/frontend/src/reader/NotificationInbox.tsx` | 188 | `afb353609dd59864b784a826790ecb18988b0b5f2667a3e15acd056b48021968` |
