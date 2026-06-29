@@ -398,6 +398,8 @@ export interface DeploymentResolved {
   required_connections: string[]; default_modules: string[]; configured: boolean;
 }
 // Внешние подключения (#335) — секреты приходят маскированными ('***').
+export interface WebhookSub { id: number; tenant: string; event: string; url: string; secret: string; active: boolean | number; created_at?: string }
+export interface WebhookTarget { subscription_id: number; url: string; event: string; payload: { event: string; ts: string; data: Record<string, unknown> }; signature: string }
 export interface ConnectionItem { kind: string; enabled: boolean | number; config: Record<string, string | number> }
 export interface ConnectionHint { key: string; label: string; secret: boolean }
 
@@ -698,6 +700,17 @@ export const api = {
     jpost<{ connection: ConnectionItem }>("/api/admin/connections", b),
   adminConnectionRemove: (b: { tenant: string; kind: string }) =>
     jpost<{ removed: boolean }>("/api/admin/connections/remove", b),
+  // --- Исходящие вебхуки (#356) — оператор платформы (admin.db) ---
+  adminWebhooks: (tenant: string) =>
+    jget<{ items: WebhookSub[]; events: string[] }>("/api/admin/webhooks?" + qs({ tenant })),
+  adminWebhookSubscribe: (b: { tenant: string; event: string; url: string; secret?: string }) =>
+    jpost<WebhookSub>("/api/admin/webhooks", b),
+  adminWebhookSetActive: (b: { id: number; active: boolean }) =>
+    jpost<WebhookSub>("/api/admin/webhooks/active", b),
+  adminWebhookRemove: (b: { id: number }) =>
+    jpost<{ removed: boolean }>("/api/admin/webhooks/remove", b),
+  adminWebhookPreview: (b: { tenant: string; event: string; data?: Record<string, unknown> }) =>
+    jpost<{ targets: WebhookTarget[] }>("/api/admin/webhooks/preview", b),
   // Онбординг «завершение визарда»: режим + брендинг одним вызовом.
   adminOnboard: (b: { tenant: string; mode: string; topology: string; name?: string; fullName?: string }) =>
     jpost<{ tenant: string; deployment?: DeploymentResolved; config?: LibraryConfig }>("/api/admin/onboard", b),
