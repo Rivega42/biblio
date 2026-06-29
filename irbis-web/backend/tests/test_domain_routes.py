@@ -880,7 +880,8 @@ def batch240_route_checks():
     print('-- Батч #240: шаблоны метаданных / очередь задач / подписки через route()')
     api = _api()
     S = _sess(api, 'staff', 'cat', STAFF_G)
-    A = _sess(api, 'staff', 'adm', ADMIN_G)
+    # Очередь фоновых задач — концерн оператора платформы (admin.db) после re-gate.
+    A = _sess(api, 'staff', 'adm', [{'function': 'admin.db', 'db': '*', 'level': 'admin'}])
     R = _reader(api)
 
     # --- Шаблоны метаданных (Каталогизатор) ---
@@ -1485,6 +1486,40 @@ def authority_route_checks():
     check('reader смотрит авторитет -> 403', st == 403)
 
 
+def jobs_route_checks():
+    print('-- Фоновые задачи: очередь/статистика/жизненный цикл через route() (super-admin)')
+    api = _api()
+    SUP = _sess(api, 'staff', 'op', [{'function': 'admin.db', 'db': '*', 'level': 'admin'}])
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    R = _reader(api)
+
+    st, p = api.route('GET', '/api/jobs', {}, None, SUP)
+    check('пустой список задач + stats.total 0',
+          st == 200 and p['data']['items'] == [] and p['data']['stats']['total'] == 0)
+    st, p = api.route('POST', '/api/jobs', {},
+                      {'kind': 'reindex', 'payload': {'db': 'IBIS'}, 'priority': 5}, SUP)
+    check('enqueue -> pending, kind reindex',
+          st == 200 and p['data']['job']['status'] == 'pending' and p['data']['job']['kind'] == 'reindex')
+    jid = p['data']['job']['id']
+    st, p = api.route('POST', '/api/jobs', {}, {'kind': '', 'payload': {}}, SUP)
+    check('enqueue без kind -> 400', st == 400)
+    st, p = api.route('GET', '/api/jobs', {'status': ['pending']}, None, SUP)
+    check('список pending -> 1 + by_status.pending',
+          st == 200 and len(p['data']['items']) == 1 and p['data']['stats']['by_status'].get('pending') == 1)
+    st, p = api.route('POST', '/api/jobs/claim', {}, {}, SUP)
+    check('claim -> running тот же id',
+          st == 200 and p['data']['job']['id'] == jid and p['data']['job']['status'] == 'running')
+    st, p = api.route('POST', '/api/jobs/complete', {}, {'id': jid, 'result': {'ok': True}}, SUP)
+    check('complete -> done', st == 200 and p['data']['job']['status'] == 'done')
+    st, p = api.route('POST', '/api/jobs/complete', {}, {'id': 99999}, SUP)
+    check('complete неизвестного -> 404', st == 404)
+    # гварды: после re-gate задачи — концерн оператора платформы (admin.db)
+    st, p = api.route('GET', '/api/jobs', {}, None, S)
+    check('staff-cat (не super-admin) к задачам -> 403', st == 403)
+    st, p = api.route('GET', '/api/jobs', {}, None, R)
+    check('reader к задачам -> 403', st == 403)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1511,6 +1546,7 @@ def main():
     ocr_pipeline_route_checks()
     webhooks_route_checks()
     authority_route_checks()
+    jobs_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 

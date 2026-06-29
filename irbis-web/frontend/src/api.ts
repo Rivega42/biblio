@@ -398,6 +398,8 @@ export interface DeploymentResolved {
   required_connections: string[]; default_modules: string[]; configured: boolean;
 }
 // Внешние подключения (#335) — секреты приходят маскированными ('***').
+export interface JobItem { id: number; kind: string; status: string; priority?: number; created_at?: string; started_at?: string; finished_at?: string; error?: string; payload?: Record<string, unknown>; result?: Record<string, unknown> }
+export interface JobStats { total: number; by_status: Record<string, number> }
 export interface MatrixCap { title: string; kind: string; unit: string; limit: number | null; enforcement: string; addon_units: number }
 export interface ResolvedMatrix { tariff: string | null; configured: boolean; sections: Record<string, { title?: string; included: boolean; enforcement: string }>; caps: Record<string, MatrixCap> }
 export type ResourceUsage = Record<string, number>;
@@ -717,6 +719,12 @@ export const api = {
     jpost<{ removed: boolean }>("/api/admin/webhooks/remove", b),
   adminWebhookPreview: (b: { tenant: string; event: string; data?: Record<string, unknown> }) =>
     jpost<{ targets: WebhookTarget[] }>("/api/admin/webhooks/preview", b),
+  // --- Фоновые задачи (#240) — оператор платформы (admin.db) ---
+  adminJobs: (status?: string) =>
+    jget<{ items: JobItem[]; stats: JobStats }>("/api/jobs" + (status ? "?" + qs({ status }) : "")),
+  adminJobClaim: () => jpost<{ job: JobItem | null }>("/api/jobs/claim", {}),
+  // Обработать следующую OCR-задачу (распознать -> проиндексировать).
+  adminOcrProcess: () => jpost<{ job: JobItem | null; indexed: number }>("/api/ocr/process", {}),
   // Онбординг «завершение визарда»: режим + брендинг одним вызовом.
   adminOnboard: (b: { tenant: string; mode: string; topology: string; name?: string; fullName?: string }) =>
     jpost<{ tenant: string; deployment?: DeploymentResolved; config?: LibraryConfig }>("/api/admin/onboard", b),
