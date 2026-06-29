@@ -1618,6 +1618,28 @@ def fulltext_route_checks():
     check('staff-cat reindex-ocr (не super-admin) -> 403', st == 403)
 
 
+def demo_own_store_checks():
+    print('-- ДЕМО own-store: поиск + деталь записи из каталога без живого ИРБИС (#374)')
+    os.environ['OWN_SEARCH_DBS'] = 'IBIS'
+    try:
+        api = _api()   # _api() ставит api.irbis = None — имитируем отсутствие ИРБИС
+        G = _sess(api, 'guest', 'g', [{'function': 'search', 'db': '*', 'level': 'read'},
+                                      {'function': 'record.read', 'db': '*', 'level': 'read'}])
+        api.catalog.save('IBIS', _rec('Чайка', **{'700': [{'a': 'Чехов'}]}))
+        st, p = api.route('GET', '/api/search', {'db': ['IBIS'], 'q': ['Чайка']}, None, G)
+        check('поиск обслужен из own-store (source=own), ИРБИС не нужен',
+              st == 200 and p['data'].get('source') == 'own' and p['data']['total'] >= 1)
+        mfn = p['data']['items'][0]['mfn']
+        st, p = api.route('GET', '/api/record/IBIS/%d' % mfn, {}, None, G)
+        f200 = [f['value'] for f in p['data']['fields'] if f['tag'] == '200']
+        check('деталь записи из own-store-фолбэка (поле 200 присутствует)',
+              st == 200 and any('Чайка' in v for v in f200) and len(p['data']['fields']) >= 1)
+        st, p = api.route('GET', '/api/record/IBIS/99999', {}, None, G)
+        check('несуществующая запись own-store -> 404', st == 404)
+    finally:
+        os.environ.pop('OWN_SEARCH_DBS', None)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1647,6 +1669,7 @@ def main():
     jobs_route_checks()
     analytics_route_checks()
     fulltext_route_checks()
+    demo_own_store_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
