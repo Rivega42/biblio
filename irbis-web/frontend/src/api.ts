@@ -398,6 +398,9 @@ export interface DeploymentResolved {
   required_connections: string[]; default_modules: string[]; configured: boolean;
 }
 // Внешние подключения (#335) — секреты приходят маскированными ('***').
+export interface MatrixCap { title: string; kind: string; unit: string; limit: number | null; enforcement: string; addon_units: number }
+export interface ResolvedMatrix { tariff: string | null; configured: boolean; sections: Record<string, { title?: string; included: boolean; enforcement: string }>; caps: Record<string, MatrixCap> }
+export type ResourceUsage = Record<string, number>;
 export interface WebhookSub { id: number; tenant: string; event: string; url: string; secret: string; active: boolean | number; created_at?: string }
 export interface WebhookTarget { subscription_id: number; url: string; event: string; payload: { event: string; ts: string; data: Record<string, unknown> }; signature: string }
 export interface ConnectionItem { kind: string; enabled: boolean | number; config: Record<string, string | number> }
@@ -700,6 +703,9 @@ export const api = {
     jpost<{ connection: ConnectionItem }>("/api/admin/connections", b),
   adminConnectionRemove: (b: { tenant: string; kind: string }) =>
     jpost<{ removed: boolean }>("/api/admin/connections/remove", b),
+  // Эффективная матрица тенанта + текущее потребление (usage vs cap, #331).
+  adminAccessMatrix: (tenant: string) =>
+    jget<{ tenant: string; matrix: ResolvedMatrix | null; usage: ResourceUsage }>("/api/admin/access-matrix?" + qs({ tenant })),
   // --- Исходящие вебхуки (#356) — оператор платформы (admin.db) ---
   adminWebhooks: (tenant: string) =>
     jget<{ items: WebhookSub[]; events: string[] }>("/api/admin/webhooks?" + qs({ tenant })),
