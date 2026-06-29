@@ -194,6 +194,13 @@ export interface AuditEntry {
   ts?: string; actor?: string; function?: string; fn?: string;
   result?: string; ok?: boolean; detail?: string; ip?: string;
 }
+// Запросный аудит-журнал (#318) — поля own-store AuditStore.
+export interface AuditTrailEntry {
+  id?: number; ts?: string; actor?: string; action?: string;
+  object_type?: string; object_id?: string; db?: string; status?: string;
+  note?: string; before?: Record<string, unknown>; after?: Record<string, unknown>;
+}
+export interface AuditSummary { total: number; by_action: Record<string, number>; by_actor: Record<string, number>; by_status: Record<string, number> }
 // База данных контура (для справочника администратора): код, имя, публичность.
 export interface AdminDatabase { code: string; name: string; public: boolean; count?: number; }
 
@@ -677,6 +684,12 @@ export const api = {
   adminRoles: () => jget<{ items: AdminRole[] }>("/api/admin/roles"),
   // Журнал аудита (последние limit записей).
   adminAudit: (limit = 50) => jget<{ items: AuditEntry[] }>("/api/admin/audit?" + qs({ limit })),
+  // Запросный аудит-журнал + сводка (#318): фильтры actor/action/status, лимит.
+  adminAuditTrail: (p: { actor?: string; action?: string; status?: string; limit?: number }) =>
+    jget<{ items: AuditTrailEntry[]; summary: AuditSummary }>("/api/admin/audit-trail?" + qs({
+      ...(p.actor ? { actor: p.actor } : {}), ...(p.action ? { action: p.action } : {}),
+      ...(p.status ? { status: p.status } : {}), limit: p.limit ?? 100,
+    })),
   // Список баз данных контура (код / имя / публичность).
   adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
   // --- Матрица доступов / тарифы (#331) -----------------------------------

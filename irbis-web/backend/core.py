@@ -4207,14 +4207,14 @@ class Api:
     # ---- Администратор: редактируемые роли RBAC (PR #318) ---------------- #
     def rbac_roles(self, session, query):
         """GET /api/admin/rbac/roles — список ролей (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._guard(session, 'admin.users', '*', 'admin')
         if self.roles is None:
             return 200, ok({'items': []})
         return 200, ok({'items': self.roles.list_roles()})
 
     def rbac_create_role(self, session, body):
         """POST /api/admin/rbac/role — создать роль (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._guard(session, 'admin.users', '*', 'admin')
         if self.roles is None:
             return 200, ok({'role': None})
         name = (body.get('name') or '').strip()
@@ -4229,7 +4229,7 @@ class Api:
 
     def rbac_add_grant(self, session, body):
         """POST /api/admin/rbac/grant — добавить грант роли (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._guard(session, 'admin.users', '*', 'admin')
         if self.roles is None:
             return 200, ok({'grant': None})
         role = body.get('role')
@@ -4245,7 +4245,7 @@ class Api:
 
     def rbac_assign(self, session, body):
         """POST /api/admin/rbac/assign — назначить роль учётке (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._guard(session, 'admin.users', '*', 'admin')
         if self.roles is None:
             return 200, ok({'assigned': False})
         account = (body.get('account') or '').strip()
@@ -4260,7 +4260,7 @@ class Api:
 
     def rbac_effective(self, session, query):
         """GET /api/admin/rbac/effective?account= — эффективные гранты (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._guard(session, 'admin.users', '*', 'admin')
         if self.roles is None:
             return 200, ok({'grants': []})
         account = (query.get('account', [''])[0] or '').strip()
@@ -4271,7 +4271,7 @@ class Api:
     # ---- Администратор: аудит-трейл (PR #318) ---------------------------- #
     def audit_trail_query(self, session, query):
         """GET /api/admin/audit-trail — запросный аудит-журнал + сводка (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._guard(session, 'admin.users', '*', 'admin')
         if self.audit_trail is None:
             return 200, ok({'items': [], 'summary': {}})
         kw = {}
@@ -4289,7 +4289,7 @@ class Api:
     # ---- Администратор: конфиг-параметры (PR #318) ----------------------- #
     def config_list(self, session, query):
         """GET /api/admin/config — параметры тенанта (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._guard(session, 'admin.users', '*', 'admin')
         if self.config is None:
             return 200, ok({'items': []})
         tenant = (query.get('tenant', ['default'])[0])
@@ -4298,7 +4298,7 @@ class Api:
 
     def config_set(self, session, body):
         """POST /api/admin/config — задать параметр (admin)."""
-        self._guard(session, 'admin', '*', 'admin')
+        self._guard(session, 'admin.users', '*', 'admin')
         if self.config is None:
             return 200, ok({'param': None})
         key = (body.get('key') or '').strip()
