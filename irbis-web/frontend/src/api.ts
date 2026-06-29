@@ -734,6 +734,8 @@ export const api = {
     jpost<{ targets: WebhookTarget[] }>("/api/admin/webhooks/preview", b),
   // Активный набор функциональных модулей тенанта по режиму развёртывания (#335).
   myModules: () => jget<{ configured: boolean; mode: string | null; modules: string[] }>("/api/me/modules"),
+  // Сводка ключевых метрик библиотеки для дашборда штата.
+  analyticsOverview: () => jget<{ tenant: string; metrics: Record<string, number> }>("/api/analytics/overview"),
   // --- Фоновые задачи (#240) — оператор платформы (admin.db) ---
   adminJobs: (status?: string) =>
     jget<{ items: JobItem[]; stats: JobStats }>("/api/jobs" + (status ? "?" + qs({ status }) : "")),

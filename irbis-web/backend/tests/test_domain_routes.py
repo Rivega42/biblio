@@ -1537,6 +1537,25 @@ def jobs_route_checks():
     check('reader к задачам -> 403', st == 403)
 
 
+def analytics_route_checks():
+    print('-- Аналитика: сводка ключевых метрик библиотеки через route() (штат)')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    R = _reader(api)
+    api.catalog.save('IBIS', _rec('Книга для метрик'))
+    api.catalog.save('IBIS', _rec('Ещё книга'))
+
+    st, p = api.route('GET', '/api/analytics/overview', {}, None, S)
+    m = p['data']['metrics']
+    check('overview -> 200 + ключи метрик',
+          st == 200 and isinstance(m, dict)
+          and {'records', 'readers', 'ocr_pages', 'exhibits', 'authority', 'loans_archived'} <= set(m))
+    check('overview: records отражает каталог (>=2)', m['records'] >= 2)
+    check('overview: staff_seats из сида (2)', m['staff_seats'] == 2)
+    st, p = api.route('GET', '/api/analytics/overview', {}, None, R)
+    check('reader к аналитике -> 403', st == 403)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1564,6 +1583,7 @@ def main():
     webhooks_route_checks()
     authority_route_checks()
     jobs_route_checks()
+    analytics_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
