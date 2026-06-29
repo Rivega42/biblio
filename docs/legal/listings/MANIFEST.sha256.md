@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-29**
-- Версия кода (git): **`869387d`**
-- Файлов: **296** · строк: **88592** · условных страниц: **1611**
-- **SHA-256 всего листинга:** `7d1c62e2751fbc987a2a456051e79cdb50ed60ec971d2a5018839e68d3c5f34b`
+- Версия кода (git): **`9b8c335`**
+- Файлов: **296** · строк: **88714** · условных страниц: **1613**
+- **SHA-256 всего листинга:** `20119ce878d196a76502638edfd49c4fbbe42947187003bb47814132e6cd8e2e`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -265,10 +265,10 @@
 | `irbis-web/frontend/src/CatalogingDesk.tsx` | 508 | `627bd1dcc2fc82310ed018759771575a619dd07529c65c351bdc3e87087e6971` |
 | `irbis-web/frontend/src/CirculationDesk.tsx` | 423 | `47330dfbaca24b73685d42522d5fa7ff5d068a51e35b63d5d08af4d5f8692fb4` |
 | `irbis-web/frontend/src/MigrationWizard.tsx` | 605 | `1a1333e120567d4b279f188d7310f6ff26514198b8bd59383867c53a726a23a1` |
-| `irbis-web/frontend/src/PlatformDesk.tsx` | 877 | `1386443b248795d4faff183d6849c71b113f03fef3e09b1a4c9f5f3429ec1bd8` |
+| `irbis-web/frontend/src/PlatformDesk.tsx` | 986 | `21d764d488aaa7d1abb969061a1d4c27f0d4cdb1c85b413ee85f192fdcb64e40` |
 | `irbis-web/frontend/src/Staff.tsx` | 1230 | `08f4bfbbac7ab8cafd780bc3d3169992bc2d7301cd0ec4d3a2405000d391e916` |
 | `irbis-web/frontend/src/UtilitiesDesk.tsx` | 403 | `0b1afa74f032a638ed03f6e59d9854379b1ef97f917f975fa5e84ae0a7b65fb9` |
-| `irbis-web/frontend/src/api.ts` | 801 | `64fd85ea50834ab896b80bef66ff1605ee676f3862e2ebf6d826e8bcc0228755` |
+| `irbis-web/frontend/src/api.ts` | 814 | `ff97e9057bd9804b39bb7b0a2581515e887648a065ac453ab2e6b72df3828fca` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 188 | `b364926e1a4282a688eff2a9e07101820e16bfad8f68e12b7a137aad82d2685f` |
 | `irbis-web/frontend/src/landing/DemoRequestForm.tsx` | 216 | `c6e175d56b6b7d09346db0b72f38ec47cf8389396e1be97524d5dba17cd505e3` |
