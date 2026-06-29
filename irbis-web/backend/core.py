@@ -3865,6 +3865,22 @@ class Api:
             return 503, err('unavailable', 'authority store off')
         return 200, ok({'removed': self.authority_control.store.remove(int(body.get('id') or 0))})
 
+    def my_modules(self, session):
+        """GET /api/me/modules — активный набор функциональных модулей тенанта (#335).
+
+        Резолвит режим развёртывания тенанта в набор модулей: ``overlay_jirbis``
+        прячет тяжёлый бэк-офис (каталогизация/комплектование живут в живом ИРБИС),
+        ``replace_*``/``full`` включают больше. Доступен любому сотруднику — фронт
+        прячет неактуальные десктопы. Режим не назначен/стор не собран ->
+        ``configured:false`` (фронт показывает всё, ничего не ограничивая)."""
+        self._require_staff(session)
+        if self.deployment is None:
+            return 200, ok({'configured': False, 'mode': None, 'modules': []})
+        r = self.deployment.resolve(session.get('tenant', DEFAULT_TENANT))
+        return 200, ok({'configured': bool(r.get('configured')),
+                        'mode': r.get('mode'),
+                        'modules': r.get('default_modules', [])})
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -6464,6 +6480,9 @@ class Api:
                 return self.authority_merge(session, body or {})
             if method == 'POST' and path == '/api/authority/remove':
                 return self.authority_remove(session, body or {})
+            # ---- Активные модули тенанта по режиму развёртывания (#335) ----
+            if method == 'GET' and path == '/api/me/modules':
+                return self.my_modules(session)
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})

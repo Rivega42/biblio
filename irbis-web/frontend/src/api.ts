@@ -732,6 +732,8 @@ export const api = {
     jpost<{ removed: boolean }>("/api/admin/webhooks/remove", b),
   adminWebhookPreview: (b: { tenant: string; event: string; data?: Record<string, unknown> }) =>
     jpost<{ targets: WebhookTarget[] }>("/api/admin/webhooks/preview", b),
+  // Активный набор функциональных модулей тенанта по режиму развёртывания (#335).
+  myModules: () => jget<{ configured: boolean; mode: string | null; modules: string[] }>("/api/me/modules"),
   // --- Фоновые задачи (#240) — оператор платформы (admin.db) ---
   adminJobs: (status?: string) =>
     jget<{ items: JobItem[]; stats: JobStats }>("/api/jobs" + (status ? "?" + qs({ status }) : "")),

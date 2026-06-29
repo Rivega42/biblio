@@ -23,17 +23,21 @@ type ToastFn = (t: { variant: ToastVariant; title: string; message?: string }) =
 // Функциональные модули продукта «Рабочее пространство сотрудника».
 // Собираются ПО ГРАНТАМ учётки (а не «по АРМам»): видны только разрешённые.
 type StaffRoute = "cataloging" | "cattools" | "circulation" | "cells" | "acquisition" | "provision" | "admin" | "utilities" | "platform" | "migration" | "benchmark" | "stub";
-type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: StaffRoute };
+// module — ключ функционального модуля режима развёртывания (#335). Если режим
+// тенанта не включает модуль (overlay_jirbis: каталогизация/комплектование живут
+// в живом ИРБИС) — плитка скрывается. Операторские инструменты (platform/migration/
+// benchmark) module не имеют и не прячутся режимом.
+type DomainTile = { id: string; label: string; icon: IconName; grant: string; desc: string; route: StaffRoute; module?: string };
 const DOMAINS: DomainTile[] = [
-  { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей RUSMARC", route: "cataloging" as const },
-  { id: "acq", label: "Комплектование", icon: "archive", grant: "acq.receipt", desc: "Заказ, поступление, КСУ, списание", route: "acquisition" as const },
-  { id: "circ", label: "Книговыдача", icon: "package", grant: "circ.issue", desc: "Выдача, возврат, продление, штрафы, формуляр читателя", route: "circulation" as const },
-  { id: "cells", label: "Ячеистое хранение", icon: "grid", grant: "record.read", desc: "Карта ячеек: занятость, адрес, RFID (наша фишка)", route: "cells" as const },
-  { id: "provision", label: "Книгообеспеченность", icon: "bar-chart", grant: "record.read", desc: "Обеспеченность дисциплин учебной литературой", route: "provision" as const },
-  { id: "inv", label: "Инвентаризация", icon: "scan-line", grant: "record.read", desc: "Сверка фонда с ТСД", route: "stub" as const },
-  { id: "cattools", label: "Каталог · инструменты", icon: "book", grant: "record.read", desc: "MARC/MARCXML обмен, дедуп, печать ГОСТ, словари, версии", route: "cattools" as const },
-  { id: "utilities", label: "Утилиты", icon: "sliders", grant: "record.read", desc: "Статистика, экспорт, поиск дублей, пакетная валидация", route: "utilities" as const },
-  { id: "admin", label: "Администрирование", icon: "sliders", grant: "admin.users", desc: "Учётки, гранты, роли, аудит", route: "admin" as const },
+  { id: "cataloging", label: "Каталогизация", icon: "book", grant: "record.write", desc: "Создание и правка библиографических записей RUSMARC", route: "cataloging" as const, module: "cataloging" },
+  { id: "acq", label: "Комплектование", icon: "archive", grant: "acq.receipt", desc: "Заказ, поступление, КСУ, списание", route: "acquisition" as const, module: "acquisition" },
+  { id: "circ", label: "Книговыдача", icon: "package", grant: "circ.issue", desc: "Выдача, возврат, продление, штрафы, формуляр читателя", route: "circulation" as const, module: "circulation" },
+  { id: "cells", label: "Ячеистое хранение", icon: "grid", grant: "record.read", desc: "Карта ячеек: занятость, адрес, RFID (наша фишка)", route: "cells" as const, module: "circulation" },
+  { id: "provision", label: "Книгообеспеченность", icon: "bar-chart", grant: "record.read", desc: "Обеспеченность дисциплин учебной литературой", route: "provision" as const, module: "bookprovision" },
+  { id: "inv", label: "Инвентаризация", icon: "scan-line", grant: "record.read", desc: "Сверка фонда с ТСД", route: "stub" as const, module: "circulation" },
+  { id: "cattools", label: "Каталог · инструменты", icon: "book", grant: "record.read", desc: "MARC/MARCXML обмен, дедуп, печать ГОСТ, словари, версии", route: "cattools" as const, module: "cataloging" },
+  { id: "utilities", label: "Утилиты", icon: "sliders", grant: "record.read", desc: "Статистика, экспорт, поиск дублей, пакетная валидация", route: "utilities" as const, module: "analytics" },
+  { id: "admin", label: "Администрирование", icon: "sliders", grant: "admin.users", desc: "Учётки, гранты, роли, аудит", route: "admin" as const, module: "admin" },
   { id: "platform", label: "Платформа", icon: "layers", grant: "admin.db", desc: "Арендаторы, тариф, лимиты, функциональные модули", route: "platform" as const },
   { id: "migration", label: "Миграция", icon: "download", grant: "admin.db", desc: "Онбординг-мастер переноса данных из ИРБИС64 в арендатора", route: "migration" as const },
   { id: "benchmark", label: "Сравнение", icon: "trending-up", grant: "admin.db", desc: "ИРБИС ↔ Biblio: метрики скорости поиска, выдачи и миграции", route: "benchmark" as const },
@@ -281,7 +285,23 @@ function routeId(route: any): string {
 
 export function StaffArea({ staff, route, setRoute, toast }: { staff: StaffSession; route: any; setRoute: (r: any) => void; toast: ToastFn }) {
   const [density, setDensity] = React.useState<"compact" | "comfortable">("compact");
-  const tiles = DOMAINS.filter((d) => hasGrant(staff.grants, d.grant));
+  // Активные модули по режиму развёртывания (#335). null = ещё не загружено или
+  // режим не назначен -> ничего не ограничиваем (показываем всё по грантам).
+  const [activeModules, setActiveModules] = React.useState<string[] | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await api.myModules();
+      if (!alive) return;
+      if (r.json?.ok && r.json.data?.configured) setActiveModules(r.json.data.modules || []);
+      else setActiveModules(null);
+    })();
+    return () => { alive = false; };
+  }, []);
+  // Гейт грантом + (если режим назначен) активным модулем. Плитки без module
+  // (операторские) режимом не прячутся.
+  const tiles = DOMAINS.filter((d) => hasGrant(staff.grants, d.grant)
+    && (activeModules === null || !d.module || activeModules.includes(d.module)));
   const current = routeId(route);
   const stubTitle = route && route.name === "stub" ? route.title : "";
   const open = (d: typeof DOMAINS[number]) => setRoute(d.route === "stub" ? { name: "stub", title: d.label } : d.route);
