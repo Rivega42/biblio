@@ -1644,6 +1644,14 @@ class Api:
 
     def _brief_item(self, db, mfn):
         """Structured result item (title/author/year/docType/availability) for cards."""
+        # ДЕМО/own-store (#374): для баз OWN_SEARCH_DBS бриф строим из own-store (без
+        # ИРБИС) — чтобы заглавия в бронях/формуляре/полках резолвились в демо, а не
+        # были «MFN N». Прод (пустой флаг) — прежний путь через ИРБИС.
+        if db.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+            own = self._own_record(db, mfn)
+            if own is not None:
+                return self._brief_from_record(mfn, own)
+            return {'mfn': mfn, 'title': 'MFN %d' % mfn, 'availability': 'unknown'}
         try:
             rec = self.irbis.read_record(db, mfn)
         except IrbisError:
