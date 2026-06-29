@@ -871,6 +871,13 @@ class Api:
                     'INFOROST_DB', os.path.join(here, 'inforost.db'))))
         except Exception:
             self.inforost = None
+        try:
+            from access import webhooks as _webhooks
+            self.webhooks = _webhooks.WebhookService(
+                _webhooks.WebhookStore(os.environ.get(
+                    'WEBHOOKS_DB', os.path.join(here, 'webhooks.db'))))
+        except Exception:
+            self.webhooks = None
         # Бэклог own-store модулей (#316/#317/#318), разведённый в роуты ниже:
         # поставщики/счета + подписка-периодика (Комплектование), версии записи +
         # редактор словарей .mnu/.tre (Каталогизатор), роли RBAC + аудит-трейл +
@@ -3684,6 +3691,73 @@ class Api:
                 skipped += 1
         return 200, ok({'created': created, 'skipped': skipped, 'mfns': mfns})
 
+    # ---- Исходящие вебхуки (#356, эпик #240) ----------------------------- #
+    # Реестр подписок per-tenant на события + подписанный payload (HMAC) +
+    # журнал доставки. Секреты наружу маскируются. Реальная сетевая отправка —
+    # на слое applier; здесь — реестр + prepare/preview + журнал. Super-admin.
+    def webhooks_list(self, session, query):
+        """GET /api/admin/webhooks?tenant= — подписки тенанта (secret маскирован, super-admin)."""
+        self._require_super_admin(session)
+        if self.webhooks is None:
+            return 200, ok({'items': [], 'events': []})
+        from access import webhooks as _wh
+        tenant = (query.get('tenant') or [session.get("tenant", DEFAULT_TENANT)])[0]
+        return 200, ok({'items': self.webhooks.list(tenant), 'events': list(_wh.EVENTS)})
+
+    def webhooks_subscribe(self, session, body):
+        """POST /api/admin/webhooks — подписка на событие (super-admin).
+
+        ``tenant`` + ``event`` (из EVENTS) + ``url`` + опц. ``secret``. Невалидное
+        событие/пустой url -> 400. В ответе secret маскирован."""
+        self._require_super_admin(session)
+        if self.webhooks is None:
+            return 503, err('unavailable', 'webhooks store off')
+        tenant = body.get("tenant") or session.get("tenant", DEFAULT_TENANT)
+        try:
+            sub = self.webhooks.subscribe(tenant, body.get('event') or '',
+                                          body.get('url') or '', body.get('secret') or '')
+        except ValueError as e:
+            return 400, err('bad_request', str(e))
+        return 200, ok(sub)
+
+    def webhooks_set_active(self, session, body):
+        """POST /api/admin/webhooks/active — вкл/выкл подписку (super-admin)."""
+        self._require_super_admin(session)
+        if self.webhooks is None:
+            return 503, err('unavailable', 'webhooks store off')
+        sub = self.webhooks.set_active(int(body.get('id') or 0), bool(body.get('active')))
+        if sub is None:
+            return 404, err('not_found', 'subscription not found')
+        return 200, ok(sub)
+
+    def webhooks_remove(self, session, body):
+        """POST /api/admin/webhooks/remove — удалить подписку (super-admin)."""
+        self._require_super_admin(session)
+        if self.webhooks is None:
+            return 503, err('unavailable', 'webhooks store off')
+        return 200, ok({'removed': self.webhooks.unsubscribe(int(body.get('id') or 0))})
+
+    def webhooks_preview(self, session, body):
+        """POST /api/admin/webhooks/preview — что будет отправлено по событию (super-admin).
+
+        ``tenant`` + ``event`` + опц. ``data``. Возвращает список целей с payload и
+        подписью (по активным подпискам) — без реальной отправки."""
+        self._require_super_admin(session)
+        if self.webhooks is None:
+            return 200, ok({'targets': []})
+        tenant = body.get("tenant") or session.get("tenant", DEFAULT_TENANT)
+        targets = self.webhooks.prepare(tenant, body.get('event') or '', body.get('data') or {})
+        return 200, ok({'targets': targets})
+
+    def webhooks_deliveries(self, session, query):
+        """GET /api/admin/webhooks/deliveries?subscriptionId= — журнал доставки (super-admin)."""
+        self._require_super_admin(session)
+        if self.webhooks is None:
+            return 200, ok({'items': []})
+        sid = query.get('subscriptionId')
+        sid = int(sid[0]) if sid and sid[0] else None
+        return 200, ok({'items': self.webhooks.store.deliveries(sid)})
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -6223,6 +6297,19 @@ class Api:
                 return self.inforost_import_exhibits(session, body or {})
             if method == 'POST' and path == '/api/admin/inforost/import-records':
                 return self.inforost_import_records(session, body or {})
+            # ---- Исходящие вебхуки (#356) ----
+            if method == 'GET' and path == '/api/admin/webhooks':
+                return self.webhooks_list(session, query)
+            if method == 'POST' and path == '/api/admin/webhooks':
+                return self.webhooks_subscribe(session, body or {})
+            if method == 'POST' and path == '/api/admin/webhooks/active':
+                return self.webhooks_set_active(session, body or {})
+            if method == 'POST' and path == '/api/admin/webhooks/remove':
+                return self.webhooks_remove(session, body or {})
+            if method == 'POST' and path == '/api/admin/webhooks/preview':
+                return self.webhooks_preview(session, body or {})
+            if method == 'GET' and path == '/api/admin/webhooks/deliveries':
+                return self.webhooks_deliveries(session, query)
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})
