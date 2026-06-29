@@ -19,6 +19,12 @@ export interface DocPage {
   url?: string;
   // Тип содержимого: image — рисуем во вьюере с зумом; file — внешний файл/ссылка.
   kind?: "image" | "file";
+  // Гейтинг прав (#369 Ф2): лимит доступных страниц (^F из rights). undefined ⇒
+  // без лимита. Для PDF пробрасывается в PdfViewer (показ N из M + баннер).
+  maxPages?: number;
+  // false ⇒ уровень доступа «только просмотр»: прячем внешние ссылки-скачивание,
+  // оставляя лишь встроенный постраничный просмотр. undefined/true ⇒ скачивание ок.
+  downloadable?: boolean;
 }
 
 // Эвристика: похоже ли на изображение по расширению URL.
@@ -87,6 +93,7 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
   const page = pages[idx] || { name: "" };
   const isImage = page.kind === "image" || (page.kind !== "file" && looksLikeImage(page.url));
   const isPdf = !isImage && looksLikePdf(page.url);
+  const canDownload = page.downloadable !== false;   // view-only ⇒ скрыть внешние ссылки
 
   const go = React.useCallback((next: number) => {
     setIdx((cur) => {
@@ -138,7 +145,7 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
             <Icon name="book-open" size={15} /> Постранично
           </button>
         )}
-        {page.url && (
+        {page.url && canDownload && (
           <a className="irb-doc__btn" href={page.url} target="_blank" rel="noopener noreferrer" title="Открыть в новой вкладке">
             <Icon name="external-link" size={15} /> Открыть
           </a>
@@ -181,7 +188,7 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
                   <Icon name="book-open" size={15} /> Открыть постранично
                 </button>
               )}
-              {page.url && (
+              {page.url && canDownload && (
                 <a className="irb-doc__btn" href={page.url} target="_blank" rel="noopener noreferrer">
                   <Icon name="external-link" size={15} /> Открыть файл
                 </a>
@@ -211,7 +218,7 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
       )}
 
       {pdfOpen && page.url && (
-        <PdfViewer url={page.url} title={page.name || title} onClose={() => setPdfOpen(false)} />
+        <PdfViewer url={page.url} title={page.name || title} maxPages={page.maxPages} onClose={() => setPdfOpen(false)} />
       )}
     </div>
   );
