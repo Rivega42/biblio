@@ -9,6 +9,7 @@
 // +/− зумируют, Esc закрывает.
 import React from "react";
 import { Icon } from "../../components/icon/Icon.jsx";
+import { PdfViewer } from "./PdfViewer";
 
 export interface DocPage {
   // Подпись страницы/файла (имя из записи).
@@ -24,6 +25,12 @@ export interface DocPage {
 function looksLikeImage(url?: string): boolean {
   if (!url) return false;
   return /\.(png|jpe?g|gif|webp|bmp|tiff?|svg)(\?|#|$)/i.test(url);
+}
+
+// Эвристика: PDF по расширению URL (для встроенного постраничного pdf.js-вьюера).
+function looksLikePdf(url?: string): boolean {
+  if (!url) return false;
+  return /\.pdf(\?|#|$)/i.test(url);
 }
 
 const CSS = `
@@ -74,10 +81,12 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
   const [idx, setIdx] = React.useState(Math.min(Math.max(0, startIndex), Math.max(0, pages.length - 1)));
   const [zoom, setZoom] = React.useState(1);
   const [imgError, setImgError] = React.useState(false);
+  const [pdfOpen, setPdfOpen] = React.useState(false);
 
   const total = pages.length;
   const page = pages[idx] || { name: "" };
   const isImage = page.kind === "image" || (page.kind !== "file" && looksLikeImage(page.url));
+  const isPdf = !isImage && looksLikePdf(page.url);
 
   const go = React.useCallback((next: number) => {
     setIdx((cur) => {
@@ -124,6 +133,11 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
             </button>
           </>
         )}
+        {isPdf && page.url && (
+          <button type="button" className="irb-doc__btn" onClick={() => setPdfOpen(true)} title="Листать PDF постранично">
+            <Icon name="book-open" size={15} /> Постранично
+          </button>
+        )}
         {page.url && (
           <a className="irb-doc__btn" href={page.url} target="_blank" rel="noopener noreferrer" title="Открыть в новой вкладке">
             <Icon name="external-link" size={15} /> Открыть
@@ -157,13 +171,22 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
             <div style={{ fontSize: "var(--text-sm)", color: "rgba(255,255,255,.78)", lineHeight: 1.5 }}>
               {imgError
                 ? "Не удалось загрузить изображение этой страницы."
-                : "Предпросмотр этого файла недоступен во встроенном просмотрщике."}
+                : isPdf
+                  ? "PDF можно листать постранично прямо здесь."
+                  : "Предпросмотр этого файла недоступен во встроенном просмотрщике."}
             </div>
-            {page.url && (
-              <a className="irb-doc__btn" href={page.url} target="_blank" rel="noopener noreferrer">
-                <Icon name="external-link" size={15} /> Открыть файл
-              </a>
-            )}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+              {isPdf && page.url && (
+                <button type="button" className="irb-doc__btn" onClick={() => setPdfOpen(true)}>
+                  <Icon name="book-open" size={15} /> Открыть постранично
+                </button>
+              )}
+              {page.url && (
+                <a className="irb-doc__btn" href={page.url} target="_blank" rel="noopener noreferrer">
+                  <Icon name="external-link" size={15} /> Открыть файл
+                </a>
+              )}
+            </div>
           </div>
         )}
 
@@ -185,6 +208,10 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
             </button>
           ))}
         </div>
+      )}
+
+      {pdfOpen && page.url && (
+        <PdfViewer url={page.url} title={page.name || title} onClose={() => setPdfOpen(false)} />
       )}
     </div>
   );
