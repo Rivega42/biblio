@@ -59,6 +59,7 @@ from access.connections import ConnectionService, ConnectionStore
 from access.inforost import InforostService, InforostImportStore
 from access.webhooks import WebhookService, WebhookStore
 from access.authority_control import AuthorityService as AuthCtlService, AuthorityStore as AuthCtlStore
+from access.search_index import SearchIndex, SearchIndexStore
 from access import circulation as _circ
 
 PASS = [0]
@@ -149,6 +150,7 @@ def _api():
     api.inforost = InforostService(InforostImportStore(':memory:'))
     api.webhooks = WebhookService(WebhookStore(':memory:'))
     api.authority_control = AuthCtlService(AuthCtlStore(':memory:'))
+    api.search_index = SearchIndex(SearchIndexStore(':memory:'))
     return api
 
 
@@ -1558,6 +1560,57 @@ def analytics_route_checks():
     check('reader к аналитике -> 403', st == 403)
 
 
+def fulltext_route_checks():
+    print('-- Морфо-полнотекст: индекс/поиск(BM25)/похожие/OCR-мост через route() (#368)')
+    api = _api()
+    S = _sess(api, 'staff', 'cat', STAFF_G)
+    SUP = _sess(api, 'staff', 'op', [{'function': 'admin.db', 'db': '*', 'level': 'admin'}])
+    R = _reader(api)
+
+    # индексируем СЛОВОФОРМУ «книги», ищем «книга» -> морфология находит
+    st, p = api.route('POST', '/api/fulltext/index', {},
+                      {'ref': 'r1', 'title': 'Старые книги', 'text': 'редкие книги о театре', 'db': 'IBIS', 'mfn': 1}, S)
+    check('index r1 -> 200', st == 200 and p['data']['indexed']['ref'] == 'r1')
+    st, p = api.route('POST', '/api/fulltext/index', {},
+                      {'ref': 'r2', 'title': 'Театр', 'text': 'история театра и сцены', 'db': 'IBIS', 'mfn': 2}, S)
+    check('index r2 -> 200', st == 200)
+    st, p = api.route('GET', '/api/fulltext/search', {'q': ['книга']}, None, R)
+    refs = [h['ref'] for h in p['data']['hits']]
+    check('морфология: поиск «книга» находит док со словоформой «книги» (r1)',
+          st == 200 and 'r1' in refs)
+    # ранжирование: «театр» есть в обоих, но запрос ранжирует по BM25 (хиты непусты, score убыв.)
+    st, p = api.route('GET', '/api/fulltext/search', {'q': ['театр']}, None, R)
+    hits = p['data']['hits']
+    check('поиск «театр» -> оба дока, score по убыванию',
+          st == 200 and len(hits) == 2
+          and hits[0]['score'] >= hits[1]['score'])
+    # похожие
+    st, p = api.route('GET', '/api/fulltext/more-like', {'ref': ['r2']}, None, R)
+    check('more-like r2 -> исключает себя', st == 200 and all(h['ref'] != 'r2' for h in p['data']['hits']))
+    st, p = api.route('GET', '/api/fulltext/more-like', {}, None, R)
+    check('more-like без ref -> 400', st == 400)
+    # пустой запрос
+    st, p = api.route('GET', '/api/fulltext/search', {'q': ['']}, None, R)
+    check('пустой запрос -> []', st == 200 and p['data']['hits'] == [])
+    # OCR-мост: распознать+обработать -> текст попадает в FTS
+    st, p = api.route('POST', '/api/ocr/recognize', {},
+                      {'assetRef': 'dam://d1', 'pages': [{'page_no': 1, 'text': 'рукописи Гамлета и комедии'}]}, S)
+    check('ocr recognize -> pending', st == 200 and p['data']['job']['status'] == 'pending')
+    st, p = api.route('POST', '/api/ocr/process', {}, {}, SUP)
+    check('ocr process -> done', st == 200 and p['data']['job']['status'] == 'done')
+    st, p = api.route('GET', '/api/fulltext/search', {'q': ['Гамлет']}, None, R)
+    check('морфо-FTS по OCR-тексту: «Гамлет» находит OCR-док (словоформа «Гамлета»)',
+          st == 200 and any(h['ref'] == 'ocr:dam://d1' for h in p['data']['hits']))
+    # реиндекс OCR-слоя
+    st, p = api.route('POST', '/api/fulltext/reindex-ocr', {}, {}, SUP)
+    check('reindex-ocr -> reindexed >= 1', st == 200 and p['data']['reindexed'] >= 1)
+    # гварды
+    st, p = api.route('POST', '/api/fulltext/index', {}, {'ref': 'x', 'text': 'y'}, R)
+    check('reader индексирует -> 403', st == 403)
+    st, p = api.route('POST', '/api/fulltext/reindex-ocr', {}, {}, S)
+    check('staff-cat reindex-ocr (не super-admin) -> 403', st == 403)
+
+
 def main():
     sdi_route_checks()
     union_route_checks()
@@ -1586,6 +1639,7 @@ def main():
     authority_route_checks()
     jobs_route_checks()
     analytics_route_checks()
+    fulltext_route_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 

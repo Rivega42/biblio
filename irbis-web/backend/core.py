@@ -920,6 +920,13 @@ class Api:
         except Exception:
             self.authority_control = None
         try:
+            from access import search_index as _search_index
+            self.search_index = _search_index.SearchIndex(
+                _search_index.SearchIndexStore(os.environ.get(
+                    'SEARCH_INDEX_DB', os.path.join(here, 'search_index.db'))))
+        except Exception:
+            self.search_index = None
+        try:
             from access import roles as _roles
             self.roles = _roles.RoleService(
                 _roles.RoleStore(os.environ.get(
@@ -3013,8 +3020,17 @@ class Api:
                             'indexed': 0})
         payload = job.get('payload') or {}
         asset_ref = payload.get('assetRef') or ''
-        indexed = (self.ocr.index_document(asset_ref, payload.get('pages') or [])
-                   if asset_ref else 0)
+        pages = payload.get('pages') or []
+        indexed = self.ocr.index_document(asset_ref, pages) if asset_ref else 0
+        # Мост в морфо-FTS (#368): склеить текст страниц и проиндексировать с
+        # морфологией+ранжированием. Best-effort — провал индекса не валит задачу.
+        if asset_ref and self.search_index is not None:
+            try:
+                text = '\n'.join((p.get('text') or '') for p in pages)
+                self.search_index.index('ocr:' + asset_ref, text,
+                                        db='OCR', title=asset_ref)
+            except Exception:
+                pass
         done = self.job_queue.complete(job['id'], result={'indexed': indexed})
         return 200, ok({'job': done, 'indexed': indexed})
 
@@ -3880,6 +3896,67 @@ class Api:
         return 200, ok({'configured': bool(r.get('configured')),
                         'mode': r.get('mode'),
                         'modules': r.get('default_modules', [])})
+
+    # ---- Морфо-полнотекст: own-store FTS + BM25 (#368) ------------------- #
+    # Морфологический поиск (русский стеммер) с ранжированием BM25 поверх
+    # собственного индекса. Источник — OCR-текст (мост в ocr_process) + ручная
+    # индексация. Поиск/похожие — public-read; индексация/реиндекс — штат/админ.
+    def fulltext_search(self, session, query):
+        """GET /api/fulltext/search?q=&limit= — морфо-полнотекст с BM25 (public-read)."""
+        if self.search_index is None:
+            return 200, ok({'hits': [], 'query': ''})
+        q = (query.get('q') or [''])[0]
+        try:
+            limit = min(50, max(1, int((query.get('limit') or ['20'])[0])))
+        except (TypeError, ValueError):
+            limit = 20
+        return 200, ok({'query': q, 'hits': self.search_index.search(q, limit=limit)})
+
+    def fulltext_more_like(self, session, query):
+        """GET /api/fulltext/more-like?ref= — похожие по терминам документа (public-read)."""
+        if self.search_index is None:
+            return 200, ok({'hits': []})
+        ref = (query.get('ref') or [''])[0]
+        if not ref:
+            return 400, err('bad_request', 'ref required')
+        return 200, ok({'ref': ref, 'hits': self.search_index.more_like(ref)})
+
+    def fulltext_index(self, session, body):
+        """POST /api/fulltext/index — проиндексировать документ (штат, cataloging)."""
+        self._guard(session, 'cataloging', '*', 'write')
+        if self.search_index is None:
+            return 503, err('unavailable', 'search index off')
+        ref = (body.get('ref') or '').strip()
+        if not ref:
+            return 400, err('bad_request', 'ref required')
+        res = self.search_index.index(ref, body.get('text') or '',
+                                      db=body.get('db') or '',
+                                      mfn=int(body.get('mfn') or 0),
+                                      title=body.get('title') or '')
+        return 200, ok({'indexed': res})
+
+    def fulltext_reindex_ocr(self, session, body):
+        """POST /api/fulltext/reindex-ocr — переиндексировать весь OCR-слой в FTS (super-admin).
+
+        Бэкфилл: склеивает текст страниц каждого OCR-документа и индексирует с
+        морфологией. Возвращает число переиндексированных документов."""
+        self._require_super_admin(session)
+        if self.search_index is None or self.ocr is None:
+            return 200, ok({'reindexed': 0})
+        store = getattr(self.ocr, 'store', None)
+        if store is None:
+            return 200, ok({'reindexed': 0})
+        by_ref = {}
+        for p in store.all_pages():
+            by_ref.setdefault(p['asset_ref'], []).append(p.get('text') or '')
+        n = 0
+        for ref, texts in by_ref.items():
+            try:
+                self.search_index.index('ocr:' + ref, '\n'.join(texts), db='OCR', title=ref)
+                n += 1
+            except Exception:
+                pass
+        return 200, ok({'reindexed': n})
 
     def analytics_overview(self, session):
         """GET /api/analytics/overview — сводка ключевых метрик библиотеки (штат).
@@ -6503,6 +6580,15 @@ class Api:
             # ---- Активные модули тенанта по режиму развёртывания (#335) ----
             if method == 'GET' and path == '/api/me/modules':
                 return self.my_modules(session)
+            # ---- Морфо-полнотекст: FTS + BM25 (#368) ----
+            if method == 'GET' and path == '/api/fulltext/search':
+                return self.fulltext_search(session, query)
+            if method == 'GET' and path == '/api/fulltext/more-like':
+                return self.fulltext_more_like(session, query)
+            if method == 'POST' and path == '/api/fulltext/index':
+                return self.fulltext_index(session, body or {})
+            if method == 'POST' and path == '/api/fulltext/reindex-ocr':
+                return self.fulltext_reindex_ocr(session, body or {})
             # ---- Аналитический обзор библиотеки (штат) ----
             if method == 'GET' and path == '/api/analytics/overview':
                 return self.analytics_overview(session)
