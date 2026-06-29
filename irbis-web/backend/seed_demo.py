@@ -5,9 +5,10 @@
 Пишет в те же sqlite-файлы, что читает сервер (дефолтные пути в backend/). Поднимать
 демо так:
 
-    OWN_SEARCH_DBS=IBIS py -3.12 seed_demo.py        # наполнить
-    OWN_SEARCH_DBS=IBIS py -3.12 server.py           # сервер на :8080 (own-store каталог)
+    OWN_SEARCH_DBS=IBIS py -3.12 seed_demo.py        # наполнить (каталог+ЛК билета 111)
+    OWN_SEARCH_DBS=IBIS TEST_READER_TICKET=111 TEST_READER_PASS=111 py -3.12 server.py
     (в frontend/)  npm run dev                       # vite, проксирует /api -> :8080
+    # вход читателя в портал: билет 111 / пароль 111 (демо-читатель, без ИРБИС)
 
 Идемпотентно: повторный прогон не плодит дубли (каталог сверяется по заглавию,
 выставки — по slug, FTS/OCR — по ref). Тематика — Театральная библиотека (контекст
@@ -190,8 +191,86 @@ def main():
     except Exception as e:
         print('Конфиг: пропущено (%s)' % e)
 
-    print('\nГотово. Поднимай: OWN_SEARCH_DBS=IBIS py -3.12 server.py  (+ vite npm run dev)')
+    # 7) Кабинет читателя (билет 111) — брони/полки/отзывы/сохранённые запросы/история.
+    #    Чтобы вход читателя работал БЕЗ ИРБИС, поднимать сервер с
+    #    TEST_READER_TICKET=111 TEST_READER_PASS=111 (демо-читатель, rdr_mfn=0).
+    _seed_cabinet(api)
+
+    print('\nГотово. Поднимай демо БЕЗ ИРБИС:')
+    print('  OWN_SEARCH_DBS=IBIS TEST_READER_TICKET=111 TEST_READER_PASS=111 py -3.12 server.py')
+    print('  (frontend) npm run dev   →  вход читателя: билет 111 / пароль 111')
     return 0
+
+
+READER_G = [{'function': 'cabinet', 'db': '*', 'level': 'read'},
+            {'function': 'order', 'db': '*', 'level': 'write'},
+            {'function': 'search', 'db': '*', 'level': 'read'},
+            {'function': 'record.read', 'db': '*', 'level': 'read'}]
+
+
+def _seed_cabinet(api):
+    """Наполнить ЛК демо-читателя (билет 111): брони, полка, отзывы, запросы, история."""
+    tok, _ = api._new_session('reader', 'RI=111', READER_G, tenant='public', rdr_mfn=0)
+    R = {'authorization': 'Bearer ' + tok}
+    try:
+        mfns = list(api.catalog.list_mfns(DB, limit=50))[:6]
+    except Exception:
+        mfns = []
+    if not mfns:
+        print('Кабинет: пропущено (нет записей каталога)'); return
+
+    holds = 0
+    for m in mfns[:3]:
+        try:
+            st, p = api.route('POST', '/api/hold', {}, {'db': DB, 'mfn': m}, R)
+            if st == 200:
+                holds += 1
+        except Exception:
+            pass
+    # полка + позиции
+    shelf_items = 0
+    try:
+        st, p = api.route('POST', '/api/shelves', {}, {'name': 'Любимые пьесы'}, R)
+        lid = (p.get('data') or {}).get('id')
+        if lid:
+            for m in mfns[:4]:
+                st2, _ = api.route('POST', '/api/shelves/item', {}, {'listId': lid, 'db': DB, 'mfn': m}, R)
+                if st2 == 200:
+                    shelf_items += 1
+    except Exception:
+        pass
+    # отзывы
+    reviews = 0
+    for (m, rating, text) in [(mfns[0], 5, 'Классика русской драматургии — обязательно к прочтению.'),
+                              (mfns[1] if len(mfns) > 1 else mfns[0], 4, 'Глубокая пьеса, прекрасный язык.')]:
+        try:
+            st, _ = api.route('POST', '/api/review', {}, {'db': DB, 'mfn': m, 'rating': rating, 'text': text}, R)
+            if st == 200:
+                reviews += 1
+        except Exception:
+            pass
+    # сохранённые запросы
+    searches = 0
+    for (name, prefix, query) in [('Чехов — автор', 'A=', 'Чехов'),
+                                  ('Драматургия — тема', 'K=', 'драматургия')]:
+        try:
+            st, _ = api.route('POST', '/api/savedsearch', {},
+                              {'name': name, 'db': DB, 'prefix': prefix, 'query': query}, R)
+            if st == 200:
+                searches += 1
+        except Exception:
+            pass
+    # история чтения — открыть несколько записей читателем (auto-log)
+    history = 0
+    for m in mfns[:5]:
+        try:
+            st, _ = api.route('GET', '/api/record/%s/%d' % (DB, m), {}, None, R)
+            if st == 200:
+                history += 1
+        except Exception:
+            pass
+    print('Кабинет (билет 111): брони %d, полка items %d, отзывы %d, запросы %d, история %d'
+          % (holds, shelf_items, reviews, searches, history))
 
 
 def _staff(api, grants):
