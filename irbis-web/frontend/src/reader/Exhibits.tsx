@@ -9,8 +9,8 @@ import React from "react";
 import { api } from "../api";
 import type { ExhibitSummary, ExhibitItem, IiifManifest } from "../api";
 import { Icon } from "../../components/icon/Icon.jsx";
-import { DocViewer } from "./DocViewer";
 import type { DocPage } from "./DocViewer";
+import { IiifViewer } from "./IiifViewer";
 
 // IIIF-манифест -> страницы для DocViewer. Из каждой канвы берём URL образа
 // (painting-аннотация: items[0].items[0].body.id) и подпись (label.<lang>[0]).
@@ -221,7 +221,7 @@ export function Exhibits({ db, onOpen }: { db: string; onOpen: (mfn: number, db:
       )}
 
       {viewer && (
-        <DocViewer pages={viewer.pages} title={viewer.title} onClose={() => setViewer(null)} />
+        <IiifViewer pages={viewer.pages} title={viewer.title} onClose={() => setViewer(null)} />
       )}
     </section>
   );
