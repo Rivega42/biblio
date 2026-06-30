@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-06-30**
-- Версия кода (git): **`db87f7b`**
-- Файлов: **304** · строк: **92359** · условных страниц: **1680**
-- **SHA-256 всего листинга:** `2fc58afdb3e81279b297c7ba8c5375a830b2d51bf8cb3d4ad65fb1a39ba79573`
+- Версия кода (git): **`555e51e`**
+- Файлов: **304** · строк: **92362** · условных страниц: **1680**
+- **SHA-256 всего листинга:** `b57163cf779a9ac13e7333567517cc980b5eec6395b3784719607ad70d76a03d`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -271,7 +271,7 @@
 | `irbis-web/frontend/src/CirculationDesk.tsx` | 423 | `47330dfbaca24b73685d42522d5fa7ff5d068a51e35b63d5d08af4d5f8692fb4` |
 | `irbis-web/frontend/src/MigrationWizard.tsx` | 605 | `1a1333e120567d4b279f188d7310f6ff26514198b8bd59383867c53a726a23a1` |
 | `irbis-web/frontend/src/PlatformDesk.tsx` | 1120 | `f8cde4639dd7553a9b480b552996915d11107630208b29761a2bf933e4cf2ed4` |
-| `irbis-web/frontend/src/Staff.tsx` | 1294 | `75e9b418a81893f7dd416974c38f51ffbfec2fe43d6f5f7d5ec34d506b9953f7` |
+| `irbis-web/frontend/src/Staff.tsx` | 1297 | `fe9a873e53e8b300d54649454c674656f465bf94c019d5f05004da028dd3f635` |
 | `irbis-web/frontend/src/UtilitiesDesk.tsx` | 403 | `0b1afa74f032a638ed03f6e59d9854379b1ef97f917f975fa5e84ae0a7b65fb9` |
 | `irbis-web/frontend/src/api.ts` | 898 | `c764f74d3826c5b8715b7a4f0572cabb7e44b6834693689f7a68052a337ce3b7` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
