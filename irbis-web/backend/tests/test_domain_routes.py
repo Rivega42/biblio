@@ -1392,6 +1392,8 @@ def webhooks_route_checks():
     st, p = api.route('GET', '/api/admin/webhooks', {'tenant': ['t1']}, None, SUP)
     check('список webhooks -> пусто + каталог событий',
           st == 200 and p['data']['items'] == [] and 'record.created' in p['data']['events'])
+    check('каталог событий включает record.updated/hold.cancelled (C4)',
+          'record.updated' in p['data']['events'] and 'hold.cancelled' in p['data']['events'])
     # подписка на валидное событие; secret маскируется наружу
     st, p = api.route('POST', '/api/admin/webhooks', {},
                       {'tenant': 't1', 'event': 'loan.issued',
@@ -1399,6 +1401,13 @@ def webhooks_route_checks():
     check('подписка loan.issued -> 200, secret маскирован',
           st == 200 and p['data']['event'] == 'loan.issued' and p['data']['secret'] == '***')
     sid = p['data']['id']
+    # ротация секрета подписки (C4): новый секрет, наружу маскирован
+    st, p = api.route('POST', '/api/admin/webhooks/rotate', {},
+                      {'id': sid, 'secret': 'new-secret'}, SUP)
+    check('ротация секрета -> 200, secret маскирован',
+          st == 200 and p['data']['secret'] == '***')
+    st, p = api.route('POST', '/api/admin/webhooks/rotate', {}, {'id': 99999, 'secret': 'x'}, SUP)
+    check('ротация неизвестной подписки -> 404', st == 404)
     # невалидное событие / пустой url -> 400
     st, p = api.route('POST', '/api/admin/webhooks', {},
                       {'tenant': 't1', 'event': 'bogus.evt', 'url': 'https://x'}, SUP)

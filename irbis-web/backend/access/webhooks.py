@@ -38,7 +38,8 @@ import threading
 from datetime import datetime, timezone
 
 # Допустимые события вебхука.
-EVENTS = ('record.created', 'loan.issued', 'hold.placed', 'import.completed')
+EVENTS = ('record.created', 'record.updated', 'loan.issued',
+          'hold.placed', 'hold.cancelled', 'import.completed')
 
 # Чем маскируется secret наружу, если он задан.
 _MASK = '***'
@@ -146,6 +147,13 @@ class WebhookStore:
         c.commit()
         return self.get(id)
 
+    def set_secret(self, id, secret):
+        """Сменить секрет подписи подписки. Возвращает обновлённую строку или ``None``."""
+        c = self._conn()
+        c.execute('UPDATE subscription SET secret=? WHERE id=?', (secret or '', id))
+        c.commit()
+        return self.get(id)
+
     def remove(self, id):
         """Удалить подписку. ``True`` — если строка была удалена, иначе ``False``."""
         c = self._conn()
@@ -238,6 +246,11 @@ class WebhookService:
     def set_active(self, id, active):
         """Вкл/выкл подписку. Возвращает обновлённую строку (МАСКИР.) или ``None``."""
         row = self.store.set_active(id, active)
+        return _masked(row) if row else None
+
+    def rotate_secret(self, id, secret):
+        """Сменить секрет подписи подписки. Возвращает строку (secret МАСКИР.) или ``None``."""
+        row = self.store.set_secret(id, secret or '')
         return _masked(row) if row else None
 
     # ---- подпись и payload ----------------------------------------------
