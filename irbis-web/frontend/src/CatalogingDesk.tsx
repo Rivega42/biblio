@@ -18,6 +18,7 @@ import { api } from "./api";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
 import type { IconName } from "../components/icon/Icon.jsx";
+import type { AuthorityHeading } from "./api";
 import { EmptyState } from "../components/feedback/EmptyState.jsx";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 
@@ -90,7 +91,7 @@ function ToolDown({ icon, title }: { icon: IconName; title: string }) {
   );
 }
 
-type Tab = "marc" | "copy" | "dedup" | "print" | "vocab" | "versions";
+type Tab = "marc" | "copy" | "dedup" | "print" | "vocab" | "versions" | "authority";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "marc", label: "Обмен MARC", icon: "download" },
   { id: "copy", label: "Копикаталогизация", icon: "search" },
@@ -98,6 +99,7 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: "print", label: "Печать ГОСТ", icon: "file-text" },
   { id: "vocab", label: "Словари", icon: "list" },
   { id: "versions", label: "Версии", icon: "clock" },
+  { id: "authority", label: "Авторитетные", icon: "users" },
 ];
 
 export function CatalogingDesk({ toast }: { toast: ToastFn }) {
@@ -123,7 +125,8 @@ export function CatalogingDesk({ toast }: { toast: ToastFn }) {
         : tab === "dedup" ? <DedupTab toast={toast} />
         : tab === "print" ? <PrintTab toast={toast} />
         : tab === "vocab" ? <VocabTab toast={toast} />
-        : <VersionsTab />}
+        : tab === "versions" ? <VersionsTab />
+        : <AuthorityTab toast={toast} />}
     </div>
   );
 }
@@ -502,6 +505,108 @@ function CopyTab({ toast }: { toast: ToastFn }) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== Авторитетные/нормативные записи (#359) ===============================
+// Контроль точек доступа: поиск авторитетных заголовков (персона/организация/тема/
+// гео) с вариантами форм и см.-также-ссылками; создание нового заголовка. Поверх
+// own-store authority_control (роуты /api/authority*). При 404/501 — информер.
+const AUTH_KINDS: { v: string; ru: string }[] = [
+  { v: "person", ru: "Персона" },
+  { v: "org", ru: "Организация" },
+  { v: "subject", ru: "Тема" },
+  { v: "geo", ru: "Гео" },
+];
+const AUTH_KIND_RU: Record<string, string> = Object.fromEntries(AUTH_KINDS.map((k) => [k.v, k.ru]));
+
+function AuthorityTab({ toast }: { toast: ToastFn }) {
+  const [items, setItems] = React.useState<AuthorityHeading[] | null>(null);
+  const [down, setDown] = React.useState(false);
+  const [q, setQ] = React.useState("");
+  const [kind, setKind] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [newKind, setNewKind] = React.useState("person");
+  const [newHeading, setNewHeading] = React.useState("");
+
+  const load = React.useCallback(async () => {
+    const r = await api.authoritySearch(kind || undefined, q.trim() || undefined);
+    if (r.status === 404 || r.status === 501 || r.status === 403) { setDown(true); return; }
+    setDown(false);
+    setItems(r.json?.ok && r.json.data ? r.json.data.items : []);
+  }, [kind, q]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const create = async () => {
+    const h = newHeading.trim();
+    if (!h) return;
+    setBusy(true);
+    const r = await api.authorityCreate({ kind: newKind, heading: h });
+    setBusy(false);
+    if (r.json?.ok) { setNewHeading(""); toast({ variant: "success", title: "Заголовок сохранён", message: h }); load(); }
+    else if (r.status === 400) toast({ variant: "error", title: "Не сохранён", message: "Проверьте вид и текст заголовка." });
+    else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант каталогизатора." });
+    else toast({ variant: "error", title: "Не сохранён", message: "Повторите попытку." });
+  };
+
+  if (down) return (
+    <div className="cat__card" style={{ padding: 18, color: "var(--text-subtle)", fontSize: 13 }}>
+      Раздел авторитетных записей подключается отдельно (эндпойнт /api/authority ещё не развёрнут).
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="cat__card" style={{ padding: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)", marginBottom: 10 }}>Новый заголовок</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={newKind} onChange={(e) => setNewKind(e.target.value)} aria-label="Вид заголовка"
+            style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--surface-base)", color: "var(--text-strong)", fontFamily: "inherit", fontSize: 13 }}>
+            {AUTH_KINDS.map((k) => <option key={k.v} value={k.v}>{k.ru}</option>)}
+          </select>
+          <input value={newHeading} onChange={(e) => setNewHeading(e.target.value)} placeholder="Чехов, Антон Павлович"
+            aria-label="Текст заголовка"
+            style={{ flex: 1, minWidth: 220, padding: "8px 11px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--surface-base)", color: "var(--text-strong)", fontFamily: "inherit", fontSize: 13 }} />
+          <Button size="sm" iconLeft="plus" loading={busy} onClick={create} disabled={!newHeading.trim()}>Создать</Button>
+        </div>
+      </div>
+
+      <div className="cat__card" style={{ padding: 14 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Фильтр по виду"
+            style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--surface-base)", color: "var(--text-strong)", fontFamily: "inherit", fontSize: 13 }}>
+            <option value="">Все виды</option>
+            {AUTH_KINDS.map((k) => <option key={k.v} value={k.v}>{k.ru}</option>)}
+          </select>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="поиск заголовка…" aria-label="Поиск заголовка"
+            style={{ flex: 1, minWidth: 200, padding: "8px 11px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--surface-base)", color: "var(--text-strong)", fontFamily: "inherit", fontSize: 13 }} />
+        </div>
+        {items === null ? <div style={{ color: "var(--text-subtle)", fontSize: 13 }}>Загрузка…</div>
+          : items.length === 0 ? <div style={{ color: "var(--text-subtle)", fontSize: 13 }}>Заголовки не найдены.</div>
+            : (
+              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                {items.map((h) => (
+                  <li key={h.id} style={{ border: "1px solid var(--border-subtle)", borderRadius: 10, padding: "10px 13px" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: "var(--surface-sunken,#f1efe9)", color: "var(--text-subtle)" }}>{AUTH_KIND_RU[h.kind] || h.kind}</span>
+                      <b style={{ fontSize: 14, color: "var(--text-strong)" }}>{h.heading}</b>
+                    </div>
+                    {h.variants && h.variants.length > 0 && (
+                      <div style={{ marginTop: 5, fontSize: 12, color: "var(--text-subtle)" }}>
+                        варианты: {h.variants.map((v) => v.variant).join("; ")}
+                      </div>
+                    )}
+                    {h.see_also && h.see_also.length > 0 && (
+                      <div style={{ marginTop: 3, fontSize: 12, color: "var(--text-subtle)" }}>
+                        см. также: {h.see_also.map((s) => s.heading).join("; ")}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
       </div>
     </div>
   );
