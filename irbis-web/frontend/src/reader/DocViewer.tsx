@@ -218,7 +218,9 @@ export function DocViewer({ pages, startIndex = 0, title, onClose }: {
       )}
 
       {pdfOpen && page.url && (
-        <PdfViewer url={page.url} title={page.name || title} maxPages={page.maxPages} onClose={() => setPdfOpen(false)} />
+        <PdfViewer url={page.url} title={page.name || title} maxPages={page.maxPages}
+          watermark={canDownload ? undefined : "только просмотр"}
+          onClose={() => setPdfOpen(false)} />
       )}
     </div>
   );

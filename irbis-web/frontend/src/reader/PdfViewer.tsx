@@ -10,7 +10,7 @@ import { Icon } from "../../components/icon/Icon.jsx";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
-export function PdfViewer({ url, title, maxPages, onClose }: { url: string; title?: string; maxPages?: number; onClose: () => void }) {
+export function PdfViewer({ url, title, maxPages, watermark, onClose }: { url: string; title?: string; maxPages?: number; watermark?: string; onClose: () => void }) {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const docRef = React.useRef<any>(null);
   const renderTaskRef = React.useRef<any>(null);
@@ -61,10 +61,27 @@ export function PdfViewer({ url, title, maxPages, onClose }: { url: string; titl
         const rt = pg.render({ canvasContext: ctx, viewport });
         renderTaskRef.current = rt;
         await rt.promise;
+        // View-only (#369 Ф2): диагональный водяной знак прямо на bitmap страницы —
+        // так он попадает и в любой сохранённый кадр canvas, не только в оверлей.
+        if (watermark && ctx) {
+          ctx.save();
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate(-Math.PI / 6);
+          ctx.font = "bold " + Math.max(18, Math.round(canvas.width / 22)) + "px sans-serif";
+          ctx.fillStyle = "rgba(120,80,40,0.16)";
+          ctx.textAlign = "center";
+          const step = Math.max(120, Math.round(canvas.width / 4));
+          for (let y = -canvas.height; y < canvas.height; y += step) {
+            for (let x = -canvas.width; x < canvas.width; x += step * 2) {
+              ctx.fillText(watermark, x, y);
+            }
+          }
+          ctx.restore();
+        }
       } catch { /* отмена рендера/гонка — игнор */ }
     })();
     return () => { alive = false; };
-  }, [page, scale, state, allowed]);
+  }, [page, scale, state, allowed, watermark]);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
