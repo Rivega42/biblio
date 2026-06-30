@@ -476,6 +476,20 @@ class PgAccessStore:
             'SELECT db,mfn,title,ts FROM reader_history WHERE ticket=%s '
             'ORDER BY ts DESC, db, mfn LIMIT %s', (ticket, limit)).fetchall()]
 
+    def popular(self, db=None, limit=12):
+        """«Популярное» — топ записей по reader_history (агрегат по всем читателям).
+        PG-зеркало AccessStore.popular. Возвращает ``[{db,mfn,count,title}]``."""
+        sql = 'SELECT db, mfn, COUNT(*) AS n, MAX(title) AS title FROM reader_history'
+        params = []
+        if db:
+            sql += ' WHERE db=%s'
+            params.append(db)
+        sql += ' GROUP BY db, mfn ORDER BY n DESC LIMIT %s'
+        params.append(int(limit))
+        return [{'db': r['db'], 'mfn': r['mfn'], 'count': int(r['n']),
+                 'title': r['title'] or ('MFN %d' % r['mfn'])}
+                for r in self._conn().execute(sql, params).fetchall()]
+
     def saved_search_list(self, ticket):
         return [dict(r) for r in self._conn().execute(
             'SELECT id,name,db,prefix,query FROM saved_search WHERE ticket=%s '
