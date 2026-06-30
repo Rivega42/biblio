@@ -424,6 +424,7 @@ export interface ResolvedMatrix { tariff: string | null; configured: boolean; se
 export type ResourceUsage = Record<string, number>;
 export interface WebhookSub { id: number; tenant: string; event: string; url: string; secret: string; active: boolean | number; created_at?: string }
 export interface WebhookTarget { subscription_id: number; url: string; event: string; payload: { event: string; ts: string; data: Record<string, unknown> }; signature: string }
+export interface WebhookDelivery { id: number; subscription_id: number; event: string; status: string; attempts: number; created_at?: string }
 export interface ConnectionItem { kind: string; enabled: boolean | number; config: Record<string, string | number> }
 export interface ConnectionHint { key: string; label: string; secret: boolean }
 
@@ -765,6 +766,9 @@ export const api = {
     jpost<{ removed: boolean }>("/api/admin/webhooks/remove", b),
   adminWebhookPreview: (b: { tenant: string; event: string; data?: Record<string, unknown> }) =>
     jpost<{ targets: WebhookTarget[] }>("/api/admin/webhooks/preview", b),
+  adminWebhookDeliveries: (subscriptionId?: number) =>
+    jget<{ items: WebhookDelivery[] }>("/api/admin/webhooks/deliveries"
+      + (subscriptionId ? "?" + qs({ subscriptionId }) : "")),
   // Активный набор функциональных модулей тенанта по режиму развёртывания (#335).
   myModules: () => jget<{ configured: boolean; mode: string | null; modules: string[] }>("/api/me/modules"),
   // Сводка ключевых метрик библиотеки для дашборда штата.

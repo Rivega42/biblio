@@ -13,7 +13,7 @@ import React from "react";
 import { api } from "./api";
 import type { Tenant, BillingInfo, PlanLimits } from "./api";
 import type { TariffTable, TariffRow, TariffCell, MatrixCap, ResourceUsage } from "./api";
-import type { DeploymentMode, DeploymentTopology, DeploymentResolved, ConnectionItem, ConnectionHint, WebhookSub, WebhookTarget, JobItem, JobStats } from "./api";
+import type { DeploymentMode, DeploymentTopology, DeploymentResolved, ConnectionItem, ConnectionHint, WebhookSub, WebhookTarget, WebhookDelivery, JobItem, JobStats } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -848,6 +848,7 @@ function WebhooksTab({ toast, selected }: { toast: ToastFn; selected: string | n
   const [secret, setSecret] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [preview, setPreview] = React.useState<Record<number, WebhookTarget | "empty">>({});
+  const [deliveries, setDeliveries] = React.useState<Record<number, WebhookDelivery[]>>({});
 
   const load = React.useCallback(async () => {
     if (!selected) { setData(null); return; }
@@ -883,6 +884,11 @@ function WebhooksTab({ toast, selected }: { toast: ToastFn; selected: string | n
     const r = await api.adminWebhookPreview({ tenant: selected, event: s.event, data: { example: true } });
     const t = r.json?.ok && r.json.data ? r.json.data.targets.find((x) => x.subscription_id === s.id) : undefined;
     setPreview((p) => ({ ...p, [s.id]: t || "empty" }));
+  };
+  const doDeliveries = async (s: WebhookSub) => {
+    if (deliveries[s.id]) { setDeliveries((d) => { const n = { ...d }; delete n[s.id]; return n; }); return; }
+    const r = await api.adminWebhookDeliveries(s.id);
+    setDeliveries((d) => ({ ...d, [s.id]: (r.json?.ok && r.json.data ? r.json.data.items : []) }));
   };
 
   if (down) return <SectionDown icon="share" title="Вебхуки подключаются отдельно" />;
@@ -924,12 +930,24 @@ function WebhooksTab({ toast, selected }: { toast: ToastFn; selected: string | n
                 <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: "var(--text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.url}</span>
                 <span style={{ fontSize: 12, color: on ? "var(--text-strong)" : "var(--text-subtle)" }}>{on ? "активна" : "выключена"}</span>
                 <Button size="sm" variant="ghost" iconLeft="eye" onClick={() => doPreview(s)}>Превью</Button>
+                <Button size="sm" variant="ghost" iconLeft="clock" onClick={() => doDeliveries(s)}>Журнал</Button>
                 <Button size="sm" variant="ghost" iconLeft={on ? "x-circle" : "check-circle"} onClick={() => toggle(s)}>{on ? "Выключить" : "Включить"}</Button>
                 <Button size="sm" variant="ghost" iconLeft="trash" onClick={() => remove(s.id)}>Удалить</Button>
               </div>
               {pv && (pv === "empty"
                 ? <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: "10px 0 0" }}>Превью пусто (подписка неактивна или событие не совпало).</p>
                 : <pre style={{ margin: "10px 0 0", padding: 10, background: "var(--surface-sunken,#f5f3ee)", borderRadius: 8, fontSize: 11.5, overflow: "auto", maxHeight: 160 }}>{"подпись HMAC: " + pv.signature.slice(0, 24) + "…\n" + JSON.stringify(pv.payload, null, 2)}</pre>)}
+              {deliveries[s.id] && (deliveries[s.id].length === 0
+                ? <p style={{ fontSize: 12, color: "var(--text-subtle)", margin: "10px 0 0" }}>Журнал доставки пуст — событий по этой подписке ещё не было.</p>
+                : <div style={{ margin: "10px 0 0", overflow: "hidden", border: "1px solid var(--border-subtle)", borderRadius: 8 }}>
+                    {deliveries[s.id].map((d, i) => (
+                      <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 11px", fontSize: 12, borderTop: i ? "1px solid var(--border-subtle)" : "none" }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 999, background: d.status === "prepared" ? "var(--status-issued-bg,#FBEFD8)" : d.status === "ok" ? "var(--status-available-bg,#E3F0E4)" : "var(--surface-sunken)", color: "var(--text-muted)" }}>{d.status}</span>
+                        <span style={{ flex: 1, minWidth: 0, color: "var(--text-strong)" }}>{WH_EVENT_RU[d.event] || d.event}</span>
+                        <span style={{ color: "var(--text-subtle)" }}>попыток: {d.attempts}</span>
+                      </div>
+                    ))}
+                  </div>)}
             </div>
           );
         })}
