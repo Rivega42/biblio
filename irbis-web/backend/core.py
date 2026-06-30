@@ -4134,6 +4134,14 @@ class Api:
         m['exhibits_public'] = _safe(lambda: len(self.exhibits.public_exhibits()) if self.exhibits else 0)
         m['authority'] = _safe(lambda: len(self.authority_control.store.list(limit=100000)) if self.authority_control else 0)
         m['loans_archived'] = _safe(lambda: int(self.circulation.count_archived()) if self.circulation else 0)
+        # Полнотекст-индекс (#368) + очередь фоновых задач (#356/jobs).
+        m['fts_indexed'] = _safe(lambda: int(self.search_index.store.count())
+                                 if (self.search_index and getattr(self.search_index, 'store', None)) else 0)
+        _js = _safe(lambda: self.job_queue.stats() if self.job_queue else {}, {})
+        m['jobs_total'] = int((_js or {}).get('total', 0))
+        _bs = (_js or {}).get('by_status') or {}
+        m['jobs_pending'] = int(_bs.get('pending', 0))
+        m['jobs_done'] = int(_bs.get('done', 0))
         return 200, ok({'tenant': tenant, 'metrics': m})
 
     # ===================================================================== #
