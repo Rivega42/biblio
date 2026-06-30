@@ -126,13 +126,14 @@ const MIME: Record<string, string> = {
   ris: "application/x-research-info-systems",
   bib: "application/x-bibtex",
   txt: "text/plain;charset=utf-8",
+  csv: "text/csv;charset=utf-8",
 };
 
-// Browser download via Blob + object URL. UTF-8, BOM for txt so Windows-кириллица
-// открывается корректно в блокноте.
+// Browser download via Blob + object URL. UTF-8, BOM for txt/csv so Windows-кириллица
+// открывается корректно в блокноте и Excel.
 export function downloadText(filename: string, text: string, ext: string): void {
-  const isTxt = ext === "txt";
-  const data = isTxt ? "﻿" + text : text;
+  const isBom = ext === "txt" || ext === "csv";
+  const data = isBom ? "﻿" + text : text;
   const blob = new Blob([data], { type: MIME[ext] || "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -167,12 +168,26 @@ export function citeFromItem(it: ResultItem): CiteFields {
   };
 }
 
-export function exportBasket(items: ResultItem[], fmt: "ris" | "bib" | "txt"): void {
+// CSV выборки (Excel-дружественный): №, заглавие, автор, год, MFN, база.
+function csvCell(v: string | number | undefined): string {
+  const s = (v ?? "").toString();
+  return /[",\r\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+export function toCSV(items: ResultItem[]): string {
+  const head = ["№", "Заглавие", "Автор", "Год", "MFN", "База"];
+  const rows = items.map((it, i) =>
+    [i + 1, it.title || "", it.author || "", it.year || "", it.mfn, it.db || ""].map(csvCell).join(","));
+  return [head.map(csvCell).join(","), ...rows].join("\r\n") + "\r\n";
+}
+
+export function exportBasket(items: ResultItem[], fmt: "ris" | "bib" | "txt" | "csv"): void {
   const cites = items.map(citeFromItem);
   if (fmt === "ris") {
     downloadText("basket.ris", cites.map(toRIS).join("\r\n"), "ris");
   } else if (fmt === "bib") {
     downloadText("basket.bib", cites.map(toBibTeX).join("\n"), "bib");
+  } else if (fmt === "csv") {
+    downloadText("basket.csv", toCSV(items), "csv");
   } else {
     const body = cites.map((c, i) => (i + 1) + ". " + toPlainLine(c)).join("\n");
     downloadText("basket.txt", body + "\n", "txt");
