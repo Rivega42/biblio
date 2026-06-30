@@ -1577,7 +1577,7 @@ function BasketPanel({ items, onClose, onRemove, onClear, toast }: {
   toast: (t: { variant: ToastVariant; title: string; message?: string }) => void;
 }) {
   const empty = items.length === 0;
-  const exp = (fmt: "ris" | "bib" | "txt") => { if (empty) return; exportBasket(items, fmt); };
+  const exp = (fmt: "ris" | "bib" | "txt" | "csv") => { if (empty) return; exportBasket(items, fmt); };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,16,14,.45)", display: "flex", justifyContent: "flex-end", zIndex: 60 }}>
       <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Корзина отбора"
@@ -1611,6 +1611,7 @@ function BasketPanel({ items, onClose, onRemove, onClear, toast }: {
             <button onClick={() => exp("ris")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> RIS</button>
             <button onClick={() => exp("bib")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> BibTeX</button>
             <button onClick={() => exp("txt")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> Текст</button>
+            <button onClick={() => exp("csv")} disabled={empty} style={{ ...exportBtn, opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer" }}><Icon name="download" size={14} /> CSV</button>
             <a href={empty ? undefined : basketMailto(items)} onClick={(e) => { if (empty) e.preventDefault(); }}
               style={{ ...exportBtn, textDecoration: "none", opacity: empty ? .5 : 1, cursor: empty ? "not-allowed" : "pointer", marginLeft: "auto" }}><Icon name="share" size={14} /> Отправить на почту</a>
           </div>
