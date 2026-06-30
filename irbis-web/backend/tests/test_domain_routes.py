@@ -545,6 +545,14 @@ def backlog_admin_route_checks():
                       {'status': ['denied']}, None, A)
     check('audit-trail фильтр status=denied -> 1', st == 200
           and len(p['data']['items']) == 1)
+    # B10: экспорт аудита в CSV (Raw text/csv с заголовком + строками)
+    st, p = api.route('GET', '/api/admin/audit-trail/export.csv', {}, None, A)
+    csv_txt = p.data.decode('utf-8') if hasattr(p, 'data') else ''
+    check('audit CSV -> 200, text/csv, заголовок+2 строки',
+          st == 200 and hasattr(p, 'content_type') and 'csv' in p.content_type
+          and 'actor' in csv_txt and 'config.set' in csv_txt and csv_txt.count('\r\n') >= 2)
+    st, p = api.route('GET', '/api/admin/audit-trail/export.csv', {}, None, S)
+    check('audit CSV без admin.users -> 403', st == 403)
 
     # конфиг-параметры
     st, p = api.route('POST', '/api/admin/config', {},

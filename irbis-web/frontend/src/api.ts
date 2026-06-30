@@ -724,6 +724,22 @@ export const api = {
       ...(p.actor ? { actor: p.actor } : {}), ...(p.action ? { action: p.action } : {}),
       ...(p.status ? { status: p.status } : {}), limit: p.limit ?? 100,
     })),
+  // Выгрузка аудита в CSV: фетч с bearer-токеном + скачивание через Blob. true при успехе.
+  adminAuditTrailExport: async (p: { actor?: string; action?: string; status?: string; limit?: number }) => {
+    const o: Record<string, string | number> = { limit: p.limit ?? 1000 };
+    if (p.actor) o.actor = p.actor;
+    if (p.action) o.action = p.action;
+    if (p.status) o.status = p.status;
+    const r = await fetch("/api/admin/audit-trail/export.csv?" + qs(o), { headers: authHeaders() });
+    if (!r.ok) return false;
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "audit-trail.csv";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  },
   // Список баз данных контура (код / имя / публичность).
   adminDatabases: () => jget<{ items: AdminDatabase[] }>("/api/admin/databases"),
   // --- Матрица доступов / тарифы (#331) -----------------------------------

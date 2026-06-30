@@ -4581,6 +4581,33 @@ class Api:
         return 200, ok({'items': self.audit_trail.entries(limit=limit, **kw),
                         'summary': self.audit_trail.summary()})
 
+    def audit_trail_export(self, session, query):
+        """GET /api/admin/audit-trail/export.csv — выгрузка аудита в CSV (admin).
+
+        Те же фильтры, что audit-trail (actor/action/status), CSV с BOM (Excel-
+        дружественная кириллица). Гейт admin.users."""
+        self._guard(session, 'admin.users', '*', 'admin')
+        import csv
+        import io
+        cols = ['ts', 'actor', 'action', 'object_type', 'object_id', 'db', 'status', 'tenant']
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(cols)
+        if self.audit_trail is not None:
+            kw = {}
+            for k in ('actor', 'action', 'status'):
+                v = (query.get(k, [None])[0])
+                if v:
+                    kw[k] = v
+            try:
+                limit = min(5000, max(1, int(query.get('limit', ['1000'])[0])))
+            except (TypeError, ValueError):
+                limit = 1000
+            for e in self.audit_trail.entries(limit=limit, **kw):
+                w.writerow(['' if e.get(c) is None else e.get(c) for c in cols])
+        data = ('﻿' + buf.getvalue()).encode('utf-8')
+        return 200, Raw(data, 'text/csv; charset=utf-8')
+
     # ---- Администратор: конфиг-параметры (PR #318) ----------------------- #
     def config_list(self, session, query):
         """GET /api/admin/config — параметры тенанта (admin)."""
@@ -6842,6 +6869,8 @@ class Api:
             # ---- Администратор: аудит-трейл + конфиг (PR #318) ----
             if method == 'GET' and path == '/api/admin/audit-trail':
                 return self.audit_trail_query(session, query)
+            if method == 'GET' and path == '/api/admin/audit-trail/export.csv':
+                return self.audit_trail_export(session, query)
             if method == 'GET' and path == '/api/admin/config':
                 return self.config_list(session, query)
             if method == 'POST' and path == '/api/admin/config':
