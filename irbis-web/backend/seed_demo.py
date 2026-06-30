@@ -104,6 +104,29 @@ OCR_DOCS = [
 ]
 
 
+# Вторая публичная база — периодика (PERIO). Для демо мульти-БД-селектора нужно
+# поднимать сервер с IRBIS_PUBLIC_DBS="IBIS,PERIO" OWN_SEARCH_DBS="IBIS,PERIO".
+PERIODICALS = [
+    ('Театр', 'журнал', '1937', 'Театральная периодика', 'Старейший театральный журнал.'),
+    ('Театральная жизнь', 'журнал', '1958', 'Театральная периодика', 'Иллюстрированный журнал о сцене.'),
+    ('Петербургский театральный журнал', 'журнал', '1992', 'Театральная периодика', 'Критика и теория театра.'),
+    ('Сцена', 'журнал', '1991', 'Театральная периодика', 'Журнал о сценографии и технологиях.'),
+    ('Балет', 'журнал', '1981', 'Музыкальный театр', 'Журнал о балете и хореографии.'),
+    ('Современная драматургия', 'журнал', '1982', 'Драматургия', 'Новые пьесы и обзоры.'),
+    ('Вопросы театра', 'журнал', '2008', 'Театроведение', 'Научный альманах о театре.'),
+    ('Театрал', 'газета', '2003', 'Театральная периодика', 'Афиша и рецензии.'),
+]
+
+
+def _perio_record(title, kind, year, subject, annotation):
+    return {'920': 'NJ', '101': 'rus',
+            '200': [{'a': title}],
+            '606': [{'a': subject}],
+            '330': [{'a': annotation}],
+            '210': [{'d': year}],
+            '900': [{'t': kind}]}
+
+
 def main():
     api = Api()
     if api.catalog is None:
@@ -190,6 +213,32 @@ def main():
         print('Конфиг библиотеки: записан')
     except Exception as e:
         print('Конфиг: пропущено (%s)' % e)
+
+    # 6b) Вторая публичная база — периодика (PERIO), для демо мульти-БД-селектора.
+    try:
+        existing_p = {((r.get('200') or [{}])[0].get('a') or '')
+                      for r in (api.catalog.get('PERIO', m) or {}
+                                for m in api.catalog.list_mfns('PERIO', limit=5000))}
+    except Exception:
+        existing_p = set()
+    pcreated = 0
+    for (title, kind, year, subject, ann) in PERIODICALS:
+        if title in existing_p:
+            continue
+        res = api.catalog.save('PERIO', _perio_record(title, kind, year, subject, ann))
+        if res and res.get('saved') and res.get('mfn'):
+            pcreated += 1
+    if api.search_index is not None:
+        for mfn in api.catalog.list_mfns('PERIO', limit=5000):
+            rec = api.catalog.get('PERIO', mfn)
+            if rec is None:
+                continue
+            title, text = api._record_search_text(rec)
+            try:
+                api.search_index.index('cat:PERIO:%d' % mfn, text, db='PERIO', mfn=mfn, title=title)
+            except Exception:
+                pass
+    print('Периодика PERIO: создано %d (всего %d)' % (pcreated, api.catalog.count('PERIO')))
 
     # 7) Кабинет читателя (билет 111) — брони/полки/отзывы/сохранённые запросы/история.
     #    Чтобы вход читателя работал БЕЗ ИРБИС, поднимать сервер с

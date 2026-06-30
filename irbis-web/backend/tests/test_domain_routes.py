@@ -1658,6 +1658,11 @@ def demo_own_store_checks():
         check('/api/terms из own-store -> термины (без ИРБИС)', st == 200 and len(p['data']['terms']) >= 1)
         st, p = api.route('GET', '/api/suggest', {'db': ['IBIS'], 'prefix': ['A'], 'q': ['Чехов']}, None, G)
         check('/api/suggest из own-store -> 200 (без ИРБИС)', st == 200 and 'suggestions' in p['data'])
+        # B9 (#374): список баз — фолбэк из public_dbs + own-store счётчик (без ИРБИС)
+        st, p = api.route('GET', '/api/databases', {}, None, G)
+        dbs = {d['code']: d for d in p['data']['items']}
+        check('/api/databases фолбэк из public_dbs (без ИРБИС): IBIS', st == 200 and 'IBIS' in dbs)
+        check('счётчик базы IBIS из own-store (>=1)', dbs.get('IBIS', {}).get('count', 0) >= 1)
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 

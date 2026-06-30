@@ -2110,6 +2110,12 @@ class Api:
         safe to call per database. Returns an int >= 0, or None when the count
         can't be obtained (server/permission hiccup) so the field can be omitted
         gracefully rather than failing the whole list."""
+        # ДЕМО/own-store (#374): счётчик из own-store для баз OWN_SEARCH_DBS.
+        if code.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+            try:
+                return int(self.catalog.count(code))
+            except Exception:
+                return None
         try:
             top = self.irbis.max_mfn(code)
         except IrbisError:
@@ -2126,8 +2132,18 @@ class Api:
         if not session:
             raise Denied(401, 'unauthorized', 'no session')
         public_only = self._is_public_session(session)
-        txt = self.irbis.read_file(self.cfg.db_menu)
-        lines = [x.strip() for x in txt.splitlines() if x.strip() and x.strip() != '*****']
+        try:
+            txt = self.irbis.read_file(self.cfg.db_menu)
+            lines = [x.strip() for x in txt.splitlines() if x.strip() and x.strip() != '*****']
+        except Exception:
+            lines = []   # ИРБИС недоступен/None (демо) -> фолбэк меню ниже
+        if not lines:
+            # ДЕМО/own-store (#374): меню баз из публичного allow-list, когда ИРБИС
+            # недоступен — чтобы селектор баз (мульти-БД) работал без живого сервера.
+            _names = {'IBIS': 'Электронный каталог', 'PERIO': 'Периодические издания',
+                      'NTD': 'Нормативно-техническая документация'}
+            for code in sorted(self.cfg.public_dbs):
+                lines += [code, _names.get(code, code)]
         items = []
         for i in range(0, len(lines) - 1, 2):
             code = lines[i]
