@@ -1170,6 +1170,22 @@ class CatalogStore:
         out = pft.eval(self.full_pft, record, {'mfn': mfn})
         return out if out else self._render(self.brief_pft, record, mfn)
 
+    def dictionary(self, db, prefix, start='', count=30):
+        """Словарь терминов префикса (own-store аналог ``irbis.read_terms``, #374).
+
+        Различные термины под ``prefix`` в активных записях ``db``, начиная с
+        ``start`` (по ``term_norm`` >=), с числом записей. Возвращает ``[(n, term)]``
+        — та же форма, что ``read_terms`` (число постингов, термин). Для демо/own-store
+        указателя словаря и подсказок «вы имели в виду» без живого ИРБИС."""
+        conn = self._conn()
+        rows = conn.execute(
+            '''SELECT MIN(ri.term) AS term, COUNT(DISTINCT r.id) AS n
+               FROM record_index ri JOIN record r ON r.id = ri.record_id
+               WHERE r.db=? AND r.status='active' AND ri.prefix=? AND ri.term_norm >= ?
+               GROUP BY ri.term_norm ORDER BY ri.term_norm LIMIT ?''',
+            (db, (prefix or '').strip().upper(), _norm(start), int(count))).fetchall()
+        return [(int(r['n']), r['term']) for r in rows]
+
     # ------------------------------------------------------------------- #
     # Listing / counts (small conveniences for callers / tests).
     # ------------------------------------------------------------------- #

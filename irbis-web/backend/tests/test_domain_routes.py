@@ -1624,7 +1624,8 @@ def demo_own_store_checks():
     try:
         api = _api()   # _api() ставит api.irbis = None — имитируем отсутствие ИРБИС
         G = _sess(api, 'guest', 'g', [{'function': 'search', 'db': '*', 'level': 'read'},
-                                      {'function': 'record.read', 'db': '*', 'level': 'read'}])
+                                      {'function': 'record.read', 'db': '*', 'level': 'read'},
+                                      {'function': 'terms', 'db': '*', 'level': 'read'}])
         api.catalog.save('IBIS', _rec('Чайка', **{'700': [{'a': 'Чехов'}]}))
         st, p = api.route('GET', '/api/search', {'db': ['IBIS'], 'q': ['Чайка']}, None, G)
         check('поиск обслужен из own-store (source=own), ИРБИС не нужен',
@@ -1646,6 +1647,13 @@ def demo_own_store_checks():
         recs = [it['mfn'] for it in (p['data'].get('items') or [])]
         check('«Похожие» из own-store (без ИРБИС): находит запись того же автора',
               st == 200 and r2.get('mfn') in recs)
+        # B3 (#374): словарь/подсказки/указатель из own-store без ИРБИС
+        terms = api.catalog.dictionary('IBIS', 'A', 'Чех', 10)
+        check('own-store словарь: префикс A содержит «Чехов»', any('Чехов' in t for _c, t in terms))
+        st, p = api.route('GET', '/api/terms', {'db': ['IBIS'], 'start': ['A=Чех'], 'count': ['10']}, None, G)
+        check('/api/terms из own-store -> термины (без ИРБИС)', st == 200 and len(p['data']['terms']) >= 1)
+        st, p = api.route('GET', '/api/suggest', {'db': ['IBIS'], 'prefix': ['A'], 'q': ['Чехов']}, None, G)
+        check('/api/suggest из own-store -> 200 (без ИРБИС)', st == 200 and 'suggestions' in p['data'])
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 
