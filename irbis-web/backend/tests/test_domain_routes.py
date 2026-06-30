@@ -1671,6 +1671,15 @@ def demo_own_store_checks():
         dbs = {d['code']: d for d in p['data']['items']}
         check('/api/databases фолбэк из public_dbs (без ИРБИС): IBIS', st == 200 and 'IBIS' in dbs)
         check('счётчик базы IBIS из own-store (>=1)', dbs.get('IBIS', {}).get('count', 0) >= 1)
+        # C2 (#374): «Популярное» из истории чтения (own-store, без ИРБИС)
+        RD = _sess(api, 'reader', 'RI=111',
+                   [{'function': 'record.read', 'db': '*', 'level': 'read'},
+                    {'function': 'cabinet', 'db': '*', 'level': 'read'}], rdr_mfn=1)
+        api.route('GET', '/api/record/IBIS/%d' % mfn, {}, None, RD)   # лог истории читателя
+        st, p = api.route('GET', '/api/popular', {}, None, G)
+        pop = {it['mfn']: it for it in p['data']['items']}
+        check('«Популярное» из истории (own-store): запись попала + заглавие резолвлено',
+              st == 200 and mfn in pop and pop[mfn].get('title') == 'Чайка' and pop[mfn].get('count', 0) >= 1)
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 

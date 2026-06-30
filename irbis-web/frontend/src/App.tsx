@@ -39,6 +39,7 @@ import { SaveSearchButton, SavedSearchMenu, SavedSearchesPanel } from "./reader/
 import { CollectionSubsPanel } from "./reader/CollectionSubs";
 import { FulltextSearchPanel } from "./reader/FulltextSearch";
 import { RecentlyViewed } from "./reader/RecentlyViewed";
+import { PopularPanel } from "./reader/Popular";
 import { ConsentBanner, ConsentToggle, EraseDataCard } from "./reader/Consent";
 import { CookiePanel } from "./reader/CookiePanel";
 import { Requisites } from "./reader/Requisites";
@@ -632,6 +633,8 @@ export function App() {
             />
             {/* «Вы недавно смотрели» (#133) — из истории чтения; скрыт для гостя/пусто. */}
             <RecentlyViewed onOpen={(database, mfn) => { setHome(false); openRecord(mfn, database); }} />
+            {/* «Популярное» — топ по истории чтения (own-store); скрыт при пустой истории. */}
+            <PopularPanel onOpen={(database, mfn) => { setHome(false); openRecord(mfn, database); }} />
             {/* «Для вас» (#133) — персональная подборка; скрыта, если эндпойнт пуст/404. */}
             <ForYouRecommendations refreshKey={forYouRefresh}
               onOpen={(mfn, database) => { setHome(false); openRecord(mfn, database); }} />

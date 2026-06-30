@@ -4961,6 +4961,26 @@ class Api:
             return 403, err('forbidden', 'not your review')
         return 200, ok(res)
 
+    def popular(self, session, query):
+        """GET /api/popular?db=&limit= — популярные записи по истории чтения (public-read).
+
+        Агрегат reader_history по всем читателям (own-store, без ИРБИС); заглавия
+        резолвятся брифом (own-store-aware). Пустая история -> []. Гость вправе."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        db = (query.get('db') or [None])[0]
+        try:
+            limit = min(30, max(1, int((query.get('limit') or ['12'])[0])))
+        except (TypeError, ValueError):
+            limit = 12
+        items = []
+        for row in store.popular(db=db, limit=limit):
+            brief = self._brief_item(row['db'], row['mfn'])
+            items.append({'db': row['db'], 'mfn': row['mfn'], 'count': row['count'],
+                          'title': brief.get('title') or row['title'],
+                          'author': brief.get('author', '')})
+        return 200, ok({'items': items})
+
     def recommendations(self, session, db, mfn):
         """GET /api/recommendations — "similar" records to the seed. Guest-readable."""
         self._guard(session, 'search', db, 'read')
@@ -6933,6 +6953,8 @@ class Api:
             # ---- reader-portal v2: recommendations (#133) ----
             if method == 'GET' and path == '/api/recommendations/foryou':
                 return self.recommendations_foryou(session)
+            if method == 'GET' and path == '/api/popular':
+                return self.popular(session, query)
             if method == 'GET' and path == '/api/recommendations':
                 db = query.get('db', [self.cfg.db_default])[0]
                 try:
