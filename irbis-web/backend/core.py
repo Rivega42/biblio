@@ -1827,10 +1827,19 @@ class Api:
         return 200, ok({'db': db, 'mfn': mfn, 'fmt': fmt,
                         'rendered': self.irbis.format_record(db, mfn, fmt)})
 
+    def _read_terms(self, db, anchor, count):
+        """Словарь терминов (count, term) — own-store для баз OWN_SEARCH_DBS (#374),
+        иначе живой ИРБИС. ``anchor`` = ``'PREFIX=term'`` (или ``'PREFIX='``). Чинит
+        указатель словаря и подсказки «вы имели в виду» в демо без ИРБИС."""
+        if db.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+            prefix, _eq, term = (anchor or '').partition('=')
+            return self.catalog.dictionary(db, prefix, term, count)
+        return self.irbis.read_terms(db, anchor, count)
+
     def terms(self, session, db, start, count):
         self._guard(session, 'terms', db, 'read')
         self._public_db_guard(session, db)
-        rows = self.irbis.read_terms(db, start, count)
+        rows = self._read_terms(db, start, count)
         return 200, ok({'db': db, 'start': start,
                         'terms': [{'count': c, 'term': t} for c, t in rows]})
 
@@ -1874,8 +1883,8 @@ class Api:
         seen_terms = set()
         for anchor in anchors:
             try:
-                got = self.irbis.read_terms(db, anchor, self._SUGGEST_SCAN)
-            except IrbisError:
+                got = self._read_terms(db, anchor, self._SUGGEST_SCAN)
+            except (IrbisError, Exception):
                 got = []
             for cnt, term in got:
                 if term not in seen_terms:
@@ -1969,8 +1978,8 @@ class Api:
         prefix = (prefix or '').strip()
         seek = prefix + (start or '')
         try:
-            rows = self.irbis.read_terms(db, seek, limit)
-        except IrbisError:
+            rows = self._read_terms(db, seek, limit)
+        except (IrbisError, Exception):
             rows = []
         entries = []
         for cnt, term in rows:
@@ -2022,8 +2031,8 @@ class Api:
         out = []
         for fieldname, prefix, label, labelmap in self._FACETS:
             try:
-                rows = self.irbis.read_terms(db, prefix + '=', max(limit * 3, 24))
-            except IrbisError:
+                rows = self._read_terms(db, prefix + '=', max(limit * 3, 24))
+            except (IrbisError, Exception):
                 continue
             values = []
             for _c, term in rows:
