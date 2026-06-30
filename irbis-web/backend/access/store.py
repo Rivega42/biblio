@@ -569,6 +569,22 @@ class AccessStore:
             'SELECT db,mfn,title,ts FROM reader_history WHERE ticket=? '
             'ORDER BY ts DESC, db, mfn LIMIT ?', (ticket, limit)).fetchall()]
 
+    def popular(self, db=None, limit=12):
+        """«Популярное» — самые открываемые записи по ``reader_history`` (агрегат по
+        всем читателям). Каждая строка истории уникальна по (ticket,db,mfn), так что
+        COUNT = число РАЗНЫХ читателей, открывавших запись. Опц. фильтр по базе.
+        Возвращает ``[{db, mfn, count, title}]`` по убыванию популярности."""
+        sql = 'SELECT db, mfn, COUNT(*) AS n, MAX(title) AS title FROM reader_history'
+        params = []
+        if db:
+            sql += ' WHERE db=?'
+            params.append(db)
+        sql += ' GROUP BY db, mfn ORDER BY n DESC LIMIT ?'
+        params.append(int(limit))
+        return [{'db': r['db'], 'mfn': r['mfn'], 'count': int(r['n']),
+                 'title': r['title'] or ('MFN %d' % r['mfn'])}
+                for r in self._conn().execute(sql, params).fetchall()]
+
     def saved_search_list(self, ticket):
         return [dict(r) for r in self._conn().execute(
             'SELECT id,name,db,prefix,query FROM saved_search WHERE ticket=? '

@@ -74,6 +74,7 @@ export interface ReviewsResult { avg: number; count: number; mine?: Review | nul
 export interface Recommendation { db: string; mfn: number; title: string; author?: string; reason?: string; }
 // История просмотров (#134). Недавно открытые записи с временной меткой.
 export interface HistoryItem { db: string; mfn: number; title?: string; ts?: string; }
+export interface PopularItem { db: string; mfn: number; title: string; author?: string; count: number; }
 // Сохранённые запросы (#133). prefix/query задают простой поиск; query может
 // нести готовое выражение, тогда prefix пуст. db — база, в которой искать.
 export interface SavedSearch { id: string | number; name: string; db: string; prefix?: string; query: string; ts?: string; }
@@ -789,6 +790,9 @@ export const api = {
   myModules: () => jget<{ configured: boolean; mode: string | null; modules: string[] }>("/api/me/modules"),
   // Сводка ключевых метрик библиотеки для дашборда штата.
   analyticsOverview: () => jget<{ tenant: string; metrics: Record<string, number> }>("/api/analytics/overview"),
+  // «Популярное» — топ записей по истории чтения (own-store, public-read).
+  popular: (db?: string, limit = 8) =>
+    jget<{ items: PopularItem[] }>("/api/popular?" + qs(db ? { db, limit } : { limit })),
   // --- Фоновые задачи (#240) — оператор платформы (admin.db) ---
   adminJobs: (status?: string) =>
     jget<{ items: JobItem[]; stats: JobStats }>("/api/jobs" + (status ? "?" + qs({ status }) : "")),
