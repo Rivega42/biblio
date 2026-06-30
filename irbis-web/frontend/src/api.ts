@@ -344,6 +344,13 @@ export interface FulltextResult {
 export interface FtsHit {
   ref: string; db: string; mfn: number; title: string; score: number; matched: string[];
 }
+// Авторитетный/нормативный контроль (#359): заголовок + варианты форм + см.-ссылки.
+export interface AuthorityVariant { id: number; heading_id: number; variant: string }
+export interface AuthoritySeeAlso { id: number; heading: string; ref_type: string }
+export interface AuthorityHeading {
+  id: number; kind: string; heading: string; note?: string; created?: boolean;
+  variants?: AuthorityVariant[]; see_also?: AuthoritySeeAlso[];
+}
 // --- Книгообеспеченность: отчёт ККО (быстрая справка) ----------------------
 // Отчёт по обеспеченности (GET /api/bp/provision) для деска ККО: запрашивается
 // по дисциплине / специальности / факультету. coefficient — коэффициент Кко
@@ -563,6 +570,19 @@ export const api = {
     jget<{ query: string; hits: FtsHit[] }>("/api/fulltext/search?" + qs({ q, limit })),
   fulltextMoreLike: (ref: string) =>
     jget<{ ref: string; hits: FtsHit[] }>("/api/fulltext/more-like?" + qs({ ref })),
+  // --- Авторитетный/нормативный контроль (#359) — каталогизатор ---
+  authoritySearch: (kind?: string, q?: string) => {
+    const o: Record<string, string> = {};
+    if (kind) o.kind = kind;
+    if (q) o.q = q;
+    return jget<{ items: AuthorityHeading[] }>("/api/authority" + (Object.keys(o).length ? "?" + qs(o) : ""));
+  },
+  authorityCreate: (b: { kind: string; heading: string; note?: string }) =>
+    jpost<{ heading: AuthorityHeading }>("/api/authority", b),
+  authorityVariant: (b: { headingId: number; variant: string }) =>
+    jpost<{ variant: AuthorityVariant }>("/api/authority/variant", b),
+  authorityLink: (b: { srcId: number; dstId: number; refType?: string }) =>
+    jpost<{ xref: AuthoritySeeAlso }>("/api/authority/link", b),
 
   // --- Бронирование (#222) -------------------------------------------------
   // Поставить экземпляр в бронь. → {holdId,status,position}. 404/501 → degrade.
