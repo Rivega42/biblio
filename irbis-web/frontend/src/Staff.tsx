@@ -400,7 +400,10 @@ const OVERVIEW_CARDS: { key: string; label: string; icon: IconName }[] = [
   { key: "loans_archived", label: "Выдач в архиве", icon: "package" },
   { key: "exhibits", label: "Выставок", icon: "images" },
   { key: "ocr_pages", label: "Распознано страниц", icon: "scan-line" },
+  { key: "fts_indexed", label: "В полнотекст-индексе", icon: "search" },
   { key: "authority", label: "Авторитетных заголовков", icon: "list-tree" },
+  { key: "exhibits_public", label: "Выставок на витрине", icon: "images" },
+  { key: "jobs_pending", label: "Задач в очереди", icon: "clock" },
   { key: "staff_seats", label: "Сотрудников", icon: "users" },
 ];
 function AnalyticsOverview() {
