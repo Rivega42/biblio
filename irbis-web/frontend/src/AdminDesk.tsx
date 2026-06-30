@@ -515,6 +515,8 @@ function AuditTab() {
             {[50, 100, 200, 500].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
           <Button size="sm" variant="ghost" iconLeft="refresh-cw" loading={loading} onClick={() => load()}>Обновить</Button>
+          <Button size="sm" variant="ghost" iconLeft="download"
+            onClick={() => { void api.adminAuditTrailExport({ actor: actor.trim(), action: action.trim(), status: status.trim(), limit }); }}>CSV</Button>
         </div>
       </div>
       {summary && summary.total > 0 ? (
