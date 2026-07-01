@@ -30,6 +30,20 @@ export const DICT: Record<string, Entry> = {
   "prefix.title": { ru: "Заглавие", en: "Title" },
   "prefix.doctype": { ru: "Вид документа", en: "Document type" },
   "home.collections": { ru: "Тематические подборки", en: "Topic collections" },
+  // АРМ сотрудника / модули (#D10)
+  "staff.workspace": { ru: "Рабочее пространство сотрудника", en: "Staff workspace" },
+  "staff.cataloging": { ru: "Каталогизация", en: "Cataloging" },
+  "staff.acq": { ru: "Комплектование", en: "Acquisitions" },
+  "staff.circ": { ru: "Книговыдача", en: "Circulation" },
+  "staff.cells": { ru: "Ячеистое хранение", en: "Cell storage" },
+  "staff.provision": { ru: "Книгообеспеченность", en: "Curriculum provision" },
+  "staff.inv": { ru: "Инвентаризация", en: "Inventory" },
+  "staff.cattools": { ru: "Каталог · инструменты", en: "Catalog · tools" },
+  "staff.utilities": { ru: "Утилиты", en: "Utilities" },
+  "staff.admin": { ru: "Администрирование", en: "Administration" },
+  "staff.platform": { ru: "Платформа", en: "Platform" },
+  "staff.migration": { ru: "Миграция", en: "Migration" },
+  "staff.benchmark": { ru: "Сравнение", en: "Benchmark" },
 };
 
 const KEY = "biblio.lang";
