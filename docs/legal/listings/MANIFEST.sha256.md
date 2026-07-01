@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-07-01**
-- Версия кода (git): **`bced7f3`**
-- Файлов: **306** · строк: **93308** · условных страниц: **1697**
-- **SHA-256 всего листинга:** `6611cc6a4578f4af51308dfed0bd4793963d589134a2969b8349b66b20543b67`
+- Версия кода (git): **`ed64010`**
+- Файлов: **306** · строк: **93404** · условных страниц: **1699**
+- **SHA-256 всего листинга:** `1e42e192d0204732e22c3f5177a1738de95ead2573dd575f5ec6b25b1bc3fc64`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -13,7 +13,7 @@
 | `irbis-web/backend/server.py` | 121 | `4a0fd3f7fc881dc7b737eb974323a0426e54ac409dcaffc9881561049995bc40` |
 | `irbis-web/backend/core.py` | 7420 | `15ebd2109e37b054855e11941114e93d4a1b14fee9acb1c56a4ca36940c18c62` |
 | `irbis-web/backend/config.py` | 115 | `2aaee5116648201577e42d4669658940fa2e835d149a91a1d52fbbfcdb95e765` |
-| `irbis-web/backend/access/catalog.py` | 1204 | `2ffefdd3958dcd4219b0814d323325d37928bf9ab45fc42f32bb44959bbfb6cd` |
+| `irbis-web/backend/access/catalog.py` | 1263 | `27032341c613c69289c21bf6957f175eb6948e54c2870816fcd5729fca4e35f8` |
 | `irbis-web/backend/access/circulation.py` | 1714 | `fdd3e8fa76c20484e398fff94c002cc60769971b36573cfe648a0e77e9138470` |
 | `irbis-web/backend/access/acquisition.py` | 1869 | `bd1678b2f963891e7208cad04da34158170193dbae44a9f42b0e2925ad5bbb0c` |
 | `irbis-web/backend/access/bookprovision.py` | 1005 | `c3a097acf545c4df9b2cc16ae1d99180f1c85883020b3534c534c7cbe280662d` |
@@ -128,7 +128,7 @@
 | `irbis-web/backend/tests/test_bookprovision.py` | 393 | `e836991b3b839f1f752afae1adad7e840f9fd8610ad564c5837e208f7db13381` |
 | `irbis-web/backend/tests/test_bp_enrollment.py` | 106 | `3fd4df48be36efb44c014986f9bd0584b16ec84c1e7304bd27553cdc6f5d3727` |
 | `irbis-web/backend/tests/test_browse_index.py` | 153 | `22dc1b68a13344fa34896bdfa81e8ac113e003d53278dfb698716542df8289a6` |
-| `irbis-web/backend/tests/test_catalog.py` | 474 | `ed1656b128c957a9770e20f202337011de6a0fe76d9ee2c48aa3205674d1a0d8` |
+| `irbis-web/backend/tests/test_catalog.py` | 511 | `e8f1b4b21597b52650a58e8b787f79087a4c43c139622129f6c2d3410e171611` |
 | `irbis-web/backend/tests/test_catalog_print.py` | 207 | `36c16a717413e20cabb3c2c507d702f9b788bc43cd3526cf21f905b7c24b6517` |
 | `irbis-web/backend/tests/test_catalog_versions.py` | 169 | `343ac0f1f03ca303db2a5dcaee9ea8a0c4fbed794c11d508e2dd9dffc952f0c0` |
 | `irbis-web/backend/tests/test_cataloging_gbl.py` | 355 | `021f24200966056e874e5e558e1c5c37d3a05dc3fc62845255a0758b78b28a16` |
