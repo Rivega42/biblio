@@ -75,6 +75,8 @@ export interface Recommendation { db: string; mfn: number; title: string; author
 // История просмотров (#134). Недавно открытые записи с временной меткой.
 export interface HistoryItem { db: string; mfn: number; title?: string; ts?: string; }
 export interface PopularItem { db: string; mfn: number; title: string; author?: string; count: number; }
+// Сводный отчёт по должникам: суммы в копейках.
+export interface DebtorsReport { readers_with_debt: number; total_owed: number; by_kind: { overdue?: number; lost?: number }; }
 // Сохранённые запросы (#133). prefix/query задают простой поиск; query может
 // нести готовое выражение, тогда prefix пуст. db — база, в которой искать.
 export interface SavedSearch { id: string | number; name: string; db: string; prefix?: string; query: string; ts?: string; count?: number; }
@@ -795,6 +797,8 @@ export const api = {
   // «Популярное» — топ записей по истории чтения (own-store, public-read).
   popular: (db?: string, limit = 8) =>
     jget<{ items: PopularItem[] }>("/api/popular?" + qs(db ? { db, limit } : { limit })),
+  // Сводный отчёт по должникам (staff). 404/403 → скрыть блок.
+  circDebtsReport: () => jget<{ report: DebtorsReport }>("/api/circ/debts"),
   // --- Фоновые задачи (#240) — оператор платформы (admin.db) ---
   adminJobs: (status?: string) =>
     jget<{ items: JobItem[]; stats: JobStats }>("/api/jobs" + (status ? "?" + qs({ status }) : "")),
