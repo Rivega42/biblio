@@ -1740,6 +1740,11 @@ def demo_own_store_checks():
         st, p = api.route('POST', '/api/savedsearch/check', {}, {}, RD)
         check('D5 повторная сверка -> new=0 (счётчик зафиксирован)',
               st == 200 and all(it['new'] == 0 for it in p['data']['items']))
+        # D7: фасеты из own-store по выборке (без ИРБИС)
+        st, p = api.route('GET', '/api/facets', {'db': ['IBIS'], 'q': ['Чехов']}, None, G)
+        allvals = [v['value'] for f in (p['data'].get('facets') or []) for v in f.get('values', [])]
+        check('D7 фасеты из own-store: непусто + значение «Чехов»',
+              st == 200 and len(p['data'].get('facets') or []) >= 1 and 'Чехов' in allvals)
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 

@@ -2014,6 +2014,13 @@ class Api:
         maxn=0 -> server returns total without reading records. Returns int or None."""
         v = value.replace('"', '')
         expr = '(%s) * "%s=%s"' % (base_expr, prefix, v)
+        # ДЕМО/own-store (#D7): пересечение считаем из own-store CatalogStore для баз
+        # OWN_SEARCH_DBS (composite +/* поддержан search_records) — фасеты без ИРБИС.
+        if db.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+            try:
+                return int(self.catalog.search_records(db, expr, limit=1, offset=0).get('total', 0))
+            except Exception:
+                return None
         try:
             count, _ = self.irbis.search(db, expr, maxn=0)
         except IrbisError:
@@ -2036,9 +2043,9 @@ class Api:
                 continue
             values = []
             for _c, term in rows:
-                if not term.startswith(prefix + '='):
-                    continue
-                val = term[len(prefix) + 1:].strip()
+                # ИРБИС отдаёт термин с префиксом ('A=…'), own-store словарь — «сырой»
+                # термин ('…'); принимаем оба формата (#D7).
+                val = (term[len(prefix) + 1:] if term.startswith(prefix + '=') else term).strip()
                 if val and val not in values:
                     values.append(val)
             scored = []
