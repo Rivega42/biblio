@@ -160,7 +160,8 @@ CREATE TABLE IF NOT EXISTS saved_search (
   db TEXT,
   prefix TEXT,
   query TEXT NOT NULL,
-  created_at REAL NOT NULL
+  created_at REAL NOT NULL,
+  last_count INTEGER NOT NULL DEFAULT 0   -- последнее зафиксированное число совпадений (#D5)
 );
 CREATE INDEX IF NOT EXISTS saved_search_ticket_idx ON saved_search(ticket, id);
 -- Consent (152-ФЗ ст.6/9, audit finding V9 / R9) — append-only: a new state is a
@@ -587,8 +588,14 @@ class AccessStore:
 
     def saved_search_list(self, ticket):
         return [dict(r) for r in self._conn().execute(
-            'SELECT id,name,db,prefix,query FROM saved_search WHERE ticket=? '
+            'SELECT id,name,db,prefix,query,last_count FROM saved_search WHERE ticket=? '
             'ORDER BY id', (ticket,)).fetchall()]
+
+    def saved_search_set_count(self, search_id, count):
+        """Зафиксировать текущее число совпадений сохранённого запроса (#D5)."""
+        c = self._conn()
+        c.execute('UPDATE saved_search SET last_count=? WHERE id=?', (int(count), search_id))
+        c.commit()
 
     def saved_search_add(self, ticket, name, db, prefix, query, ts):
         c = self._conn()

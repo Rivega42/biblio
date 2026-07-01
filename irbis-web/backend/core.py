@@ -5154,6 +5154,33 @@ class Api:
             return 404, err('not_found', 'saved search not found')
         return 200, ok(res)
 
+    def savedsearch_check(self, session, body):
+        """POST /api/savedsearch/check — сверить сохранённые запросы (#D5).
+
+        Для каждого запроса считает текущие совпадения; при РОСТЕ против прошлого
+        (last_count) кладёт уведомление читателю (savedsearch.new) и фиксирует новый
+        счётчик. Возвращает ``{items:[{id,name,count,new}]}``."""
+        ticket = self._reader_ticket(session)
+        store = self._store_for(session.get('tenant', DEFAULT_TENANT))
+        out = []
+        for s in store.saved_search_list(ticket):
+            count = self._saved_search_count(s.get('db'), s.get('prefix'), s.get('query'))
+            last = int(s.get('last_count') or 0)
+            delta = count - last
+            if delta > 0 and self.notifications is not None:
+                try:
+                    self.notifications.enqueue('savedsearch.new', ticket, payload={
+                        'name': s.get('name'), 'query': s.get('query'),
+                        'new': delta, 'count': count})
+                except Exception:
+                    pass
+            try:
+                store.saved_search_set_count(s['id'], count)
+            except Exception:
+                pass
+            out.append({'id': s['id'], 'name': s.get('name'), 'count': count, 'new': max(0, delta)})
+        return 200, ok({'items': out})
+
     # ---- privacy: consent + right-to-erasure (V9 / R9, 152-ФЗ ст.6/9/14/21) ---- #
     # Reader-session surfaces over OUR store. Consent is append-only history;
     # erasure deletes ONLY our portal-side data for the authed reader's own ticket
@@ -7107,6 +7134,8 @@ class Api:
             if method == 'POST' and path == '/api/reader/erase':
                 return self.erase_me(session, body or {})
             # ---- reader-portal v2: saved searches (#133) ----
+            if method == 'POST' and path == '/api/savedsearch/check':
+                return self.savedsearch_check(session, body or {})
             if method == 'POST' and path == '/api/savedsearch/delete':
                 return self.delete_search(session, body or {})
             if method == 'GET' and path == '/api/savedsearch':
