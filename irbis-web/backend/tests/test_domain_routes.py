@@ -1751,6 +1751,11 @@ def demo_own_store_checks():
         check('D8 экспорт данных: ключи + сохранённый запрос + билет',
               st == 200 and {'history', 'savedSearches', 'holds', 'subscriptions'} <= set(d)
               and len(d['savedSearches']) >= 1 and d['ticket'] == '111')
+        # D9: обложка из own-store — 953 без байт → SVG-плейсхолдер
+        rc = api.catalog.save('IBIS', _rec('Обложкина', **{'953': [{'a': 'IMAGE', 't': 'Обложкина'}]}))
+        st, p = api.route('GET', '/api/cover/IBIS/%d' % rc['mfn'], {}, None, G)
+        check('D9 обложка own-store (953 без байт) -> SVG-плейсхолдер',
+              st == 200 and hasattr(p, 'content_type') and 'svg' in p.content_type and b'<svg' in p.data)
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 

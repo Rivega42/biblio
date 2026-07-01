@@ -2063,19 +2063,50 @@ class Api:
                             'label': label, 'values': scored})
         return 200, ok({'db': db, 'expr': base_expr, 'facets': out})
 
+    @staticmethod
+    def _cover_svg(title, mfn):
+        """SVG-плейсхолдер обложки (#D9): тонированный прямоугольник 5:7 + инициалы/
+        заглавие. Для записей с флагом обложки (953) без встроенных байт — чтобы
+        галерея/карточка показывали обложку в демо без реального DAM."""
+        import xml.sax.saxutils as _sx
+        tints = ['#2F5D62', '#C96442', '#6B5CA5', '#3E4C7E', '#1F8A5B', '#8A4F9E']
+        tint = tints[int(mfn) % len(tints)]
+        t = (title or '').strip()
+        label = _sx.escape(t[:40] if t else ('MFN %s' % mfn))
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 350">'
+            '<rect width="250" height="350" fill="%s"/>'
+            '<rect x="0" y="0" width="250" height="6" fill="rgba(255,255,255,.25)"/>'
+            '<foreignObject x="18" y="24" width="214" height="300">'
+            '<div xmlns="http://www.w3.org/1999/xhtml" style="font-family:Georgia,serif;'
+            'color:#fff;font-size:20px;line-height:1.3;font-weight:600;">%s</div>'
+            '</foreignObject></svg>' % (tint, label))
+
     def cover(self, session, db, mfn):
-        """Embedded cover from field 953 (^B is URL-encoded image bytes)."""
+        """Обложка записи: встроенные байты 953^B, иначе (для OWN_SEARCH_DBS с флагом
+        обложки) SVG-плейсхолдер по заглавию. Прод (ИРБИС) без байт — прежний 404."""
         self._guard(session, 'record.read', db, 'read')
         self._public_db_guard(session, db)
-        rec = self.irbis.read_record(db, mfn)
-        f = field(rec, '953')
-        if not f or 'B' not in f['subfields']:
-            return 404, err('not_found', 'no embedded cover')
-        data = unquote_to_bytes(f['subfields']['B'])
-        kind = (f['subfields'].get('A') or 'JPG').upper()
-        ctype = {'JPG': 'image/jpeg', 'JPEG': 'image/jpeg', 'PNG': 'image/png',
-                 'GIF': 'image/gif'}.get(kind, 'application/octet-stream')
-        return 200, Raw(data, ctype)
+        own = db.upper() in self.cfg.own_search_dbs and self.catalog is not None
+        rec = self._own_record(db, mfn) if own else None
+        if rec is None and not own:
+            try:
+                rec = self.irbis.read_record(db, mfn)
+            except IrbisError:
+                rec = None
+        f = field(rec, '953') if rec else None
+        subs = (f.get('subfields') or {}) if f else {}
+        if f and 'B' in subs:
+            data = unquote_to_bytes(subs['B'])
+            kind = (subs.get('A') or 'JPG').upper()
+            ctype = {'JPG': 'image/jpeg', 'JPEG': 'image/jpeg', 'PNG': 'image/png',
+                     'GIF': 'image/gif'}.get(kind, 'application/octet-stream')
+            return 200, Raw(data, ctype)
+        # own-store с флагом обложки (953 без байт) → сгенерированный SVG-плейсхолдер.
+        if own and f is not None:
+            title = (field(rec, '200') or {}).get('subfields', {}).get('a', '') if field(rec, '200') else ''
+            return 200, Raw(self._cover_svg(title, mfn).encode('utf-8'), 'image/svg+xml; charset=utf-8')
+        return 404, err('not_found', 'no embedded cover')
 
     def resource(self, session, db, spec_file):
         """Read a server text resource (menus/PFT) via FILE 'L'. pathcode 3 = db menus."""
