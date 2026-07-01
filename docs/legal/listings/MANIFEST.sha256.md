@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-07-01**
-- Версия кода (git): **`ebc1d65`**
-- Файлов: **305** · строк: **92575** · условных страниц: **1684**
-- **SHA-256 всего листинга:** `383d07c7b4ea22fed125035968b1cd0cc6d3ffb130c9e7853cacbead17eb1442`
+- Версия кода (git): **`985d588`**
+- Файлов: **305** · строк: **92624** · условных страниц: **1685**
+- **SHA-256 всего листинга:** `8536005d17934b797ff34a9dad6cee3d8a7a577c7987ea4c136328abb12bdb9b`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -268,12 +268,12 @@
 | `irbis-web/frontend/src/BenchmarkPanel.tsx` | 442 | `365e5de598e181cc0520a964d1c470cb296d42a182ac44699366cac24909442a` |
 | `irbis-web/frontend/src/BookProvisionDesk.tsx` | 493 | `6e1d2a8c30d7b493db9da0686ef7658ea37cdc0b4fcee2739c3a0dc537b3486b` |
 | `irbis-web/frontend/src/CatalogingDesk.tsx` | 613 | `637cdf335158de2f98e97766b7d912ed3fc33b62f39aaa41e99c59c46b7c4612` |
-| `irbis-web/frontend/src/CirculationDesk.tsx` | 423 | `47330dfbaca24b73685d42522d5fa7ff5d068a51e35b63d5d08af4d5f8692fb4` |
+| `irbis-web/frontend/src/CirculationDesk.tsx` | 468 | `472300279055c232315a3350423ce3046a3c52c116ef241ba882f903752ee6f0` |
 | `irbis-web/frontend/src/MigrationWizard.tsx` | 605 | `1a1333e120567d4b279f188d7310f6ff26514198b8bd59383867c53a726a23a1` |
 | `irbis-web/frontend/src/PlatformDesk.tsx` | 1128 | `88a4eb8d2d5fe24225eb7a632c2c04f1ba6d5bc49df32ab883efb0b465b79f46` |
 | `irbis-web/frontend/src/Staff.tsx` | 1297 | `fe9a873e53e8b300d54649454c674656f465bf94c019d5f05004da028dd3f635` |
 | `irbis-web/frontend/src/UtilitiesDesk.tsx` | 403 | `0b1afa74f032a638ed03f6e59d9854379b1ef97f917f975fa5e84ae0a7b65fb9` |
-| `irbis-web/frontend/src/api.ts` | 904 | `97e04465627e9994c33360eb3aeda2bf0a07620f187e3187068e5111b40d8f99` |
+| `irbis-web/frontend/src/api.ts` | 908 | `063d67c63b6cd0f6138edbf1a51ba3f47acf089402367128976d7aa8e7d2c619` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 203 | `252a134c6ce06e6ac8ccb3177990b244f01fba5acfc503ad11a96ef555d24bb5` |
 | `irbis-web/frontend/src/landing/DemoRequestForm.tsx` | 216 | `c6e175d56b6b7d09346db0b72f38ec47cf8389396e1be97524d5dba17cd505e3` |
