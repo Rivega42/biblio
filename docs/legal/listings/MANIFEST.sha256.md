@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-07-01**
-- Версия кода (git): **`ce467bf`**
-- Файлов: **306** · строк: **93033** · условных страниц: **1692**
-- **SHA-256 всего листинга:** `49d312482940299711b9fa6f71f46c3657145393441d2b89364852a56072e902`
+- Версия кода (git): **`e9dac07`**
+- Файлов: **306** · строк: **93071** · условных страниц: **1693**
+- **SHA-256 всего листинга:** `019b699a01ccc243fc1f0b0da9b0293a991c503ddc7d6f5cda1780c945ead109`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -85,7 +85,7 @@
 | `irbis-web/backend/access/rights.py` | 491 | `e7a92e97b3ed65d68e83616ef2759f0c1afbd2947a9f5248b7df7599217cc676` |
 | `irbis-web/backend/access/roles.py` | 349 | `603e638dc7c614ca589d226d1438fe61191335fcee4a89500ba1e0d76a0625fa` |
 | `irbis-web/backend/access/sdi.py` | 224 | `4e18568b06209388fcf30e24022e5d18b7f256fc3ef6128d4dcb8fdd9e7aa0d3` |
-| `irbis-web/backend/access/search_index.py` | 735 | `4d9b347adf2e7ff3b2c9d8d1276ce8ee6f60bb5da8e14c33b0916ed10404341f` |
+| `irbis-web/backend/access/search_index.py` | 766 | `d5298dd1bc413c7a493a9a6e61befc5aa7b1e6d89726eb203ee171641656cdc8` |
 | `irbis-web/backend/access/seed.py` | 65 | `f1b7e3d90f25c100cb395281e0c39fbb385d06856c874c038c9026e18f369e1a` |
 | `irbis-web/backend/access/seed_data.py` | 156 | `818b331db5c8d7b4d009383959f6b077c12ef9e1ea77eabff0e264cb647dc008` |
 | `irbis-web/backend/access/seed_vocab.py` | 135 | `06b6f2a85cc0c7d07689363397a5e088e6d9e6bc1e83cfe34a0c9288c61b5d41` |
@@ -152,7 +152,7 @@
 | `irbis-web/backend/tests/test_devices.py` | 162 | `86e9116b89e1b26d8358566c17aae52f02222f7fa2a41df8512836f3128d5c66` |
 | `irbis-web/backend/tests/test_discipline_norms.py` | 160 | `5160bb59f659456805b6efee2a871e1197527666d7befb8893a3977d52324fe7` |
 | `irbis-web/backend/tests/test_discovery.py` | 363 | `a9d4b06a7457b77be26a0249f80d8882a7e94d47feb9d8c6246d03287646aaa7` |
-| `irbis-web/backend/tests/test_domain_routes.py` | 1791 | `6e7b06bad3ec75247ebf592a7d3df83998c8ae7761ae219691cf4851cca64e40` |
+| `irbis-web/backend/tests/test_domain_routes.py` | 1795 | `7cc8809005051621d7bb258cf72a6c83c4708ae89b7c505974930e5bcbe8275b` |
 | `irbis-web/backend/tests/test_encoding.py` | 57 | `b3aa6e9777a8d584423b76419275ab63e2bd4d049227bfdd5fe7eb10a52b0d58` |
 | `irbis-web/backend/tests/test_engine_routes.py` | 417 | `946850994cda92110a6e0e3235e1c0ec2cf60ea00026e0585a0897d43bc539d0` |
 | `irbis-web/backend/tests/test_exhibits.py` | 209 | `13bc9ff42f369bf7983dac88d142eef403d489514d400fc3259356ba0648660c` |
@@ -273,7 +273,7 @@
 | `irbis-web/frontend/src/PlatformDesk.tsx` | 1156 | `c9505b5899d2c822840982567c0d1d9826c3f820a6ecc50e1a58bf1d2631130d` |
 | `irbis-web/frontend/src/Staff.tsx` | 1297 | `fe9a873e53e8b300d54649454c674656f465bf94c019d5f05004da028dd3f635` |
 | `irbis-web/frontend/src/UtilitiesDesk.tsx` | 403 | `0b1afa74f032a638ed03f6e59d9854379b1ef97f917f975fa5e84ae0a7b65fb9` |
-| `irbis-web/frontend/src/api.ts` | 911 | `689b45a3a1dcd6877656e0881d8db215953b5f70d6e1eb6422381d983b94ac2b` |
+| `irbis-web/frontend/src/api.ts` | 911 | `d228e776aa571091ccebb133df6ee75acee56e3e590cbf514683f6869fb7e1a3` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 203 | `252a134c6ce06e6ac8ccb3177990b244f01fba5acfc503ad11a96ef555d24bb5` |
 | `irbis-web/frontend/src/i18n.ts` | 56 | `4fdbd6b2cf1bfb187c46cabab9ef753e72c34c088416dbb8b78ce0bada1baf98` |
@@ -291,7 +291,7 @@
 | `irbis-web/frontend/src/reader/CookiePanel.tsx` | 154 | `4e06f2e6f2efb9e4c1879a76fe40b2aa97f71efb2aae309a2e066917cf4effa7` |
 | `irbis-web/frontend/src/reader/DocViewer.tsx` | 227 | `b6c9353cffbe55cd23f36fe81cd1a384dc5a5c919553196309ef2afca78ab3ad` |
 | `irbis-web/frontend/src/reader/Exhibits.tsx` | 228 | `b8268d5ad1323bbc695b7d6fd20aea0ac422b519ac56b8496d62575927d4805d` |
-| `irbis-web/frontend/src/reader/FulltextSearch.tsx` | 107 | `3dbfb5f58516a883d8e60ff4447434bc9506b3b1368d7b1cbb26ed1b77b5fada` |
+| `irbis-web/frontend/src/reader/FulltextSearch.tsx` | 110 | `1e57bb5faab46d87cc3e14bd19477193e43ce18776e9f172df71d464ce7198f4` |
 | `irbis-web/frontend/src/reader/GalleryGrid.tsx` | 113 | `89522accc3106d2e0517e0715f4ad45e281d4e36db9f3410418eb478ecef510e` |
 | `irbis-web/frontend/src/reader/HistoryTab.tsx` | 102 | `ced520ea8d28d87b68f189ed24ceac00916be6eb5543cdd1c50d99ac3b346743` |
 | `irbis-web/frontend/src/reader/HoldsTab.tsx` | 121 | `65d84990d834702ee566c24853fd99196ba41f5595f23805d0e905e6ec8ebea7` |
