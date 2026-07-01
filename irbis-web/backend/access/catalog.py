@@ -196,6 +196,12 @@ INDEX_SPEC = [
     ('G', '210', 'd'),
     # --- экземпляр ---
     ('MHR', '910', 'd'),
+    # --- RFID-метка экземпляра (резолв метки шкафа/ворот → экземпляр; G1 #411) ---
+    # Считыватели устройств (робо-шкаф/ворота/ТСД) знают только физическую метку
+    # (UHF EPC / HF UID), а циркуляция ключуется на инв.№ (910^b). RF= индексирует
+    # метку, чтобы `RF=<epc>` и `find_exemplar_by_tag` находили нужный экземпляр.
+    ('RF', '910', 'h'),      # RFID/EPC, записанный на копии (910^h)
+    ('RF', '941', 'h'),      # RFID-дубль для индексации (941^h)
     # --- авторитетная ссылка ^3 (поиск каталога ПО авторитету, ребро 6.4) ---
     # Каждое поле-заголовок, несущее ^3 = номер авторитетной записи, индексируется
     # под AR=, чтобы найти все БО, ссылающиеся на эту авторитетную запись.
@@ -228,7 +234,7 @@ INDEX_SPEC = [
 # The prefixes a caller may search by (used to validate / document expressions).
 # Order: the four original prefixes first, then the expanded set (§3.2 high-freq).
 SEARCH_PREFIXES = ('T', 'A', 'K', 'IN',
-                   'TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR', 'AR')
+                   'TS', 'M', 'S', 'GEO', 'U', 'V', 'B', 'I', 'G', 'MHR', 'AR', 'RF')
 
 # Служебные префиксы связи иерархии записей (INTEGRATION_MAP кластер 9). Они НЕ
 # входят в SEARCH_PREFIXES (обычный словарный поиск `PREFIX=term` их не разбирает —
@@ -814,6 +820,59 @@ class CatalogStore:
                 if self._exemplar_key(inst) == target:
                     return (r['mfn'], i, inst)
         return None
+
+    @staticmethod
+    def _exemplar_tag(inst):
+        """RFID-метка (``910^h``) экземпляра, или '' если нет."""
+        if isinstance(inst, dict):
+            return str(inst.get('h') or inst.get('H') or '')
+        return ''
+
+    def find_exemplar_by_tag(self, db, tag):
+        """Найти экземпляр (копию ``910``) по физической RFID-метке (G1 #411).
+
+        Считыватели устройств (робо-шкаф/ворота/ТСД) знают только метку (UHF EPC /
+        HF UID), а циркуляция ключуется на инв.№ (``910^b`` = ``loan.item``). Этот
+        резолвер закрывает шов «метка → экземпляр»: сначала точное совпадение по
+        ``910^h`` (метка на конкретной копии), затем фолбэк по ``941^h`` (дубль-
+        индекс на уровне записи → первая копия ``910``). Возвращает
+        ``(mfn, index, instance)`` — тот же адрес, что и :meth:`find_exemplar`, из
+        которого вызывающий берёт ``910^b`` для circulation — или ``None``.
+
+        Декодирование ISO 28560-2 (``tag_codec``: метка → OID 1 = инв.№ →
+        :meth:`find_exemplar`) как третий фолбэк — отдельным шагом (см. #411),
+        т.к. UHF-EPC шкафа не тождественен байтам user-memory HF-метки."""
+        target = str(tag or '').strip()
+        if not target:
+            return None
+        fallback = None  # (mfn, i, inst), найденный по 941^h
+        for r in self._conn().execute(
+                "SELECT mfn, data_json FROM record WHERE db=? AND status='active' "
+                'ORDER BY mfn', (db,)).fetchall():
+            record = json.loads(r['data_json'])
+            insts = record.get('910')
+            if insts is not None:
+                if not isinstance(insts, list):
+                    insts = [insts]
+                for i, inst in enumerate(insts):
+                    if self._exemplar_tag(inst) == target:
+                        return (r['mfn'], i, inst)
+            # 941^h — RFID-дубль для индексации (уровень записи). Если по копиям
+            # 910^h не совпало, но 941^h == метке — резолвим к первой копии 910
+            # (best-effort; при рассинхроне 910^h/941^h верен per-copy 910^h выше).
+            if fallback is None:
+                f941 = record.get('941')
+                if f941 is not None:
+                    if not isinstance(f941, list):
+                        f941 = [f941]
+                    if any(self._exemplar_tag(f) == target for f in f941):
+                        c910 = record.get('910')
+                        if c910 is not None:
+                            if not isinstance(c910, list):
+                                c910 = [c910]
+                            if c910 and isinstance(c910[0], dict):
+                                fallback = (r['mfn'], 0, c910[0])
+        return fallback
 
     def exemplars_at(self, db, location):
         """Inventory numbers (``910^b``) of active copies whose ``910^D`` (место
