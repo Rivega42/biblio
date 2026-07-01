@@ -409,6 +409,7 @@ const OVERVIEW_CARDS: { key: string; label: string; icon: IconName }[] = [
 function AnalyticsOverview() {
   const [metrics, setMetrics] = React.useState<Record<string, number> | null>(null);
   const [hidden, setHidden] = React.useState(false);
+  const [byType, setByType] = React.useState<{ docType: string; count: number }[]>([]);
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -416,24 +417,45 @@ function AnalyticsOverview() {
       if (!alive) return;
       if (r.status === 404 || r.status === 501 || r.status === 403) { setHidden(true); return; }
       if (r.json?.ok && r.json.data) setMetrics(r.json.data.metrics || {});
+      const d = await api.analyticsByDoctype();
+      if (alive && d.json?.ok && d.json.data) setByType(d.json.data.items || []);
     })();
     return () => { alive = false; };
   }, []);
   if (hidden || metrics === null) return null;
   const cards = OVERVIEW_CARDS.filter((c) => typeof metrics[c.key] === "number");
   if (!cards.length) return null;
+  const maxCount = byType.reduce((m, x) => Math.max(m, x.count), 0) || 1;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))", gap: 10, marginBottom: 18 }}>
-      {cards.map((c) => (
-        <div key={c.key} style={{ background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-lg)", padding: "12px 14px", display: "flex", alignItems: "center", gap: 11 }}>
-          <span style={{ background: "var(--accent-weak)", color: "var(--accent)", borderRadius: "var(--radius-md)", padding: 7, flex: "none", display: "inline-flex" }}><Icon name={c.icon} size={17} /></span>
-          <span style={{ minWidth: 0 }}>
-            <span style={{ display: "block", fontWeight: 700, fontSize: 19, lineHeight: 1.1, color: "var(--text-strong)" }}>{metrics[c.key].toLocaleString("ru-RU")}</span>
-            <span style={{ display: "block", color: "var(--text-subtle)", fontSize: 11.5, marginTop: 2 }}>{c.label}</span>
-          </span>
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))", gap: 10, marginBottom: 18 }}>
+        {cards.map((c) => (
+          <div key={c.key} style={{ background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-lg)", padding: "12px 14px", display: "flex", alignItems: "center", gap: 11 }}>
+            <span style={{ background: "var(--accent-weak)", color: "var(--accent)", borderRadius: "var(--radius-md)", padding: 7, flex: "none", display: "inline-flex" }}><Icon name={c.icon} size={17} /></span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", fontWeight: 700, fontSize: 19, lineHeight: 1.1, color: "var(--text-strong)" }}>{metrics[c.key].toLocaleString("ru-RU")}</span>
+              <span style={{ display: "block", color: "var(--text-subtle)", fontSize: 11.5, marginTop: 2 }}>{c.label}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+      {byType.length > 0 && (
+        <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-lg)", padding: "12px 16px", marginBottom: 18 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-strong)", marginBottom: 10 }}>Фонд по виду документа</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {byType.slice(0, 8).map((x) => (
+              <div key={x.docType} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+                <span style={{ flex: "none", width: 150, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.docType}</span>
+                <span style={{ flex: 1, height: 8, borderRadius: 999, background: "var(--surface-sunken)", overflow: "hidden" }}>
+                  <span style={{ display: "block", height: "100%", width: Math.round((x.count / maxCount) * 100) + "%", background: "var(--accent)" }} />
+                </span>
+                <span style={{ flex: "none", width: 48, textAlign: "right", color: "var(--text-subtle)", fontVariantNumeric: "tabular-nums" }}>{x.count}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      ))}
-    </div>
+      )}
+    </>
   );
 }
 
