@@ -5043,6 +5043,12 @@ class Api:
         version = (query.get('version') or ['1.2'])[0]
         q = (query.get('query') or [''])[0]
         ctype = 'application/xml; charset=utf-8'
+        db = (query.get('database') or [self.cfg.db_default])[0]
+        # D1: operation=explain -> визитка сервиса (serverInfo + indexInfo).
+        if op == 'explain':
+            return 200, Raw(_sru.explain(self.cfg.db_default and (
+                'http://%s:%d/api/sru' % (self.cfg.app_host, self.cfg.app_port)),
+                version, db).encode('utf-8'), ctype)
         if op != 'searchRetrieve':
             return 200, Raw(_sru.diagnostic('unsupported operation: %s' % op, 4, version).encode('utf-8'), ctype)
         if not q.strip():
@@ -5055,14 +5061,16 @@ class Api:
             start = max(1, int((query.get('startRecord') or ['1'])[0]))
         except (TypeError, ValueError):
             start = 1
-        db = (query.get('database') or [self.cfg.db_default])[0]
         total, items = 0, []
         if self.catalog is not None:
             expr = _sru.cql_to_expr(q)
             if expr:
                 res = self.catalog.search_records(db, expr, limit=mx, offset=start - 1)
                 total, items = res.get('total', 0), res.get('items', [])
-        xml = _sru.search_retrieve(items, total, query=q, start=start, version=version)
+        # D1: постраничный забор — nextRecordPosition, если за окном есть ещё записи.
+        next_pos = start + len(items) if (start - 1 + len(items)) < total else None
+        xml = _sru.search_retrieve(items, total, query=q, start=start, version=version,
+                                   next_position=next_pos)
         return 200, Raw(xml.encode('utf-8'), ctype)
 
     def recommendations(self, session, db, mfn):

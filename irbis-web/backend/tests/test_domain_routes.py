@@ -1722,10 +1722,22 @@ def sru_route_checks():
     check('SRU searchRetrieve -> XML c numberOfRecords + запись',
           st == 200 and hasattr(p, 'content_type') and 'xml' in p.content_type
           and '<srw:numberOfRecords>' in xml and 'Театр' in xml and 'dc:title' in xml)
-    st, p = api.route('GET', '/api/sru', {'operation': ['explain']}, None, G)
+    st, p = api.route('GET', '/api/sru', {'operation': ['scan']}, None, G)
     check('SRU неподдерж. операция -> диагностика', st == 200 and b'diagnostic' in p.data)
     st, p = api.route('GET', '/api/sru', {'query': ['']}, None, G)
     check('SRU пустой запрос -> диагностика', st == 200 and b'diagnostic' in p.data)
+    # D1: explain + постраничный nextRecordPosition
+    st, p = api.route('GET', '/api/sru', {'operation': ['explain']}, None, G)
+    check('SRU explain -> explainResponse c indexInfo',
+          st == 200 and b'explainResponse' in p.data and b'indexInfo' in p.data)
+    # 3 записи того же автора (A=Иванов индексится целиком) -> 4 совпадения с сид-записью
+    for i in range(3):
+        api.catalog.save('IBIS', _rec('Пьеса %d' % i, **{'700': [{'a': 'Иванов'}]}))
+    st, p = api.route('GET', '/api/sru',
+                      {'query': ['dc.creator=Иванов'], 'maximumRecords': ['2'], 'startRecord': ['1']}, None, G)
+    xml = p.data.decode('utf-8')
+    check('SRU пейджинг: >2 совпадений, окно 2 -> nextRecordPosition=3',
+          st == 200 and '<srw:nextRecordPosition>3</srw:nextRecordPosition>' in xml)
 
 
 def main():
