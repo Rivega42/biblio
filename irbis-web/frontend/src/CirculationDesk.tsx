@@ -7,7 +7,7 @@
 // Мягкая деградация: если /api/circ/* нет (404/501) — информер, приложение не падает.
 import React from "react";
 import { api } from "./api";
-import type { CircFormular, CircLoan, CircFine } from "./api";
+import type { CircFormular, CircLoan, CircFine, DebtorsReport } from "./api";
 import type { ToastVariant } from "../components/feedback/Toast.jsx";
 import { Button } from "../components/forms/Button.jsx";
 import { Icon } from "../components/icon/Icon.jsx";
@@ -272,6 +272,8 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
     <div className="cdesk">
       {head}
 
+      <DebtorsSummary />
+
       {/* ===== Сканер: билет → экземпляр ===== */}
       <div className="cdesk__scan">
         <div className="cdesk__fld">
@@ -418,6 +420,49 @@ export function CirculationDesk({ toast }: { toast: ToastFn }) {
           </aside>
         </div>
       )}
+    </div>
+  );
+}
+
+// ===== Сводка по должникам (#C6) ============================================
+// Компактная карточка над рабочим столом: читателей с долгом, сумма к взысканию
+// (просрочка/утеря). Данные — GET /api/circ/debts (сводный отчёт, staff). При
+// 404/403 или отсутствии долгов блок не рендерится.
+function rub(kopecks: number | undefined): string {
+  return ((kopecks || 0) / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₽";
+}
+function DebtorsSummary() {
+  const [rep, setRep] = React.useState<DebtorsReport | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await api.circDebtsReport();
+      if (!alive) return;
+      if (r.json?.ok && r.json.data?.report) setRep(r.json.data.report);
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (!rep || !rep.readers_with_debt) return null;
+  const cells: { label: string; val: string; danger?: boolean }[] = [
+    { label: "Читателей с долгом", val: String(rep.readers_with_debt), danger: true },
+    { label: "К взысканию", val: rub(rep.total_owed), danger: true },
+    { label: "Просрочка", val: rub(rep.by_kind?.overdue) },
+    { label: "Утеря", val: rub(rep.by_kind?.lost) },
+  ];
+  return (
+    <div className="cdesk__card" style={{ padding: 14, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <Icon name="alert-triangle" size={16} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-strong)" }}>Должники</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10 }}>
+        {cells.map((c) => (
+          <div key={c.label} style={{ background: "var(--surface-sunken)", borderRadius: "var(--radius-md)", padding: "10px 12px" }}>
+            <div style={{ fontWeight: 700, fontSize: 18, lineHeight: 1.1, color: c.danger ? "var(--danger-500,#c0392b)" : "var(--text-strong)" }}>{c.val}</div>
+            <div style={{ fontSize: 11, color: "var(--text-subtle)", marginTop: 3 }}>{c.label}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
