@@ -799,6 +799,19 @@ export const api = {
   analyticsOverview: () => jget<{ tenant: string; metrics: Record<string, number> }>("/api/analytics/overview"),
   // Разбивка фонда по виду документа (штат). 404/403 → скрыть блок.
   analyticsByDoctype: () => jget<{ items: { docType: string; count: number }[] }>("/api/analytics/by-doctype"),
+  // Экспорт данных читателя (портируемость, 152-ФЗ): фетч с bearer + скачивание JSON.
+  meExport: async () => {
+    const r = await fetch("/api/me/export", { headers: authHeaders() });
+    if (!r.ok) return false;
+    const j = await r.json();
+    const blob = new Blob([JSON.stringify(j.data ?? j, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "my-data.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  },
   // «Популярное» — топ записей по истории чтения (own-store, public-read).
   popular: (db?: string, limit = 8) =>
     jget<{ items: PopularItem[] }>("/api/popular?" + qs(db ? { db, limit } : { limit })),

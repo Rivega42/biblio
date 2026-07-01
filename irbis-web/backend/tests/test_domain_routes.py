@@ -1745,6 +1745,12 @@ def demo_own_store_checks():
         allvals = [v['value'] for f in (p['data'].get('facets') or []) for v in f.get('values', [])]
         check('D7 фасеты из own-store: непусто + значение «Чехов»',
               st == 200 and len(p['data'].get('facets') or []) >= 1 and 'Чехов' in allvals)
+        # D8: экспорт данных читателя (портируемость)
+        st, p = api.route('GET', '/api/me/export', {}, None, RD)
+        d = p['data']
+        check('D8 экспорт данных: ключи + сохранённый запрос + билет',
+              st == 200 and {'history', 'savedSearches', 'holds', 'subscriptions'} <= set(d)
+              and len(d['savedSearches']) >= 1 and d['ticket'] == '111')
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 

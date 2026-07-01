@@ -5210,6 +5210,31 @@ class Api:
             out.append({'id': s['id'], 'name': s.get('name'), 'count': count, 'new': max(0, delta)})
         return 200, ok({'items': out})
 
+    def my_data_export(self, session):
+        """GET /api/me/export — данные читателя одним пакетом (портируемость, #D8,
+        152-ФЗ ст.20/21): история/сохранённые запросы/брони/подписки. Reader-scoped,
+        best-effort по own-store (каждый источник в своём try/except -> [])."""
+        ticket = self._reader_ticket(session)
+
+        def _items(v):
+            if isinstance(v, dict):
+                return v.get('items', [])
+            return v if isinstance(v, list) else []
+
+        def _safe(fn):
+            try:
+                return _items(fn())
+            except Exception:
+                return []
+        data = {
+            'ticket': ticket,
+            'history': _safe(lambda: self.social.history(ticket)) if self.social else [],
+            'savedSearches': _safe(lambda: self.social.saved_searches(ticket)) if self.social else [],
+            'holds': _safe(lambda: self.holds.list_for(ticket)) if getattr(self, 'holds', None) else [],
+            'subscriptions': _safe(lambda: self.collection_subs.for_reader(ticket)) if self.collection_subs else [],
+        }
+        return 200, ok(data)
+
     # ---- privacy: consent + right-to-erasure (V9 / R9, 152-ФЗ ст.6/9/14/21) ---- #
     # Reader-session surfaces over OUR store. Consent is append-only history;
     # erasure deletes ONLY our portal-side data for the authed reader's own ticket
@@ -7167,6 +7192,8 @@ class Api:
             # ---- reader-portal v2: saved searches (#133) ----
             if method == 'POST' and path == '/api/savedsearch/check':
                 return self.savedsearch_check(session, body or {})
+            if method == 'GET' and path == '/api/me/export':
+                return self.my_data_export(session)
             if method == 'POST' and path == '/api/savedsearch/delete':
                 return self.delete_search(session, body or {})
             if method == 'GET' and path == '/api/savedsearch':

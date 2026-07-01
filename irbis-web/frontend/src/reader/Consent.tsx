@@ -239,7 +239,13 @@ export function EraseDataCard({ cardSx, toast, onErased }: {
           ))}
         </div>
       ) : (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+          <Button variant="ghost" size="sm" iconLeft="download"
+            onClick={async () => {
+              const okexp = await api.meExport();
+              toast(okexp ? { variant: "success", title: "Данные выгружены", message: "Файл my-data.json скачан." }
+                          : { variant: "error", title: "Не выгружено", message: "Повторите попытку." });
+            }}>Скачать мои данные</Button>
           <Button variant="ghost" size="sm" iconLeft="trash" onClick={() => setConfirmOpen(true)}>Удалить мои данные</Button>
         </div>
       )}
