@@ -280,7 +280,11 @@ CREATE TABLE IF NOT EXISTS loan (
   returned_at REAL,
   renewals INTEGER NOT NULL DEFAULT 0,   -- prolong_count (MAXPROLONGCOUNT)
   lost_status TEXT NOT NULL DEFAULT 'none'  -- none | lost_candidate | lost
-       CHECK (lost_status IN ('none','lost_candidate','lost'))
+       CHECK (lost_status IN ('none','lost_candidate','lost')),
+  op_id TEXT UNIQUE          -- BDP-ключ идемпотентности (#412): повтор с тем же
+                             -- op_id не создаёт вторую выдачу (replay-safe для
+                             -- sync.replay). NULL для staff-путей — NULL'ы в
+                             -- UNIQUE различны, staff-выдачи не конфликтуют.
 );
 CREATE INDEX IF NOT EXISTS loan_reader_idx ON loan(reader, returned);
 CREATE INDEX IF NOT EXISTS loan_item_idx ON loan(item, returned);
@@ -372,18 +376,26 @@ class CirculationStore:
 
     # ---- loans ------------------------------------------------------------ #
     def add_loan(self, reader_id, item, due, checked_out_at,
-                 item_kind=None, item_price=None):
+                 item_kind=None, item_price=None, op_id=None):
         c = self._conn()
         cur = c.execute(
             'INSERT INTO loan(reader,item,item_kind,item_price,due,'
-            'checked_out_at) VALUES(?,?,?,?,?,?)',
-            (reader_id, item, item_kind, item_price, due, checked_out_at))
+            'checked_out_at,op_id) VALUES(?,?,?,?,?,?,?)',
+            (reader_id, item, item_kind, item_price, due, checked_out_at, op_id))
         c.commit()
         return self.get_loan(cur.lastrowid)
 
     def get_loan(self, loan_id):
         r = self._conn().execute(
             'SELECT * FROM loan WHERE id=?', (loan_id,)).fetchone()
+        return dict(r) if r else None
+
+    def get_loan_by_op_id(self, op_id):
+        """Выдача по BDP op_id (идемпотентность replay, #412), или None."""
+        if not op_id:
+            return None
+        r = self._conn().execute(
+            'SELECT * FROM loan WHERE op_id=?', (op_id,)).fetchone()
         return dict(r) if r else None
 
     def loans_on_hand(self, reader_id):
@@ -1120,7 +1132,8 @@ class CirculationEngine:
 
     # ---- checkout (§2 debtor gate + §5 limits) ---------------------------- #
     def checkout(self, reader_id, item, today, item_kind=None, item_price=None,
-                 staff_override=False, override_grant=False, device_id=None):
+                 staff_override=False, override_grant=False, device_id=None,
+                 op_id=None):
         """Lend ``item`` to ``reader_id``. Enforces limits + the debtor gate.
 
         ``staff_override`` lets a librarian lend over a deny — but only when the
@@ -1130,6 +1143,15 @@ class CirculationEngine:
 
         Returns a :class:`Decision`; on ALLOW ``computed['loan']`` is the new loan.
         """
+        # BDP-идемпотентность (#412): повтор с тем же op_id (напр. sync.replay
+        # после офлайна) не создаёт вторую выдачу — возвращаем исходное решение.
+        if op_id:
+            _existing = self.store.get_loan_by_op_id(op_id)
+            if _existing is not None:
+                return Decision(ALLOW, [], {'loan': _existing,
+                                            'due': _existing['due'],
+                                            'replayed': True})
+
         reader = self.store.get_reader(reader_id)
         if reader is None:
             return Decision(DENY, ['unknown_reader'])
@@ -1189,8 +1211,18 @@ class CirculationEngine:
                 return Decision(DENY, reasons)
 
         due = today + limits['max_return_days'] * SECONDS_PER_DAY
-        loan = self.store.add_loan(reader_id, item, due, today,
-                                   item_kind=item_kind, item_price=item_price)
+        try:
+            loan = self.store.add_loan(reader_id, item, due, today,
+                                       item_kind=item_kind, item_price=item_price,
+                                       op_id=op_id)
+        except sqlite3.IntegrityError:
+            # Гонка replay: параллельный commit того же op_id уже создал выдачу.
+            _existing = self.store.get_loan_by_op_id(op_id)
+            if _existing is not None:
+                return Decision(ALLOW, [], {'loan': _existing,
+                                            'due': _existing['due'],
+                                            'replayed': True})
+            raise
         # Edge 2.1: reflect the issue into the catalog exemplar (910^A 0→1).
         cat_mfn = self._flip_catalog_status(item, '1')  # EXEMPLAR_ISSUED
         computed = {'loan': loan, 'due': due, 'override': bool(reasons)}
