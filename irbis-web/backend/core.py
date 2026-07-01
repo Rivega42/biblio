@@ -4230,6 +4230,28 @@ class Api:
         m['jobs_done'] = int(_bs.get('done', 0))
         return 200, ok({'tenant': tenant, 'metrics': m})
 
+    def analytics_by_doctype(self, session):
+        """GET /api/analytics/by-doctype — разбивка фонда по виду документа (штат, #D6).
+
+        Own-store агрегат по каталогу: вид берётся из 900^b/^t, иначе рабочий лист
+        920, иначе «прочее». Возвращает ``{items:[{docType, count}]}`` по убыванию."""
+        self._require_staff(session)
+        db = self.cfg.db_default
+        counts = {}
+        for rec in self._catalog_records(db, limit=5000):
+            dt = ''
+            f900 = rec.get('900')
+            inst = (f900[0] if isinstance(f900, list) else f900) if f900 else None
+            if isinstance(inst, dict):
+                dt = (inst.get('b') or inst.get('t') or '').strip()
+            if not dt:
+                g = rec.get('920')
+                dt = (g if isinstance(g, str) else '').strip() or 'прочее'
+            counts[dt] = counts.get(dt, 0) + 1
+        items = sorted(({'docType': k, 'count': v} for k, v in counts.items()),
+                       key=lambda x: (-x['count'], x['docType']))
+        return 200, ok({'items': items})
+
     # ===================================================================== #
     # Разводка own-store бэклога (#316/#317/#318) в роуты.                   #
     # Комплектование: поставщики/счета + подписка-периодика. Каталогизатор:  #
@@ -6982,6 +7004,8 @@ class Api:
             # ---- Аналитический обзор библиотеки (штат) ----
             if method == 'GET' and path == '/api/analytics/overview':
                 return self.analytics_overview(session)
+            if method == 'GET' and path == '/api/analytics/by-doctype':
+                return self.analytics_by_doctype(session)
             # ---- Комплектование: поставщики/счета + подписка (PR #316) ----
             if method == 'POST' and path == '/api/acq/supplier':
                 return self.suppliers_add(session, body or {})

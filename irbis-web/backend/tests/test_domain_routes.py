@@ -1603,6 +1603,15 @@ def analytics_route_checks():
     check('overview: staff_seats — целое >= 1', isinstance(m['staff_seats'], int) and m['staff_seats'] >= 1)
     st, p = api.route('GET', '/api/analytics/overview', {}, None, R)
     check('reader к аналитике -> 403', st == 403)
+    # D6: разбивка фонда по виду документа (own-store агрегат)
+    api.catalog.save('IBIS', _rec('Книга А'))            # 920=PAZK
+    api.catalog.save('IBIS', _rec('Журнал Б', **{'920': 'NJ'}))
+    st, p = api.route('GET', '/api/analytics/by-doctype', {}, None, S)
+    kinds = {it['docType']: it['count'] for it in p['data']['items']}
+    check('by-doctype: агрегат по виду (PAZK + NJ)',
+          st == 200 and kinds.get('PAZK', 0) >= 1 and kinds.get('NJ', 0) >= 1)
+    st, p = api.route('GET', '/api/analytics/by-doctype', {}, None, R)
+    check('by-doctype: reader -> 403', st == 403)
 
 
 def fulltext_route_checks():

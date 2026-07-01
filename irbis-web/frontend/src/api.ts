@@ -797,6 +797,8 @@ export const api = {
   myModules: () => jget<{ configured: boolean; mode: string | null; modules: string[] }>("/api/me/modules"),
   // Сводка ключевых метрик библиотеки для дашборда штата.
   analyticsOverview: () => jget<{ tenant: string; metrics: Record<string, number> }>("/api/analytics/overview"),
+  // Разбивка фонда по виду документа (штат). 404/403 → скрыть блок.
+  analyticsByDoctype: () => jget<{ items: { docType: string; count: number }[] }>("/api/analytics/by-doctype"),
   // «Популярное» — топ записей по истории чтения (own-store, public-read).
   popular: (db?: string, limit = 8) =>
     jget<{ items: PopularItem[] }>("/api/popular?" + qs(db ? { db, limit } : { limit })),
