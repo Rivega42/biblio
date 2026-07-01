@@ -40,6 +40,7 @@ import { CollectionSubsPanel } from "./reader/CollectionSubs";
 import { FulltextSearchPanel } from "./reader/FulltextSearch";
 import { RecentlyViewed } from "./reader/RecentlyViewed";
 import { PopularPanel } from "./reader/Popular";
+import { useLang } from "./i18n";
 import { ConsentBanner, ConsentToggle, EraseDataCard } from "./reader/Consent";
 import { CookiePanel } from "./reader/CookiePanel";
 import { Requisites } from "./reader/Requisites";
@@ -173,6 +174,7 @@ export function App() {
   // Biblio Style A is the default skin. MODE light/dark via data-mode, a11y via data-theme.
   const [darkMode, setDarkMode] = React.useState(false);
   const [a11y, setA11y] = React.useState(false);
+  const { lang, setLang, t } = useLang();
   const [databases, setDatabases] = React.useState<DbItem[]>([]);
   const [db, setDb] = React.useState("IBIS");
   const [prefix, setPrefix] = React.useState("ALL");
@@ -601,15 +603,16 @@ export function App() {
         )}
         <div className="irb-headctl" style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
           <div style={{ display: "flex", gap: 4, marginRight: 6, padding: 2, background: "rgba(255,255,255,.12)", borderRadius: 10 }}>
-            <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>Читатель</button>
-            <button onClick={() => switchContext("staff")} style={hbtn(context === "staff")}>Сотрудник</button>
+            <button onClick={() => switchContext("reader")} style={hbtn(context === "reader")}>{t("nav.reader")}</button>
+            <button onClick={() => switchContext("staff")} style={hbtn(context === "staff")}>{t("nav.staff")}</button>
           </div>
-          <button onClick={() => setDarkMode((v) => !v)} title="Светлая / тёмная тема" style={hbtn(darkMode && !a11y)}>{darkMode ? "Светлая" : "Тёмная"}</button>
+          <button onClick={() => setDarkMode((v) => !v)} title="Светлая / тёмная тема" style={hbtn(darkMode && !a11y)}>{darkMode ? t("nav.light") : t("nav.dark")}</button>
           <button onClick={() => setA11y((v) => !v)} style={hbtn(a11y)}>A11y</button>
+          <button onClick={() => setLang(lang === "ru" ? "en" : "ru")} title="Язык интерфейса / Interface language" style={hbtn(false)}>{lang === "ru" ? "EN" : "RU"}</button>
           {/* Почтовый ящик уведомлений (#222) — только для вошедшего читателя. */}
           {context === "reader" && account.loggedIn && <NotificationInbox />}
-          {context === "reader" && account.loggedIn && <button onClick={loadCabinet} style={hbtn(view === "cabinet")}>Кабинет</button>}
-          {context === "reader" && <button onClick={() => account.loggedIn ? (setAccount({ loggedIn: false }), setView("search"), setCab(null)) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? "Выйти" : "Вход"}</button>}
+          {context === "reader" && account.loggedIn && <button onClick={loadCabinet} style={hbtn(view === "cabinet")}>{t("nav.cabinet")}</button>}
+          {context === "reader" && <button onClick={() => account.loggedIn ? (setAccount({ loggedIn: false }), setView("search"), setCab(null)) : setLoginOpen(true)} style={hbtn(false)}>{account.loggedIn ? t("nav.logout") : t("nav.login")}</button>}
           {context === "staff" && staff && <button onClick={() => { setStaff(null); setContext("reader"); }} style={hbtn(false)}>Выйти ({staff.login})</button>}
         </div>
       </header>
