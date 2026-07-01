@@ -25,6 +25,7 @@
 | [TAG_DATA_MODEL.md](TAG_DATA_MODEL.md) | **Байты метки** (из декомпиляции Ghidra нативного ядра): ISO 28560-2 — precursor-байт, компакция 1/2/3-5/6, EAS/AFI команды. Формат стандартный |
 | [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) | Пробелы и нужный стенд/доступы |
 | [BIBLIO_DEVICE_INTEGRATION_DESIGN.md](BIBLIO_DEVICE_INTEGRATION_DESIGN.md) | **Проект:** как Biblio (два режима: замена JIRBIS / замена ИРБИС) полноформатно работает со всеми устройствами + Android ТСД через ABIS‑порт; замена стека IDlogic |
+| [BOOKCABINET_INTEGRATION_DESIGN.md](BOOKCABINET_INTEGRATION_DESIGN.md) | **Проект:** наш робо-шкаф книговыдачи/книгоприёма (repo Rivega42/bookcabinet) на Biblio: раскол руки(RPi)/мозг(Biblio)/UI(портал-киоск); **свой протокол BDP** (не SIP2/IDlogic); офлайн-деградация+replay; единая личность портал=шкаф |
 | [TZ_PHASE1_abis_device_core.md](TZ_PHASE1_abis_device_core.md) | **ТЗ Фаза 1:** контракт IAbis, нативная БД (режим 2), эндпоинты Device Service, протокол Reader Agent; разделы «бесшовный подхват устройств» и «покрытие интерфейсов сотрудников» |
 | [DEVICES_NATIVE_ARCHITECTURE.md](DEVICES_NATIVE_ARCHITECTURE.md) | **Каноничная архитектура** (#272): устройства = нативные домены Biblio + compat-адаптер |
 | [specs/](specs/) | **Спеки реализации (нативные домены):** [домен `devices`](specs/DOMAIN_DEVICES_SPEC.md) (1/3) · [compat-адаптер](specs/COMPAT_ADAPTER_CONTRACT.md) (2/3) · [SafeKeeper→holds #222](specs/SAFEKEEPER_HOLDS_MAPPING.md) (3/3) |
