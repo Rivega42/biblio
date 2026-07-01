@@ -16,6 +16,20 @@ export const DICT: Record<string, Entry> = {
   "nav.cabinet": { ru: "Кабинет", en: "My account" },
   "nav.login": { ru: "Вход", en: "Sign in" },
   "nav.logout": { ru: "Выйти", en: "Sign out" },
+  // Лендинг / поиск (#D4)
+  "hero.eyebrow": { ru: "Электронный каталог", en: "Electronic catalog" },
+  "hero.title": { ru: "Найдите нужное издание в библиотеке", en: "Find the edition you need" },
+  "hero.lead": { ru: "Книги, статьи, электронные версии и архивные материалы — поиск по всему фонду в одном окне.", en: "Books, articles, e-versions and archival materials — search the whole collection in one place." },
+  "search.find": { ru: "Найти", en: "Search" },
+  "search.in": { ru: "Искать в:", en: "Search in:" },
+  "search.allbases": { ru: "Во всех базах", en: "All databases" },
+  "search.popular": { ru: "Популярные запросы", en: "Popular queries" },
+  "search.placeholder": { ru: "Например: основы программирования", en: "e.g.: programming basics" },
+  "prefix.all": { ru: "Везде", en: "Everywhere" },
+  "prefix.author": { ru: "Автор", en: "Author" },
+  "prefix.title": { ru: "Заглавие", en: "Title" },
+  "prefix.doctype": { ru: "Вид документа", en: "Document type" },
+  "home.collections": { ru: "Тематические подборки", en: "Topic collections" },
 };
 
 const KEY = "biblio.lang";
