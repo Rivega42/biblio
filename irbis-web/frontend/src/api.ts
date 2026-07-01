@@ -77,7 +77,7 @@ export interface HistoryItem { db: string; mfn: number; title?: string; ts?: str
 export interface PopularItem { db: string; mfn: number; title: string; author?: string; count: number; }
 // Сохранённые запросы (#133). prefix/query задают простой поиск; query может
 // нести готовое выражение, тогда prefix пуст. db — база, в которой искать.
-export interface SavedSearch { id: string | number; name: string; db: string; prefix?: string; query: string; ts?: string; }
+export interface SavedSearch { id: string | number; name: string; db: string; prefix?: string; query: string; ts?: string; count?: number; }
 
 // --- Каталогизация: рабочий лист + ФЛК (#183, #188) ------------------------
 // Описание поля рабочего листа (.ws/.wss → FIELD_CATALOG). type определяет

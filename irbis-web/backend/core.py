@@ -5011,10 +5011,29 @@ class Api:
         ticket = self._reader_ticket(session)
         return 200, ok(self.social.history(ticket))
 
+    def _saved_search_count(self, db, prefix, query):
+        """Текущее число совпадений сохранённого запроса (#C5). own-store для баз
+        OWN_SEARCH_DBS, иначе живой ИРБИС; ошибка/пусто -> 0. Best-effort."""
+        db = db or self.cfg.db_default
+        query = (query or '').strip()
+        if not query:
+            return 0
+        expr = query if '=' in query else ((prefix or 'K') + '=' + query)
+        try:
+            if db.upper() in self.cfg.own_search_dbs and self.catalog is not None:
+                return int(self.catalog.search(db, expr, limit=1, offset=0).get('total', 0))
+            cnt, _mfns = self.irbis.search(db, '"%s"' % expr)
+            return int(cnt)
+        except Exception:
+            return 0
+
     def saved_searches(self, session):
-        """GET /api/savedsearch — the reader's saved searches."""
+        """GET /api/savedsearch — the reader's saved searches (+ текущее число совпадений)."""
         ticket = self._reader_ticket(session)
-        return 200, ok(self.social.saved_searches(ticket))
+        res = self.social.saved_searches(ticket)
+        for s in res.get('items', []):
+            s['count'] = self._saved_search_count(s.get('db'), s.get('prefix'), s.get('query'))
+        return 200, ok(res)
 
     def save_search(self, session, body):
         """POST /api/savedsearch — persist a saved search."""
