@@ -2240,9 +2240,9 @@ class Api:
             assigned = int(r.data[0].split('#')[0])
         self._store_for(session.get('tenant', DEFAULT_TENANT)).audit(
             session['actor'], 'record.write', db, assigned, 'ok', {'created': mfn == 0})
-        if mfn == 0:
-            self._webhooks_emit(session.get('tenant', DEFAULT_TENANT), 'record.created',
-                                {'db': db, 'mfn': assigned})
+        self._webhooks_emit(session.get('tenant', DEFAULT_TENANT),
+                            'record.created' if mfn == 0 else 'record.updated',
+                            {'db': db, 'mfn': assigned})
         return 200, ok({'db': db, 'mfn': assigned, 'created': mfn == 0, 'returnCode': r.return_code})
 
     def validate_record(self, session, body):
@@ -2683,6 +2683,8 @@ class Api:
         res = self.holds.cancel(ticket, hold_id)
         if res is None:
             return 404, err('not_found', 'hold not found')
+        self._webhooks_emit(session.get('tenant', DEFAULT_TENANT), 'hold.cancelled',
+                            {'holdId': hold_id, 'ticket': ticket})
         return 200, ok(res)
 
     def place_holds_batch(self, session, body):
@@ -3920,6 +3922,18 @@ class Api:
         if self.webhooks is None:
             return 503, err('unavailable', 'webhooks store off')
         sub = self.webhooks.set_active(int(body.get('id') or 0), bool(body.get('active')))
+        if sub is None:
+            return 404, err('not_found', 'subscription not found')
+        return 200, ok(sub)
+
+    def webhooks_rotate(self, session, body):
+        """POST /api/admin/webhooks/rotate — сменить секрет подписи (super-admin).
+
+        ``id`` + новый ``secret``. В ответе secret маскирован (***)."""
+        self._require_super_admin(session)
+        if self.webhooks is None:
+            return 503, err('unavailable', 'webhooks store off')
+        sub = self.webhooks.rotate_secret(int(body.get('id') or 0), body.get('secret') or '')
         if sub is None:
             return 404, err('not_found', 'subscription not found')
         return 200, ok(sub)
@@ -6783,6 +6797,8 @@ class Api:
                 return self.webhooks_list(session, query)
             if method == 'POST' and path == '/api/admin/webhooks':
                 return self.webhooks_subscribe(session, body or {})
+            if method == 'POST' and path == '/api/admin/webhooks/rotate':
+                return self.webhooks_rotate(session, body or {})
             if method == 'POST' and path == '/api/admin/webhooks/active':
                 return self.webhooks_set_active(session, body or {})
             if method == 'POST' and path == '/api/admin/webhooks/remove':

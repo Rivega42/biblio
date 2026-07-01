@@ -885,6 +885,13 @@ function WebhooksTab({ toast, selected }: { toast: ToastFn; selected: string | n
     const t = r.json?.ok && r.json.data ? r.json.data.targets.find((x) => x.subscription_id === s.id) : undefined;
     setPreview((p) => ({ ...p, [s.id]: t || "empty" }));
   };
+  const doRotate = async (s: WebhookSub) => {
+    const secret = window.prompt("Новый секрет подписи (HMAC) для " + (WH_EVENT_RU[s.event] || s.event) + ":", "");
+    if (secret == null) return;
+    const r = await api.adminWebhookRotate({ id: s.id, secret });
+    if (r.json?.ok) toast({ variant: "success", title: "Секрет сменён", message: "Подпись обновлена" });
+    else toast({ variant: "error", title: "Не сменён", message: "Повторите попытку." });
+  };
   const doDeliveries = async (s: WebhookSub) => {
     if (deliveries[s.id]) { setDeliveries((d) => { const n = { ...d }; delete n[s.id]; return n; }); return; }
     const r = await api.adminWebhookDeliveries(s.id);
@@ -931,6 +938,7 @@ function WebhooksTab({ toast, selected }: { toast: ToastFn; selected: string | n
                 <span style={{ fontSize: 12, color: on ? "var(--text-strong)" : "var(--text-subtle)" }}>{on ? "активна" : "выключена"}</span>
                 <Button size="sm" variant="ghost" iconLeft="eye" onClick={() => doPreview(s)}>Превью</Button>
                 <Button size="sm" variant="ghost" iconLeft="clock" onClick={() => doDeliveries(s)}>Журнал</Button>
+                <Button size="sm" variant="ghost" iconLeft="refresh-cw" onClick={() => doRotate(s)}>Секрет</Button>
                 <Button size="sm" variant="ghost" iconLeft={on ? "x-circle" : "check-circle"} onClick={() => toggle(s)}>{on ? "Выключить" : "Включить"}</Button>
                 <Button size="sm" variant="ghost" iconLeft="trash" onClick={() => remove(s.id)}>Удалить</Button>
               </div>

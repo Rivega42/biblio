@@ -779,6 +779,8 @@ export const api = {
     jpost<WebhookSub>("/api/admin/webhooks", b),
   adminWebhookSetActive: (b: { id: number; active: boolean }) =>
     jpost<WebhookSub>("/api/admin/webhooks/active", b),
+  adminWebhookRotate: (b: { id: number; secret: string }) =>
+    jpost<WebhookSub>("/api/admin/webhooks/rotate", b),
   adminWebhookRemove: (b: { id: number }) =>
     jpost<{ removed: boolean }>("/api/admin/webhooks/remove", b),
   adminWebhookPreview: (b: { tenant: string; event: string; data?: Record<string, unknown> }) =>
