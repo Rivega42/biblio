@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-07-01**
-- Версия кода (git): **`517d87f`**
-- Файлов: **305** · строк: **92895** · условных страниц: **1690**
-- **SHA-256 всего листинга:** `74c5ff5c81e33d0546b041648171e7380327e62a59e2e84e842d05548b0a84a0`
+- Версия кода (git): **`1935a23`**
+- Файлов: **306** · строк: **92954** · условных страниц: **1691**
+- **SHA-256 всего листинга:** `a1d297749d992e4b9f654521fcc80347b643802131e081b5bf24d0f362b4baf9`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -264,7 +264,7 @@
 | `irbis-web/frontend/components/viewer/FileViewer.jsx` | 156 | `ebc9849e151def9e8c4ecdafebe1fc1fb3418ec345d3f1a4b96a924223668aa2` |
 | `irbis-web/frontend/src/AcquisitionDesk.tsx` | 514 | `14fb28cee56e30b21f6e6b92a390abe75b2cacf49a4ef257fb32d7ad5b183796` |
 | `irbis-web/frontend/src/AdminDesk.tsx` | 661 | `7b176599abe4e8d22bc9a6a11d6842fa177783bd28e53c873f0fa075e35c65d5` |
-| `irbis-web/frontend/src/App.tsx` | 1623 | `bcabbf7def405e425b2b1fede803110309b379567182aa13433df263ae534a3c` |
+| `irbis-web/frontend/src/App.tsx` | 1626 | `9018faa4aa0c2bc1b16abd163ee0ba35a7145cd2dca5a9b06f6d5755a74d84d3` |
 | `irbis-web/frontend/src/BenchmarkPanel.tsx` | 442 | `365e5de598e181cc0520a964d1c470cb296d42a182ac44699366cac24909442a` |
 | `irbis-web/frontend/src/BookProvisionDesk.tsx` | 493 | `6e1d2a8c30d7b493db9da0686ef7658ea37cdc0b4fcee2739c3a0dc537b3486b` |
 | `irbis-web/frontend/src/CatalogingDesk.tsx` | 613 | `637cdf335158de2f98e97766b7d912ed3fc33b62f39aaa41e99c59c46b7c4612` |
@@ -276,6 +276,7 @@
 | `irbis-web/frontend/src/api.ts` | 911 | `689b45a3a1dcd6877656e0881d8db215953b5f70d6e1eb6422381d983b94ac2b` |
 | `irbis-web/frontend/src/biblio-bridge.css` | 104 | `77526df1ac973b673774a84a30d5b167a5caa12cb99682ce17e403eec39e3f8c` |
 | `irbis-web/frontend/src/export.ts` | 203 | `252a134c6ce06e6ac8ccb3177990b244f01fba5acfc503ad11a96ef555d24bb5` |
+| `irbis-web/frontend/src/i18n.ts` | 56 | `4fdbd6b2cf1bfb187c46cabab9ef753e72c34c088416dbb8b78ce0bada1baf98` |
 | `irbis-web/frontend/src/landing/DemoRequestForm.tsx` | 216 | `c6e175d56b6b7d09346db0b72f38ec47cf8389396e1be97524d5dba17cd505e3` |
 | `irbis-web/frontend/src/landing/Landing.tsx` | 263 | `0987c928bf39382b674705446406f910cbdfe6f310e186c6df23714a0764a71e` |
 | `irbis-web/frontend/src/landing/content.ts` | 190 | `c469997245bd1ec3ffb729d77d294799238316787416711777f8e373407cca2a` |
