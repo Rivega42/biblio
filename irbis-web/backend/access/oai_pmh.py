@@ -303,3 +303,71 @@ def paginate(items, offset, limit):
     next_offset = offset + limit
     token = str(next_offset) if next_offset < len(items) else None
     return page, token
+
+
+# --------------------------------------------------------------------------- #
+# XML-сериализация OAI-PMH (#C9): те же структуры глаголов -> валидный
+# OAI-PMH 2.0 XML для харвестеров (JSON-путь остаётся для внутренних потребителей).
+# --------------------------------------------------------------------------- #
+import xml.sax.saxutils as _sax   # noqa: E402
+
+_DC_KEYS = ('title', 'creator', 'subject', 'description', 'publisher',
+            'date', 'type', 'language', 'identifier')
+
+
+def _x(s):
+    return _sax.escape('' if s is None else str(s))
+
+
+def _header_xml(h):
+    parts = ['<identifier>%s</identifier>' % _x(h.get('identifier')),
+             '<datestamp>%s</datestamp>' % _x(h.get('datestamp'))]
+    if h.get('setSpec'):
+        parts.append('<setSpec>%s</setSpec>' % _x(h['setSpec']))
+    return '<header>%s</header>' % ''.join(parts)
+
+
+def _metadata_xml(dc):
+    body = ''.join('<dc:%s>%s</dc:%s>' % (k, _x(dc[k]), k) for k in _DC_KEYS if k in dc)
+    return ('<metadata><oai_dc:dc '
+            'xmlns:oai_dc="http://www.openarchives.org/OAI/2.0/oai_dc/" '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/">%s</oai_dc:dc></metadata>' % body)
+
+
+def _envelope(base_url, args, inner, datestamp=DEFAULT_DATESTAMP):
+    req_attrs = ''.join(' %s="%s"' % (k, _x(v)) for k, v in (args or {}).items())
+    return ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">'
+            '<responseDate>%s</responseDate><request%s>%s</request>%s</OAI-PMH>'
+            % (_x(datestamp), req_attrs, _x(base_url), inner))
+
+
+def to_xml(verb, payload, base_url, args=None, datestamp=DEFAULT_DATESTAMP):
+    """OAI-PMH XML-ответ по глаголу + структурам (identify/list_*/get_record)."""
+    if verb == 'Identify':
+        inner = '<Identify>%s</Identify>' % ''.join(
+            '<%s>%s</%s>' % (k, _x(v), k) for k, v in payload.items())
+    elif verb == 'ListMetadataFormats':
+        fmts = ''.join('<metadataFormat><metadataPrefix>%s</metadataPrefix>'
+                       '<schema>%s</schema><metadataNamespace>%s</metadataNamespace>'
+                       '</metadataFormat>'
+                       % (_x(f['metadataPrefix']), _x(f['schema']), _x(f['metadataNamespace']))
+                       for f in payload)
+        inner = '<ListMetadataFormats>%s</ListMetadataFormats>' % fmts
+    elif verb == 'GetRecord':
+        inner = ('<GetRecord><record>%s%s</record></GetRecord>'
+                 % (_header_xml(payload['header']), _metadata_xml(payload['metadata'])))
+    elif verb == 'ListRecords':
+        recs = ''.join('<record>%s%s</record>'
+                       % (_header_xml(r['header']), _metadata_xml(r['metadata'])) for r in payload)
+        inner = '<ListRecords>%s</ListRecords>' % recs
+    elif verb == 'ListIdentifiers':
+        inner = '<ListIdentifiers>%s</ListIdentifiers>' % ''.join(_header_xml(h) for h in payload)
+    else:
+        inner = ''
+    return _envelope(base_url, args, inner, datestamp)
+
+
+def error_xml(code, message, base_url, args=None):
+    """OAI-PMH XML с ошибкой (badVerb / cannotDisseminateFormat / idDoesNotExist …)."""
+    return _envelope(base_url, args, '<error code="%s">%s</error>' % (_x(code), _x(message)))

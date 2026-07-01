@@ -880,6 +880,18 @@ def digitization_route_checks():
     check('OAI неподдерживаемый формат -> 400', st == 400)
     st, p = api.route('GET', '/api/oai', {'verb': ['Bogus']}, None, {})
     check('OAI неизвестный verb -> 400', st == 400)
+    # C9: XML-вывод для харвестеров (&format=xml) — валидный OAI-PMH XML, own-store
+    st, p = api.route('GET', '/api/oai', {'verb': ['ListRecords'], 'format': ['xml']}, None, {})
+    xml = p.data.decode('utf-8') if hasattr(p, 'data') else ''
+    check('OAI ListRecords&format=xml -> OAI-PMH XML + oai_dc + Чайка',
+          st == 200 and hasattr(p, 'content_type') and 'xml' in p.content_type
+          and '<OAI-PMH' in xml and 'oai_dc:dc' in xml and 'Чайка' in xml)
+    st, p = api.route('GET', '/api/oai', {'verb': ['Identify'], 'format': ['xml']}, None, {})
+    check('OAI Identify&format=xml -> XML c protocolVersion 2.0',
+          st == 200 and b'<protocolVersion>2.0</protocolVersion>' in p.data)
+    st, p = api.route('GET', '/api/oai', {'verb': ['Bogus'], 'format': ['xml']}, None, {})
+    check('OAI badVerb&format=xml -> XML error badVerb',
+          st == 200 and b'code="badVerb"' in p.data)
 
     # --- gating раздела по тарифу (#331 Фаза 3): standard без оцифровки -> 402 ---
     api.tariffs.assign_tenant('public', 'standard')

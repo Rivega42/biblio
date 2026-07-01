@@ -3173,6 +3173,40 @@ class Api:
             pass
         return out
 
+    def _oai_xml(self, verb, query, base_url):
+        """OAI-PMH XML-ответ (#C9) — те же глаголы, что JSON-путь, но валидный
+        OAI-PMH 2.0 XML (для стандартных харвестеров). Источник — own-store."""
+        from access import oai_pmh as _oai
+        args = {'verb': verb} if verb else {}
+        ctype = 'application/xml; charset=utf-8'
+
+        def raw(x):
+            return 200, Raw(x.encode('utf-8'), ctype)
+        if verb == 'Identify':
+            return raw(_oai.to_xml('Identify', _oai.identify(
+                os.environ.get('OAI_REPO_NAME', 'Biblio OAI-PMH'), base_url,
+                os.environ.get('OAI_ADMIN_EMAIL', 'admin@localhost'),
+                _oai.DEFAULT_DATESTAMP), base_url, args))
+        if verb == 'ListMetadataFormats':
+            return raw(_oai.to_xml('ListMetadataFormats', _oai.list_metadata_formats(), base_url, args))
+        prefix = (query.get('metadataPrefix', ['oai_dc'])[0] or 'oai_dc')
+        if prefix != 'oai_dc':
+            return raw(_oai.error_xml('cannotDisseminateFormat', 'unsupported metadataPrefix', base_url, args))
+        records = self._oai_records()
+        if verb == 'GetRecord':
+            ident = (query.get('identifier', [''])[0] or '').strip()
+            rec = _oai.get_record(records, ident) if ident else None
+            if rec is None:
+                return raw(_oai.error_xml('idDoesNotExist', 'no such record', base_url, args))
+            return raw(_oai.to_xml('GetRecord', rec, base_url, args))
+        if verb == 'ListRecords':
+            return raw(_oai.to_xml('ListRecords',
+                                   _oai.list_records(records, set_spec=(query.get('set', [None])[0])),
+                                   base_url, args))
+        if verb == 'ListIdentifiers':
+            return raw(_oai.to_xml('ListIdentifiers', _oai.list_identifiers(records), base_url, args))
+        return raw(_oai.error_xml('badVerb', 'illegal or missing verb', base_url, args))
+
     def oai(self, session, query):
         """GET /api/oai?verb= — OAI-PMH 2.0 провайдер метаданных каталога (public).
 
@@ -3186,6 +3220,9 @@ class Api:
         base_url = os.environ.get(
             'OAI_BASE_URL',
             'http://%s:%d/api/oai' % (self.cfg.app_host, self.cfg.app_port))
+        # #C9: &format=xml -> валидный OAI-PMH XML для харвестеров (JSON — по умолчанию).
+        if (query.get('format', [''])[0] or '') == 'xml':
+            return self._oai_xml(verb, query, base_url)
         if verb == 'Identify':
             return 200, ok({'verb': verb, 'Identify': _oai.identify(
                 os.environ.get('OAI_REPO_NAME', 'Biblio OAI-PMH'), base_url,
