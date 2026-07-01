@@ -3173,6 +3173,20 @@ class Api:
             pass
         return out
 
+    _OAI_PAGE = 50
+
+    def _oai_slice(self, query):
+        """Пагинация OAI (#D2): (страница записей, resumptionToken|None) по offset-
+        курсору из ``resumptionToken``. Большие наборы харвестятся постранично."""
+        try:
+            offset = max(0, int((query.get('resumptionToken', ['0'])[0] or '0')))
+        except (TypeError, ValueError):
+            offset = 0
+        allrecs = self._oai_records(limit=5000)
+        page = allrecs[offset:offset + self._OAI_PAGE]
+        nxt = str(offset + self._OAI_PAGE) if (offset + self._OAI_PAGE) < len(allrecs) else None
+        return page, nxt
+
     def _oai_xml(self, verb, query, base_url):
         """OAI-PMH XML-ответ (#C9) — те же глаголы, что JSON-путь, но валидный
         OAI-PMH 2.0 XML (для стандартных харвестеров). Источник — own-store."""
@@ -3200,11 +3214,14 @@ class Api:
                 return raw(_oai.error_xml('idDoesNotExist', 'no such record', base_url, args))
             return raw(_oai.to_xml('GetRecord', rec, base_url, args))
         if verb == 'ListRecords':
+            page, nxt = self._oai_slice(query)
             return raw(_oai.to_xml('ListRecords',
-                                   _oai.list_records(records, set_spec=(query.get('set', [None])[0])),
-                                   base_url, args))
+                                   _oai.list_records(page, set_spec=(query.get('set', [None])[0])),
+                                   base_url, args, resumption_token=nxt))
         if verb == 'ListIdentifiers':
-            return raw(_oai.to_xml('ListIdentifiers', _oai.list_identifiers(records), base_url, args))
+            page, nxt = self._oai_slice(query)
+            return raw(_oai.to_xml('ListIdentifiers', _oai.list_identifiers(page),
+                                   base_url, args, resumption_token=nxt))
         return raw(_oai.error_xml('badVerb', 'illegal or missing verb', base_url, args))
 
     def oai(self, session, query):
@@ -3245,11 +3262,13 @@ class Api:
             return 200, ok({'verb': verb, 'GetRecord': rec})
         if verb == 'ListRecords':
             set_spec = (query.get('set', [None])[0])
-            return 200, ok({'verb': verb, 'ListRecords':
-                            _oai.list_records(records, set_spec=set_spec)})
+            page, nxt = self._oai_slice(query)
+            return 200, ok({'verb': verb, 'resumptionToken': nxt,
+                            'ListRecords': _oai.list_records(page, set_spec=set_spec)})
         if verb == 'ListIdentifiers':
-            return 200, ok({'verb': verb,
-                            'ListIdentifiers': _oai.list_identifiers(records)})
+            page, nxt = self._oai_slice(query)
+            return 200, ok({'verb': verb, 'resumptionToken': nxt,
+                            'ListIdentifiers': _oai.list_identifiers(page)})
         return 400, err('badVerb', 'unknown or missing verb')
 
     # ===================================================================== #

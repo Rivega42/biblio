@@ -892,6 +892,18 @@ def digitization_route_checks():
     st, p = api.route('GET', '/api/oai', {'verb': ['Bogus'], 'format': ['xml']}, None, {})
     check('OAI badVerb&format=xml -> XML error badVerb',
           st == 200 and b'code="badVerb"' in p.data)
+    # D2: resumptionToken-пейджинг больших наборов (страница 50; сеем 60 записей)
+    for i in range(60):
+        api.catalog.save('IBIS', _rec('Издание %03d' % i))
+    st, p = api.route('GET', '/api/oai', {'verb': ['ListRecords']}, None, {})
+    check('OAI ListRecords 1-я стр. -> 50 + resumptionToken=50',
+          st == 200 and len(p['data']['ListRecords']) == 50 and p['data'].get('resumptionToken') == '50')
+    st, p = api.route('GET', '/api/oai', {'verb': ['ListRecords'], 'resumptionToken': ['50']}, None, {})
+    check('OAI ListRecords 2-я стр. по токену -> остаток, токен null',
+          st == 200 and len(p['data']['ListRecords']) >= 1 and p['data'].get('resumptionToken') is None)
+    st, p = api.route('GET', '/api/oai', {'verb': ['ListIdentifiers'], 'format': ['xml']}, None, {})
+    check('OAI ListIdentifiers&xml (большой набор) -> resumptionToken в XML',
+          st == 200 and b'<resumptionToken>50</resumptionToken>' in p.data)
 
     # --- gating раздела по тарифу (#331 Фаза 3): standard без оцифровки -> 402 ---
     api.tariffs.assign_tenant('public', 'standard')

@@ -342,8 +342,12 @@ def _envelope(base_url, args, inner, datestamp=DEFAULT_DATESTAMP):
             % (_x(datestamp), req_attrs, _x(base_url), inner))
 
 
-def to_xml(verb, payload, base_url, args=None, datestamp=DEFAULT_DATESTAMP):
-    """OAI-PMH XML-ответ по глаголу + структурам (identify/list_*/get_record)."""
+def to_xml(verb, payload, base_url, args=None, datestamp=DEFAULT_DATESTAMP, resumption_token=None):
+    """OAI-PMH XML-ответ по глаголу + структурам (identify/list_*/get_record).
+
+    ``resumption_token`` (ListRecords/ListIdentifiers) — курсор следующей страницы;
+    эмитится как ``<resumptionToken>`` для постраничного харвеста."""
+    rt = '<resumptionToken>%s</resumptionToken>' % _x(resumption_token) if resumption_token else ''
     if verb == 'Identify':
         inner = '<Identify>%s</Identify>' % ''.join(
             '<%s>%s</%s>' % (k, _x(v), k) for k, v in payload.items())
@@ -360,9 +364,9 @@ def to_xml(verb, payload, base_url, args=None, datestamp=DEFAULT_DATESTAMP):
     elif verb == 'ListRecords':
         recs = ''.join('<record>%s%s</record>'
                        % (_header_xml(r['header']), _metadata_xml(r['metadata'])) for r in payload)
-        inner = '<ListRecords>%s</ListRecords>' % recs
+        inner = '<ListRecords>%s%s</ListRecords>' % (recs, rt)
     elif verb == 'ListIdentifiers':
-        inner = '<ListIdentifiers>%s</ListIdentifiers>' % ''.join(_header_xml(h) for h in payload)
+        inner = '<ListIdentifiers>%s%s</ListIdentifiers>' % (''.join(_header_xml(h) for h in payload), rt)
     else:
         inner = ''
     return _envelope(base_url, args, inner, datestamp)
