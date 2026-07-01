@@ -1700,8 +1700,25 @@ def demo_own_store_checks():
         os.environ.pop('OWN_SEARCH_DBS', None)
 
 
+def sru_route_checks():
+    print('-- SRU-сервер: searchRetrieve поверх own-store (#C8, интероп)')
+    api = _api()
+    G = _sess(api, 'guest', 'g', [{'function': 'search', 'db': '*', 'level': 'read'}])
+    api.catalog.save('IBIS', _rec('Театр', **{'700': [{'a': 'Иванов'}]}))
+    st, p = api.route('GET', '/api/sru', {'query': ['dc.title=Театр']}, None, G)
+    xml = p.data.decode('utf-8') if hasattr(p, 'data') else ''
+    check('SRU searchRetrieve -> XML c numberOfRecords + запись',
+          st == 200 and hasattr(p, 'content_type') and 'xml' in p.content_type
+          and '<srw:numberOfRecords>' in xml and 'Театр' in xml and 'dc:title' in xml)
+    st, p = api.route('GET', '/api/sru', {'operation': ['explain']}, None, G)
+    check('SRU неподдерж. операция -> диагностика', st == 200 and b'diagnostic' in p.data)
+    st, p = api.route('GET', '/api/sru', {'query': ['']}, None, G)
+    check('SRU пустой запрос -> диагностика', st == 200 and b'diagnostic' in p.data)
+
+
 def main():
     sdi_route_checks()
+    sru_route_checks()
     union_route_checks()
     dispatch_route_checks()
     reader_record_checks()

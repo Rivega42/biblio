@@ -4995,6 +4995,39 @@ class Api:
                           'author': brief.get('author', '')})
         return 200, ok({'items': items})
 
+    def sru_server(self, session, query):
+        """GET /api/sru — SRU 1.2 searchRetrieve поверх own-store (интероп, public-read).
+
+        Отдаём собственный каталог как SRU-источник: CQL → own-store поиск →
+        Dublin-Core записи. Ошибка операции/пустой запрос → SRU-диагностика."""
+        self._guard(session, 'search', self.cfg.db_default, 'read')
+        from access import sru as _sru
+        op = (query.get('operation') or ['searchRetrieve'])[0]
+        version = (query.get('version') or ['1.2'])[0]
+        q = (query.get('query') or [''])[0]
+        ctype = 'application/xml; charset=utf-8'
+        if op != 'searchRetrieve':
+            return 200, Raw(_sru.diagnostic('unsupported operation: %s' % op, 4, version).encode('utf-8'), ctype)
+        if not q.strip():
+            return 200, Raw(_sru.diagnostic('empty query', 7, version).encode('utf-8'), ctype)
+        try:
+            mx = min(50, max(1, int((query.get('maximumRecords') or ['10'])[0])))
+        except (TypeError, ValueError):
+            mx = 10
+        try:
+            start = max(1, int((query.get('startRecord') or ['1'])[0]))
+        except (TypeError, ValueError):
+            start = 1
+        db = (query.get('database') or [self.cfg.db_default])[0]
+        total, items = 0, []
+        if self.catalog is not None:
+            expr = _sru.cql_to_expr(q)
+            if expr:
+                res = self.catalog.search_records(db, expr, limit=mx, offset=start - 1)
+                total, items = res.get('total', 0), res.get('items', [])
+        xml = _sru.search_retrieve(items, total, query=q, start=start, version=version)
+        return 200, Raw(xml.encode('utf-8'), ctype)
+
     def recommendations(self, session, db, mfn):
         """GET /api/recommendations — "similar" records to the seed. Guest-readable."""
         self._guard(session, 'search', db, 'read')
@@ -6990,6 +7023,8 @@ class Api:
                 return self.recommendations_foryou(session)
             if method == 'GET' and path == '/api/popular':
                 return self.popular(session, query)
+            if method == 'GET' and path == '/api/sru':
+                return self.sru_server(session, query)
             if method == 'GET' and path == '/api/recommendations':
                 db = query.get('db', [self.cfg.db_default])[0]
                 try:
