@@ -423,8 +423,40 @@ def isolation_checks():
           engG.checkout('G1', 'g2', T0).decision == REQUIRE_OVERRIDE)
 
 
+def op_id_idempotency_checks():
+    print('-- op_id идемпотентность (BDP replay, #412)')
+    store, eng = fresh()
+    d1 = eng.checkout('R1', 'BK-OP', T0, op_id='op-abc')
+    check('первая выдача с op_id allowed', d1.decision == ALLOW)
+    loan1 = d1.computed['loan']
+    check('loan получил op_id', loan1.get('op_id') == 'op-abc')
+
+    # Повтор того же op_id (sync.replay) не создаёт вторую выдачу.
+    d2 = eng.checkout('R1', 'BK-OP', T0, op_id='op-abc')
+    check('replay того же op_id allowed', d2.decision == ALLOW)
+    check('replay помечен replayed', d2.computed.get('replayed') is True)
+    check('replay вернул ту же выдачу', d2.computed['loan']['id'] == loan1['id'])
+    check('вторая loan не создана', store.count_on_hand('R1') == 1)
+
+    # Разные op_id → разные выдачи.
+    d3 = eng.checkout('R1', 'BK-OP2', T0, op_id='op-xyz')
+    check('другой op_id -> новая выдача', d3.computed['loan']['id'] != loan1['id'])
+    check('на руках 2', store.count_on_hand('R1') == 2)
+
+    # Staff-путь без op_id — несколько выдач без конфликта (NULL'ы различны).
+    s2, e2 = fresh()
+    a = e2.checkout('R1', 'S1', T0)
+    b = e2.checkout('R1', 'S2', T0)
+    check('staff без op_id: обе ok', a.decision == ALLOW and b.decision == ALLOW)
+    check('op_id staff-выдачи NULL', a.computed['loan'].get('op_id') is None)
+
+    check('get_loan_by_op_id находит', store.get_loan_by_op_id('op-abc')['id'] == loan1['id'])
+    check('get_loan_by_op_id(None) -> None', store.get_loan_by_op_id(None) is None)
+
+
 def main():
     store_and_policy_checks()
+    op_id_idempotency_checks()
     checkout_limit_checks()
     checkout_debtor_checks()
     renew_hold_checks()
