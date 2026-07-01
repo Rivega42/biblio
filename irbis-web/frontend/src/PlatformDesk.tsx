@@ -581,6 +581,10 @@ function MatrixTab({ toast }: { toast: ToastFn }) {
   const [newName, setNewName] = React.useState("");
   const [newTitle, setNewTitle] = React.useState("");
   const [usageTenant, setUsageTenant] = React.useState("public");
+  const [usageBump, setUsageBump] = React.useState(0);
+  const [addonRes, setAddonRes] = React.useState("ocr_pages");
+  const [addonPacks, setAddonPacks] = React.useState(1);
+  const [addonSize, setAddonSize] = React.useState(1000);
 
   const load = React.useCallback(async () => {
     const r = await api.adminTariffs();
@@ -610,13 +614,37 @@ function MatrixTab({ toast }: { toast: ToastFn }) {
     const r = await api.adminTariffDelete(n);
     if (r.json?.ok) { load(); toast({ variant: "success", title: "Тариф удалён", message: n }); }
   };
+  const buyAddon = async () => {
+    const t = usageTenant.trim() || "public";
+    const r = await api.adminTariffAddon({ tenant: t, resource: addonRes, packs: addonPacks, packSize: addonSize });
+    if (r.json?.ok) {
+      setUsageBump((b) => b + 1);
+      toast({ variant: "success", title: "Пакет докуплен", message: addonRes + " +" + (addonPacks * addonSize) + " для " + t });
+    } else if (r.status === 403) toast({ variant: "info", title: "Недостаточно прав", message: "Нужен грант admin.db." });
+    else toast({ variant: "error", title: "Не докуплено", message: "Проверьте поля." });
+  };
 
   if (down) return <SectionDown icon="sliders" title="Матрица доступов подключается отдельно" />;
   if (data === null) return <div className="irb-plat__card" style={{ padding: 16, color: "var(--text-subtle)", fontSize: 13 }}>Загрузка матрицы…</div>;
 
   return (
     <div className="irb-plat__card">
-      <UsageBars key={usageTenant} tenant={usageTenant} />
+      <UsageBars key={usageTenant + ":" + usageBump} tenant={usageTenant} />
+      <div style={{ display: "flex", alignItems: "end", gap: 8, flexWrap: "wrap", padding: "0 14px 12px", borderBottom: "1px solid var(--border-subtle)" }}>
+        <span style={{ fontSize: 12, color: "var(--text-subtle)", alignSelf: "center" }}>À-la-carte для «{usageTenant || "public"}»:</span>
+        <label className="irb-plat__fld"><span className="irb-plat__fld-lab">Ресурс</span>
+          <select className="irb-plat__in" value={addonRes} onChange={(e) => setAddonRes(e.target.value)} style={{ width: 130 }} aria-label="Ресурс à-la-carte">
+            <option value="ocr_pages">OCR-страницы</option>
+            <option value="records">Записи</option>
+            <option value="readers">Читатели</option>
+            <option value="staff_seats">Сотрудники</option>
+          </select></label>
+        <label className="irb-plat__fld"><span className="irb-plat__fld-lab">Пакетов</span>
+          <input className="irb-plat__in" type="number" min={1} value={addonPacks} onChange={(e) => setAddonPacks(Math.max(1, parseInt(e.target.value, 10) || 1))} style={{ width: 72 }} aria-label="Число пакетов" /></label>
+        <label className="irb-plat__fld"><span className="irb-plat__fld-lab">Размер пакета</span>
+          <input className="irb-plat__in" type="number" min={1} value={addonSize} onChange={(e) => setAddonSize(Math.max(1, parseInt(e.target.value, 10) || 1))} style={{ width: 90 }} aria-label="Размер пакета" /></label>
+        <Button size="sm" variant="secondary" iconLeft="plus" onClick={buyAddon}>Докупить</Button>
+      </div>
       <div className="irb-plat__bar">
         <span style={{ fontSize: 13, color: "var(--text-muted)", maxWidth: 420 }}>
           Тарифная сетка платформы: разделы/функции × тарифы. Галочка — входит в тариф; число — лимит (вкл. число аккаунтов); режим — блок (402) / грейс при превышении.

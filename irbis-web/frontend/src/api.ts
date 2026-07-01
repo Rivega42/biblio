@@ -758,6 +758,9 @@ export const api = {
   // Удалить тариф-колонку.
   adminTariffDelete: (name: string) =>
     jpost<{ removed: boolean }>("/api/admin/tariffs/delete", { name }),
+  // À-la-carte: докупить пакеты ресурса тенанту (например ocr_pages).
+  adminTariffAddon: (b: { tenant: string; resource: string; packs: number; packSize: number }) =>
+    jpost<{ addon: unknown }>("/api/admin/tariffs/addon", b),
   // --- Онбординг: режим развёртывания + подключения (#335, оператор платформы) ---
   adminDeploymentCatalog: () =>
     jget<{ modes: DeploymentMode[]; topologies: DeploymentTopology[] }>("/api/admin/deployment/catalog"),
