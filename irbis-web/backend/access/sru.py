@@ -294,3 +294,74 @@ def candidates(records, isbn=None, title=None):
         if matched:
             out.append(rec)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# SRU-СЕРВЕР (#C8): отдаём собственный own-store каталог как SRU-источник
+# (searchRetrieve). Интероп-точка: внешние системы забирают наши записи по SRU.
+# Чистые функции построения XML (Dublin Core через oai_pmh.dublin_core).
+# --------------------------------------------------------------------------- #
+import xml.sax.saxutils as _sax   # noqa: E402
+
+_SRW_NS = 'http://www.loc.gov/zing/srw/'
+_DC_ORDER = ('title', 'creator', 'subject', 'publisher', 'date', 'type', 'language', 'identifier')
+# CQL-индекс -> префикс own-store поиска.
+_CQL_INDEX = {'dc.title': 'T', 'title': 'T', 'dc.creator': 'A', 'creator': 'A',
+              'author': 'A', 'dc.subject': 'S', 'subject': 'S', 'keywords': 'K', 'cql.anywhere': 'K'}
+
+
+def _esc(s):
+    return _sax.escape('' if s is None else str(s))
+
+
+def cql_to_expr(query):
+    """Простой CQL -> own-store ``PREFIX=term``. ``index=term`` (dc.title/creator/
+    subject) → соответствующий префикс, bare-term → ``K=``. Пусто -> ''."""
+    q = (query or '').strip()
+    if not q:
+        return ''
+    if '=' in q:
+        idx, term = q.split('=', 1)
+        pref = _CQL_INDEX.get(idx.strip().lower(), 'K')
+        return pref + '=' + term.strip().strip('"')
+    return 'K=' + q.strip('"')
+
+
+def search_retrieve(items, total, query='', start=1, version='1.2'):
+    """SRU searchRetrieve-ответ (XML) из own-store записей.
+
+    ``items`` — ``[{'mfn', 'record': tag-keyed}]``; ``total`` — всего совпадений.
+    Записи отдаются схемой Dublin Core (info:srw/schema/1/dc-v1.1)."""
+    from access import oai_pmh as _oai
+    recs, pos = [], int(start)
+    for it in items:
+        dc = _oai.dublin_core(it.get('record') or {})
+        body = ''.join('<dc:%s>%s</dc:%s>' % (k, _esc(dc[k]), k) for k in _DC_ORDER if k in dc)
+        recs.append(
+            '<srw:record><srw:recordSchema>info:srw/schema/1/dc-v1.1</srw:recordSchema>'
+            '<srw:recordPacking>xml</srw:recordPacking><srw:recordData>'
+            '<srw_dc:dc xmlns:srw_dc="info:srw/schema/1/dc-v1.1" '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/">%s</srw_dc:dc></srw:recordData>'
+            '<srw:recordPosition>%d</srw:recordPosition></srw:record>' % (body, pos))
+        pos += 1
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<srw:searchRetrieveResponse xmlns:srw="%s">'
+        '<srw:version>%s</srw:version>'
+        '<srw:numberOfRecords>%d</srw:numberOfRecords>'
+        '<srw:records>%s</srw:records>'
+        '<srw:echoedSearchRetrieveRequest><srw:query>%s</srw:query></srw:echoedSearchRetrieveRequest>'
+        '</srw:searchRetrieveResponse>'
+        % (_SRW_NS, _esc(version), int(total), ''.join(recs), _esc(query)))
+
+
+def diagnostic(message, code=1, version='1.2'):
+    """SRU-ответ с диагностикой (ошибка запроса/операции)."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<srw:searchRetrieveResponse xmlns:srw="%s">'
+        '<srw:version>%s</srw:version><srw:numberOfRecords>0</srw:numberOfRecords>'
+        '<srw:diagnostics xmlns:diag="http://www.loc.gov/zing/srw/diagnostic/">'
+        '<diag:diagnostic><diag:uri>info:srw/diagnostic/1/%d</diag:uri>'
+        '<diag:message>%s</diag:message></diag:diagnostic></srw:diagnostics>'
+        '</srw:searchRetrieveResponse>' % (_SRW_NS, _esc(version), int(code), _esc(message)))
