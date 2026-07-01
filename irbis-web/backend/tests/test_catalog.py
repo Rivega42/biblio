@@ -455,6 +455,42 @@ def extra_prefix_search_checks():
           st.search('IBIS', 'U=004.65')['total'] == 1)
 
 
+def exemplar_by_tag_checks():
+    print('-- find_exemplar_by_tag (RFID-метка -> экземпляр, G1 #411)')
+    st = _store()
+    # Копия с RFID-меткой на самом экземпляре (910^h) + инв.№ (910^b).
+    rec = dict(_good_book())
+    rec['910'] = [{'a': '0', 'b': 'INV-A1', 'h': 'E2003411DEADBEEF00000001'}]
+    r = st.save('IBIS', rec)
+    check('rec with 910^h saved', r['saved'] is True)
+    mfn = r['mfn']
+
+    hit = st.find_exemplar_by_tag('IBIS', 'E2003411DEADBEEF00000001')
+    check('find_exemplar_by_tag matches 910^h', hit is not None and hit[0] == mfn)
+    check('resolved instance carries inventory 910^b',
+          hit is not None and hit[2].get('b') == 'INV-A1')
+    check('unknown tag -> None', st.find_exemplar_by_tag('IBIS', 'NOPE') is None)
+    check('empty tag -> None', st.find_exemplar_by_tag('IBIS', '') is None)
+
+    # Фолбэк по 941^h (RFID-дубль уровня записи; у 910 метки нет) → первая копия.
+    rec2 = dict(_good_book())
+    rec2['200'] = [{'a': 'Издание с меткой в 941'}]
+    rec2['910'] = [{'a': '0', 'b': 'INV-B7'}]
+    rec2['941'] = [{'h': 'E2003411CAFEBABE00000002'}]
+    r2 = st.save('IBIS', rec2)
+    check('rec with 941^h saved', r2['saved'] is True)
+    hit2 = st.find_exemplar_by_tag('IBIS', 'E2003411CAFEBABE00000002')
+    check('941^h fallback resolves to first 910 copy',
+          hit2 is not None and hit2[2].get('b') == 'INV-B7')
+
+    # Индексация/поиск по RF= (метка → запись через словарь).
+    check('RF in SEARCH_PREFIXES', 'RF' in SEARCH_PREFIXES)
+    check('RF binds 910^h in INDEX_SPEC', ('RF', '910', 'h') in INDEX_SPEC)
+    check('RF binds 941^h in INDEX_SPEC', ('RF', '941', 'h') in INDEX_SPEC)
+    check('RF= search finds the tagged record',
+          st.search('IBIS', 'RF=E2003411DEADBEEF00000001')['total'] == 1)
+
+
 def main():
     schema_checks()
     save_get_checks()
@@ -466,6 +502,7 @@ def main():
     unit_checks()
     extra_prefix_index_checks()
     extra_prefix_search_checks()
+    exemplar_by_tag_checks()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
