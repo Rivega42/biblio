@@ -327,11 +327,13 @@ def cql_to_expr(query):
     return 'K=' + q.strip('"')
 
 
-def search_retrieve(items, total, query='', start=1, version='1.2'):
+def search_retrieve(items, total, query='', start=1, version='1.2', next_position=None):
     """SRU searchRetrieve-ответ (XML) из own-store записей.
 
     ``items`` — ``[{'mfn', 'record': tag-keyed}]``; ``total`` — всего совпадений.
-    Записи отдаются схемой Dublin Core (info:srw/schema/1/dc-v1.1)."""
+    Записи отдаются схемой Dublin Core (info:srw/schema/1/dc-v1.1). Если задан
+    ``next_position`` (есть ещё записи за окном) — эмитим ``<srw:nextRecordPosition>``
+    для постраничного забора клиентом."""
     from access import oai_pmh as _oai
     recs, pos = [], int(start)
     for it in items:
@@ -344,15 +346,37 @@ def search_retrieve(items, total, query='', start=1, version='1.2'):
             'xmlns:dc="http://purl.org/dc/elements/1.1/">%s</srw_dc:dc></srw:recordData>'
             '<srw:recordPosition>%d</srw:recordPosition></srw:record>' % (body, pos))
         pos += 1
+    nrp = '<srw:nextRecordPosition>%d</srw:nextRecordPosition>' % int(next_position) if next_position else ''
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<srw:searchRetrieveResponse xmlns:srw="%s">'
         '<srw:version>%s</srw:version>'
         '<srw:numberOfRecords>%d</srw:numberOfRecords>'
-        '<srw:records>%s</srw:records>'
+        '<srw:records>%s</srw:records>%s'
         '<srw:echoedSearchRetrieveRequest><srw:query>%s</srw:query></srw:echoedSearchRetrieveRequest>'
         '</srw:searchRetrieveResponse>'
-        % (_SRW_NS, _esc(version), int(total), ''.join(recs), _esc(query)))
+        % (_SRW_NS, _esc(version), int(total), ''.join(recs), nrp, _esc(query)))
+
+
+def explain(base_url, version='1.2', db='IBIS'):
+    """SRU explain-ответ: краткое описание сервиса (serverInfo + indexInfo).
+
+    Отдаётся на operation=explain (и как «визитка» SRU-эндпойнта)."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<srw:explainResponse xmlns:srw="%s"><srw:version>%s</srw:version>'
+        '<srw:record><srw:recordSchema>http://explain.z3950.org/dtd/2.0/</srw:recordSchema>'
+        '<srw:recordPacking>xml</srw:recordPacking><srw:recordData>'
+        '<explain xmlns="http://explain.z3950.org/dtd/2.0/">'
+        '<serverInfo><host>%s</host><database>%s</database></serverInfo>'
+        '<indexInfo>'
+        '<index><title>Заглавие</title><map><name set="dc">title</name></map></index>'
+        '<index><title>Автор</title><map><name set="dc">creator</name></map></index>'
+        '<index><title>Тема</title><map><name set="dc">subject</name></map></index>'
+        '</indexInfo>'
+        '<schemaInfo><schema identifier="info:srw/schema/1/dc-v1.1" name="dc"><title>Dublin Core</title></schema></schemaInfo>'
+        '</explain></srw:recordData></srw:record></srw:explainResponse>'
+        % (_SRW_NS, _esc(version), _esc(base_url), _esc(db)))
 
 
 def diagnostic(message, code=1, version='1.2'):
