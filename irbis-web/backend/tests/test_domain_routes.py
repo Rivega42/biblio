@@ -1689,6 +1689,13 @@ def demo_own_store_checks():
         pop = {it['mfn']: it for it in p['data']['items']}
         check('«Популярное» из истории (own-store): запись попала + заглавие резолвлено',
               st == 200 and mfn in pop and pop[mfn].get('title') == 'Чайка' and pop[mfn].get('count', 0) >= 1)
+        # C5 (#374): сохранённый запрос несёт текущее число совпадений (own-store)
+        api.route('POST', '/api/savedsearch', {},
+                  {'name': 'Чехов', 'db': 'IBIS', 'prefix': 'A', 'query': 'Чехов'}, RD)
+        st, p = api.route('GET', '/api/savedsearch', {}, None, RD)
+        ss = p['data']['items']
+        check('сохранённый запрос несёт count текущих совпадений (own-store)',
+              st == 200 and len(ss) >= 1 and ss[0].get('count', 0) >= 1)
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 

@@ -240,7 +240,12 @@ export function SavedSearchesPanel({ cardSx, h2Sx, toast, onRun, onUnavailable, 
                 <Icon name="search" size={17} />
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: "var(--text-sm)", color: "var(--text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: "var(--text-sm)", color: "var(--text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                  {typeof s.count === "number" && s.count > 0 && (
+                    <span title="совпадений сейчас" style={{ flex: "none", fontSize: "var(--text-2xs,11px)", fontWeight: 600, padding: "1px 8px", borderRadius: "var(--radius-pill,999px)", background: "var(--accent-weak,var(--accent-tint))", color: "var(--accent)" }}>{s.count}</span>
+                  )}
+                </div>
                 <div style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{prefixLabel(s.prefix)} · «{s.query}» · база {s.db}</div>
               </div>
               <div style={{ display: "flex", gap: 6, flex: "none" }}>
