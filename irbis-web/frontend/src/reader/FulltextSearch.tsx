@@ -75,6 +75,9 @@ export function FulltextSearchPanel({ cardSx, h2Sx }: { cardSx: React.CSSPropert
                         <Icon name={k.icon} size={11} /> {k.label}
                       </span>
                     </span>
+                    {h.snippet && (
+                      <span style={{ display: "block", marginTop: 4, fontSize: "var(--text-sm)", color: "var(--text-muted)", lineHeight: 1.4 }}>{h.snippet}</span>
+                    )}
                     {h.matched && h.matched.length > 0 && (
                       <span style={{ display: "block", marginTop: 3, fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>совпало: {h.matched.join(", ")}</span>
                     )}

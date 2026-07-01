@@ -1623,6 +1623,10 @@ def fulltext_route_checks():
     refs = [h['ref'] for h in p['data']['hits']]
     check('морфология: поиск «книга» находит док со словоформой «книги» (r1)',
           st == 200 and 'r1' in refs)
+    # D3: сниппет вокруг совпадения из тела документа
+    r1hit = next((h for h in p['data']['hits'] if h['ref'] == 'r1'), {})
+    check('сниппет непустой и содержит «книг» (тело r1)',
+          isinstance(r1hit.get('snippet'), str) and 'книг' in r1hit.get('snippet', '').lower())
     # ранжирование: «театр» есть в обоих, но запрос ранжирует по BM25 (хиты непусты, score убыв.)
     st, p = api.route('GET', '/api/fulltext/search', {'q': ['театр']}, None, R)
     hits = p['data']['hits']

@@ -345,7 +345,7 @@ export interface FulltextResult {
 // Хит морфо-полнотекста (#368): ref (cat:<db>:<mfn> | ocr:<asset>), заглавие,
 // score BM25, matched — основы запроса, реально найденные в документе.
 export interface FtsHit {
-  ref: string; db: string; mfn: number; title: string; score: number; matched: string[];
+  ref: string; db: string; mfn: number; title: string; score: number; matched: string[]; snippet?: string;
 }
 // Авторитетный/нормативный контроль (#359): заголовок + варианты форм + см.-ссылки.
 export interface AuthorityVariant { id: number; heading_id: number; variant: string }
