@@ -492,8 +492,12 @@ class PgAccessStore:
 
     def saved_search_list(self, ticket):
         return [dict(r) for r in self._conn().execute(
-            'SELECT id,name,db,prefix,query FROM saved_search WHERE ticket=%s '
+            'SELECT id,name,db,prefix,query,last_count FROM saved_search WHERE ticket=%s '
             'ORDER BY id', (ticket,)).fetchall()]
+
+    def saved_search_set_count(self, search_id, count):
+        self._conn().execute('UPDATE saved_search SET last_count=%s WHERE id=%s',
+                             (int(count), search_id))
 
     def saved_search_add(self, ticket, name, db, prefix, query, ts):
         r = self._conn().execute(

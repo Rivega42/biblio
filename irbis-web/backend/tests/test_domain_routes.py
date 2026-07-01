@@ -1724,6 +1724,13 @@ def demo_own_store_checks():
         ss = p['data']['items']
         check('сохранённый запрос несёт count текущих совпадений (own-store)',
               st == 200 and len(ss) >= 1 and ss[0].get('count', 0) >= 1)
+        # D5: сверка сохранённых запросов -> новые результаты (был 0), затем 0
+        st, p = api.route('POST', '/api/savedsearch/check', {}, {}, RD)
+        check('D5 первая сверка -> new>=1 (last_count был 0)',
+              st == 200 and any(it['new'] >= 1 for it in p['data']['items']))
+        st, p = api.route('POST', '/api/savedsearch/check', {}, {}, RD)
+        check('D5 повторная сверка -> new=0 (счётчик зафиксирован)',
+              st == 200 and all(it['new'] == 0 for it in p['data']['items']))
     finally:
         os.environ.pop('OWN_SEARCH_DBS', None)
 
