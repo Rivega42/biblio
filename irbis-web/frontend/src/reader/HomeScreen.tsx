@@ -10,6 +10,7 @@ import type { DbItem } from "../api";
 import { api } from "../api";
 import type { Term } from "../api";
 import { Icon } from "../../components/icon/Icon.jsx";
+import { useLang } from "../i18n";
 import { SearchBar } from "../../components/catalog/SearchBar.jsx";
 import { DatabaseSelector } from "../../components/catalog/DatabaseSelector.jsx";
 import { Showcase } from "./Showcase";
@@ -72,8 +73,8 @@ if (typeof document !== "undefined" && !document.getElementById("irb-home-css"))
 }
 
 const PREFIX_OPTS = [
-  { code: "ALL", label: "Везде" }, { code: "A", label: "Автор" },
-  { code: "T", label: "Заглавие" }, { code: "V", label: "Вид документа" },
+  { code: "ALL", key: "prefix.all" }, { code: "A", key: "prefix.author" },
+  { code: "T", key: "prefix.title" }, { code: "V", key: "prefix.doctype" },
 ];
 // «Во всех базах» — то же значение, что ALL_DBS в App.tsx (#255 п.2).
 const ALL_BASES = "__ALL__";
@@ -89,6 +90,7 @@ export function HomeScreen({
   onSearch: (prefix: string, query: string, base?: string) => void;
   onOpen: (mfn: number, db: string) => void;
 }) {
+  const { t } = useLang();
   const [prefix, setPrefix] = React.useState("ALL");
   const [q, setQ] = React.useState("");
   const [base, setBase] = React.useState(ALL_BASES);   // #255 п.2: дефолт — во всех базах
@@ -127,9 +129,9 @@ export function HomeScreen({
       {/* ===== Hero + поиск ===== */}
       <section className="irb-hero" aria-label="Поиск по каталогу">
         <div className="irb-hero__inner">
-          <span className="irb-hero__eyebrow"><Icon name="book-open" size={14} /> Электронный каталог</span>
-          <h1 className="irb-hero__title">Найдите нужное издание в библиотеке</h1>
-          <p className="irb-hero__lead">Книги, статьи, электронные версии и архивные материалы — поиск по всему фонду в одном окне.</p>
+          <span className="irb-hero__eyebrow"><Icon name="book-open" size={14} /> {t("hero.eyebrow")}</span>
+          <h1 className="irb-hero__title">{t("hero.title")}</h1>
+          <p className="irb-hero__lead">{t("hero.lead")}</p>
 
           <div className="irb-hero__search">
             <div className="irb-hero__field">
@@ -137,29 +139,29 @@ export function HomeScreen({
                 aria-label="Область поиска" value={prefix} onChange={(e) => setPrefix(e.target.value)}
                 style={{ width: "100%", height: "100%", boxSizing: "border-box", padding: "0 12px", borderRadius: "var(--radius-md,8px)", border: "1px solid var(--border-strong,#cdd3da)", background: "var(--surface-card,#fff)", color: "var(--text-body)", fontFamily: "var(--font-ui,inherit)", fontSize: "var(--text-sm)" }}
               >
-                {PREFIX_OPTS.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
+                {PREFIX_OPTS.map((p) => <option key={p.code} value={p.code}>{t(p.key)}</option>)}
               </select>
             </div>
             <div className="irb-hero__bar">
               <SearchBar value={q} onChange={setQ} onSearch={submit}
-                placeholder="Например: основы программирования" buttonLabel="Найти" />
+                placeholder={t("search.placeholder")} buttonLabel={t("search.find")} />
             </div>
           </div>
 
           {/* #255 п.2: выбор базы под поиском; по умолчанию — во всех базах сразу. */}
           {publicDbs.length > 1 && (
             <div className="irb-hero__scope" role="group" aria-label="База поиска">
-              <span className="irb-hero__scopelabel">Искать в:</span>
+              <span className="irb-hero__scopelabel">{t("search.in")}</span>
               <select className="irb-hero__scopesel" aria-label="Выбор базы поиска"
                 value={base} onChange={(e) => setBase(e.target.value)}>
-                <option value={ALL_BASES}>Во всех базах</option>
+                <option value={ALL_BASES}>{t("search.allbases")}</option>
                 {publicDbs.map((d) => <option key={d.code} value={d.code}>{d.name || d.code}</option>)}
               </select>
             </div>
           )}
 
           <div className="irb-home__examples" role="group" aria-label="Примеры запросов">
-            <span className="irb-home__exlabel">Популярные запросы</span>
+            <span className="irb-home__exlabel">{t("search.popular")}</span>
             {examples.map((ex) => (
               <button key={ex} type="button" className="irb-hero-chip"
                 onClick={() => { setQ(ex); onSearch(prefix, ex, base); }}>
