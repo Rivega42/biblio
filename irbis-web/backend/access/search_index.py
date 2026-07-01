@@ -362,6 +362,7 @@ CREATE TABLE IF NOT EXISTS doc (
   mfn         INTEGER NOT NULL DEFAULT 0,  -- MFN записи (0 если неприменимо)
   title       TEXT NOT NULL DEFAULT '',    -- заголовок (для выдачи)
   length      INTEGER NOT NULL DEFAULT 0,  -- число токенов тела (для нормировки BM25)
+  body        TEXT NOT NULL DEFAULT '',    -- усечённый исходный текст (для сниппетов, #D3)
   created_at  REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS posting (
@@ -382,6 +383,7 @@ CREATE TABLE IF NOT EXISTS doc (
   mfn         BIGINT NOT NULL DEFAULT 0,
   title       TEXT NOT NULL DEFAULT '',
   length      INTEGER NOT NULL DEFAULT 0,
+  body        TEXT NOT NULL DEFAULT '',
   created_at  DOUBLE PRECISION NOT NULL
 );
 CREATE TABLE IF NOT EXISTS posting (
@@ -461,9 +463,10 @@ class SearchIndexStore:
             'mfn': int(r['mfn']),
             'title': r['title'],
             'length': int(r['length']),
+            'body': r.get('body', '') if isinstance(r, dict) else '',
         }
 
-    def upsert_doc(self, ref, db, mfn, title, terms):
+    def upsert_doc(self, ref, db, mfn, title, terms, body=''):
         """Пересоздать документ ``ref`` с агрегированными постингами.
 
         Сначала удаляет старый документ с тем же ``ref`` (и его постинги), затем
@@ -482,19 +485,20 @@ class SearchIndexStore:
         ref = str(ref)
         # снять старый документ с этим ref (и его постинги)
         self._delete_rows(ref)
+        body = str(body or '')[:2000]
         if self.backend == 'postgres':
             row = c.execute(
-                'INSERT INTO doc(ref,db,mfn,title,length,created_at) '
-                'VALUES(%s,%s,%s,%s,%s,%s) RETURNING *',
-                (ref, str(db or ''), int(mfn or 0), str(title or ''), length, ts)).fetchone()
+                'INSERT INTO doc(ref,db,mfn,title,length,body,created_at) '
+                'VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *',
+                (ref, str(db or ''), int(mfn or 0), str(title or ''), length, body, ts)).fetchone()
             doc_id = row['id']
             for term, n in tf.items():
                 c.execute('INSERT INTO posting(doc_id,term,tf) VALUES(%s,%s,%s)',
                           (doc_id, term, n))
             return self._doc_view(dict(row))
         cur = c.execute(
-            'INSERT INTO doc(ref,db,mfn,title,length,created_at) VALUES(?,?,?,?,?,?)',
-            (ref, str(db or ''), int(mfn or 0), str(title or ''), length, ts))
+            'INSERT INTO doc(ref,db,mfn,title,length,body,created_at) VALUES(?,?,?,?,?,?,?)',
+            (ref, str(db or ''), int(mfn or 0), str(title or ''), length, body, ts))
         doc_id = cur.lastrowid
         for term, n in tf.items():
             c.execute('INSERT INTO posting(doc_id,term,tf) VALUES(?,?,?)',
@@ -631,8 +635,34 @@ class SearchIndex:
         terms = tokenize(text)
         if title:
             terms = terms + tokenize(title)
-        self.store.upsert_doc(ref, db, mfn, title, terms)
+        self.store.upsert_doc(ref, db, mfn, title, terms, body=text or '')
         return {'ref': str(ref), 'terms': len(set(terms)), 'length': len(terms)}
+
+    @staticmethod
+    def _snippet(body, stems, width=45):
+        """Фрагмент ``body`` вокруг первого вхождения любой основы запроса (#D3).
+
+        Основа — префикс словоформы, поэтому ищется как подстрока в теле
+        (регистронезависимо). По краям — многоточие. Нет тела/совпадения → ''."""
+        text = body or ''
+        low = text.lower()
+        pos = -1
+        for st in stems:
+            if not st:
+                continue
+            p = low.find(st)
+            if p >= 0 and (pos < 0 or p < pos):
+                pos = p
+        if pos < 0:
+            return ''
+        start = max(0, pos - width)
+        end = min(len(text), pos + width)
+        frag = text[start:end].strip()
+        if start > 0:
+            frag = '…' + frag
+        if end < len(text):
+            frag = frag + '…'
+        return frag
 
     def remove(self, ref):
         """Удалить документ из индекса. True если он там был."""
@@ -707,6 +737,7 @@ class SearchIndex:
                 'title': dv['title'],
                 'score': round(score, 4),
                 'matched': matched_ordered,
+                'snippet': self._snippet(dv.get('body', ''), matched_ordered),
             })
 
         hits.sort(key=lambda h: (-h['score'], h['ref']))
