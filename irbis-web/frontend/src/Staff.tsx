@@ -10,6 +10,7 @@ import { DynamicField } from "../components/cataloging/DynamicField.jsx";
 import { CirculationDesk } from "./CirculationDesk";
 import { AcquisitionDesk } from "./AcquisitionDesk";
 import { BookProvisionDesk } from "./BookProvisionDesk";
+import { useLang } from "./i18n";
 import { AdminDesk } from "./AdminDesk";
 import { CatalogingDesk } from "./CatalogingDesk";
 import { UtilitiesDesk } from "./UtilitiesDesk";
@@ -460,11 +461,13 @@ function AnalyticsOverview() {
 }
 
 function StaffDesktop({ staff, tiles, onOpen }: { staff: StaffSession; tiles: typeof DOMAINS; onOpen: (d: typeof DOMAINS[number]) => void }) {
+  const { t } = useLang();
+  const tileLabel = (d: typeof DOMAINS[number]) => { const k = "staff." + d.id; const v = t(k); return v === k ? d.label : v; };
   return (
     <div>
       <div className="stf__pagehead">
         <div className="stf__h1">
-          <h2>Рабочее пространство сотрудника</h2>
+          <h2>{t("staff.workspace")}</h2>
           <span className="stf__pill">{tiles.length} модул{tiles.length === 1 ? "ь" : "я/ей"}</span>
         </div>
       </div>
@@ -480,7 +483,7 @@ function StaffDesktop({ staff, tiles, onOpen }: { staff: StaffSession; tiles: ty
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-subtle)"; e.currentTarget.style.background = "var(--surface-card)"; }}>
             <span style={{ background: "var(--accent-weak)", color: "var(--accent)", borderRadius: "var(--radius-md)", padding: 8, flex: "none", display: "inline-flex" }}><Icon name={d.icon} size={20} /></span>
             <span style={{ minWidth: 0 }}>
-              <span style={{ display: "block", fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{d.label}</span>
+              <span style={{ display: "block", fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{tileLabel(d)}</span>
               <span style={{ display: "block", color: "var(--text-subtle)", fontSize: 12.5, lineHeight: 1.45 }}>{d.desc}</span>
             </span>
           </button>
