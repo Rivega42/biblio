@@ -6755,6 +6755,115 @@ class Api:
         except _compat_devices.CompatError as e:
             return 400, err('unsupported', str(e))
 
+    def _bdp_ctx(self, headers):
+        """device-token (``Authorization: Bearer``) → контекст устройства | None."""
+        if self.devices is None:
+            return None
+        return self.devices.authenticate_token(headers.get('authorization'))
+
+    @staticmethod
+    def _bdp_decision(d):
+        """Decision циркуляции → (status, payload) для BDP-ответа."""
+        if d.ok:
+            return 200, ok(d.computed or {})
+        status = 409 if d.decision == _circulation.REQUIRE_OVERRIDE else 403
+        return status, err('bdp_denied', ','.join(d.reasons) or d.decision)
+
+    def _bdp(self, method, path, body, headers, session):
+        """Нативный BDP-контур устройств (#418): ``/api/bdp/<op>``.
+
+        Регистрация (``register``) — staff-сессия (тонкий грант devices.admin — G9);
+        остальные операции — **device-token** (Bearer) → контекст
+        ``{device_id, tenant, kind}``. Так робо-шкаф / мок-агент / киоск говорят с
+        VPS БЕЗ legacy Basic ServiceLogin (тот только для унаследованных станций
+        IDlogic). Поверх доменных примитивов G1..G7."""
+        if self.devices is None or self.circulation is None:
+            return 503, err('unavailable', 'bdp subsystem not configured')
+        op = path[len('/api/bdp/'):].strip('/')
+        body = body or {}
+
+        # -- регистрация устройства + выпуск device-token (staff) --
+        if op == 'register' and method == 'POST':
+            self._require_staff(session)
+            guid = (body.get('guid') or '').strip() or None
+            kind = (body.get('kind') or _devices.KIND_SELF_SERVICE_CABINET).strip()
+            tenant = session.get('tenant', DEFAULT_TENANT)
+            try:
+                dev = self.devices.register(guid, kind, name=body.get('name'),
+                                            library=body.get('library'), tenant=tenant)
+            except _devices.DeviceError as e:
+                return 400, err('bad_request', str(e))
+            tok = self.devices.issue_token(dev['id'], label=body.get('label'))
+            return 200, ok({'device': dev, 'token': tok['token'], 'tokenId': tok['id']})
+
+        # -- остальное — под device-token --
+        ctx = self._bdp_ctx(headers)
+        if ctx is None:
+            return 401, err('unauthorized', 'device token required')
+        tenant, device_id = ctx['tenant'], ctx['device_id']
+
+        if op == 'card' and method == 'POST':
+            if self.readers is None:
+                return 503, err('unavailable', 'readers not configured')
+            return 200, ok(self.readers.resolve_patron(
+                body.get('reader_role', 'main'), body.get('uid', '')))
+
+        if op == 'item' and method == 'POST':
+            db = body.get('db') or self.cfg.db_default
+            ex = self.catalog.find_exemplar_by_tag(db, body.get('epc', '')) \
+                if self.catalog is not None else None
+            return 200, ok({'found': ex is not None,
+                            'item': (ex[2].get('b') if ex else None),
+                            'mfn': (ex[0] if ex else None)})
+
+        if op == 'reserve' and method == 'POST':
+            patron = (body.get('patron') or '').strip()
+            item = str(body.get('item') or '').strip()
+            if not patron or not item:
+                return 400, err('bad_request', 'patron and item required')
+            return self._bdp_decision(self.circulation.reserve(
+                self._circ_reader(patron), item, self._circ_today(),
+                op_id=body.get('op_id'), device_id=device_id))
+
+        if op == 'commit' and method == 'POST':
+            return self._bdp_decision(
+                self.circulation.commit(body.get('op_id'), device_id=device_id))
+
+        if op == 'rollback' and method == 'POST':
+            return self._bdp_decision(
+                self.circulation.rollback(body.get('op_id'), device_id=device_id))
+
+        if op == 'return' and method == 'POST':
+            lid = body.get('loan_id')
+            if lid is None:
+                patron = (body.get('patron') or '').strip()
+                item = str(body.get('item') or '').strip()
+                if not patron or not item:
+                    return 400, err('bad_request', 'loan_id or (patron,item) required')
+                loan = self._circ_find_loan(self._circ_reader(patron), item)
+                if loan is None:
+                    return 404, err('not_found', 'no on-hand loan')
+                lid = loan['id']
+            return self._bdp_decision(self.circulation.return_item(
+                lid, self._circ_today(), device_id=device_id))
+
+        if op == 'cells' and method == 'GET':
+            return 200, ok({'cells': self.devices.cell_map(tenant, device_id)})
+
+        if op == 'cell' and method == 'POST':
+            c = self.devices.cell_upsert(
+                tenant, device_id, body.get('row'), body.get('x'), body.get('y'),
+                state=body.get('state', 'free'), item=body.get('item'),
+                epc=body.get('epc'))
+            return 200, ok({'cell': c})
+
+        if op == 'health' and method == 'POST':
+            self.devices.record_event(device_id, event_name='bdp_health',
+                                      message=body.get('note'))
+            return 200, ok({'ok': True, 'device': device_id})
+
+        return 404, err('unknown_op', 'unknown bdp op: %s' % op)
+
     def _dispatch_route(self, method, path, query, body, headers):
         """Return (status, payload) where payload is dict | Raw | None."""
         path = path.rstrip('/') or '/'
@@ -6794,6 +6903,9 @@ class Api:
             # ---- Внешние устройства IDlogic (compat-шим, #272) — Basic ServiceLogin ----
             if method == 'POST' and path.startswith('/api/devices/'):
                 return self._device_compat(path, body or {}, headers)
+            # ---- Нативный BDP-контур устройств (#418) — device-token (Bearer) ----
+            if path.startswith('/api/bdp/'):
+                return self._bdp(method, path, body or {}, headers, session)
             parts = path.strip('/').split('/')
             if method == 'GET' and path == '/api/search':
                 db = query.get('db', [self.cfg.db_default])[0]
