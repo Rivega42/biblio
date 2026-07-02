@@ -90,9 +90,37 @@ def test_rdr_sync_plan():
     check('empty reader -> empty plan', s.rdr_sync_plan('NOBODY') == [])
 
 
+def test_resolve_patron():
+    s = svc()
+    s.bind_card('T-100', 'AABBCCDD11', kind=KIND_MAIN)
+    r = s.resolve_patron('main', 'aabbccdd11')  # регистронезависимо
+    check('resolve ok (CI по UID)', r['status'] == 'ok' and r['patron'] == 'T-100')
+    check('resolve вернул kind карты', r['kind'] == KIND_MAIN)
+    check('unknown UID -> guest', s.resolve_patron('main', 'ZZZZ')['status'] == 'unknown')
+    check('пустой UID -> unknown', s.resolve_patron('main', '')['status'] == 'unknown')
+    # UID НЕ усекается: длинный EPC (36) резолвится целиком
+    long_epc = 'E20034120139' + 'F' * 24  # 36 симв.
+    s.bind_card('T-200', long_epc, kind=KIND_EKP)
+    rl = s.resolve_patron('ekp', long_epc.lower())
+    check('длинный EPC резолвится без усечения', rl['status'] == 'ok' and rl['patron'] == 'T-200')
+    # две карты с общим 24-символьным префиксом — РАЗНЫЕ читатели (нет коллизии)
+    s.bind_card('T-201', 'E20034120139FFFFFFFFFFFF' + '0001', kind=KIND_EKP)
+    s.bind_card('T-202', 'E20034120139FFFFFFFFFFFF' + '0002', kind=KIND_EKP)
+    check('карта ...0001 -> T-201', s.resolve_patron('ekp', 'E20034120139FFFFFFFFFFFF0001')['patron'] == 'T-201')
+    check('карта ...0002 -> T-202', s.resolve_patron('ekp', 'E20034120139FFFFFFFFFFFF0002')['patron'] == 'T-202')
+    # ambiguous: живой RDR вернул >1 читателя на один UID
+    s2 = svc(rdr_lookup=lambda u: ['T-A', 'T-B'])
+    amb = s2.resolve_patron('main', 'DUP')
+    check('коллизия RDR -> ambiguous', amb['status'] == 'ambiguous' and amb['candidates'] == ['T-A', 'T-B'])
+    # rdr_lookup единичный -> ok
+    s3 = svc(rdr_lookup=lambda u: 'T-LIVE')
+    check('rdr единичный -> ok', s3.resolve_patron('main', 'LIVE')['patron'] == 'T-LIVE')
+
+
 def main():
     for t in (test_bind_find, test_bind_guards, test_upsert_idempotent_and_kind,
-              test_cards_for, test_rdr_lookup_fallback, test_rdr_sync_plan):
+              test_cards_for, test_rdr_lookup_fallback, test_rdr_sync_plan,
+              test_resolve_patron):
         print('==', t.__name__); t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0
