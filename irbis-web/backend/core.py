@@ -6813,7 +6813,11 @@ class Api:
                                             library=body.get('library'), tenant=tenant)
             except _devices.DeviceError as e:
                 return 400, err('bad_request', str(e))
-            tok = self.devices.issue_token(dev['id'], label=body.get('label'))
+            # H4 (#5): device-token со сроком (не «вечный»); TTL из env, дефолт 365 дн.
+            ttl_days = int(os.environ.get('BDP_TOKEN_TTL_DAYS', '365') or 0)
+            tok = self.devices.issue_token(
+                dev['id'], label=body.get('label'),
+                ttl=(ttl_days * 86400 if ttl_days > 0 else None))
             return 200, ok({'device': dev, 'token': tok['token'], 'tokenId': tok['id']})
 
         # -- остальное — под device-token --
@@ -6826,7 +6830,7 @@ class Api:
             if self.readers is None:
                 return 503, err('unavailable', 'readers not configured')
             who = self.readers.resolve_patron(body.get('reader_role', 'main'),
-                                              body.get('uid', ''))
+                                              body.get('uid', ''), tenant=tenant)
             # H1 (#3/#10): фиксируем серверную device-сессию (карта→читатель, TTL),
             # чтобы reserve/return бронировали ТОЛЬКО на приложенного читателя, а не
             # на произвольный billet из тела. unknown/ambiguous сессию не создают.

@@ -473,6 +473,10 @@ class DeviceService:
         if kind not in KINDS:
             raise DeviceError('unknown device kind: %r' % (kind,))
         existing = self.store.get_by_guid(guid) if guid else None
+        # H4 (#6): GUID глобально уникален — не дать арендатору перехватить чужое
+        # устройство по совпадению GUID (get_by_guid tenant-слеп).
+        if existing and existing.get('tenant') not in (None, tenant):
+            raise DeviceError('device guid=%r owned by another tenant' % (guid,))
         if existing:
             return self.store.update_device(
                 existing['id'], kind=kind, name=name, library=library, ip=ip,
