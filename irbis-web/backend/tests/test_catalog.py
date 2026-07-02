@@ -490,6 +490,14 @@ def exemplar_by_tag_checks():
     check('RF= search finds the tagged record',
           st.search('IBIS', 'RF=E2003411DEADBEEF00000001')['total'] == 1)
 
+    # H5 (#16): та же метка на копии ДРУГОЙ записи → неоднозначно → None (не гадаем).
+    dup = dict(_good_book())
+    dup['200'] = [{'a': 'Двойник по метке'}]
+    dup['910'] = [{'a': '0', 'b': 'INV-DUP', 'h': 'E2003411DEADBEEF00000001'}]
+    st.save('IBIS', dup)
+    check('EPC на копиях разных записей → None (неоднозначно)',
+          st.find_exemplar_by_tag('IBIS', 'E2003411DEADBEEF00000001') is None)
+
 
 def main():
     schema_checks()

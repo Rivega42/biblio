@@ -846,6 +846,7 @@ class CatalogStore:
         if not target:
             return None
         fallback = None  # (mfn, i, inst), найденный по 941^h
+        matches = []     # H5 (#16): ВСЕ совпадения 910^h — для детекта неоднозначности
         for r in self._conn().execute(
                 "SELECT mfn, data_json FROM record WHERE db=? AND status='active' "
                 'ORDER BY mfn', (db,)).fetchall():
@@ -856,7 +857,7 @@ class CatalogStore:
                     insts = [insts]
                 for i, inst in enumerate(insts):
                     if self._exemplar_tag(inst) == target:
-                        return (r['mfn'], i, inst)
+                        matches.append((r['mfn'], i, inst))
             # 941^h — RFID-дубль для индексации (уровень записи). Если по копиям
             # 910^h не совпало, но 941^h == метке — резолвим к первой копии 910
             # (best-effort; при рассинхроне 910^h/941^h верен per-copy 910^h выше).
@@ -872,6 +873,13 @@ class CatalogStore:
                                 c910 = [c910]
                             if c910 and isinstance(c910[0], dict):
                                 fallback = (r['mfn'], 0, c910[0])
+        # H5 (#16): ровно одно совпадение 910^h → его; несколько (та же метка на
+        # копиях РАЗНЫХ записей — коллизия/перемаркировка) → None (не гадаем копию);
+        # ни одного → фолбэк по 941^h.
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            return None
         return fallback
 
     def exemplars_at(self, db, location):

@@ -129,10 +129,25 @@ def test_tenant_scope():
     check('CI сохраняется в скоупе', s.resolve_patron('main', 'card-x', tenant='libA')['patron'] == 'T-A')
 
 
+def test_resolve_ambiguous_ownstore():
+    print('== test_resolve_ambiguous_ownstore (#8/#15)')
+    s = svc()
+    s.bind_card('T-1', 'abcd')   # разные билеты, UID отличается ТОЛЬКО регистром
+    s.bind_card('T-2', 'ABCD')
+    r = s.resolve_patron('main', 'AbCd')
+    check('коллизия UID own-store → ambiguous',
+          r['status'] == 'ambiguous' and set(r.get('candidates', [])) == {'T-1', 'T-2'})
+    s2 = svc()
+    s2.bind_card('T-9', 'UNIQ')
+    check('одна карта → ok', s2.resolve_patron('main', 'uniq')['patron'] == 'T-9')
+    check('find_by_card CI (#15)',
+          s2.find_by_card('uniq') is not None and s2.find_by_card('UNIQ') is not None)
+
+
 def main():
     for t in (test_bind_find, test_bind_guards, test_upsert_idempotent_and_kind,
               test_cards_for, test_rdr_lookup_fallback, test_rdr_sync_plan,
-              test_resolve_patron, test_tenant_scope):
+              test_resolve_patron, test_tenant_scope, test_resolve_ambiguous_ownstore):
         print('==', t.__name__); t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0
