@@ -13,10 +13,12 @@ CREATE TABLE IF NOT EXISTS device (
   guid        UUID UNIQUE,                       -- DeviceID (cfg3) / Station/SafeKeeper ID
   kind        TEXT NOT NULL                      -- вид устройства
                 CHECK (kind IN ('desktop_reader','gate','station','safekeeper',
-                                'smartshelf','acs_reader','camera')),
+                                'smartshelf','acs_reader','camera',
+                                'self_service_cabinet')),
   type_id     INTEGER, type_name TEXT,
   name        TEXT,
   library     TEXT,                              -- сигла/МХ (связь с own-store)
+  tenant      TEXT NOT NULL DEFAULT 'public',    -- мультиарендная изоляция (#414)
   ip          TEXT, port INTEGER,                -- IPAddress / counter / camera
   is_online   INTEGER NOT NULL DEFAULT 0,
   last_seen   DOUBLE PRECISION,
@@ -95,3 +97,22 @@ CREATE TABLE IF NOT EXISTS station_banner (
   name TEXT, image BYTEA, period_from DOUBLE PRECISION, period_to DOUBLE PRECISION,
   interval_sec INTEGER, is_enabled INTEGER NOT NULL DEFAULT 1
 );
+
+-- Ячейки робо-шкафа (self_service_cabinet) — зеркало физики (#414). Ячейка =
+-- полка ФОНДА (не pickup-локер): книга живёт в ячейке; источник правды —
+-- журнал агента на RPi, Biblio держит зеркало и сверяет inventory.run.
+CREATE TABLE IF NOT EXISTS cabinet_cell (
+  id       BIGSERIAL PRIMARY KEY,
+  tenant   TEXT NOT NULL DEFAULT 'public',
+  device   BIGINT NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  row      TEXT NOT NULL,
+  x        INTEGER NOT NULL,
+  y        INTEGER NOT NULL,
+  state    TEXT NOT NULL DEFAULT 'free'
+       CHECK (state IN ('free','occupied','awaiting_extraction','blocked')),
+  item     TEXT,
+  epc      TEXT,
+  updated  DOUBLE PRECISION NOT NULL,
+  UNIQUE(device, row, x, y)
+);
+CREATE INDEX IF NOT EXISTS cabinet_cell_idx ON cabinet_cell(tenant, device, state);
