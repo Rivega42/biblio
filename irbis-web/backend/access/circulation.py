@@ -281,6 +281,8 @@ CREATE TABLE IF NOT EXISTS loan (
   renewals INTEGER NOT NULL DEFAULT 0,   -- prolong_count (MAXPROLONGCOUNT)
   lost_status TEXT NOT NULL DEFAULT 'none'  -- none | lost_candidate | lost
        CHECK (lost_status IN ('none','lost_candidate','lost')),
+  pending INTEGER NOT NULL DEFAULT 0,  -- BDP-сага (#415): 1=резерв (reserve),
+                                       -- 0=активна (commit) / обычная staff-выдача
   op_id TEXT UNIQUE          -- BDP-ключ идемпотентности (#412): повтор с тем же
                              -- op_id не создаёт вторую выдачу (replay-safe для
                              -- sync.replay). NULL для staff-путей — NULL'ы в
@@ -376,12 +378,13 @@ class CirculationStore:
 
     # ---- loans ------------------------------------------------------------ #
     def add_loan(self, reader_id, item, due, checked_out_at,
-                 item_kind=None, item_price=None, op_id=None):
+                 item_kind=None, item_price=None, op_id=None, pending=0):
         c = self._conn()
         cur = c.execute(
             'INSERT INTO loan(reader,item,item_kind,item_price,due,'
-            'checked_out_at,op_id) VALUES(?,?,?,?,?,?,?)',
-            (reader_id, item, item_kind, item_price, due, checked_out_at, op_id))
+            'checked_out_at,op_id,pending) VALUES(?,?,?,?,?,?,?,?)',
+            (reader_id, item, item_kind, item_price, due, checked_out_at, op_id,
+             1 if pending else 0))
         c.commit()
         return self.get_loan(cur.lastrowid)
 
@@ -397,6 +400,27 @@ class CirculationStore:
         r = self._conn().execute(
             'SELECT * FROM loan WHERE op_id=?', (op_id,)).fetchone()
         return dict(r) if r else None
+
+    def set_loan_pending(self, loan_id, pending):
+        c = self._conn()
+        c.execute('UPDATE loan SET pending=? WHERE id=?',
+                  (1 if pending else 0, loan_id))
+        c.commit()
+        return self.get_loan(loan_id)
+
+    def delete_loan(self, loan_id):
+        c = self._conn()
+        c.execute('DELETE FROM loan WHERE id=?', (loan_id,))
+        c.commit()
+
+    def pending_loans(self, before=None):
+        """PENDING-резервы (BDP-сага #415); ``before`` — checked_out_at < before."""
+        q = 'SELECT * FROM loan WHERE pending=1'
+        args = []
+        if before is not None:
+            q += ' AND checked_out_at < ?'; args.append(before)
+        return [dict(r) for r in self._conn().execute(
+            q + ' ORDER BY id', args).fetchall()]
 
     def loans_on_hand(self, reader_id):
         """RDR.40 rows still on hand (``40^F='******'``) for a reader."""
@@ -1235,6 +1259,112 @@ class CirculationEngine:
         if dev_ev is not None:
             computed['device_event'] = dev_ev
         return Decision(ALLOW, [], computed)
+
+    # ---- BDP-сага выдачи: reserve -> commit / rollback (#415) -------------- #
+    # Двухфазная выдача для устройств (робо-шкаф): Biblio-гейт (право/долги/лимит)
+    # и физика (механика может упасть) разнесены по узлам. reserve резервирует
+    # (PENDING-loan + 910^A=1), commit активирует после op.result{ok}, rollback
+    # компенсирует при DENY/сбое/TTL. Идемпотентно по op_id (replay-safe).
+    def _reserve_gate(self, reader_id, item_kind, today):
+        """Право на выдачу для self-service reserve (без staff-override).
+        Возвращает (Decision|None, limits): Decision!=None → отказ."""
+        reader = self.store.get_reader(reader_id)
+        if reader is None:
+            return Decision(DENY, ['unknown_reader']), None
+        category = reader['category']
+        limits = category_limits(self.policy, category)
+        ext_pol = self._resolve_loan_policy(category, item_kind)
+        if ext_pol is not None:
+            limits = dict(limits)
+            if ext_pol.get('max_items') is not None:
+                limits['max_books'] = ext_pol['max_items']
+                limits['max_dolg_books'] = min(limits['max_dolg_books'],
+                                               ext_pol['max_items'])
+            if ext_pol.get('loan_days') is not None:
+                limits['max_return_days'] = ext_pol['loan_days']
+        reasons = []
+        level = debt_level(self.store, self.policy, reader_id, today)
+        if level == 'hard' and self.policy['debt']['reader_block_on_hard']:
+            reasons.append('reader_has_debt')
+        on_hand = self.store.count_on_hand(reader_id)
+        cap = limits['max_dolg_books'] if level != 'none' else limits['max_books']
+        if on_hand >= cap:
+            reasons.append('limit_exceeded')
+        if reader['blocked']:
+            reasons.append('reader_blocked')
+        if getattr(self, 'debtors', None) is not None:
+            try:
+                if self.debtors.is_blocked(reader_id):
+                    reasons.append('reader_blocked_debt')
+            except Exception:  # pragma: no cover - seam guard
+                pass
+        if reasons:
+            return Decision(DENY, reasons), limits
+        return None, limits
+
+    def reserve(self, reader_id, item, today, item_kind=None, item_price=None,
+                op_id=None, device_id=None):
+        """Фаза 1: проверить право и создать PENDING-выдачу (+910^A=1)."""
+        if op_id:
+            ex = self.store.get_loan_by_op_id(op_id)
+            if ex is not None:
+                return Decision(ALLOW, [], {'loan': ex, 'phase': 'reserve',
+                                            'replayed': True})
+        decision, limits = self._reserve_gate(reader_id, item_kind, today)
+        if decision is not None:
+            return decision
+        due = today + limits['max_return_days'] * SECONDS_PER_DAY
+        try:
+            loan = self.store.add_loan(reader_id, item, due, today,
+                                       item_kind=item_kind, item_price=item_price,
+                                       op_id=op_id, pending=1)
+        except sqlite3.IntegrityError:
+            ex = self.store.get_loan_by_op_id(op_id)
+            if ex is not None:
+                return Decision(ALLOW, [], {'loan': ex, 'phase': 'reserve',
+                                            'replayed': True})
+            raise
+        cat_mfn = self._flip_catalog_status(item, '1')  # EXEMPLAR_ISSUED (резерв)
+        computed = {'loan': loan, 'due': due, 'phase': 'reserve'}
+        if cat_mfn is not None:
+            computed['catalog_mfn'] = cat_mfn
+        self._record_device_event(device_id, 'loan_reserve', user_code=reader_id,
+                                  loan_ref=loan['id'])
+        return Decision(ALLOW, [], computed)
+
+    def commit(self, op_id, device_id=None):
+        """Фаза 2 (op.result{ok}): PENDING→активна. Идемпотентно."""
+        loan = self.store.get_loan_by_op_id(op_id) if op_id else None
+        if loan is None:
+            return Decision(DENY, ['no_reserved_loan'])
+        if loan['pending']:
+            loan = self.store.set_loan_pending(loan['id'], 0)
+        self._record_device_event(device_id, 'loan_commit', user_code=loan['reader'],
+                                  loan_ref=loan['id'])
+        return Decision(ALLOW, [], {'loan': loan, 'phase': 'commit'})
+
+    def rollback(self, op_id, device_id=None):
+        """Компенсация (DENY/сбой физики/TTL): снять PENDING-резерв + вернуть 910^A=0.
+        Только для PENDING — активную (commit'нутую) выдачу не откатывает."""
+        loan = self.store.get_loan_by_op_id(op_id) if op_id else None
+        if loan is None:
+            return Decision(DENY, ['no_reserved_loan'])
+        if not loan['pending']:
+            return Decision(DENY, ['already_committed'])
+        self._flip_catalog_status(loan['item'], '0')  # EXEMPLAR_FREE
+        self.store.delete_loan(loan['id'])
+        self._record_device_event(device_id, 'loan_rollback',
+                                  user_code=loan['reader'], loan_ref=loan['id'])
+        return Decision(ALLOW, [], {'phase': 'rollback', 'loan_id': loan['id']})
+
+    def expire_pending(self, now, ttl):
+        """Авто-rollback зависших резервов старше ttl (device-agent/cron)."""
+        rolled = []
+        for ln in self.store.pending_loans(before=now - ttl):
+            self._flip_catalog_status(ln['item'], '0')
+            self.store.delete_loan(ln['id'])
+            rolled.append(ln['id'])
+        return rolled
 
     # ---- renew (§1 holds-block-renewal + cap) ----------------------------- #
     def renew(self, loan_id, today, staff_override=False, override_grant=False,

@@ -454,9 +454,48 @@ def op_id_idempotency_checks():
     check('get_loan_by_op_id(None) -> None', store.get_loan_by_op_id(None) is None)
 
 
+def saga_checks():
+    print('-- BDP-сага reserve->commit/rollback (#415)')
+    store, eng = fresh()
+    d = eng.reserve('R1', 'BK-S', T0, op_id='op-s1')
+    check('reserve allowed + phase', d.decision == ALLOW and d.computed['phase'] == 'reserve')
+    check('reserve создал PENDING-loan', d.computed['loan']['pending'] == 1)
+    check('reserve засчитан в on_hand', store.count_on_hand('R1') == 1)
+    d2 = eng.reserve('R1', 'BK-S', T0, op_id='op-s1')
+    check('reserve replay идемпотентен', d2.computed.get('replayed') is True and store.count_on_hand('R1') == 1)
+    c = eng.commit('op-s1')
+    check('commit allowed', c.decision == ALLOW and c.computed['phase'] == 'commit')
+    check('commit снял pending', c.computed['loan']['pending'] == 0)
+    check('после commit on_hand=1', store.count_on_hand('R1') == 1)
+    check('commit повтор ок', eng.commit('op-s1').decision == ALLOW)
+    check('rollback committed → already_committed', 'already_committed' in eng.rollback('op-s1').reasons)
+
+    store2, eng2 = fresh()
+    eng2.reserve('R1', 'BK-R', T0, op_id='op-r1')
+    check('до rollback on_hand=1', store2.count_on_hand('R1') == 1)
+    rb = eng2.rollback('op-r1')
+    check('rollback allowed', rb.decision == ALLOW and rb.computed['phase'] == 'rollback')
+    check('после rollback on_hand=0 (компенсация)', store2.count_on_hand('R1') == 0)
+    check('rollback неизвестного op_id → DENY', eng2.rollback('nope').decision == DENY)
+    check('commit неизвестного op_id → DENY', eng2.commit('nope').decision == DENY)
+
+    store3, eng3 = fresh()
+    store3.set_blocked('R1', 1)
+    dd = eng3.reserve('R1', 'BK-X', T0, op_id='op-x')
+    check('reserve заблокированному → DENY', dd.decision == DENY and 'reader_blocked' in dd.reasons)
+    check('отказной reserve не создал loan', store3.count_on_hand('R1') == 0)
+
+    store4, eng4 = fresh()
+    eng4.reserve('R1', 'BK-T', T0, op_id='op-t')
+    check('до expire pending=1', len(store4.pending_loans()) == 1)
+    rolled = eng4.expire_pending(now=T0 + 10 * DAY, ttl=1 * DAY)
+    check('expire откатил зависший резерв', len(rolled) == 1 and store4.count_on_hand('R1') == 0)
+
+
 def main():
     store_and_policy_checks()
     op_id_idempotency_checks()
+    saga_checks()
     checkout_limit_checks()
     checkout_debtor_checks()
     renew_hold_checks()
