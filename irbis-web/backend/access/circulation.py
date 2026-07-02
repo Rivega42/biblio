@@ -355,6 +355,17 @@ class CirculationStore:
     def ensure_schema(self):
         c = self._conn()
         c.executescript(SCHEMA_SQLITE)
+        # Идемпотентные миграции ранее созданных loan-таблиц: op_id (#412) и
+        # pending (#415). Новые БД получают колонки из SCHEMA; существующие
+        # (файловые) — досаживаем ALTER'ом (UNIQUE — частичным индексом, т.к.
+        # sqlite ALTER не умеет inline UNIQUE; NULL'ы op_id остаются различны).
+        cols = [r[1] for r in c.execute('PRAGMA table_info(loan)').fetchall()]
+        if 'op_id' not in cols:
+            c.execute('ALTER TABLE loan ADD COLUMN op_id TEXT')
+            c.execute('CREATE UNIQUE INDEX IF NOT EXISTS loan_op_id_ux '
+                      'ON loan(op_id) WHERE op_id IS NOT NULL')
+        if 'pending' not in cols:
+            c.execute('ALTER TABLE loan ADD COLUMN pending INTEGER NOT NULL DEFAULT 0')
         c.commit()
 
     # ---- readers ---------------------------------------------------------- #
