@@ -114,8 +114,43 @@ def run():
     check('unknown op → 404', st == 404)
 
 
+def run_h1():
+    print('-- BDP H1: card-binding + item-availability + ownership')
+    api = _api()
+    _, pa = api._bdp('POST', '/api/bdp/register', {'guid': 'cabA', 'name': 'A'}, {}, STAFF)
+    HA = {'authorization': 'Bearer ' + pa['data']['token']}
+    devA = pa['data']['device']['id']
+
+    # reserve БЕЗ приложенной карты → 409 (не бронировать на произвольный билет)
+    st, _ = api._bdp('POST', '/api/bdp/reserve', {'item': 'INV-1', 'op_id': 'A1'}, HA, None)
+    check('reserve без карты → 409 no_card_session', st == 409)
+
+    # card → серверная сессия; reserve берёт patron из неё
+    api._bdp('POST', '/api/bdp/card', {'reader_role': 'main', 'uid': 'card-9'}, HA, None)
+    st, pl = api._bdp('POST', '/api/bdp/reserve', {'item': 'INV-1', 'op_id': 'A1'}, HA, None)
+    check('reserve после карты → 200 PENDING', st == 200 and pl['data']['loan']['pending'] == 1)
+
+    # двойной reserve того же экземпляра (другой op) → item_unavailable
+    st, pl = api._bdp('POST', '/api/bdp/reserve', {'item': 'INV-1', 'op_id': 'A2'}, HA, None)
+    check('двойной reserve экземпляра → item_unavailable',
+          st == 403 and 'item_unavailable' in str(pl))
+
+    # другое устройство НЕ может commit/rollback чужую сагу
+    _, pb = api._bdp('POST', '/api/bdp/register', {'guid': 'cabB', 'name': 'B'}, {}, STAFF)
+    HB = {'authorization': 'Bearer ' + pb['data']['token']}
+    st, _ = api._bdp('POST', '/api/bdp/commit', {'op_id': 'A1'}, HB, None)
+    check('чужое устройство commit → 403 forbidden', st == 403)
+    st, _ = api._bdp('POST', '/api/bdp/rollback', {'op_id': 'A1'}, HB, None)
+    check('чужое устройство rollback → 403 forbidden', st == 403)
+
+    # владелец commit — ок
+    st, _ = api._bdp('POST', '/api/bdp/commit', {'op_id': 'A1'}, HA, None)
+    check('владелец commit → 200', st == 200)
+
+
 def main():
     run()
+    run_h1()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0
 

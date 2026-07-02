@@ -283,6 +283,8 @@ CREATE TABLE IF NOT EXISTS loan (
        CHECK (lost_status IN ('none','lost_candidate','lost')),
   pending INTEGER NOT NULL DEFAULT 0,  -- BDP-сага (#415): 1=резерв (reserve),
                                        -- 0=активна (commit) / обычная staff-выдача
+  device INTEGER,            -- владелец BDP-выдачи (device.id); NULL для staff-выдач.
+                             -- commit/rollback/return сверяют владение устройством (H1).
   op_id TEXT UNIQUE          -- BDP-ключ идемпотентности (#412): повтор с тем же
                              -- op_id не создаёт вторую выдачу (replay-safe для
                              -- sync.replay). NULL для staff-путей — NULL'ы в
@@ -366,6 +368,8 @@ class CirculationStore:
                       'ON loan(op_id) WHERE op_id IS NOT NULL')
         if 'pending' not in cols:
             c.execute('ALTER TABLE loan ADD COLUMN pending INTEGER NOT NULL DEFAULT 0')
+        if 'device' not in cols:
+            c.execute('ALTER TABLE loan ADD COLUMN device INTEGER')
         c.commit()
 
     # ---- readers ---------------------------------------------------------- #
@@ -389,13 +393,14 @@ class CirculationStore:
 
     # ---- loans ------------------------------------------------------------ #
     def add_loan(self, reader_id, item, due, checked_out_at,
-                 item_kind=None, item_price=None, op_id=None, pending=0):
+                 item_kind=None, item_price=None, op_id=None, pending=0,
+                 device=None):
         c = self._conn()
         cur = c.execute(
             'INSERT INTO loan(reader,item,item_kind,item_price,due,'
-            'checked_out_at,op_id,pending) VALUES(?,?,?,?,?,?,?,?)',
+            'checked_out_at,op_id,pending,device) VALUES(?,?,?,?,?,?,?,?,?)',
             (reader_id, item, item_kind, item_price, due, checked_out_at, op_id,
-             1 if pending else 0))
+             1 if pending else 0, device))
         c.commit()
         return self.get_loan(cur.lastrowid)
 
@@ -1276,7 +1281,7 @@ class CirculationEngine:
     # и физика (механика может упасть) разнесены по узлам. reserve резервирует
     # (PENDING-loan + 910^A=1), commit активирует после op.result{ok}, rollback
     # компенсирует при DENY/сбое/TTL. Идемпотентно по op_id (replay-safe).
-    def _reserve_gate(self, reader_id, item_kind, today):
+    def _reserve_gate(self, reader_id, item_kind, today, item=None):
         """Право на выдачу для self-service reserve (без staff-override).
         Возвращает (Decision|None, limits): Decision!=None → отказ."""
         reader = self.store.get_reader(reader_id)
@@ -1311,6 +1316,10 @@ class CirculationEngine:
                 pass
         if reasons:
             return Decision(DENY, reasons), limits
+        # H2 (#2/#11): физический экземпляр уже на руках / в резерве — вторую копию
+        # выдать нельзя (одна ячейка = одна книга). Совместимо с place_hold-гейтом.
+        if item is not None and self.store.item_on_hand_count(item) > 0:
+            return Decision(DENY, ['item_unavailable']), limits
         return None, limits
 
     def reserve(self, reader_id, item, today, item_kind=None, item_price=None,
@@ -1321,14 +1330,14 @@ class CirculationEngine:
             if ex is not None:
                 return Decision(ALLOW, [], {'loan': ex, 'phase': 'reserve',
                                             'replayed': True})
-        decision, limits = self._reserve_gate(reader_id, item_kind, today)
+        decision, limits = self._reserve_gate(reader_id, item_kind, today, item)
         if decision is not None:
             return decision
         due = today + limits['max_return_days'] * SECONDS_PER_DAY
         try:
             loan = self.store.add_loan(reader_id, item, due, today,
                                        item_kind=item_kind, item_price=item_price,
-                                       op_id=op_id, pending=1)
+                                       op_id=op_id, pending=1, device=device_id)
         except sqlite3.IntegrityError:
             ex = self.store.get_loan_by_op_id(op_id)
             if ex is not None:
@@ -1348,6 +1357,9 @@ class CirculationEngine:
         loan = self.store.get_loan_by_op_id(op_id) if op_id else None
         if loan is None:
             return Decision(DENY, ['no_reserved_loan'])
+        # H3 (PARTIAL#1): не реактивировать уже возвращённую/откатанную выдачу.
+        if loan['returned']:
+            return Decision(DENY, ['already_returned'])
         if loan['pending']:
             loan = self.store.set_loan_pending(loan['id'], 0)
         self._record_device_event(device_id, 'loan_commit', user_code=loan['reader'],
@@ -1468,6 +1480,10 @@ class CirculationEngine:
             return Decision(DENY, ['unknown_loan'])
         if loan['returned']:
             return Decision(DENY, ['already_returned'])
+        # H3 (#12): PENDING-резерв (ещё не commit'нут) нельзя закрыть как возврат —
+        # его разрешают через commit/rollback, иначе фантомная выдача-возврат.
+        if loan['pending']:
+            return Decision(DENY, ['loan_not_committed'])
 
         events = []
         computed = {}

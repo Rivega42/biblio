@@ -6769,6 +6769,26 @@ class Api:
         status = 409 if d.decision == _circulation.REQUIRE_OVERRIDE else 403
         return status, err('bdp_denied', ','.join(d.reasons) or d.decision)
 
+    def _bdp_session_patron(self, device_id, ttl=180):
+        """Читатель из активной device-сессии карты (H1 #3/#10) | None (нет/протухла).
+        Так reserve/return бронируют ТОЛЬКО на реально приложенную к шкафу карту, а не
+        на произвольный билет из тела запроса."""
+        s = getattr(self, '_bdp_card_sessions', {}).get(device_id)
+        if not s or (self._circ_today() - s.get('ts', 0)) > ttl:
+            return None
+        return s['patron']
+
+    def _bdp_ownership(self, device_id, op_id=None, loan_id=None):
+        """H1 (#4/#9/#17): выдача принадлежит вызывающему устройству? (status,payload)
+        при чужом владельце → 403; None — ок (или loan не найден, обработает движок).
+        Закрывает межустройственный/межарендный захват саги (op_id/loan глобальны)."""
+        st = self.circulation.store
+        loan = (st.get_loan_by_op_id(op_id) if op_id
+                else st.get_loan(loan_id) if loan_id is not None else None)
+        if loan is not None and loan.get('device') not in (None, device_id):
+            return 403, err('forbidden', 'loan owned by another device')
+        return None
+
     def _bdp(self, method, path, body, headers, session):
         """Нативный BDP-контур устройств (#418): ``/api/bdp/<op>``.
 
@@ -6805,8 +6825,17 @@ class Api:
         if op == 'card' and method == 'POST':
             if self.readers is None:
                 return 503, err('unavailable', 'readers not configured')
-            return 200, ok(self.readers.resolve_patron(
-                body.get('reader_role', 'main'), body.get('uid', '')))
+            who = self.readers.resolve_patron(body.get('reader_role', 'main'),
+                                              body.get('uid', ''))
+            # H1 (#3/#10): фиксируем серверную device-сессию (карта→читатель, TTL),
+            # чтобы reserve/return бронировали ТОЛЬКО на приложенного читателя, а не
+            # на произвольный billet из тела. unknown/ambiguous сессию не создают.
+            if who.get('status') == 'ok' and who.get('patron'):
+                if not hasattr(self, '_bdp_card_sessions'):
+                    self._bdp_card_sessions = {}
+                self._bdp_card_sessions[device_id] = {
+                    'patron': who['patron'], 'ts': self._circ_today()}
+            return 200, ok(who)
 
         if op == 'item' and method == 'POST':
             db = body.get('db') or self.cfg.db_default
@@ -6817,19 +6846,29 @@ class Api:
                             'mfn': (ex[0] if ex else None)})
 
         if op == 'reserve' and method == 'POST':
-            patron = (body.get('patron') or '').strip()
+            # H1 (#3/#10): читатель — ТОЛЬКО из активной device-сессии карты, не из
+            # тела; иначе device-token бронировал бы на любой билет без карты.
+            patron = self._bdp_session_patron(device_id)
+            if patron is None:
+                return 409, err('no_card_session', 'present a reader card first')
             item = str(body.get('item') or '').strip()
-            if not patron or not item:
-                return 400, err('bad_request', 'patron and item required')
+            if not item:
+                return 400, err('bad_request', 'item required')
             return self._bdp_decision(self.circulation.reserve(
                 self._circ_reader(patron), item, self._circ_today(),
                 op_id=body.get('op_id'), device_id=device_id))
 
         if op == 'commit' and method == 'POST':
+            forbidden = self._bdp_ownership(device_id, op_id=body.get('op_id'))
+            if forbidden:
+                return forbidden
             return self._bdp_decision(
                 self.circulation.commit(body.get('op_id'), device_id=device_id))
 
         if op == 'rollback' and method == 'POST':
+            forbidden = self._bdp_ownership(device_id, op_id=body.get('op_id'))
+            if forbidden:
+                return forbidden
             return self._bdp_decision(
                 self.circulation.rollback(body.get('op_id'), device_id=device_id))
 
