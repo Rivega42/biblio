@@ -222,10 +222,22 @@ def test_device_tokens():
     check('токен удалённого устройства невалиден', svc.authenticate_token(t4['token']) is None)
 
 
+def test_register_tenant_guard():
+    print('-- register: GUID tenant-guard (#6)')
+    svc = make_service([1000.0])
+    a = svc.register('shared-guid', KIND_SELF_SERVICE_CABINET, tenant='libA')
+    check('регистрация в libA', a['tenant'] == 'libA')
+    expect_raises('чужой tenant по тому же GUID → DeviceError',
+                  lambda: svc.register('shared-guid', KIND_SELF_SERVICE_CABINET, tenant='libB'))
+    a2 = svc.register('shared-guid', KIND_SELF_SERVICE_CABINET, name='upd', tenant='libA')
+    check('тот же tenant по GUID → идемпотентно (update)', a2['id'] == a['id'])
+
+
 def main():
     for t in (test_registry, test_derive_state, test_heartbeat,
               test_events_and_sensors, test_masters, test_info_and_license,
-              test_tenant_and_cabinet_cells, test_device_tokens):
+              test_tenant_and_cabinet_cells, test_device_tokens,
+              test_register_tenant_guard):
         print('==', t.__name__)
         t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))

@@ -117,10 +117,22 @@ def test_resolve_patron():
     check('rdr единичный -> ok', s3.resolve_patron('main', 'LIVE')['patron'] == 'T-LIVE')
 
 
+def test_tenant_scope():
+    print('== test_tenant_scope (#7)')
+    s = svc()
+    s.bind_card('T-A', 'CARD-X', tenant='libA')
+    check('tenant=libA резолвит свою карту',
+          s.resolve_patron('main', 'CARD-X', tenant='libA')['patron'] == 'T-A')
+    check('tenant=libB НЕ видит чужую карту (ПДн-изоляция)',
+          s.resolve_patron('main', 'CARD-X', tenant='libB')['status'] == 'unknown')
+    check('tenant=None (глобально) видит', s.resolve_patron('main', 'CARD-X')['patron'] == 'T-A')
+    check('CI сохраняется в скоупе', s.resolve_patron('main', 'card-x', tenant='libA')['patron'] == 'T-A')
+
+
 def main():
     for t in (test_bind_find, test_bind_guards, test_upsert_idempotent_and_kind,
               test_cards_for, test_rdr_lookup_fallback, test_rdr_sync_plan,
-              test_resolve_patron):
+              test_resolve_patron, test_tenant_scope):
         print('==', t.__name__); t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     return 1 if FAIL[0] else 0

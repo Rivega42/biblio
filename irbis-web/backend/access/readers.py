@@ -26,12 +26,13 @@ SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS reader_card (
   rfid_code  TEXT PRIMARY KEY,
   abis_code  TEXT NOT NULL,
+  tenant     TEXT NOT NULL DEFAULT 'public',   -- мультиарендная изоляция карт (H4 #7)
   serial     TEXT,
   kind       TEXT NOT NULL DEFAULT 'main',
   created    REAL NOT NULL,
   updated    REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS reader_card_abis_idx ON reader_card(abis_code);
+CREATE INDEX IF NOT EXISTS reader_card_abis_idx ON reader_card(tenant, abis_code);
 """
 
 
@@ -60,6 +61,11 @@ class ReaderStore:
     def ensure_schema(self):
         c = self._conn()
         c.executescript(SCHEMA_SQLITE)
+        # Идемпотентная миграция (#7): tenant на ранее созданных reader_card.
+        cols = [r[1] for r in c.execute('PRAGMA table_info(reader_card)').fetchall()]
+        if 'tenant' not in cols:
+            c.execute("ALTER TABLE reader_card ADD COLUMN tenant TEXT NOT NULL "
+                      "DEFAULT 'public'")
         c.commit()
 
     def find_by_rfid(self, rfid_code):
@@ -67,23 +73,27 @@ class ReaderStore:
                                  (rfid_code,)).fetchone()
         return dict(r) if r else None
 
-    def find_by_rfid_ci(self, rfid_code):
-        """Регистронезависимый поиск карты (#417): UID хранят по-разному
-        (uppercase hex у RFID), резолв не должен зависеть от регистра."""
-        r = self._conn().execute(
-            'SELECT * FROM reader_card WHERE UPPER(rfid_code)=UPPER(?)',
-            (rfid_code,)).fetchone()
+    def find_by_rfid_ci(self, rfid_code, tenant=None):
+        """Регистронезависимый поиск карты (#417), опц. со скоупом арендатора (#7):
+        UID хранят по-разному (uppercase hex), резолв не зависит от регистра; tenant
+        (если задан) не даёт устройству одного арендатора резолвить чужую карту."""
+        q = 'SELECT * FROM reader_card WHERE UPPER(rfid_code)=UPPER(?)'
+        args = [rfid_code]
+        if tenant is not None:
+            q += ' AND tenant=?'; args.append(tenant)
+        r = self._conn().execute(q, args).fetchone()
         return dict(r) if r else None
 
-    def upsert(self, abis_code, rfid_code, serial=None, kind=KIND_MAIN):
+    def upsert(self, abis_code, rfid_code, serial=None, kind=KIND_MAIN,
+               tenant='public'):
         now = time.time()
         c = self._conn()
         c.execute(
-            'INSERT INTO reader_card(rfid_code,abis_code,serial,kind,created,updated)'
-            ' VALUES(?,?,?,?,?,?) ON CONFLICT(rfid_code) DO UPDATE SET '
-            'abis_code=excluded.abis_code, serial=excluded.serial, '
-            'kind=excluded.kind, updated=excluded.updated',
-            (rfid_code, abis_code, serial, kind, now, now))
+            'INSERT INTO reader_card(rfid_code,abis_code,tenant,serial,kind,created,'
+            'updated) VALUES(?,?,?,?,?,?,?) ON CONFLICT(rfid_code) DO UPDATE SET '
+            'abis_code=excluded.abis_code, tenant=excluded.tenant, '
+            'serial=excluded.serial, kind=excluded.kind, updated=excluded.updated',
+            (rfid_code, abis_code, tenant, serial, kind, now, now))
         c.commit()
         return self.find_by_rfid(rfid_code)
 
@@ -116,18 +126,21 @@ class ReaderService:
                 return {'abis_code': ticket, 'rfid_code': rfid_code}
         return None
 
-    def bind_card(self, abis_code, rfid_code, serial=None, kind=KIND_MAIN):
-        """Привязать RFID-карту к билету (ReaderModify с устройства). Идемпотентно."""
+    def bind_card(self, abis_code, rfid_code, serial=None, kind=KIND_MAIN,
+                  tenant='public'):
+        """Привязать RFID-карту к билету (ReaderModify с устройства). Идемпотентно.
+        tenant — арендатор карты (#7), по умолчанию 'public'."""
         if not abis_code or not rfid_code:
             return False
-        self.store.upsert(abis_code, rfid_code, serial=serial, kind=kind or KIND_MAIN)
+        self.store.upsert(abis_code, rfid_code, serial=serial,
+                          kind=kind or KIND_MAIN, tenant=tenant)
         return True
 
     def cards_for(self, abis_code):
         return self.store.list_for(abis_code)
 
-    def resolve_patron(self, reader_role, uid):
-        """Канонический резолв карты → один читатель (#417).
+    def resolve_patron(self, reader_role, uid, tenant=None):
+        """Канонический резолв карты → один читатель (#417), опц. tenant-скоуп (#7).
 
         ``reader_role`` — вид карты (``main``/``ekp``/``extra`` или BDP-роль),
         ``uid`` — сырой идентификатор (NFC-UID / UHF-EPC). UID нормализуется
@@ -143,7 +156,7 @@ class ReaderService:
         norm = (uid or '').strip().upper()
         if not norm:
             return {'status': 'unknown', 'patron': None, 'uid': ''}
-        card = self.store.find_by_rfid_ci(norm)
+        card = self.store.find_by_rfid_ci(norm, tenant=tenant)
         if card is not None:
             return {'status': 'ok', 'patron': card['abis_code'],
                     'kind': card['kind'], 'uid': norm}
