@@ -116,3 +116,16 @@ CREATE TABLE IF NOT EXISTS cabinet_cell (
   UNIQUE(device, row, x, y)
 );
 CREATE INDEX IF NOT EXISTS cabinet_cell_idx ON cabinet_cell(tenant, device, state);
+
+-- Токены устройств (BDP-аутентификация, #413): хранится только sha256-хэш.
+CREATE TABLE IF NOT EXISTS device_token (
+  id         BIGSERIAL PRIMARY KEY,
+  device     BIGINT NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  tenant     TEXT NOT NULL DEFAULT 'public',
+  token_hash TEXT NOT NULL UNIQUE,
+  label      TEXT,
+  created    DOUBLE PRECISION NOT NULL,
+  expires    DOUBLE PRECISION,
+  revoked    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS device_token_idx ON device_token(device, revoked);
