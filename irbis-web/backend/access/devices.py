@@ -52,8 +52,9 @@ KIND_SAFEKEEPER = 'safekeeper'
 KIND_SMARTSHELF = 'smartshelf'
 KIND_ACS = 'acs_reader'
 KIND_CAMERA = 'camera'
+KIND_SELF_SERVICE_CABINET = 'self_service_cabinet'  # робо-шкаф выдачи/приёма (#414)
 KINDS = (KIND_DESKTOP, KIND_GATE, KIND_STATION, KIND_SAFEKEEPER,
-         KIND_SMARTSHELF, KIND_ACS, KIND_CAMERA)
+         KIND_SMARTSHELF, KIND_ACS, KIND_CAMERA, KIND_SELF_SERVICE_CABINET)
 
 # Здоровье устройства (DeviceMonitoringPage: 1 Неизвестно / 2 Исправно /
 # 3 Требует диагностики / 4 Не настроено). Точную формулу IDlogic строки не
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS device (
   type_id     INTEGER, type_name TEXT,
   name        TEXT,
   library     TEXT,
+  tenant      TEXT NOT NULL DEFAULT 'public',
   ip          TEXT, port INTEGER,
   is_online   INTEGER NOT NULL DEFAULT 0,
   last_seen   REAL,
@@ -140,6 +142,25 @@ CREATE TABLE IF NOT EXISTS station_banner (
   name TEXT, image BLOB, period_from REAL, period_to REAL,
   interval_sec INTEGER, is_enabled INTEGER NOT NULL DEFAULT 1
 );
+-- Ячейки робо-шкафа (self_service_cabinet) — зеркало физики (#414). Источник
+-- правды о физическом мире — журнал агента на RPi; Biblio держит это зеркало и
+-- сверяет inventory.run. Ячейка = полка ФОНДА (не pickup-локер locker_order):
+-- книга живёт в ячейке, выдача освобождает, возврат занимает свободную.
+CREATE TABLE IF NOT EXISTS cabinet_cell (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant   TEXT NOT NULL DEFAULT 'public',
+  device   INTEGER NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  row      TEXT NOT NULL,             -- FRONT / BACK
+  x        INTEGER NOT NULL,
+  y        INTEGER NOT NULL,
+  state    TEXT NOT NULL DEFAULT 'free'
+       CHECK (state IN ('free','occupied','awaiting_extraction','blocked')),
+  item     TEXT,                      -- инв.№ (910^b) книги в ячейке
+  epc      TEXT,                      -- RFID-метка книги
+  updated  REAL NOT NULL,
+  UNIQUE(device, row, x, y)
+);
+CREATE INDEX IF NOT EXISTS cabinet_cell_idx ON cabinet_cell(tenant, device, state);
 """
 
 
@@ -172,18 +193,23 @@ class DeviceStore:
     def ensure_schema(self):
         c = self._conn()
         c.executescript(SCHEMA_SQLITE)
+        # Идемпотентная миграция (#414): добить device.tenant на ранее созданных БД.
+        cols = [r[1] for r in c.execute('PRAGMA table_info(device)').fetchall()]
+        if 'tenant' not in cols:
+            c.execute("ALTER TABLE device ADD COLUMN tenant TEXT NOT NULL "
+                      "DEFAULT 'public'")
         c.commit()
 
     # ---- device CRUD ------------------------------------------------------ #
     def add_device(self, guid, kind, name, library, ip, port, type_id,
-                   type_name, cfg, cfg2):
+                   type_name, cfg, cfg2, tenant='public'):
         now = time.time()
         c = self._conn()
         cur = c.execute(
-            'INSERT INTO device(guid,kind,name,library,ip,port,type_id,'
-            'type_name,cfg,cfg2,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-            (guid, kind, name, library, ip, port, type_id, type_name, cfg, cfg2,
-             now, now))
+            'INSERT INTO device(guid,kind,name,library,tenant,ip,port,type_id,'
+            'type_name,cfg,cfg2,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (guid, kind, name, library, tenant, ip, port, type_id, type_name,
+             cfg, cfg2, now, now))
         c.commit()
         return self.get_device(cur.lastrowid)
 
@@ -208,7 +234,8 @@ class DeviceStore:
         c.commit()
         return self.get_device(device_id)
 
-    def list_devices(self, kind=None, library=None, include_deleted=False):
+    def list_devices(self, kind=None, library=None, include_deleted=False,
+                     tenant=None):
         q = 'SELECT * FROM device WHERE 1=1'
         args = []
         if not include_deleted:
@@ -217,6 +244,8 @@ class DeviceStore:
             q += ' AND kind=?'; args.append(kind)
         if library is not None:
             q += ' AND library=?'; args.append(library)
+        if tenant is not None:
+            q += ' AND tenant=?'; args.append(tenant)
         q += ' ORDER BY id'
         return [dict(r) for r in self._conn().execute(q, args).fetchall()]
 
@@ -321,6 +350,38 @@ class DeviceStore:
                 'device=? ORDER BY id', (device,)).fetchall()
         return [dict(r) for r in rows]
 
+    # ---- cabinet cells (self_service_cabinet, #414) ---------------------- #
+    def cabinet_cell_upsert(self, tenant, device, row, x, y, state='free',
+                            item=None, epc=None):
+        """Обновить зеркало ячейки (idempotent по device+row+x+y)."""
+        now = time.time()
+        c = self._conn()
+        c.execute(
+            'INSERT INTO cabinet_cell(tenant,device,row,x,y,state,item,epc,'
+            'updated) VALUES(?,?,?,?,?,?,?,?,?) '
+            'ON CONFLICT(device,row,x,y) DO UPDATE SET tenant=excluded.tenant,'
+            'state=excluded.state,item=excluded.item,epc=excluded.epc,'
+            'updated=excluded.updated',
+            (tenant, device, row, x, y, state, item, epc, now))
+        c.commit()
+        return self.cabinet_cell_get(device, row, x, y)
+
+    def cabinet_cell_get(self, device, row, x, y):
+        r = self._conn().execute(
+            'SELECT * FROM cabinet_cell WHERE device=? AND row=? AND x=? AND y=?',
+            (device, row, x, y)).fetchone()
+        return dict(r) if r else None
+
+    def cabinet_cells(self, tenant, device):
+        return [dict(r) for r in self._conn().execute(
+            'SELECT * FROM cabinet_cell WHERE tenant=? AND device=? '
+            'ORDER BY row, x, y', (tenant, device)).fetchall()]
+
+    def cabinet_free_cells(self, tenant, device):
+        return [dict(r) for r in self._conn().execute(
+            "SELECT * FROM cabinet_cell WHERE tenant=? AND device=? AND "
+            "state='free' ORDER BY row, x, y", (tenant, device)).fetchall()]
+
 
 class DeviceService:
     """Операции домена устройств над :class:`DeviceStore`.
@@ -353,7 +414,8 @@ class DeviceService:
 
     # -- registry ----------------------------------------------------------- #
     def register(self, guid, kind, name=None, library=None, ip=None, port=None,
-                 type_id=None, type_name=None, cfg=None, cfg2=None):
+                 type_id=None, type_name=None, cfg=None, cfg2=None,
+                 tenant='public'):
         if kind not in KINDS:
             raise DeviceError('unknown device kind: %r' % (kind,))
         existing = self.store.get_by_guid(guid) if guid else None
@@ -363,7 +425,7 @@ class DeviceService:
                 port=port, type_id=type_id, type_name=type_name, cfg=cfg,
                 cfg2=cfg2, is_deleted=0)
         return self.store.add_device(guid, kind, name, library, ip, port,
-                                     type_id, type_name, cfg, cfg2)
+                                     type_id, type_name, cfg, cfg2, tenant=tenant)
 
     def modify(self, device_id, **fields):
         if self.store.get_device(device_id) is None:
@@ -373,8 +435,23 @@ class DeviceService:
     def remove(self, device_id):
         return self.store.update_device(device_id, is_deleted=1)
 
-    def list(self, kind=None, library=None):
-        return self.store.list_devices(kind=kind, library=library)
+    def list(self, kind=None, library=None, tenant=None):
+        return self.store.list_devices(kind=kind, library=library, tenant=tenant)
+
+    # -- cabinet cells (self_service_cabinet, #414) ------------------------- #
+    def cell_upsert(self, tenant, device_id, row, x, y, state='free',
+                    item=None, epc=None):
+        """Обновить зеркало ячейки робо-шкафа (idempotent по device+row+x+y)."""
+        return self.store.cabinet_cell_upsert(tenant, device_id, row, x, y,
+                                              state, item, epc)
+
+    def cell_map(self, tenant, device_id):
+        """Карта ячеек устройства в пределах арендатора (cell.map)."""
+        return self.store.cabinet_cells(tenant, device_id)
+
+    def free_cells(self, tenant, device_id):
+        """Свободные ячейки (для выбора при возврате/загрузке)."""
+        return self.store.cabinet_free_cells(tenant, device_id)
 
     def get(self, guid):
         return self.store.get_by_guid(guid)

@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from access.devices import (
     DeviceStore, DeviceService, DeviceError,
-    KIND_DESKTOP, KIND_SAFEKEEPER, KIND_GATE,
+    KIND_DESKTOP, KIND_SAFEKEEPER, KIND_GATE, KIND_SELF_SERVICE_CABINET,
     STATE_UNKNOWN, STATE_OK, STATE_DIAG, STATE_UNCONFIGURED, STATE_NAMES,
     DIR_OUT, ONLINE_TTL_SEC,
 )
@@ -149,9 +149,40 @@ def test_info_and_license():
     check('license invalid unknown', svc.is_license_valid('nope') is False)
 
 
+def test_tenant_and_cabinet_cells():
+    print('-- tenant-изоляция + cabinet_cell (#414)')
+    svc = make_service([1000.0])
+    a = svc.register('cab-A', KIND_SELF_SERVICE_CABINET, name='Шкаф A', tenant='libA')
+    b = svc.register('cab-B', KIND_SELF_SERVICE_CABINET, name='Шкаф B', tenant='libB')
+    check('self_service_cabinet — валидный kind', a['kind'] == KIND_SELF_SERVICE_CABINET)
+    check('device.tenant сохранён', a.get('tenant') == 'libA' and b.get('tenant') == 'libB')
+    check('list(tenant=libA) — только свой', [d['guid'] for d in svc.list(tenant='libA')] == ['cab-A'])
+    check('list(tenant=libB) — только свой', [d['guid'] for d in svc.list(tenant='libB')] == ['cab-B'])
+    check('list() без tenant — оба', len(svc.list()) == 2)
+
+    svc.cell_upsert('libA', a['id'], 'FRONT', 1, 9, state='occupied', item='INV-1', epc='EPC1')
+    svc.cell_upsert('libA', a['id'], 'FRONT', 1, 10, state='free')
+    svc.cell_upsert('libA', a['id'], 'BACK', 2, 3, state='awaiting_extraction', item='INV-2')
+    check('cell_map — 3 ячейки', len(svc.cell_map('libA', a['id'])) == 3)
+    free = svc.free_cells('libA', a['id'])
+    check('free_cells — 1 свободная (y=10)', len(free) == 1 and free[0]['y'] == 10)
+
+    # upsert идемпотентен по (device,row,x,y)
+    svc.cell_upsert('libA', a['id'], 'FRONT', 1, 9, state='free')
+    check('upsert не задвоил ячейку', len(svc.cell_map('libA', a['id'])) == 3)
+    check('состояние ячейки обновлено',
+          svc.store.cabinet_cell_get(a['id'], 'FRONT', 1, 9)['state'] == 'free')
+
+    # изоляция ячеек между арендаторами
+    svc.cell_upsert('libB', b['id'], 'FRONT', 1, 1, state='occupied', item='X')
+    check('cell_map(libA) не видит ячейки libB', len(svc.cell_map('libA', a['id'])) == 3)
+    check('cell_map(libB) — только свои', len(svc.cell_map('libB', b['id'])) == 1)
+
+
 def main():
     for t in (test_registry, test_derive_state, test_heartbeat,
-              test_events_and_sensors, test_masters, test_info_and_license):
+              test_events_and_sensors, test_masters, test_info_and_license,
+              test_tenant_and_cabinet_cells):
         print('==', t.__name__)
         t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
