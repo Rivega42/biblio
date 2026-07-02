@@ -67,6 +67,14 @@ class ReaderStore:
                                  (rfid_code,)).fetchone()
         return dict(r) if r else None
 
+    def find_by_rfid_ci(self, rfid_code):
+        """Регистронезависимый поиск карты (#417): UID хранят по-разному
+        (uppercase hex у RFID), резолв не должен зависеть от регистра."""
+        r = self._conn().execute(
+            'SELECT * FROM reader_card WHERE UPPER(rfid_code)=UPPER(?)',
+            (rfid_code,)).fetchone()
+        return dict(r) if r else None
+
     def upsert(self, abis_code, rfid_code, serial=None, kind=KIND_MAIN):
         now = time.time()
         c = self._conn()
@@ -117,6 +125,46 @@ class ReaderService:
 
     def cards_for(self, abis_code):
         return self.store.list_for(abis_code)
+
+    def resolve_patron(self, reader_role, uid):
+        """Канонический резолв карты → один читатель (#417).
+
+        ``reader_role`` — вид карты (``main``/``ekp``/``extra`` или BDP-роль),
+        ``uid`` — сырой идентификатор (NFC-UID / UHF-EPC). UID нормализуется
+        (uppercase, strip, БЕЗ усечения — усечение до 24 символов рождало коллизии
+        личностей, см. bookcabinet C10). Возвращает
+        ``{'status': 'ok'|'unknown'|'ambiguous', 'patron': billet|None, ...}``:
+          * ``ok``        — ровно один читатель (карта в реестре или живой RDR);
+          * ``unknown``   — карта не найдена → сценарий «гость» (публичный поиск,
+                            циркуляция недоступна);
+          * ``ambiguous`` — коллизия (живой RDR вернул >1 читателя) → в аудит,
+                            обслуживать нельзя без разбора.
+        """
+        norm = (uid or '').strip().upper()
+        if not norm:
+            return {'status': 'unknown', 'patron': None, 'uid': ''}
+        card = self.store.find_by_rfid_ci(norm)
+        if card is not None:
+            return {'status': 'ok', 'patron': card['abis_code'],
+                    'kind': card['kind'], 'uid': norm}
+        if self.rdr_lookup is not None:
+            try:
+                res = self.rdr_lookup(norm)
+            except Exception:  # pragma: no cover - seam guard
+                res = None
+            if res:
+                if isinstance(res, (list, tuple, set)):
+                    distinct = sorted({str(x) for x in res if x})
+                    if len(distinct) > 1:
+                        return {'status': 'ambiguous', 'patron': None,
+                                'candidates': distinct, 'uid': norm}
+                    if len(distinct) == 1:
+                        return {'status': 'ok', 'patron': distinct[0],
+                                'kind': reader_role, 'uid': norm}
+                else:
+                    return {'status': 'ok', 'patron': str(res),
+                            'kind': reader_role, 'uid': norm}
+        return {'status': 'unknown', 'patron': None, 'uid': norm}
 
     # kind карты → поле RDR (источник истины карт в ИРБИС)
     KIND_FIELD = {KIND_MAIN: '30', KIND_EXTRA: '24', KIND_EKP: '28'}
