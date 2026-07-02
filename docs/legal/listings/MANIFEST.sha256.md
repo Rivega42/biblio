@@ -1,9 +1,9 @@
 # Манифест депонируемых материалов Biblio (SHA-256)
 
 - Дата сборки: **2026-07-02**
-- Версия кода (git): **`c7065ff`**
-- Файлов: **306** · строк: **93969** · условных страниц: **1709**
-- **SHA-256 всего листинга:** `316f16da90aca7a3b6945ac58902bb8d93f9e022afd2aa31775b8a67671b2dee`
+- Версия кода (git): **`7c8687b`**
+- Файлов: **307** · строк: **94116** · условных страниц: **1712**
+- **SHA-256 всего листинга:** `ca97fee7434990ec293fa7642585cfbe32ecaf31b38b141a7e23aba19190109b`
 
 Контрольная сумма всего листинга фиксирует неизменность кода на дату сборки —
 её удобно указывать в описи на депонирование (`templates/10_zayavka_deponirovanie.md`).
@@ -124,6 +124,7 @@
 | `irbis-web/backend/tests/test_authority.py` | 255 | `effcd41bddc1bd1429ff55b68c22b5768d7967d2daa0b53662e81d99a6e42e0c` |
 | `irbis-web/backend/tests/test_authority_control.py` | 349 | `262dfa74f42f87a62cc3ea0772bab2a5b0772199925c72abf96bd09740625455` |
 | `irbis-web/backend/tests/test_authority_seam.py` | 117 | `a9bd4b9bd8e2fcb6c4a0161ee7293398c1e42f764f6e0153e1a0c4b0abff8dd1` |
+| `irbis-web/backend/tests/test_bdp_e2e.py` | 147 | `233628746b3853128f9d17756c507ff4ce15ef36fbe29e016d4490d13edd5bf1` |
 | `irbis-web/backend/tests/test_benchmark.py` | 343 | `b4fd0cfbf827068228f3a0b197f6f8eeebc70129183e937a2cfb04633516ccbe` |
 | `irbis-web/backend/tests/test_bookprovision.py` | 393 | `e836991b3b839f1f752afae1adad7e840f9fd8610ad564c5837e208f7db13381` |
 | `irbis-web/backend/tests/test_bp_enrollment.py` | 106 | `3fd4df48be36efb44c014986f9bd0584b16ec84c1e7304bd27553cdc6f5d3727` |
