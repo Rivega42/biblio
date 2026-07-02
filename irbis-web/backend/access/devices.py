@@ -39,6 +39,8 @@ sqlite dev / Postgres prod — зеркало в ``schema_devices.sql``). Чис
 проставляет слой маршрутов (`server.py` + `access/authz.py`); сам домен пишет
 доменные события в ``device_event``.
 """
+import hashlib
+import secrets
 import threading
 import time
 
@@ -161,6 +163,19 @@ CREATE TABLE IF NOT EXISTS cabinet_cell (
   UNIQUE(device, row, x, y)
 );
 CREATE INDEX IF NOT EXISTS cabinet_cell_idx ON cabinet_cell(tenant, device, state);
+-- Токены устройств (BDP-аутентификация, #413): хранится ТОЛЬКО sha256-хэш; сырой
+-- токен показывается один раз при выпуске. tenant-скоуп + ротация/отзыв.
+CREATE TABLE IF NOT EXISTS device_token (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  device     INTEGER NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  tenant     TEXT NOT NULL DEFAULT 'public',
+  token_hash TEXT NOT NULL UNIQUE,
+  label      TEXT,
+  created    REAL NOT NULL,
+  expires    REAL,
+  revoked    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS device_token_idx ON device_token(device, revoked);
 """
 
 
@@ -382,6 +397,45 @@ class DeviceStore:
             "SELECT * FROM cabinet_cell WHERE tenant=? AND device=? AND "
             "state='free' ORDER BY row, x, y", (tenant, device)).fetchall()]
 
+    # ---- device tokens (BDP auth, #413) ---------------------------------- #
+    def add_token(self, device, tenant, token_hash, label=None, expires=None):
+        now = time.time()
+        c = self._conn()
+        cur = c.execute(
+            'INSERT INTO device_token(device,tenant,token_hash,label,created,'
+            'expires) VALUES(?,?,?,?,?,?)',
+            (device, tenant, token_hash, label, now, expires))
+        c.commit()
+        return cur.lastrowid
+
+    def get_token_by_hash(self, token_hash):
+        r = self._conn().execute('SELECT * FROM device_token WHERE token_hash=?',
+                                 (token_hash,)).fetchone()
+        return dict(r) if r else None
+
+    def revoke_token(self, token_id):
+        c = self._conn()
+        c.execute('UPDATE device_token SET revoked=1 WHERE id=?', (token_id,))
+        c.commit()
+
+    def revoke_device_tokens(self, device):
+        c = self._conn()
+        c.execute('UPDATE device_token SET revoked=1 WHERE device=? AND revoked=0',
+                  (device,))
+        c.commit()
+
+    def list_tokens(self, device=None, tenant=None, include_revoked=False):
+        q = 'SELECT * FROM device_token WHERE 1=1'
+        args = []
+        if not include_revoked:
+            q += ' AND revoked=0'
+        if device is not None:
+            q += ' AND device=?'; args.append(device)
+        if tenant is not None:
+            q += ' AND tenant=?'; args.append(tenant)
+        q += ' ORDER BY id'
+        return [dict(r) for r in self._conn().execute(q, args).fetchall()]
+
 
 class DeviceService:
     """Операции домена устройств над :class:`DeviceStore`.
@@ -452,6 +506,57 @@ class DeviceService:
     def free_cells(self, tenant, device_id):
         """Свободные ячейки (для выбора при возврате/загрузке)."""
         return self.store.cabinet_free_cells(tenant, device_id)
+
+    # -- device tokens (BDP auth, #413) ------------------------------------ #
+    @staticmethod
+    def _hash_token(raw):
+        return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+    def issue_token(self, device_id, tenant=None, label=None, ttl=None):
+        """Выпустить device-token. Сырой токен возвращается ОДИН РАЗ (в сторе —
+        только sha256-хэш). tenant по умолчанию = tenant устройства."""
+        dev = self.store.get_device(device_id)
+        if dev is None:
+            raise DeviceError('no device id=%r' % (device_id,))
+        tenant = tenant or dev.get('tenant') or 'public'
+        raw = secrets.token_urlsafe(32)
+        expires = (self._now() + ttl) if ttl else None
+        tid = self.store.add_token(device_id, tenant, self._hash_token(raw),
+                                   label=label, expires=expires)
+        return {'id': tid, 'device_id': device_id, 'tenant': tenant,
+                'token': raw, 'expires': expires}
+
+    def authenticate_token(self, bearer):
+        """``Authorization``-строка (Bearer или голый токен) → контекст
+        ``{device_id, tenant, kind, token_id}`` | ``None`` (revoked/expired/
+        неизвестный/удалённое устройство)."""
+        if not bearer:
+            return None
+        raw = bearer[7:].strip() if bearer[:7].lower() == 'bearer ' else bearer.strip()
+        if not raw:
+            return None
+        row = self.store.get_token_by_hash(self._hash_token(raw))
+        if row is None or row['revoked']:
+            return None
+        if row['expires'] is not None and self._now() > row['expires']:
+            return None
+        dev = self.store.get_device(row['device'])
+        if dev is None or dev.get('is_deleted'):
+            return None
+        return {'device_id': row['device'], 'tenant': row['tenant'],
+                'kind': dev['kind'], 'token_id': row['id']}
+
+    def rotate_token(self, device_id, label=None, ttl=None):
+        """Отозвать активные токены устройства и выпустить новый."""
+        self.store.revoke_device_tokens(device_id)
+        return self.issue_token(device_id, label=label, ttl=ttl)
+
+    def revoke_token(self, token_id):
+        self.store.revoke_token(token_id)
+
+    def list_tokens(self, device_id=None, tenant=None):
+        """Активные токены (для admin-UI; token_hash маскировать на слое роутов)."""
+        return self.store.list_tokens(device=device_id, tenant=tenant)
 
     def get(self, guid):
         return self.store.get_by_guid(guid)

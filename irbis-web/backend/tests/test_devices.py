@@ -179,10 +179,53 @@ def test_tenant_and_cabinet_cells():
     check('cell_map(libB) — только свои', len(svc.cell_map('libB', b['id'])) == 1)
 
 
+def test_device_tokens():
+    print('-- device-token (BDP auth, #413)')
+    nr = [1000.0]
+    svc = make_service(nr)
+    d = svc.register('cab-T', KIND_SELF_SERVICE_CABINET, name='Шкаф T', tenant='libT')
+    t = svc.issue_token(d['id'])
+    check('issue вернул сырой токен', isinstance(t.get('token'), str) and len(t['token']) > 20)
+    check('токен наследует tenant устройства', t['tenant'] == 'libT')
+    ctx = svc.authenticate_token('Bearer ' + t['token'])
+    check('authenticate → device/tenant/kind',
+          bool(ctx) and ctx['device_id'] == d['id'] and ctx['tenant'] == 'libT'
+          and ctx['kind'] == KIND_SELF_SERVICE_CABINET)
+    check('authenticate без Bearer-префикса тоже ок', svc.authenticate_token(t['token']) is not None)
+    check('неверный токен → None', svc.authenticate_token('Bearer nope') is None)
+    check('пустой → None', svc.authenticate_token('') is None)
+    check('в сторе хэш, не сырой токен', svc.store.get_token_by_hash(t['token']) is None)
+
+    # ротация: старый отзывается, новый работает
+    t2 = svc.rotate_token(d['id'])
+    check('после ротации старый невалиден', svc.authenticate_token(t['token']) is None)
+    check('новый токен валиден', svc.authenticate_token(t2['token']) is not None)
+
+    # отзыв
+    svc.revoke_token(t2['id'])
+    check('отозванный невалиден', svc.authenticate_token(t2['token']) is None)
+
+    # срок годности
+    t3 = svc.issue_token(d['id'], ttl=100)
+    check('токен со сроком валиден до истечения', svc.authenticate_token(t3['token']) is not None)
+    nr[0] = 1000.0 + 200
+    check('просроченный невалиден', svc.authenticate_token(t3['token']) is None)
+
+    # tenant-изоляция list
+    d2 = svc.register('cab-U', KIND_SELF_SERVICE_CABINET, tenant='libU')
+    svc.issue_token(d2['id'])
+    check('list_tokens(tenant=libT) не видит libU',
+          all(x['tenant'] == 'libT' for x in svc.list_tokens(tenant='libT')))
+    # удалённое устройство → токен невалиден
+    t4 = svc.issue_token(d2['id'])
+    svc.remove(d2['id'])
+    check('токен удалённого устройства невалиден', svc.authenticate_token(t4['token']) is None)
+
+
 def main():
     for t in (test_registry, test_derive_state, test_heartbeat,
               test_events_and_sensors, test_masters, test_info_and_license,
-              test_tenant_and_cabinet_cells):
+              test_tenant_and_cabinet_cells, test_device_tokens):
         print('==', t.__name__)
         t()
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
