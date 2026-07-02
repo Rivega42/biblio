@@ -491,6 +491,24 @@ def saga_checks():
     rolled = eng4.expire_pending(now=T0 + 10 * DAY, ttl=1 * DAY)
     check('expire откатил зависший резерв', len(rolled) == 1 and store4.count_on_hand('R1') == 0)
 
+    # H2 (#2/#11): один физический экземпляр нельзя выдать дважды.
+    sA, eA = fresh()
+    sA.add_reader('R2', category='В01')
+    eA.reserve('R1', 'SHARED', T0, op_id='sh1'); eA.commit('sh1')
+    dsh = eA.reserve('R2', 'SHARED', T0, op_id='sh2')
+    check('reserve занятого экземпляра → item_unavailable',
+          dsh.decision == DENY and 'item_unavailable' in dsh.reasons)
+
+    # H3 (#12): PENDING-резерв нельзя закрыть как возврат.
+    sB, eB = fresh()
+    lp = eB.reserve('R1', 'PBK', T0, op_id='p1').computed['loan']['id']
+    check('return PENDING → loan_not_committed',
+          'loan_not_committed' in eB.return_item(lp, T0).reasons)
+    # H3 (PARTIAL#1): commit возвращённой выдачи → отказ (не реактивировать).
+    eB.commit('p1'); eB.return_item(lp, T0 + DAY)
+    check('commit возвращённой → already_returned',
+          'already_returned' in eB.commit('p1').reasons)
+
 
 def main():
     store_and_policy_checks()
