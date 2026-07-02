@@ -84,6 +84,16 @@ class ReaderStore:
         r = self._conn().execute(q, args).fetchone()
         return dict(r) if r else None
 
+    def find_all_by_rfid_ci(self, rfid_code, tenant=None):
+        """ВСЕ карты, чей UID совпадает без учёта регистра (#8): две карты-варианта
+        регистра для РАЗНЫХ билетов дают >1 строку → резолв обязан вернуть ambiguous,
+        а не молча первую (.fetchone скрывал коллизию)."""
+        q = 'SELECT * FROM reader_card WHERE UPPER(rfid_code)=UPPER(?)'
+        args = [rfid_code]
+        if tenant is not None:
+            q += ' AND tenant=?'; args.append(tenant)
+        return [dict(r) for r in self._conn().execute(q, args).fetchall()]
+
     def upsert(self, abis_code, rfid_code, serial=None, kind=KIND_MAIN,
                tenant='public'):
         now = time.time()
@@ -114,7 +124,7 @@ class ReaderService:
         """Резолв RFID-карты → билет. Сначала own-реестр, затем (опц.) живой RDR."""
         if not rfid_code:
             return None
-        r = self.store.find_by_rfid(rfid_code)
+        r = self.store.find_by_rfid_ci(rfid_code)  # #15: CI и в legacy-пути (SIP2/compat)
         if r:
             return {'abis_code': r['abis_code'], 'rfid_code': r['rfid_code']}
         if self.rdr_lookup is not None:
@@ -156,10 +166,16 @@ class ReaderService:
         norm = (uid or '').strip().upper()
         if not norm:
             return {'status': 'unknown', 'patron': None, 'uid': ''}
-        card = self.store.find_by_rfid_ci(norm, tenant=tenant)
-        if card is not None:
-            return {'status': 'ok', 'patron': card['abis_code'],
-                    'kind': card['kind'], 'uid': norm}
+        cards = self.store.find_all_by_rfid_ci(norm, tenant=tenant)
+        distinct = sorted({c['abis_code'] for c in cards})
+        if len(distinct) > 1:
+            # #8: коллизия UID (две карты-варианта регистра на разные билеты) —
+            # обслуживать нельзя без разбора, иначе выдача не тому читателю.
+            return {'status': 'ambiguous', 'patron': None,
+                    'candidates': distinct, 'uid': norm}
+        if len(distinct) == 1:
+            return {'status': 'ok', 'patron': distinct[0],
+                    'kind': cards[0]['kind'], 'uid': norm}
         if self.rdr_lookup is not None:
             try:
                 res = self.rdr_lookup(norm)
